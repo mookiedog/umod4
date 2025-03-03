@@ -1,0 +1,40 @@
+{
+  // The number of parallel build jobs.
+  // "Use zero to automatically detect the number of CPUs." --> doesn't work for me though
+  // Setting this to 1 will disable build parallelism.
+	"cmake.parallelJobs": 10,
+
+  /* Use 'make' instead of the default, 'ninja' */
+  /*"cmake.generator": "Unix Makefiles",*/
+  "cmake.generator": "Ninja",
+
+  /* This option adds extra args to the cmake "configure" command. */
+  "cmake.configureArgs": [
+    /* Uncomment the next line to see the actual compiler command lines in gory detail.
+     * It is hugely useful for looking at the compiler options like include paths.
+     */
+    /*"-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON",*/
+
+    /* Tell CMake to display some debug info about what it is doing */
+    /*"--debug-output",*/
+
+    /* Tell CMake to display so much debug info that you will be sorry you asked */
+    /*"--trace"*/
+  ],
+  "cortex-debug.variableUseNaturalFormat": false,
+  "cortex-debug.registerUseNaturalFormat": false,
+  "files.associations": {
+    "freertos.h": "c",
+    "functional": "cpp",
+    "optional": "cpp",
+    "ratio": "cpp",
+    "system_error": "cpp",
+    "array": "cpp",
+    "tuple": "cpp",
+    "type_traits": "cpp",
+    "utility": "cpp",
+    "cerrno": "cpp",
+    "*.dsc": "jsonc"
+  },
+  "cmake.configureOnOpen": true,
+}

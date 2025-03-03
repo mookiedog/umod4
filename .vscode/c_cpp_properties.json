@@ -1,0 +1,27 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/robin/projects/pico-sdk/**",
+                "${workspaceFolder}/build/_deps/littlefs-src",
+                "/home/robin/projects/FreeRTOS-Kernel/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "linux-gcc-x64",
+            "configurationProvider": "ms-vscode.cmake-tools",
+            "compilerArgs": []
+        },
+        {
+            "name": "gcc-arm-none-eabi",
+            "includePath": [],
+            "defines": [],
+            "intelliSenseMode": "gcc-arm"
+        }
+    ],
+    "version": 4
+}

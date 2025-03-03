@@ -1,0 +1,6 @@
+# Ignore any directory (and everything under it) that starts with double underscore
+__*/
+# Ignore any filename starting with double underscore:
+__*
+
+*.bin
