@@ -32,12 +32,14 @@ set(PROJECTS_PATH ${CMAKE_SOURCE_DIR}/..)
 #   projects/
 #   └── pico-sdk
 #       ├── 1.5.1
-#       └── 2.0.0
+#       ├── 2.0.0
+#       └── 2.1.1
+
 
 # Select the SDK version. This variable gets passed into the WP and EP external projects.
 # At the moment, both EP and WP use the same SDK version.
 # It would be possible for the WP and EP to use different versions of the SDK, should that need arise.
-set(PICO_SDK_VERSION 2.0.0)
+set(PICO_SDK_VERSION 2.1.1)
 set(PICO_SDK_PATH ${PROJECTS_PATH}/pico-sdk/${PICO_SDK_VERSION})
 
 # If this path is specified, the SDK init process will make sure that the picotool sources will get downloaded to this path,
