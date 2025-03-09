@@ -13,10 +13,12 @@
 #include "hardware/gpio.h"
 #include "umod4_WP.h"
 
+#include "pico/time.h"
+
 uint32_t msgCount;
 uint32_t cksumErrorCount;
 
-static const bool dbg = false;
+static const uint32_t dbg = 1;
 
 // Defining this next symbol tells the GPS to disable NMEA and communicate via UBX only
 #define UBX_ONLY_MODE
@@ -333,7 +335,7 @@ void Gps::processUbxBuffer()
 // ----------------------------------------------------------------------------------
 void Gps::tx(uint8_t byte)
 {
-  if (dbg) {
+  if (dbg >= 2) {
     printf("%02X ", byte);
   }
   uart->tx(byte);
@@ -387,7 +389,7 @@ void Gps::sendUbxMsg(uint8_t* buffer, uint16_t bufferLength)
   tx(ckA);
   tx(ckB);
 
-  if (dbg) {
+  if (dbg >= 2) {
     printf("\n");
   }
 }
@@ -431,7 +433,7 @@ void Gps::sendUbxMsg(uint8_t ubxClass, uint8_t ubxId, const uint8_t* payload, ui
   tx(ckA);
   tx(ckB);
 
-  if (dbg) {
+  if (dbg >= 2) {
     printf("\n");
   }
 }
@@ -460,7 +462,7 @@ void Gps::setUbxOnlyMode(uint32_t baudRate)
   payload[10] = (baudRate>>16) & 0xFF;
   payload[11] = (baudRate>>24) & 0xFF;
 
-  if (dbg) {printf("GPS UBX: Setting UBX-only reporting mode\n");}
+  if (dbg) {printf("GPS UBX: Setting UBX-only reporting mode at baud rate: %u\n", baudRate);}
   sendUbxMsg(cl, id, payload, sizeof(payload));
   #else
     if (dbg) {printf("GPS_UBX: NMEA messages are active!\n");}
@@ -671,13 +673,17 @@ void Gps::setBaud()
   //   frame errors are detected during a one-second period. This can happen if the wrong
   //   baud rate is used or the UART RX pin is grounded."
 
-  uart->configBaud(9600);
-
-  // The UBX command to set the baud rate is the same one that also sets UBX-only mode.
-  // Since we only ever want UBX mode, we treat it as a harmless side effect of changing the baud rate.
-  // need to do it anyway.
+  uint32_t tempBaud = 9600;
+  if (dbg) printf("%s: Setting UART baud rate %d\n", __FUNCTION__, tempBaud);
+  uart->configBaud(tempBaud);
   setUbxOnlyMode(GPS_BAUD_RATE);
+
+  // Give time for the setUbxOnlyMode message to get sent before we change the baud rate again:
+  vTaskDelay(100);
+
+  if (dbg) printf("%s: Setting UART baud rate %d\n", __FUNCTION__, GPS_BAUD_RATE);
   uart->configBaud(GPS_BAUD_RATE);
+  setUbxOnlyMode(GPS_BAUD_RATE);
 
   // In theory, we both are operating at the desired GPS_BAUD_RATE now.
 }
@@ -724,7 +730,6 @@ void Gps::rxTask()
     } state_t;
 
   state_t state = SYNC_ST;
-  uint32_t charCount=0;
 
   // Enable a pulldown on the pin that the GPS uses to transmit to us.
   // If the GPS is present, it will override our pulldown whenever the UART is idle.
@@ -747,19 +752,8 @@ void Gps::rxTask()
     // If the GPS resets itself or messes up its baud rate or is not even present (as might
     // happen during bench testing) the 1/2 second timeout on receiving valid serial data will trigger.
     BaseType_t rval = uart->rx(c, pdMS_TO_TICKS(500));
-    charCount++;
-    if (charCount > 5000) {
-      //setAntennaPower(false);
-      setPowerDown(0);
-      vTaskDelay(pdMS_TO_TICKS(5000));
-      setPowerDown(1);
-      while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-      }
-    }
-
     if (rval != pdPASS) {
-      /// This test crudely avoids constantly talking to a GPS that is not present.
+      /// This test crudely avoids constantly talking to a GPS module that is not present.
       // With no GPS, the GPS TX input will always report as '0' due to our port-based pulldown.
       if (gpio_get(GPS_RX_PIN) != 0) {
         // The GPIO is being driven high, so a GPS might be present.
