@@ -66,7 +66,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-threadsafe-statics")
 # Disable C++ exception processing
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions")
 
-# Turn off RTTI since we have our own printf mechanisms
+# We will not be using C++ run-time typing features
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 
 pico_sdk_init()
@@ -124,6 +124,14 @@ add_executable(${PROJECT_NAME}
   src/ws2812.pio
 
 )
+
+# Not sure the next line does what I want:
+add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
+
+# Choose where stdio output goes. It should only be RTT for this project.
+pico_enable_stdio_uart(${PROJECT_NAME} 0)
+pico_enable_stdio_usb(${PROJECT_NAME} 0)
+pico_enable_stdio_rtt(${PROJECT_NAME} 1)
 
 # The Littlefs project is not designed using CMake.
 # Here, we set up littlefs as an INTERFACE library that can be used by either project.

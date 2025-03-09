@@ -1,3 +1,4 @@
+#include "stdio.h"
 #include "pico/stdlib.h"
 
 #include "umod4_WP.h"
@@ -133,6 +134,7 @@ bool comingOnline(SdCard* sdCard)
   cfg.lookahead_size = 16;
 
   // Mount the filesystem.
+  printf("%s: Mounting filesystem\n", __FUNCTION__);
   t0 = time_us_32();
   int err = lfs_mount(&lfs, &cfg);
   t1 = time_us_32();
@@ -140,20 +142,26 @@ bool comingOnline(SdCard* sdCard)
 
   // If we were unable to mount the filesystem, try reformatting it. This should only happen on the first boot.
   if (err) {
-    // We should probably log a message if we ever have to reformat!
+    printf("%s: Mount failed! err=%d\n", __FUNCTION__, err);
 
+      // We should probably log a message if we ever have to reformat!
+
+    printf("%s: Formatting a filesystem\n", __FUNCTION__);
     t0 = time_us_32();
     err = lfs_format(&lfs, &cfg);
     t1 = time_us_32();
     formatTime_us = t1 - t0;
     if (err < 0) {
       // Format operation failed
-      return false;
+      printf("%s: Format failed! err=%d\n", __FUNCTION__, err);
+    return false;
     }
     // Mount the freshly formatted device
+    printf("%s: Mounting new filesystem\n", __FUNCTION__);
     err = lfs_mount(&lfs, &cfg);
     if (err<0) {
       // Still unable to mount the device!
+      printf("%s: Mount of new filesystem failed! err=%d\n", __FUNCTION__, err);
       return false;
     }
     mountTime_us = time_us_32() - t1;
@@ -173,6 +181,8 @@ bool comingOnline(SdCard* sdCard)
     lfs_prog(&cfg, 1000+i, 0, scratch, 512);
   }
   #endif
+
+  printf("%s: Filesystem mounted in %.2f milliseconds\n", __FUNCTION__, mountTime_us/1000.0);
   return true;
 }
 
@@ -243,6 +253,8 @@ void bootSystem()
   // There is no harm in creating it even if there is no display attached:
   spiLcd = new Spi(LCD_SPI_PORT, LCD_SCK_PIN, LCD_MOSI_PIN, LCD_MISO_PIN);
 
+  printf("WP Booting\n");
+
   // Get the GPS started
   startGps();
 
@@ -301,6 +313,8 @@ void vLedTask(void* arg)
 // That is where all the behind-the-scenes initialization of the runtime occurs.
 int main()
 {
+  stdio_init_all();
+
   // The LED task will boot the rest of the system
   BaseType_t err = xTaskCreate(vLedTask, "LED Task", 512, NULL, 1, NULL);
   if (err != pdPASS) {
