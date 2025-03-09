@@ -83,7 +83,7 @@ project(umod4)
 # Littlefs is a small enough project that we just pull it into our superbuild's build tree
 FetchContent_Declare(littlefs
     GIT_REPOSITORY https://github.com/littlefs-project/littlefs
-    GIT_TAG v2.9.3
+    GIT_TAG v2.10.1
 )
 
 # We use FetchContent_populate, not _add(), because _populate() does not perform an
@@ -175,6 +175,7 @@ set(EP_CMAKE_ARG_LIST
     -DECU_BINARY_DIR=${CMAKE_BINARY_DIR}/ecu
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
 #    -DLFS_SRC_DIR=${LFS_SRC_DIR}
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=1
 )
 
 ExternalProject_Add(EP
@@ -197,6 +198,7 @@ set(WP_CMAKE_ARG_LIST
     -DPROJECTS_PATH=${PROJECTS_PATH}
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DLFS_SRC_DIR=${LFS_SRC_DIR}
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=1
 )
 
 ExternalProject_Add(WP

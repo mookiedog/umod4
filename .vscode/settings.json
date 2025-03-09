@@ -10,11 +10,6 @@
 
   /* This option adds extra args to the cmake "configure" command. */
   "cmake.configureArgs": [
-    /* Uncomment the next line to see the actual compiler command lines in gory detail.
-     * It is hugely useful for looking at the compiler options like include paths.
-     */
-    /*"-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON",*/
-
     /* Tell CMake to display some debug info about what it is doing */
     /*"--debug-output",*/
 
