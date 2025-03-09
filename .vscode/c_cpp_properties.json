@@ -4,9 +4,9 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/home/robin/projects/pico-sdk/**",
+                "${workspaceFolder}/../pico-sdk/2.1.1/**",
                 "${workspaceFolder}/build/_deps/littlefs-src",
-                "/home/robin/projects/FreeRTOS-Kernel/**"
+                "${workspaceFolder}/../FreeRTOS-Kernel/include/**"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
