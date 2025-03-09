@@ -27,7 +27,7 @@
 
 #define BREAKPT() __breakpoint();
 
-static const bool dbg = false;
+static const uint32_t dbg = 0;
 
 // The command packets all start with a '0' bit (the 'start bit'),
 // followed by a '1' bit (the 'transmission bit'), then the 6-bit 'command index'.
