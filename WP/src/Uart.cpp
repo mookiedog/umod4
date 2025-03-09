@@ -39,7 +39,7 @@ Uart::Uart(uart_inst_t* _uartId, int32_t _txPad, int32_t _rxPad)
     hw = uart0_hw;
     isr_obj[0] = this;
   }
-  else if (_uartId == uart0) {
+  else if (_uartId == uart1) {
     irqId = UART1_IRQ;
     irq_set_exclusive_handler(irqId, isr_uart1);
     hw = uart1_hw;
