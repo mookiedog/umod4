@@ -3,80 +3,163 @@
 This document explains how to set up a machine so that it can build the umod4 project.
 
 To set expectations: if you are a Gen1 Aprilia enthusiast more than a software person, be warned that this project is not trivial.
-If you have worked with Arduino, I can tell you that it's significantly more complicated than loading an Arduino sketch and going riding!
+It is significantly more complicated than loading an Arduino sketch and going riding!
 To get the project working requires building tools and executables for four separate processors:
 
 1) 68HC11 assembly code for ECU firmware
 1) C, C++ and assembly language for ARM Cortex M0+: the EP and WP processors (both running dual-core RP2040 processors)
 1) various C, C++, and Python tools that will run on the development host (an x86 PC or ARM Raspberry Pi)
 
-## Development System
+## Development System Overview
 
 Linux is required to build this project.
-You do not need a pure linux machine to work with it though.
-This project has been developed and tested on three different OS/machine combinations:
+The development system to be created has been tested on three different OS/machine combinations:
 
-1) an x86-64 Windows machine running Windows Subsystem for Linux (WSL2)
-1) an x86-64 machine running Linux Mint 24
-1) a ARM-based Raspberry Pi 5 running Raspberry Pi OS (Linux)
+1) an x86-64 Windows machine running Ubuntu via Windows Subsystem for Linux (WSL2)
+1) an x86-64 machine running Linux Mint 22
+1) a ARM-based Raspberry Pi 5 running Raspberry Pi OS, its own flavor of Linux
 
-The project uses Microsoft's Visual Studio Code as its IDE.
+Once the tools are installed, all project development will occur directly within the VS Code Integrated Development Environment (IDE): editing, building, flashing, and debugging of the hardware.
 VS Code is available for x86 and ARM, and runs under Windows WSL2 as well as other linux distros.
-It might be possible to use an IDE other than VS Code, but that would be kind of a big change, and you are on your own if you do.
-Certain aspects of the build/run process are baked into VS Code setup files like c_cpp_properties.json and launch.json.
-These would need to be identified and changed if you were to use a different IDE.
+It might be possible to use an IDE other than VS Code, but you are on your own if you do.
+Part of that is because certain aspects of the build/run/debug process are baked into VS Code setup files and extensions.
+If you _really_ want to use a different IDE, then I will assume that you are capable of figuring out what you need to do based on the VS Code instructions that follow.
 
 ## Prep The Development System
 
 The list of the high-level steps to get a build system working on Windows is shown below.
-The instructions assume that you will be using a Window machine and running WSL2 linux under Windows.
-If you choose to build the system on a pure Linux machine instead of Windows/WSL2, then you probably already know what you are doing and can figure out what needs to happen based on these WSL2 instructions.
+It's a long list, but it's not overly difficult, and it only needs to happen once.
 
-* Install Windows software
-  * VS Code
-    * Install a bunch of VS Code extensions
+The instructions assume that you will be using a Window machine and running WSL2 linux under Windows.
+If you choose to build the system on a pure Linux machine instead of Windows/WSL2, then you probably already know what you are doing and can figure out what you should be doing based on these instructions.
+
+* [Install WSL2](#install-wsl2)
   * WSL2 Ubuntu Linux
-  * Windows Terminal app
-* Install Linux software under WSL2
-  * Python Virtual Environment support
-  * Git
-  * C/C++ host compilers
-  * Build a 68HC11 toolchain from source (requited to create Aprilia ECU software)
-  * C/C++ cross compilers (to create Arm Cortex code that runs on umod4 hardware)
-  * GDB (GNU debugger), for debugging ARM Cortex code
-  * CMake, which creates the build system for umod4
-  * Ninja, used by CMake to drive the actual build process
-* Install software required by umod4 source code
-  * Raspberry Pi Pico-SDK
-    * enable wifi and bluetooth extensions
-  * FreeRTOS for Pi Pico
-    * Needs a special version that includes SMP support for the RP2040 dual-core processors
-* Install umod4 source code
+* [Windows Terminal App](#windows-terminal-app)
+* [Install VS Code](#vs-code)
+  * Install a bunch of VS Code extensions
+* [Install Linux software](#linuxwsl2-software-installation)
+  * [Host Tools](#install-linux-host-tools)
+  * [Build a 68HC11 toolchain](#build-68hc11-toolchain) from source (requited to create Aprilia ECU software)
+  * [Download ARM Tools](#downloading-arm-tools-for-x86-pc)
+  * [OpenOCD](#install-openocd), Interfaces GDB to on-chip debugging silicon
+* [Prepare a 'projects' directory in Linux](#project-development-setup)
+  * Install Pi Pico software
+    * [Raspberry Pi Pico-SDK](#rpi-sdk)
+    * [Picotool](#picotool)
+  * [Install this project from github](#getting-the-umod4-source-code)
 
 Once all the software is successfully installed, you will be able to use VS Code to:
 
-* Configure the umod4 build
-* Build all the umod4 software
+* Configure the project build
+* Build the project software
 * Use a hardware debugger to flash the code onto a umod4 circuit board
 
-It's a bit of a trek to get there, but here we go...
+The following sections detail how to do the items listed, above.
+
+## Install WSL2
+
+WSL (Windows Subsystem for Linux) runs a virtualized linux kernel inside Windows.
+If you haven't used WSL2 before, it's a real linux kernel running in a Windows virtual environment.
+There is no need to do things like dual-boot Windows/Linux or anything like that: Windows and WSL2 run simultaneously, side-by-side.
+
+The WSL2 installation process is defined [here](https://learn.microsoft.com/en-us/windows/wsl/install).
+Follow those instructions and all will be well.
+But here is the short version. In the standard windows search box, type 'powershell'. Select the option to "run as administrator".
+ When the window opens, type the following commands:
+
+```bash
+wsl --install
+wsl --install -d Ubuntu
+```
+
+The first install installs WSL2 itself.
+The second install installs a generic Ubuntu distro.
+
+There are other distro choices, but the instructions that follow might have some very minor dependencies on you installing Ubuntu. To see the other choices available directly from Microsoft sources, type:
+
+```bash
+wsl --list --online
+```
+
+## Windows Terminal App
+
+Once WSL2/Ubuntu has been installed, go to the Microsoft store and download the "[Windows Terminal](https://apps.microsoft.com/detail/9n0dx20hk701?hl=en-us&gl=US)" free app.
+Terminal works great for interacting with WSL2.
+It supports multiple terminal windows using a tabbed interface which is nice.
+
+**Note:** From this point on, any of the instructions in this document that are executed from a Linux command line will be using a Windows Terminal window that is running Ubuntu/WSL.
+
+* Open the terminal app by typing 'terminal' into the Windows search box.
+* On the title bar, click the small down-arrow to get a bunch of options.
+* Find the 'settings' option and click it.
+* At the bottom left of the settings screen, you will see "Add New Profile".
+Click that.
+* Add a new empty profile.
+Give it a name, like 'wsl-Ubuntu'.
+* Change the 'command line' option to be '%SystemRoot%\System32\wsl.exe -d Ubuntu'.
+* In the Starting Directory option, uncheck the 'Use Parent Process Directory' option.
+* Enter '~' as the starting directory.
+* Click 'save'
+
+There are other options you can play with (like fonts and colors), but those mentioned above are the required options to be changed.
+
+If you click the same little down arrow on the title bar now, you will see a new entry with the name you entered earlier: 'wsl-Ubuntu'.
+Click the 'wsl-ubuntu' selection.
+
+The linux boot will takes a few seconds the very first time that it runs.
+You will be asked for a user name and password for your initial Ubuntu user account.
+You can use the same user name as your windows account, or create a different user name.
+The new user name is used by linux only.
+The new user name will automatically be given 'sudo' privileges.
+
+From this point on, when you type 'terminal' in the windows search box, you will have the option to directly select your new Ubuntu distro:
+
+![image](doc/images/terminal-app.jpg)
+
+Use a terminal window to get your new WSL2 Linux system.
+Get the system software up to date by typing:
+
+```bash
+sudo apt update
+sudo apt upgrade
+```
+
+The first time around, these commands may install a bunch of updates.
+You should run this command pair once in a while to keep your Linux distro up-to-date for application updates and security patches.
+
+### WSL and Windows Filesystems
+
+Both WSL and Windows run simultaneously, but each has its own separate filesystem.
+Even so, WSL2 arranges for the two filesystems get cross-mounted so that each one is accessable from the other.
+
+From Windows, the root of all the distros that may be installed is located at '\\wsl$' or \\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
+
+![image](doc/images/wsl-from-windows.jpg)
+
+Going the other way is just as easy.
+In Ubuntu, each Windows drive letter automatically gets mounted under '/mnt'.
+Doing an 'ls -l /mnt/c' in a linux terminal window will show you the contents of your top-level directory on Windows drive 'C:'.
+
+Linux commands like 'cp' or 'mv' operate seamlessly on both filesystems.
+If you are a linux person, it's nice to be able to use linux commands like 'find' and 'grep' on the directories inside your Windows machine.
 
 ## Windows Software Installation
 
-There are a few programs that need to be installed on the Windows machine.
-
-*If you are developing strictly using a linux machine, all you need to install is VS Code for linux, along with all the extensions mentioned in the VS Code section, below.
-After that, you can skip to the section "Linux/WSL2 Software Installation".*
+There are a few programs that need to be installed on the development host.
 
 ### VS Code
 
 VS Code is a software IDE (Integrated Development Environment) that runs in Windows.
 Basically, it is an extremely powerful text editor, with all kinds of additions to help you develop writing code.
-Even though VS Code runs under Windows, it is able to seamlessly connect to the Linux enviroment we will be creating to actually develop the umod4 project.
+One feature of VS Code is that it can edit from remote sources.
+If VS Code is running on a Windows machine, as a Windows executable, it will seamlessly connect to the 'remote' WSL2 linux environment on the same machine to allow you to edit the project files in the linux filesystem.
 
-Installing VS Code is easy.
-Official Microsoft instructions are located [here](https://code.visualstudio.com/docs/setup/windows).
-If that link goes dead, just google 'installing VS Code', and find a link that tells you how to do it.
+Official Microsoft installation instructions are located [here](https://code.visualstudio.com/docs/setup/windows).
+If that link goes dead, just google 'installing VS Code', and find a Microsoft link that tells you how to do it.
+
+If you are developing strictly on a linux machine, VS Code can be installed as a native linux app using .deb or .rpm mechanisms.
+Google for the VS Code linux download page and there will be instructions.
 
 Once you have VS Code installed, you need to add a bunch of extensions, as described in the next section.
 
@@ -85,89 +168,75 @@ Once you have VS Code installed, you need to add a bunch of extensions, as descr
 One of VS Code's best features is that it is amazingly extensible.
 People all over the world write useful "extensions" that add new features to the editor.
 This project needs a bunch of extensions to be installed.
-Start VS Code.
-You don't need to open any directories.
-Click the 'extensions' icon on the left side ribbon.
-The 'extensions' icon looks like 3 boxes with a 4th box floating above the 3 boxes.
-Once you find that icon, click it.
-It will open a search box that says 'Search Extensions in Marketplace'.
-There are a bunch to install!
-As you search for each one from the list below, it will give you an option to install it. Install each one in turn:
+To install the extensions:
+
+* Start VS Code, but don't open any files or directories just yet.
+* Click the 'extensions' icon on the left side ribbon (icon looks like 3 boxes with a 4th box floating above the 3 boxes)
+* A search box will open saying 'Search Extensions in Marketplace'
+
+Search for each of the extensions listed below and install each one in turn when given the chance:
 
 * C/C++ (by Microsoft)
 * C/C++ Extension pack (by Microsoft)
-* C/C++ Themes (by Microsoft)
-* Markdown Preview Github Styling
 * Cortex-debug
 * MemoryView
 * RTOS Views
-* CMake
-* CMake Tools
+* Markdown Preview Github Styling
 * markdownlint
 * Python (by Microsoft)
 
-One last thing: If you ever consider participating in this project, please go to your VS Code settings, type "trailing" into the settings searchbox, and make sure the box is checked for "Files: Trim Trailing Whitespace".
+The C/C++ Extension Pack should install a couple of other extensions, namely: CMake, CMake Tools, and Themes.
 
-### Windows Terminal App
-
-Go to the Microsoft store and download the "Windows Terminal" free app.
-It works great for interacting with WSL2.
-It supports multiple terminal windows in different tabs which is handy.
-
-_Fix Me: it's been so long, I don't remember what I needed to do to set up a terminal profile to talk to WSL2. Sorry! It's not critical, but it makes opening a new terminal tab faster.
-
-From this point on, any of the instructions in this document that are executed from a command line will be using a Windows Terminal window that is running Ubuntu/WSL.
-
-### WSL2 Installation
-
-The WSL2 installation process is defined [here](https://learn.microsoft.com/en-us/windows/wsl/install).
-Follow those instructions and all will be well.
-
-Open a Windows Terminal window into WSL2.
-Get your new WSL2 Linux system up to date by typing:
-
-```bash
-$ sudo apt update
-$ sudo apt upgrade
-```
-
-The first time around, these commands may install a bunch of updates.
-You can run this command pair whenever you feel like to keep your Linux up-to-date.
+Note that these extensions run as windows apps on Windows versions of VS Code and as linux apps on either linux versions of VS Code, or Windows versions of VS Code that are using a remote connection to a linux machine.
+What this means is that you might need to install linux versions of these extensions later, if you use Windows in its remote editor mode.
+VS Code will let you know if you need to install the linux versions later.
 
 ## Linux/WSL2 Software Installation
 
-Before starting the installation process for all of the Linux software, make sure your machine is up to date:
+Before starting the installation process for all of the Linux software, make sure your linux machine (virtual or otherwise!) is up to date. Use a terminal window talking to your linux machine:
 
 ```bash
-$ sudo apt update
-$ sudo apt upgrade
+sudo apt update
+sudo apt upgrade
 ```
 
-Get your system updated before proceeding.
+## Create a 'projects' Directory
+
+A lot of the software we will be installing needs to be installed in a fashion that certain parts can find other parts.
+To that end, we will be putting everything inside a directory called 'projects' located inside your home directory.
+Create that directory now:
+
+```bash
+mkdir ~/projects
+```
 
 ## Create a Local Bin Directory
 
 This project creates a few special executables to help build the software.
 Rather than put these tools in the standard system-wide installation locations,
-the build system will place them in a user-specific ~/.local/bin directory.
+the build system will place them in a user-specific "~/.local/bin directory".
 
-If that directory does not exist, create it via the following:
+If that directory does not exist, use your terminal window to create it via the following:
 
 ```bash
-$ mkdir -p ~/.local/bin
+mkdir -p ~/.local/bin
 ```
 
-The standard Ubuntu ~/.profile will automatically add your new .local/bin directory to the PATH variable.
-Check your PATH to see if the "~/.local/bin" directory is on it:
+The standard Ubuntu "\~/.profile" you got with your fresh distro will automatically add your new "\~/.local/bin" directory to the PATH variable.
+You will either need to close your terminal window and open a new one, or you can just re-run your .profile via:
 
 ```bash
-$ echo $PATH|tr ':' '\n'|grep '[.]local'
+. ~/.profile
+```
+
+Check your PATH to verify that "~/.local/bin" directory is on it now:
+
+```bash
+echo $PATH|tr ':' '\n'|grep '[.]local'
 /home/<your-user-name>/.local/bin
 ```
 
-If the directory is not on your PATH, log out and log in again so that your '~/.profile' gets re-executed.
-Typically, the ~/.profile will only add '~/.local/bin' to your PATH if the directory exists.
-If your .profile is not adding ~/.local/bin to your path, edit your .profile to add the following lines:
+If your .profile is not adding "\~/.local/bin" to your path, edit your '\~/.profile' to add the following lines:
 
 ```bash
 # set PATH so it includes user's private bin if it exists
@@ -178,7 +247,30 @@ fi
 
 Log out and log in again (or type 'source ~/.profile'), and verify that '~/.local.bin' is on your PATH.
 
-### Python
+### Install Linux Host Tools
+
+A number of tools that need to run on the host machine need to be installed.
+It is possible that they are already installed in the fresh WSL distro, but it is harmless to ask to reinstall them.
+Install them as below:
+
+```bash
+sudo apt install gcc g++ git unzip cmake ninja-build libncurses5-dev libncursesw5-dev
+```
+
+The gcc and g++ compilers installed above generate code for your Linux host machine, not the ARM chips on the Pico boards. The Pico SDK expects to find the host g++ compiler using an environment variable called 'CXX'.
+Run the following command to add the appropriate CXX definition to your .bashrc file:
+
+```bash
+echo "export CXX=/usr/bin/g++" >> ~/.bashrc
+```
+
+Remember to re-run your .bashrc so that the change you just made takes effect:
+
+```bash
+. ~/.bashrc
+```
+
+#### Python
 
 The umod4 system uses Python3 for some utility programs.
 Python3 is typically part of Linux distributions, so you probably do not need to install it.
@@ -191,41 +283,17 @@ Python 3.10.12
 $ sudo apt install python3.10-venv
 ```
 
-### Git
-
-Git is a source-code control system used for managing large projects.
-It should already be installed in your WSL2 Ubuntu distribution, but it is harmless to make sure, as shown below.
-
-```bash
-$ sudo apt install git
-Reading package lists... Done
-Building dependency tree... Done
-Reading state information... Done
-git is already the newest version (1:2.34.1-1ubuntu1.11).
-0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
-```
-
 #### Git and Line Endings
 
-The Git repository for umod4 always has Unix-style LF line endings.
-Configuring the git setting 'core.autocrlf' to 'false' tells Git to *not* change files to use CRLF-style endings when it checks stuff out onto a Windows machine.
+We need to make a small configuration change to the git program installed in the previous step.
+The project's Git repository always has Unix-style LF line endings.
+Configuring the git setting 'core.autocrlf' to 'false' tells Git to _not_ change files to use CRLF-style endings when it checks stuff out onto a Windows machine.
 VS Code on Windows operates just fine on LF-style endings so there is no need to add CR characters just because it is a Windows machine.
 
-Type the following in your WSL2 terminal window:
+To avoid the whole CR mess when working with Windows, type the following in your WSL2 terminal window:
 
 ```bash
-$ git config --global core.autocrlf false
-```
-
-### Host C/C++ Compilers
-
-You will need both C (gcc) and C++ (g++) compilers to build the system.
-Run the following two commands in the terminal window.
-If either of the compilers is already installed, these requests to install them are harmless.
-
-```bash
-$ sudo apt install gcc
-$ sudo apt install g++
+git config --global core.autocrlf false
 ```
 
 ### Build 68HC11 Toolchain
@@ -251,16 +319,16 @@ The commands assume that you would like to put your binutils source in a directo
 This naming convention allows you to support multiple versions of the binutils, should that be useful.
 
 ```bash
-$ sudo apt install texinfo
-$ cd ~
-$ mkdir binutils
-$ cd binutils
-$ wget https://ftp.gnu.org/gnu/binutils/binutils-2.42.tar.gz
-$ tar zxvf binutils-2.42.tar.gz
-$ mv binutils-2.42 binutils-m68hc11-elf-2.42
-$ cd binutils-m68hc11-elf-2.42
-$ ./configure --prefix=$HOME/.local --target=m68hc11-elf
-$ make
+sudo apt install texinfo
+cd ~
+mkdir binutils
+cd binutils
+wget https://ftp.gnu.org/gnu/binutils/binutils-2.42.tar.gz
+tar zxvf binutils-2.42.tar.gz
+mv binutils-2.42 binutils-m68hc11-elf-2.42
+cd binutils-m68hc11-elf-2.42
+./configure --prefix=$HOME/.local --target=m68hc11-elf
+make
 ```
 
 The 'make' operation will take a couple minutes.
@@ -305,376 +373,301 @@ This assembler was configured for a target of `m68hc11-elf'.
 The important part is that the new assembler knows it has been configured to target "m68hc11-elf", which represents the processor inside the ECU.
 If the system was not able to find the m68hc11-elf-as executable, make sure that "~/.local/bin" is on your PATH, as described earlier in this document.
 
-### ARM Cross-Compiler Toolchain
+### Install ARM Cross-Compiler Toolchain
 
-ARM cross compilers are required to build the code that runs on the umod4 circuit board.
-To get the Arm cross-compiler installed, start off by downloading an appropriate toolchain from the Arm download page located [here](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
+ARM cross compilers are required to build code for the ARM processors used by this project.
+A cross-compiler runs on a particular machine architecture (like x86), but produces code for a different machine architecture (ARM, in this case).
+We will set things up so that your PC can have access to multiple versions of the ARM cross compiler toolchain.
 
-#### For x86 PC
+#### Preparing a Tools Directory
 
-Assuming that your PC host is an x86 machine capable of running linux/WSL2, scroll down until you see the section called 'x86_64 Linux hosted cross toolchains'.
-From the 'AArch32 bare-metal target (arm-none-eabi)' subsection, find the link to download 'arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz'.
-The version number in the example (13.3.rel1) may have changed since this document was last updated, so just locate the most recent version, whatever it is.
-Don't download the file though, just right click the link and select "copy link".
+We need to prepare a place for the cross-compilation tools to live.
+There are many ways to do that, but the project files are set up to expect the tools to end up in a particular hierarchy, as shown below:
 
-#### For ARM Raspberry Pi 5
+```text
+/opt
+└── arm
+    └── arm-none-eabi
+        └── 14.2.rel1
 
-If you are developing on a Pi 5, scroll down the ARM download page until you see the section titled 'AArch64 Linux hosted cross toolchains'. You want the version 'AArch32 bare-metal target (arm-none-eabi)', downloaded via the file 'arm-gnu-toolchain-13.3.rel1-aarch64-arm-none-eabi.tar.xz'. As with the x86 instructions, don't actually download the file, but right-click the link and select 'copy link'.
+```
 
-Once the link has been selected for the proper download, we need to prepare a place for the downloaded cross-compilation tools to live.
-If you have your own favorite way of doing things like this, do it your way.
-Note that if you *do* change where you want to put the tools, you will need to update the umod4 project file 'cmake/toolchains/arm-none-eabi.cmake' to reflect your changes.
-Otherwise, this is the recommended way:
+Subsequent versions like some hypothetical xx.y version would be downloaded into the same arm-none-eabi directory.
+All the installed versions would live side-by-side, as shown:
+
+```text
+/opt
+└── arm
+    └── arm-none-eabi
+        ├── 14.2.rel1
+        └── xx.y.rel1
+```
+
+To set this up, (and assuming that the version you downloaded was named 14.2.rel1), type the following to create the basic directory structure:
 
 ```bash
-# This assumes that the latest version was named 13.3.rel1:
-$ sudo mkdir -p /opt/arm/arm-none-eabi/13.3.rel1
+sudo mkdir -p /opt/arm/arm-none-eabi/14.2.rel1
 ```
 
-The point of this directory structure is to allow multiple versions of the toolchain to live on your system.
-The toolchain directory will look like this:
+You will be able switch over to the new tools or switch back to the old ones by just changing an appropriate CMake toolchain file to point at the proper directory.
+This really helps keeping old projects alive when some new release breaks compatibilty with your old project: the old project can just continue to use the old tools.
 
-```text
-/opt
-└── arm
-    └── arm-none-eabi
-        └── 13.3.rel1
+Now that the toolchain has a place to live, it's time to get it, then install it.
 
-```
+#### Downloading ARM Tools For x86 PC
 
-In the future, when some new, hypothetical version 14.1 of the tools gets released, you could download that new toolchain beside the current 13.3 directory.
-The resulting directory structure would look like this:
+To get the Arm cross-compiler software installed, start off by downloading an appropriate toolchain from the Arm download page located [here](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
+Click that link to view the download page.
+Assuming that your PC host is an x86 machine capable of running linux/WSL2, scroll down until you see the section called:
 
-```text
-/opt
-└── arm
-    └── arm-none-eabi
-        └── 13.3.rel1
-        └── 14.1.rel1
-```
+```x86_64 Linux hosted cross toolchains```
 
-You will be able switch over to the new tools or switch back to the old ones by just changing the appropriate CMake toolchain file to point at the proper directory.
+Inside that section, you will see a heading:
 
-Now that the toolchain has a place to live, it's time to get it and install it.
-Assuming that the link to the toolchain on the ARM download website is still in you copy buffer, you can paste it after the 'wget' to avoid a bunch of typing in the example below.
+```AArch32 bare-metal target (arm-none-eabi)```
+
+What you are looking for is:
+
+```arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz```
+
+Pictorially, you are looking for this entry on the webpage:
+
+![image](./doc/images/arm-tools.jpg)
+
+The version number in the example (14.2.rel1) may have changed since this document was last updated, so just locate the most recent version, whatever it is.
+Don't download the file though, just right click the link and select "copy link", then skip to [Downloading & Installing](#downloading--installing)
+
+#### Tools For ARM Raspberry Pi 5
+
+If you are developing on a Pi 5, scroll down the ARM download page until you see the section titled 'AArch64 Linux hosted cross toolchains'. You want the version 'AArch32 bare-metal target (arm-none-eabi)', downloaded via the file 'arm-gnu-toolchain-14.2.rel1-aarch64-arm-none-eabi.tar.xz'. As with the x86 instructions, don't actually download the file, but right-click the link and select 'copy link'.
+
+#### Downloading & Installing
+
+Assuming that the link to the toolchain on the ARM download website is still in your copy buffer, you can paste it onto your command line after typing the 'wget' command to avoid a bunch of typing in the example below.
 Make sure you are in the proper directory before downloading the code, then get it using 'wget':
 
 ```bash
-$ cd /opt/arm/arm-none-eabi/13.3.rel1
-$ sudo wget https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz
+cd /opt/arm/arm-none-eabi/14.2.rel1
+sudo wget https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
 ```
 
-At this point, you should have a very large archive file in your directory:
+The version number in the example above may not match what you downloaded.
+Regardless, if you downloaded some version, you should have a very large archive file in your 14.2.rel1 (or equivalent) directory:
 
 ```bash
 $ ls -l
--rw-r--r-- 1 root root 147343268 Jul  3 05:10 arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz
+-rw-r--r-- 1 root root 149739784 Dec  6 06:07 arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
 ```
 
 Next up is to extract the files from the archive that was downloaded.
-One problem (for me) is that every single file in the entire archive is prepended with an annoyingly long initial pathname: 'arm-gnu-toolchain-13.3Rel1-x86_64-arm-none-eabi'.
-I suppose it might be useful if you needed to install cross compilers for every single Arm architecture, but this project doesn't need that level of complexity.
-To get rid of that long pathname, extract the archive using the following command:
+One problem (at least, for me) is that every single file in the entire archive is prepended with an annoyingly long initial directory name: "arm-gnu-toolchain-*.*Rel*-x86_64-arm-none-eabi", where the '*' characters represent specific version numbers.
+
+It might be useful if a system needed to install cross compilers for every single Arm architecture, but this project doesn't need that level of complexity.
+To get rid of that long pathname, extract files in the archive using the following command:
 
 ```bash
-$ sudo tar xf ./arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz --strip-components 1
+# assuming you are still in /opt/arm/arm-none-eabi/14.2.rel1 from the previous download step:
+sudo tar xf ./arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz --strip-components 1
 ```
 
-Once tar completes, the cross-compilation executable tools will be located at /opt/arm/arm-none-eabi/13.3.rel1/bin.
+Once tar completes, the cross-compilation executable tools will be located at /opt/arm/arm-none-eabi/14.2.rel1/bin.
 Verify that the new tools are functioning by running gcc directly from its bin directory:
 
 ```bash
-    $ ./bin/arm-none-eabi-gcc --version
-    arm-none-eabi-gcc (Arm GNU Toolchain 13.3.rel1 (Build arm-13.7)) 13.3.1 20231009
-    Copyright (C) 2023 Free Software Foundation, Inc.
-    This is free software; see the source for copying conditions.
- There is NO
-    warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+$ ./bin/arm-none-eabi-gcc --version
+arm-none-eabi-gcc (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119
+Copyright (C) 2024 Free Software Foundation, Inc.
 ```
 
-There is no need to add the cross-compiler's bin directory to your PATH variable.
-Instead, this project will use CMake's 'toolchain' mechanism to tell the build system how to find the tools.
+Do __not__ add the cross-compiler's bin directory to your PATH variable.
+We will be using CMake's 'toolchain' mechanism to tell the build system how to find the ARM tools so they do not need to go on your PATH.
+
+Verify that GDB runs, too:
+
+```bash
+$ ./bin/arm-none-eabi-gdb --version
+GNU gdb (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 15.2.90.20241130-git
+Copyright (C) 2024 Free Software Foundation, Inc.
+```
 
 #### Updates When Installing a New Version of ARM tools
 
-The file 'projects/umod4/cmake/toolchains/arm-none-eabi.cmake' is set up to use the version of the arm tools that were just installed.
-Verify that the variables from that file as shown below match where you downloaded and installed the tools, and that the version number matches:
+_This section only applies if you install a new version of the ARM tools, or if you ever need to update a project to use different tools._
 
-```cmake
-# This explicitly overrides the built-in tools to use a specific version
-set(ARM_NONE_EABI_VERSION "13.3.rel1")
-set(CROSSCOMPILE_TOOL_PATH "/opt/arm/arm-none-eabi/${ARM_NONE_EABI_VERSION}/bin")
-```
+The project will contain a toolchain file, which explains where to find the ARM toolchain you just installed.
+For the project we will be installing later, the toolchain file will be located at 'cmake/toolchains/arm-none-eabi.cmake'.
+If you were to install new ARM tools, you could change your toolchain file to use them by editing the 'arm-none-eabi.cmake' file to point at the new tools.
 
-### GDB
-
-GDB is the Gnu Debugger.
-It will be used to debug the RP2040 code that runs on the umod4 board.
-Try executing the new cross-tool GDB as follows, and you will probably see the following error:
-
-```bash
-$ cd /opt/arm/arm-none-eabi/bin
-$ ./arm-none-eabi-gdb  --version
-./arm-none-eabi-gdb: error while loading shared libraries: libncursesw.so.5: cannot open shared object file: No such file or directory
-```
-
-FYI, the 'w' version of libncurses (i.e. ''libncursesw.so.5') is the same as libncurses except that it can deal with 'wide' characters, meaning the UTF-8 charset.
-To fix this, we need to install libncurses5 as follows:
-
-```bash
-sudo apt-get install libncurses5 libncursesw5
-```
-
-When using WSL, the libraries get installed in '/usr/lib/x86_64-linux-gnu', not the standard linux location '/usr/lib'.
-WSL users will need to add '/usr/lib/x86_64-linux-gnu' to their PATH variable.
-It is easiest to modify your .bashrc file to add the following line:
-
-```bash
-export PATH=$PATH:/usr/lib/x86_64-linux-gnu
-```
-
-Now, GDB should run:
-
-```bash
-$ cd /opt/arm/arm-none-eabi/bin
-$ ./arm-none-eabi-gdb --version
-GNU gdb (Arm GNU Toolchain 13.3.Rel1 (Build arm-13.24)) 14.2.90.20240526-git
-Copyright (C) 2023 Free Software Foundation, Inc.
-License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
-This is free software: you are free to change and redistribute it.
-There is NO WARRANTY, to the extent permitted by law.
-```
-
-### CMake
-
-CMake is used to define a build process to create all the pieces in the entire umod4 system.
-It can be installed via the standard Ubuntu Linux mechanisms, as shown below.
-Run 'cmake' after it gets installed to prove that it exists:
-
-```bash
-$ sudo apt install cmake
-$ cmake --version
-cmake version 3.22.1
-
-CMake suite maintained and supported by Kitware (kitware.com/cmake).
-```
-
-### Ninja
-
-Ninja is the low-level build tool used by VS Code and CMake to decide when and how to construct all the umod4 components.
-Ninja is not installable in the normal 'apt install ...' fashion.
-Instead, it comes as a zip file containing a single binary executable that needs to be stored somewhere.
-In this case, we will store ninja in our ~/.local/bin directory that was created earlier in this document.
-
-Use a Windows browser to get to the ninja [download page](https://github.com/ninja-build/ninja/releases)
-The download file 'ninja-linux.zip' contains the x86 ninja executable.
-Download that file, then open it.
-The zip extractor will ask where to put it.
-Type '\\wsl$' then hit return.
-Remember this '\\wsl$' starting point because this is how Windows can access the WSL filesystem.
-Double click the Ubuntu icon and you will see that you are now at directory '/', the root of your WSL filesystem.
-From there, click through 'home', your user name, '.local', and finally, 'bin'.
-Select bin as the extraction target and then extract.
-
-From your WSL terminal window, type the following:
-
-```bash
-$ ll ~/.local/bin
-total 276
-drwxr-xr-x 2 robin robin   4096 Aug  5 11:43 ./
-drwxr-xr-x 4 robin robin   4096 Aug  5 11:43 ../
--rw-r--r-- 1 robin robin 273768 May 11 12:45 ninja
--rw-r--r-- 1 robin robin      0 Aug  5 11:43 ninja:Zone.Identifier
-```
-
-You can remove the 'ninja:Zone.Identifier' file, if you see it.
-It is trash left over from the Windows zip extraction process.
-Run 'chmod' to make sure that the extracted 'ninja' file is executable, then run it as a test:
-
-```bash
-$ cd ~/.local/bin
-$ chmod +x ninja
-$ ./ninja --version
-1.12.1
-```
-
-Verify that your ~/.local/bin directory is on your PATH:
-
-```bash
-$ cd
-$ which ninja
-/home/robin/.local/bin/ninja
-```
-
-If the 'which' command could not find ninja, you have a problem.
-See the section about '~/.local/bin' earlier in this document, and make sure that directory is on your PATH.
+If the version number of the tools has changed for you, edit the toolchain file to reflect your new version number and save it.
 
 ### Install OpenOCD
 
+_At some point, the RP2xxx support will exist in the Ubuntu distribution and installing OpenOCD will be as simple as "sudo apt install openocd".
+But for now, it needs to be built from source, as described in this next section._
+
 OpenOCD is the "Open On-Chip Debugger" software tool.
-It is required to debug the EP and WP firmware created by the umod4 project.
-OpenOCD has been around forever, but it needs to run a special version for the RP2040 chip.
-At some point, the RP2040 support will exist in the Ubuntu distribution and installing OpenOCD will be as simple as "sudo apt install openocd".
-For now, it needs to be built from source.
+GDB uses OpenOCD to talk to the silicon debug unit inside the chip being debugged.
+OpenOCD has been around forever, but it needs to run a special version for the Pi Pico boards because the RP2xxx processors on those boards are dual core.
 
-Install source code for OpenOCD, making sure to get the sources from raspberrypi where the RP2040 support is located.
-Go to the official Rpi site located [here](https://github.com/raspberrypi/openocd).
-Find the name of the default branch, named 'rp2040-v0.12.0' at the time of this writing.
-You will need the name of that branch in a couple steps.
-Type:
+Install source code for OpenOCD, making sure to get the sources from raspberrypi where the RP2xxx support is located:
 
 ```bash
-$ cd ~/projects
-$ git clone https://github.com/raspberrypi/openocd.git --recursive --branch rp2040 --depth=1
+cd ~/projects
+git clone https://github.com/raspberrypi/openocd.git
 ```
 
-The openocd project is now checked out into directory ~/projects/openocd.
-Next, we need to check out the proper branch that contains the RP2040 support (use the branch name you got from the previous step):
+You will need to install a bunch of packages for building OpenOCD:
 
 ```bash
-$ cd ~/projects/openocd
-$ git checkout -b rp2040-v0.12.0
-Switched to a new branch 'rp2040-v0.12.0'
-```
-
-Install the developer version of ncurses-5:
-
-```bash
-$ sudo apt-get install libncurses5-dev libncursesw5-dev
-```
-
-Install a bunch of packages that OpenOCD will need:
-
-```bash
-$ sudo apt install libusb-1.0-0 libusb-1.0-0-dev libhidapi-dev libtool texinfo pkg-config
+sudo apt install libusb-1.0-0 libusb-1.0-0-dev libhidapi-dev libtool texinfo pkg-config make
 ```
 
 Finally, build OpenOCD:
 
 ```bash
-$ cd ~/projects/openocd
-$ ./bootstrap
-$ ./configure --enable-ftdi --enable-sysfsgpio --enable-bcm2835gpio --enable-cmsis-dap
-$ make
-$ sudo make install
-$ openocd --version
+cd ~/projects/openocd
+./bootstrap
+./configure --enable-ftdi --enable-sysfsgpio --enable-bcm2835gpio --enable-cmsis-dap
+make
+sudo make install
+openocd --version
 ```
 
 The fun never ends with openocd though.
-Now you need to create a file in directory "/etc/udev/rules.d"
-
-The file is named "46-probe.rules".
-Use the nano editor in sudo mode to create that file containing the following text:
-
-```text
-# Pi Pico CMSIS-DAP USB debug probe
-ATTRS{idProduct}=="000c", ATTRS{idVendor}=="2e8a", MODE="666", GROUP="plugdev"
-```
-
-Once the file is written, do the following:
+We need to give ourselves permission to access the USB debug probe so that we don't have to use sudo all the time.
+For that, we create another rules file as follows:
 
 ```bash
-$ sudo udevadm control --reload
-$ sudo udevadm trigger
+sudo sh -c 'printf "# Pi Pico CMSIS-DAP USB debug probe\nATTRS{idProduct}==\"000c\", ATTRS{idVendor}==\"2e8a\", MODE=\"666\", GROUP=\"plugdev\"\n" >> /etc/udev/rules.d/46-probe.rules'
 ```
 
-You will not need to do that again because the '46-probe.rules' file you created will take care of setting the permissions every time the machine reboots.
+Finally, we trigger reloading the new rules file we just created:
 
-## Umod4 Software Packages
+```bash
+sudo udevadm control --reload
+sudo udevadm trigger
+```
 
-At this point, the Linux system is ready to go with all the tools required to build the umod4 project.
-Now we need to load up a bunch of software packages that umod4 needs.
-These packages need to be loaded into a project directory in a particular fashion so that umod4 can find them.
-This process is described below.
+From now on, the rules will be reapplied every time WSL starts.
+
+## Project Development Setup
+
+The next step is to start filling out the project directory structure.
+There is a fair amount of software source that needs to be installed, and a some of it needs to know where other parts of it are located.
+By installing things as decribed in the sections that follows, the various bits of the system will be able to find each other.
 
 ### Development Directory Structure
 
-There is a fair amount of software source that needs to be installed, and a some of it needs to know where other parts of it are located.
-In addition, the Pico SDK (Software Development Kit) is quite large, at over 600 megabytes.
-The SDK could be installed by cmake as sub-piece of the umod4 project, but it is so large that replicating the entire SDK for every project in your sytem that might need it is a bad idea.
-A simple way to share a single SDK installation with more than one project is to store a single copy of the SDK at a well-known location in the 'projects' directory, and then just tell the sub-projects that need the SDK where to find it.
+The main part of the project directory involves the Pico SDK (Software Development Kit) is quite large, at over 600 megabytes.
+The SDK could be installed by cmake as sub-piece of each of your Pico projects, but replicating the entire SDK for every project in your sytem that might need it is a giant waste of disk storage.
+Instead, we will set things up so that all projects will share a single SDK installation.
+We do this by storing the SDK at a well-known location in the 'projects' directory.
+We then tell the individual Pico development projects where to find it.
+This also allows us to store multiple versions of the SDK, enabling old projects to use old SDK versions without forcing them to uipgrade.
 
-Pictorially, we want to end up with a directory structure that looks like this.
-Notice that the directory structure is set up so that we can store multiple versions of the SDK, allowing different projects the ability to use different versions:
+Pictorially, we want to end up with a directory structure that has this general form:
 
 ```text
 /home/<your-user-name>/
 └── projects/
-    ├── FreeRTOS-Kernel
-    ├── pico-sdk
-    │   ├── 1.5.1
-    │   └── 2.0.0
-    └── umod4
+    ├── openocd       (a special version for debugging RP2xxx chips)
+    ├── pico-examples (sample code for SDK applications)
+    ├── pico-sdk      (may contain multiple versions of the SDK over time)
+    │   ├── 1.5.1     (predates the Pico/RP2040 only)
+    │   ├── 2.0.0     (first version that supports Pico and Pico2)
+    │   └── 2.1.1     (the most version, at time of writing)
+    └── umod4         (where our umod4 sosftware project gets stored)
 ```
-
-The umod4 build system assumes that this form of directory structure will be used.
-You could change this if you really wanted, but it would be a lot of work and is not recommended.
 
 ### RPi SDK
 
-The Raspberry Pi RP2040 Software Development Kit (SDK) is a collection of software tools and code libraries that make it easier to work with the RP2040 processor chips that are used by the umod4.
+The Raspberry Pi Software Development Kit (SDK) is a collection of software tools and code libraries that make it easier to work with the RP2xxx processor chips.
 
 The SDK can be installed in a number of fashions.
-For various reasons, we will install it using Git, a source control system.
-Using Git makes it easy to update to new versions.
+For various reasons, we will install it using Git.
+
+First, we create the top-level directory inside the projects directory that will contain all the SDK versions:
 
 ```bash
-$ cd ~/projects
-$ mkdir pico-sdk
-$ cd pico-sdk
-
-# This clones the 'master' branch of the pico-sdk
-$ git clone https://github.com/raspberrypi/pico-sdk
-
-# Rename pico-sdk to reflect the SDK branch that we will be checking out:
-$ mv pico-sdk 2.0.0
-
-# Tell git that we actually want to use the "2.0.0" tag on the master branch
-$ cd 2.0.0
-$ git checkout 2.0.0
-
-# Update our branch so that it can do WiFi and Bluetooth
-$ git submodule update --init
+cd ~/projects
+mkdir pico-sdk
+cd pico-sdk
 ```
 
-At this point, your 'projects' directory hierarchy should look like this:
-
-```text
-projects/
-└── pico-sdk
-    └── 2.0.0
-```
-
-### FreeRTOS
-
-FreeRTOS is a free, Real Time Operating System (RTOS).
-The umod4 project uses it on the WiFi Processor (WP).
-A special version of FreeRTOS is required for the RP2040 processor used on umod4 because
-the RP2040 is a dual core processor, which is still a bit unusual in the FreeRTOS world.
-
-FreeRTOS is a big enough project that it makes more sense to store it in the projects directory like the Pico-SDK, instead of replicating it inside each RP2040 project that might need it.
-To get FreeRTOS, type the following commands.
-The critical part is to clone the 'smp' branch (via option '-b smp').
-This branch adds 'Symmetric Multi Processor' support, which is what is needed for the dual-core processor in the RP2040.
+Next, we clone the 'master' branch of the pico-sdk into the new directory:
 
 ```bash
-$ cd ~/projects
-$ git clone -b smp https://github.com/FreeRTOS/FreeRTOS-Kernel --recurse-submodules
-$ ls -l
-total 20
-drwxr-xr-x  5 robin robin 4096 Aug  6 09:58 ./
-drwxr-x---  7 robin robin 4096 Aug  6 07:02 ../
-drwxr-xr-x  7 robin robin 4096 Aug  6 09:58 FreeRTOS-Kernel/
-drwxr-xr-x 11 robin robin 4096 Aug  6 09:20 pico-sdk/
+git clone https://github.com/raspberrypi/pico-sdk
 ```
 
-You should now see a 'FreeRTOS-Kernel' directory beside your 'pico-sdk' directory:
+Rename pico-sdk to reflect the SDK branch that we will be checking out:
 
-```textr
-projects/
-  ├── FreeRTOS-Kernel
-  └── pico-sdk
-      └── 2.0.0
+```bash
+mv pico-sdk 2.1.1
+```
+
+Now we tell git that we actually want to lock this cloned branch to the "2.1.1" tag on the master branch:
+
+```bash
+cd 2.1.1
+git checkout 2.1.1
+```
+
+Our new branch tag now matches its directory name.
+As always, update the new branch so that it can do WiFi and Bluetooth for Pico[2]-W:
+
+```bash
+git submodule update --init
+```
+
+Now, we make FreeRTOS for the Pico family available to any project using this version of the SDK:
+
+```bash
+git submodule add https://github.com/FreeRTOS/FreeRTOS-Kernel
+cd FreeRTOS-Kernel
+git submodule update --init
+```
+
+Finally, we need to create an environment variable used by various parts of the build system to explain where to find the version of SDK they should be using:
+
+```bash
+echo "export PICO_SDK_PATH=/home/$(id -u -n)/projects/pico-sdk/2.1.1" >> ~/.bashrc
+```
+
+Either close the terminal and reopen it, or execute ". ~/.bashrc" to make sure that the variable is defined in your current shell.
+
+## Picotool
+
+Picotool is a tool used by the SDK to perform various tasks while building project binaries.
+In theory, the SDK will build picotool as needed.
+In practice, this approach does not always work.
+I have had better luck arranging to build the 'picotool' once, and then intalling in my .local/bin where all my projects can use the same executable.
+To that end, do the following:
+
+```bash
+cd ~/projects
+git clone https://github.com/raspberrypi/picotool
+cd picotool
+mkdir build
+cd build
+cmake -DCMAKE_INSTALL_PREFIX=~/.local ..
+make
+make install
+```
+
+The 'make install' step will install the picotool executable in your ".local/bin" directory.
+Prove to yourself that picotool exists, and is being found in your own ".local/bin":
+
+```bash
+$ which picotool
+/home/<your-name-here>/.local/bin/picotool
+```
+
+Finally, do the following so that you can use picotool without needing sudo:
+
+```bash
+cd ~/projects/picotool
+sudo cp udev/99-picotool.rules /etc/udev/rules.d/
 ```
 
 ## Getting the Umod4 Source Code
@@ -706,7 +699,11 @@ It should be clear by now that the umod is not a particularly simple system to g
 But you are finally ready to try and build it.
 In your VS code window that you used to get the umod4 code from Github, hit 'F1' then type 'delete', but don't hit return.
 A bunch of selections related to the topic of 'deleting' will appear in a dropdown list.
-Click the list item called 'CMake: Delete Cache and Reconfigure'.
+Click the list item called '__CMake: Delete Cache and Reconfigure__'.
+
+If a window pops up asking you to specify a toolkit, select 'unspecified'.
+The project will set up the toolkit by itself.
+
 After some amount of time, that operation should finish without errors.
 It should produce a bunch of messages in the VS Code 'output' window that looks something like this:
 
@@ -737,11 +734,13 @@ It should produce a bunch of messages in the VS Code 'output' window that looks 
 [cmake] -- Build files have been written to: /home/robin/projects/umod4/build
 ```
 
+You should see CMake correctly identify your target board and find the cross compilers that you installed.
+
 The important part is that the messages end with "Build files have been written to: ..." which means, no errors.
 
-Assuming that the system configured without errors, you finally get to build the umod4 project.
+Assuming that the system configured without errors, you finally get to build the project.
 In the VS Code window, hit key 'F7' to build everything.
-The VS Code output window will get tons of messages as everything runs.
+The VS Code output window will display tons of messages as everything runs.
 If it all goes according to plan, you will see the following down at the very bottom of all those messages:
 
 ```text
@@ -754,8 +753,8 @@ If you get a non-zero exit code, scroll back to the top of the message output wi
 Then, fix the error.
 I know, I know, maybe not so simple...
 
-**Important:** the CMake process is designed to put anything that gets generated or created by the build process into a directory called 'build', located under the main "projects/umod4" directory.
-This means that it is *always* safe to delete the entire contents of the build directory because anything in that directory can be re-created automatically.
+**Important:** the CMake process is designed to put anything that gets generated or created by the build process into a directory called 'build', located under the main "projects/ptwd" directory.
+The way things are set up, it is *always* safe to delete the entire contents of the build directory because anything in that directory can be re-created automatically.
 Sometimes, things can get out of sync in the CMake build process.
 It usually happens after making changes to one of the CMakeLists.txt files in the system.
 If things are acting weird, the nuclear option to get back on track is to:
@@ -808,13 +807,15 @@ But for now, the 'launch.json' file is modified so that it creates an explicit c
 
 ### Getting WSL To See a Debug Probe
 
-Ownership of USB devices is an issue for WSL.
+Ownership of USB devices is one of the few non-seamless issues for WSL under windows.
 When you plug a USB device into a Windows machine, Windows owns it by default, as opposed to WSL.
-However, there is a mechanism that lets you tell Windows to give control of a specific USB device to WSL.
+There is a software package that allows you to tell Windows to give control of a specific USB device to WSL.
 
 Plug your [Raspberry Pi Pico Debug Probe](https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html) into a USB port on your Windows machine.
 
-From a Windows powershell or cmd prompt, type:
+Using your terminal app, open a Windows powershell or cmd prompt in administrator mode.
+Do NOT use a linux terminal window!
+Type the following:
 
 ```text
 winget install --interactive --exact dorssel.usbipd-win
@@ -823,7 +824,7 @@ winget install --interactive --exact dorssel.usbipd-win
 It will download and run an installer.
 Do what the installer says.
 
-After the installer completes, open a powershell 'administrator' window, then type "usbipd list" as shown.
+Still from your powershell 'administrator' window, type "usbipd list" as below.
 You will get back something like this, obviously depending on the USB devices that are attached to your own machine:
 
 ```text
@@ -840,18 +841,20 @@ Persisted:
 GUID                                  DEVICE
 ```
 
-Locate the proper device, the one with "CMSIS-DAP" in its name.
-In this case, its busID (its USB address info) is 8-2.
+The debug device will be the one with "CMSIS-DAP" in its name.
+In this case, its busID is 8-2.
 It will be different on your system.
-Make a note of the busID, then do the following in the same powershell administrator window:
+Make a note of the busID, then do the following in your powershell administrator window:
 
 ```text
-PS C:\Users\robin> usbipd bind --busid 8-2 (or whatever your own system's busID was for the CMSIS-DAP device)
+usbipd bind --busid 8-2
 ```
 
-This is a one-time command to tell Windows that it is allowed to connect that device to WSL at a later point in time.
+The 'bind' operation is a one-time administrator-level operation that tells Windows that it is allowed to share the device with WSL from now on.
 
-When it is actually time to connect a debugger, you will need to open a powershell window (doesn't need to be an adminstrator windown), and type the 'list' and 'attach' commands as shown below:
+You can now close the powershell administrator window and open a regular (non-administrator) powershell window as one of the tabs inside your terminal app.
+
+To connect the debugger to WSL, use the regular powershell window to type the 'list' and 'attach' commands as shown below:
 
 ```text
 PS C:\Users\robin> usbipd list
@@ -868,22 +871,9 @@ GUID                                  DEVICE
 PS C:\Users\robin>usbipd attach --wsl --busid 8-2
 ```
 
-You need to do the list command in case the busID changed, then the attach using that busID.
-Sadly, each time you restart WSL, you will need to do this last 'attach' step to request that Windows
-transfers control of the debugger dongle to WSL.
-It's a bit annoying to have to keep reconnecting the USB dongles each time you restart WSL, but that's life.
-Unlike the bad old days, at least WSL can access USB devices now!
-
-### Preparing to Launch
-
-The "launch.json" file needs to know where to find the Pico SDK so that it can access the RP2040 chip's peripheral register definitions.
-Put this definition in your .bash_rc:
-
-```bash
-export PICO_SDK_PATH=/home/<your-user-name>/projects/pico-sdk/<version-you-are-using>
-```
-
-That last definition assumes that you used all the defaults and didn't put 'projects' somewhere else, or with a different name, and that you put some specific version of the SDK under 'projects/pico-sdk' as suggested.
+At this point, Windows will have given control of the debugger to WSL.
+If you reboot your machine, or if you unplug the debugger and plug it back in, you will need to repeat the powershell 'list' and 'attach' commands to give control back to WSL.
+The busID can change on reboot, so pay attention to what 'list' tells you!
 
 ### Starting the Debugger
 
