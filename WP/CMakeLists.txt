@@ -15,12 +15,19 @@ endif()
 set (CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
 
 # --------------------------------------------------------------------------------------------------
-# These PICO_* definitions need to occur before including pico_sdk_import.cmake:
+# These definitions need to occur before including pico_sdk_import.cmake:
+set(PICO_BOARD pico2_w)
 
-# Define the board file that the SDK should use for this build:
-set(PICO_BOARD pico_w)
-
-set(PICO_PLATFORM rp2040)
+# Based on the board definition, define the appropriate platform and cpu:
+if (${PICO_BOARD} STREQUAL "pico_w")
+  set(PICO_PLATFORM rp2040)
+  set(CPU cortex-m0)
+elseif (${PICO_BOARD} STREQUAL "pico2_w")
+  set(PICO_PLATFORM rp2350)
+  set(CPU cortex-m33)
+else()
+  message(FATAL_ERROR "Unknown board type!")
+endif()
 
 # As per SDK doc, this include needs to happen before project()
 include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
@@ -32,11 +39,9 @@ project(WP
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
-if(PICO_SDK_VERSION_STRING VERSION_LESS "1.5.1")
-    message(FATAL_ERROR "Raspberry Pi Pico SDK version 1.5.1 (or later) required. Your version is ${PICO_SDK_VERSION_STRING}")
+if(PICO_SDK_VERSION_STRING VERSION_LESS "2.0.0")
+    message(FATAL_ERROR "Raspberry Pi Pico SDK version 2.0.0 (or later) required for pico2_w support. Your version is ${PICO_SDK_VERSION_STRING}")
 endif()
-
-set(CPU cortex-m0)
 
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -mcpu=${CPU} -mthumb")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcpu=${CPU} -mthumb")
@@ -44,15 +49,8 @@ set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -mcpu=${CPU} -mthumb")
 
 set(TOOLS_DIR ${CMAKE_BINARY_DIR}/tools)
 
-# ToDo: document this in the build.md
-# There is an inherent assumption in this project that the FreeRTOS repository has
-# been cloned into the top-level 'pico' directory using something like this:
-#   cd to the directory that contains the sdk directory
-#   git clone -b smp https://github.com/FreeRTOS/FreeRTOS-Kernel --recurse-submodules
-# Selecting the 'smp' branch is important because it contains the RP2040 SMP functionality!
-
 # Tell the build system where to find the root of the FreeRTOS-Kernel
-set(FREERTOS_KERNEL_PATH ${PROJECTS_PATH}/FreeRTOS-Kernel)
+set(FREERTOS_KERNEL_PATH ${PICO_SDK_PATH}/FreeRTOS-Kernel)
 
 # Important: Use the RP2040 kernel importer!
 include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
@@ -71,7 +69,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 
 pico_sdk_init()
 
-if(PICO_CYW43_SUPPORTED) # set by PICO_BOARD=pico_w
+if(PICO_CYW43_SUPPORTED)
     if(NOT TARGET pico_cyw43_arch)
         message(FATAL_ERROR "Pico W support is not available")
     endif()
@@ -114,6 +112,7 @@ add_executable(${PROJECT_NAME}
   src/Clock.cpp
   src/Crc.cpp
   src/Gps.cpp
+  src/Logger.cpp
   src/main.cpp
   src/NeoPixelConnect.cpp
   src/Psm.cpp

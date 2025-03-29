@@ -1,15 +1,11 @@
 #include "stdio.h"
 #include "pico/stdlib.h"
+#include "hardware/sync.h"
 
 #include "umod4_WP.h"
 #include "NeoPixelConnect.h"
 
 #include <string.h>
-
-#include "Uart.h"
-#include "Gps.h"
-#include "SdCard.h"
-#include "Spi.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -20,9 +16,14 @@
   #include "lfs.h"
 #endif
 
+#include "Uart.h"
+#include "Gps.h"
+#include "SdCard.h"
+#include "Spi.h"
+#include "Logger.h"
 
 Spi* spiLcd;
-
+Logger* logger;
 
 #if defined LFS
 // littlefs needs these 4 "C" routines to be defined so that it can work with a block-based
@@ -105,6 +106,8 @@ bool comingOnline(SdCard* sdCard)
   // Configuration of the filesystem is provided by this struct
   struct lfs_config cfg;
 
+  printf("%s: Bringing SD card online\n", __FUNCTION__);
+
   // Default all fields to zero
   memset((void*)&cfg, 0, sizeof(cfg));
 
@@ -144,7 +147,7 @@ bool comingOnline(SdCard* sdCard)
   if (err) {
     printf("%s: Mount failed! err=%d\n", __FUNCTION__, err);
 
-      // We should probably log a message if we ever have to reformat!
+    // We should probably log a message if we ever have to reformat!
 
     printf("%s: Formatting a filesystem\n", __FUNCTION__);
     t0 = time_us_32();
@@ -183,6 +186,12 @@ bool comingOnline(SdCard* sdCard)
   #endif
 
   printf("%s: Filesystem mounted in %.2f milliseconds\n", __FUNCTION__, mountTime_us/1000.0);
+
+  // Reinit the logger if for some reason a card got hotplugged after the system had booted.
+  if (logger) {
+    logger->init(&lfs);
+  }
+
   return true;
 }
 
@@ -190,7 +199,9 @@ bool comingOnline(SdCard* sdCard)
 // ----------------------------------------------------------------------------------
 void goingOffline(SdCard* sdCard)
 {
-  // Not sure I have anything to do here
+  if (logger) {
+    logger->deinit();
+  }
 }
 
 
@@ -215,6 +226,7 @@ void startFileSystem(void)
   cfg.goingDown = goingOffline;
 
   // Start a hot plug manager task to control the new SdCard instance
+  printf("%s: Starting hotPlugManager task\n", __FUNCTION__);
   BaseType_t err = xTaskCreate(SdCard::hotPlugManager, "HotPlugMgr", HOTPLUG_MGR_STACK_SIZE_WORDS, &cfg, 1, NULL);
   if (err != pdPASS) {
     panic("Unable to create hotPlugManager task");
@@ -243,6 +255,14 @@ void startGps()
 }
 
 
+// --------------------------------------------------------------------------------------------
+// Add an idle task where we sleep to provide a minor power savings.
+void vApplicationIdleHook( void )
+{
+    __wfi();
+}
+
+
 // ----------------------------------------------------------------------------------
 // This function is used to perform the FreeRTOS task initialization.
 // FreeRTOS is known to be running when this routine is called so it is free
@@ -253,13 +273,15 @@ void bootSystem()
   // There is no harm in creating it even if there is no display attached:
   spiLcd = new Spi(LCD_SPI_PORT, LCD_SCK_PIN, LCD_MOSI_PIN, LCD_MISO_PIN);
 
-  printf("WP Booting\n");
+  // The logger object gets created here, but logging is not started until
+  // the hotplug manager decides that the filesystem is coming up
+  printf("%s: Creating the logger\n", __FUNCTION__);
+  logger = new Logger();
 
-  // Get the GPS started
+  printf("%s: Starting the GPS\n", __FUNCTION__);
   startGps();
 
-  // Get the filesystem up and running, which includes creating the SD SPI interface, getting
-  // the SD card initialized, and starting the SD card hotplug manager
+  printf("%s: Starting the filesystem\n", __FUNCTION__);
   startFileSystem();
 }
 
@@ -314,6 +336,11 @@ void vLedTask(void* arg)
 int main()
 {
   stdio_init_all();
+
+  printf("\n\nWP Booting on %s\n", STRINGIFY(PICO_BOARD));
+  uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
+  printf("WP System clock: %.1f MHz\n", f_clk_sys / 1000.0);
+  printf("\n");
 
   // The LED task will boot the rest of the system
   BaseType_t err = xTaskCreate(vLedTask, "LED Task", 512, NULL, 1, NULL);

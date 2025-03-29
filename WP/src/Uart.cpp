@@ -4,7 +4,7 @@
 #include "hardware/irq.h"
 #include "hardware/regs/intctrl.h"
 
- #include <string.h>
+#include <string.h>
 
 // This array holds a pointer to the object that will handle the uart ISR.
 // There need to be as many of these objects as there are uarts in the device:
@@ -52,7 +52,9 @@ Uart::Uart(uart_inst_t* _uartId, int32_t _txPad, int32_t _rxPad)
   txPad = _txPad;
   rxPad = _rxPad;
 
-  rxTask = nullptr;
+  // To the outside world, a taskhandle_t is an int. Behind the scenes inside FreeRTOS, it is a pointer.
+  // We init that pointer to NULL:
+  rxTask = 0;
 
   gpio_set_function(txPad, GPIO_FUNC_UART);
   gpio_set_function(rxPad, GPIO_FUNC_UART);
@@ -100,6 +102,9 @@ bool Uart::rxQ_full()
   }
   return (next == rxQ_tail);
 }
+
+uint32_t errCnt;
+
 // -------------------------------------------------------------------------------------------------
 // This method gets called whenever this UART needs to service an interrupt.
 // It executes at ISR level, so all the usual warnings apply!
@@ -113,77 +118,29 @@ void __time_critical_func(Uart::isr)()
   bool notify = false;
   t0_isr = time_us_32();
 
-  int32_t bufferSpaceRemaining = rxQ_tail - rxQ_head - 1;
-  if (bufferSpaceRemaining<0) {
-    bufferSpaceRemaining += rxQ_len;
-  }
-  if (bufferSpaceRemaining == 0) {
-    // Things are getting critical. The hardware RX FIFO has not overflowed yet, but since our
-    // RAM FIFO is full, we can't service this RX interrupt, not any more RX interrupts until
-    // somebody calls the rx() method and makes room in the RAM FIFO.
-    // All we can do is notify the task waiting on RX data to get to work.
-    // When the task calls rx(), RX interrupts will be automatically re-enabled.
+  if (hw->mis & (UART_UARTMIS_RXMIS_BITS | UART_UARTMIS_RTMIS_BITS)) {
+    // We got here because the FIFO reached a trigger level or we had an RX timeout
+    // Either way, we read everything out of the FIFO until it is empty
+
     notify = true;
 
-    rxIntsEnabled = false;
-    uart_set_irq_enables(uartId, txIntsEnabled, rxIntsEnabled);
-  }
-
-  if (hw->mis & UART_UARTMIS_RXMIS_BITS) {
-    // The FIFO has hit its watermark trigger level.
-    // Note: there is no mechanism to know exactly how many characters are in the RX FIFO.
-    // If you get an interrupt for some watermark trigger level, all you know is that there are
-    // at least as many characters in the FIFO as the watermark level.
-    // Figure out how many bytes we intend to remove from the UART FIFO.
-    int32_t readCount = (bufferSpaceRemaining < RX_FIFO_LENGTH) ? bufferSpaceRemaining : RX_FIFO_LENGTH;
-
-    // Calculate if the write pointer into the RAM FIFO is going to wrap during the copy.
-    // If it is, we split the copy into two separate loops to avoid performing a wrap test on every
-    // character we copy.
-    uint16_t* terminalP = rxQ_head + readCount;
-    bool wrap = terminalP >= &rxQ[rxQ_len];
-    if (wrap) {
-      // Adjust the terminalP to reflect its wrapped location
-      terminalP -= rxQ_len;
-
-      // Copy data until we fill the last address in the buffer...
-      while (rxQ_head < &rxQ[rxQ_len]) {
-        *rxQ_head++ = (uint16_t)(hw->dr);
+    while (!(hw->fr & UART_UARTFR_RXFE_BITS)) {
+      uint16_t dr = (uint16_t)(hw->dr);
+      if (dr > 0xFF) {
+        errCnt++;
       }
-      // ...then wrap the head pointer
-      rxQ_head = rxQ;
-    }
-
-    // At this point, we are either copying the remainder of the data after wrapping (if any),
-    // or we are copying all of the data for an operation that we know can't wrap:
-    while (rxQ_head < terminalP) {
-      *rxQ_head++ = (uint16_t)(hw->dr);
-    }
-
-    notify = true;
-  }
-  else if (hw->mis & UART_UARTMIS_RTMIS_BITS) {
-    // We had a receive timeout. Start off by clearing the interrupt request.
-    hw->icr = UART_UARTICR_RTIC_BITS;
-
-    // The FIFO has data, but we don't know how much.
-    // We will not read more than we have buffer space to hold though.
-    uint32_t maxReadCount = bufferSpaceRemaining;
-
-    while ((!(hw->fr & UART_UARTFR_RXFE_BITS)) && (maxReadCount>0)) {
-      maxReadCount--;
-      *rxQ_head++ = (uint16_t)(hw->dr);
-      if (rxQ_head >= &rxQ[rxQ_len]) {
-        rxQ_head = rxQ;
+      else {
+        *rxQ_head++ = dr;
+        if (rxQ_head >= &rxQ[rxQ_len]) {
+          rxQ_head = rxQ;
+        }
       }
     }
-    notify = true;
   }
-
-  // Notify the receiving task that more data has arrived
-  BaseType_t higherPriorityTaskWoken = pdFALSE;
 
   if (notify && rxTask) {
+    // Notify the receiving task that more data has arrived
+    BaseType_t higherPriorityTaskWoken = pdFALSE;
     t0 = time_us_32();
     BaseType_t result = xTaskNotifyFromISR(rxTask, 0, eNoAction, &higherPriorityTaskWoken);
     t1 = time_us_32();
@@ -226,7 +183,17 @@ void Uart::rxIntEnable()
 
   // Unfortunately, a side effect of calling uart_set_irq_enables() is that it always
   // sets the FIFO length to 4 (the minimum). Set the level here to what we really want.
-  hw_write_masked(&hw->ifls, RX_FIFO_WATERMARK_LEVEL_1_2 << UART_UARTIFLS_RXIFLSEL_LSB, UART_UARTIFLS_RXIFLSEL_BITS);
+  hw_write_masked(&hw->ifls, RX_FIFO_WATERMARK_LEVEL << UART_UARTIFLS_RXIFLSEL_LSB, UART_UARTIFLS_RXIFLSEL_BITS);
+}
+
+
+// -------------------------------------------------------------------------------------------------
+//
+bool Uart::txBusy()
+{
+  // busy_bits will be 1 until both the TX FIFO is empty and the final stop bit of the char
+  // in the tx shift register has been sent
+  return hw->fr & UART_UARTFR_BUSY_BITS;
 }
 
 

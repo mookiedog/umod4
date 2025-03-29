@@ -83,6 +83,11 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
   xTaskCreate(start_gps_rxTask, "Gps", 4096 /* words */, this, TASK_HIGH_PRIORITY, &gps_taskHandle);
 
   uart->notifyOnRx(gps_taskHandle);
+
+  // Drive this pin high to signal the scope
+  gpio_init(SPARE1_PIN);
+  gpio_put(SPARE1_PIN, 0);
+  gpio_set_dir(SPARE1_PIN, GPIO_OUT);
 }
 
 
@@ -165,12 +170,12 @@ void Gps::processUbxBuffer()
 
   if ((ubxClass == 0x05) && (ubxId == 0x01)) {
     // ACK-ACK
-    if (dbg) printf("UBX ACK-ACK received\n");
+    if (dbg) printf("%s: UBX ACK-ACK received\n", __FUNCTION__);
     ubxAck = true;
   }
   else if ((ubxClass == 0x05) && (ubxId == 0x00)) {
     // ACK-NAK
-    if (dbg) printf("UBX ACK-NAK received\n");
+    if (dbg) printf("%s: UBX ACK-NAK received\n", __FUNCTION__);
     ubxNak = true;
   }
   else if ((ubxClass == 0x0D) && (ubxId == 0x01)) {
@@ -202,7 +207,7 @@ void Gps::processUbxBuffer()
     TimeUtils::fromRataDie(today_ratadie, timeAtNextPps);
 
     // Notify the rtc what the UTC time will be at the next PPS event
-    #warning "FIX ME: this should be a callback as to not pollute the GPS with knowledge of Rtc/ArtemisRtc"
+    #warning "FIX ME"
     #if 0
     {
       extern ArtemisRtc* rtc;
@@ -289,7 +294,7 @@ void Gps::processUbxBuffer()
       hours = get_uint8_t(payload, 8);
       mins  = get_uint8_t(payload, 9);
       secs  = get_uint8_t(payload, 10);
-      nanos = get_uint8_t(payload, 16);
+      nanos = get_int32_t(payload, 16);
     }
     if (fullyResolved = (validFlags & 0x04)) {
       //if (dbg) printf("Fully Resolved\n");
@@ -328,7 +333,7 @@ void Gps::processUbxBuffer()
     }
   }
   else {
-    printf("Unknown UBX Message received: %02X-%02X\n", ubxClass, ubxId);
+    printf("%s: Unknown UBX Message received: %02X-%02X\n", __FUNCTION__, ubxClass, ubxId);
   }
 }
 
@@ -462,10 +467,19 @@ void Gps::setUbxOnlyMode(uint32_t baudRate)
   payload[10] = (baudRate>>16) & 0xFF;
   payload[11] = (baudRate>>24) & 0xFF;
 
-  if (dbg) {printf("GPS UBX: Setting UBX-only reporting mode at baud rate: %u\n", baudRate);}
+  if (dbg) {printf("%s: GPS UBX: Setting UBX-only reporting mode at baud rate: %u\n", __FUNCTION__, baudRate);}
   sendUbxMsg(cl, id, payload, sizeof(payload));
+
+  // Because this msg can change the baud rate, we wait for the msg to be completely
+  // transmitted before returning.
+  uint32_t t0_usec = time_us_32();
+  do {
+  } while (uart->txBusy());
+  if (dbg) printf("%s: %.2f mSec to complete message transmission\n", __FUNCTION__, (time_us_32() - t0_usec)/1000.0);
+
+
   #else
-    if (dbg) {printf("GPS_UBX: NMEA messages are active!\n");}
+    if (dbg) {printf("%s: GPS_UBX: NMEA messages are active!\n", __FUNCTION__);}
   #endif
 }
 
@@ -490,7 +504,7 @@ void Gps::setMeasurementRate(uint16_t mSec)
   payload[4] = 0;
   payload[5] = 0;
 
-  printf("GPS UBX: Setting CFG-MEAS measurement rate\n");
+  printf("%s: GPS UBX: Setting CFG-MEAS measurement rate\n", __FUNCTION__);
   sendUbxMsg(cl, id, payload, sizeof(payload));
 }
 
@@ -511,7 +525,7 @@ void Gps::setNavReportRate()
     0x01                      // NAV/PVT message rate will be once per navigation solution sending on this port
   };
 
-  printf("GPS UBX: Setting NAV-PVT report rate\n");
+  printf("%s: GPS UBX: Setting NAV-PVT report rate\n", __FUNCTION__);
   sendUbxMsg(cl, id, payload, sizeof(payload));
 }
 
@@ -528,7 +542,7 @@ void Gps::setTimelsReportRate()
     0x01                      // message rate will be once per navigation solution sending on this port
   };
 
-  printf("GPS UBX: Setting NAV-TIMELS report rate\n");
+  printf("%s: GPS UBX: Setting NAV-TIMELS report rate\n", __FUNCTION__);
   sendUbxMsg(cl, id, payload, sizeof(payload));
 }
 
@@ -545,7 +559,7 @@ void Gps::setTimePulseReportRate()
     0x01                      // message rate will be once per navigation solution sending on this port
   };
 
-  printf("GPS UBX: Setting TIM-TP report rate\n");
+  printf("%s: GPS UBX: Setting TIM-TP report rate\n", __FUNCTION__);
   sendUbxMsg(cl, id, payload, sizeof(payload));
 }
 
@@ -562,7 +576,7 @@ void Gps::setStationaryPlatformModel()
     0x02,                     // Use "stationary" dynamic platform model
   };
 
-  printf("GPS UBX: Setting platform model to 'stationary'\n");
+  printf("%s: GPS UBX: Setting platform model to 'stationary'\n", __FUNCTION__);
   sendUbxMsg(cl, id, payload, sizeof(payload));
 }
 
@@ -579,7 +593,7 @@ void Gps::setAutomotivePlatformModel()
     0x04,                     // Use "automotive" dynamic platform model
   };
 
-  printf("GPS UBX: Setting platform model to 'automotive'\n");
+  printf("%s: GPS UBX: Setting platform model to 'automotive'\n", __FUNCTION__);
   sendUbxMsg(cl, id, payload, sizeof(payload));
 }
 
@@ -604,7 +618,7 @@ void Gps::setAntennaPower(bool powerOn)
   memset(payload, 0, sizeof(payload));
   payload[0] = powerOn ? 0x01 : 0x00;
 
-  printf("GPS UBX: Setting antenna power to %s\n", powerOn ? "ON" : "OFF");
+  printf("%s: GPS UBX: Setting antenna power to %s\n", __FUNCTION__, powerOn ? "ON" : "OFF");
   sendUbxMsg(cl, id, payload, sizeof(payload));
 }
 
@@ -678,14 +692,11 @@ void Gps::setBaud()
   uart->configBaud(tempBaud);
   setUbxOnlyMode(GPS_BAUD_RATE);
 
-  // Give time for the setUbxOnlyMode message to get sent before we change the baud rate again:
-  vTaskDelay(100);
-
   if (dbg) printf("%s: Setting UART baud rate %d\n", __FUNCTION__, GPS_BAUD_RATE);
   uart->configBaud(GPS_BAUD_RATE);
   setUbxOnlyMode(GPS_BAUD_RATE);
 
-  // In theory, we both are operating at the desired GPS_BAUD_RATE now.
+  // In theory, our uart and the GPS are operating at the desired GPS_BAUD_RATE now.
 }
 
 // ----------------------------------------------------------------------------------
@@ -767,6 +778,9 @@ void Gps::rxTask()
       // The data bits are the low order 8 bits, and the error flags are the higher-order bits.
       bool err = c >= 0x100;
       if (err) {
+        if (dbg) printf("%s: err bits during receive: %02X\n", __FUNCTION__, c>>8);
+      }
+      if (err) {
         // We don't care what the error was - we just resync our UBX stream:
         state = SYNC_ST;
       }
@@ -808,7 +822,7 @@ void Gps::rxTask()
 
         case NMEA_GP_ST:
         case NMEA_P_ST:
-          printf("NMEA message detected!\n");
+          printf("%s: NMEA message detected!\n", __FUNCTION__);
           // Reconfigure the GPS
           // The baud rate must be OK so we only need to reconfig the UBX stuff
           config();
@@ -861,10 +875,17 @@ void Gps::rxTask()
           ubxCkB += ubxCkA;
 
           ubxLen += (b<<8);
-          //if (dbg) printf("Incoming UBX %02X-%02X (len %d)\n", ubxBuffer[0], ubxBuffer[1], ubxLen);
+          if (dbg) printf("Incoming UBX %02X-%02X (len %d)\n", ubxBuffer[0], ubxBuffer[1], ubxLen);
           if (ubxLen > 0) {
-            ubxPayloadCount = 0;
-            state = UBX_PAYLOAD_ST;
+            // Check if the message is too long to fit in our buffer (-6 due to needing room for storing class/id/lenLo,lenHi,ckA,ckB)
+            if (ubxLen > (sizeof(ubxBuffer)-6)) {
+              printf("%s: ubx msg too long [%d] for buffer - ignored\n", __FUNCTION__, ubxLen);
+              state = SYNC_ST;
+            }
+            else {
+              ubxPayloadCount = 0;
+              state = UBX_PAYLOAD_ST;
+            }
           }
           else {
             // for a zero-length payload, go straight to reading the checksum
@@ -873,42 +894,38 @@ void Gps::rxTask()
           break;
 
         case UBX_PAYLOAD_ST:
-          if (ubxP < (&ubxBuffer[sizeof(ubxBuffer)])) {
-            *ubxP++ = b;
-            ubxCkA += b;
-            ubxCkB += ubxCkA;
+          // We know the message will fit so we can process each byte without checking for overflow
+          *ubxP++ = b;
+          ubxCkA += b;
+          ubxCkB += ubxCkA;
 
-            ubxPayloadCount++;
-            if (ubxPayloadCount == ubxLen) {
-              state = UBX_CKA_ST;
-            }
-          }
-          else {
-            // payload buffer overflow
-            printf("Payload buffer overflow!\n");
-            state = SYNC_ST;
+          ubxPayloadCount++;
+          if (ubxPayloadCount == ubxLen) {
+            state = UBX_CKA_ST;
           }
           break;
 
         case UBX_CKA_ST:
-          if (b == ubxCkA) {
+        *ubxP++ = b;
+        if (b == ubxCkA) {
             state = UBX_CKB_ST;
           }
           else {
-             printf("UBX checksum A error\n");
-             cksumErrorCount++;
+            cksumErrorCount++;
+            printf("%s: UBX checksum A error (err #%d) saw: %02X, expected %02X\n", __FUNCTION__, cksumErrorCount, b, ubxCkA);
             state = SYNC_ST;
           }
           break;
 
         case UBX_CKB_ST:
+          *ubxP++ = b;
           if (b == ubxCkB) {
             // message received, checksum is good
             processUbxBuffer();
           }
           else {
-            printf("UBX checksum B error\n");
             cksumErrorCount++;
+            printf("%s: UBX checksum B error (%d)\n", __FUNCTION__, cksumErrorCount);
           }
           state = SYNC_ST;
           break;

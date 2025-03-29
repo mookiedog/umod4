@@ -37,9 +37,12 @@
 // Spare IOs for future use
 #define SPARE0_PIN        27
 #define SPARE1_PIN        26
+
+// We will use SPARE2 as a development aid.
+// If grounded, it will indicate to the system that it should NOT log data.
 #define SPARE2_PIN        5
 
-// Interface for driving a local LCD using RP2040 SPI1
+// Interface for driving a local LCD using SPI1
 #define LCD_SPI_PORT      spi0
 #define LCD_BKLT_PIN      21
 #define LCD_DC_PIN        20
@@ -48,7 +51,7 @@
 #define LCD_MISO_PIN      16
 #define LCD_CS_PIN        17
 
-// Interface to MicroSD card using RP2040 SPI0
+// Interface to MicroSD card using SPI0
 #define SD_SPI_PORT       spi1
 #define SD_SCK_PIN        10
 #define SD_MOSI_PIN       11
@@ -85,7 +88,7 @@
 
 #define LOCATION(msg) __FILE__ "[" STRINGIFY(__LINE__) "] " msg
 
-// Choices are:
+// Define the GPS Baud rate choices.
 // 115200 (char time of 87 uSec)
 // 230400 (char time of 43 uSec)
 // 460800 (char time of 22 uSec)

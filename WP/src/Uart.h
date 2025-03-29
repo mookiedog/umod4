@@ -9,9 +9,20 @@
 #include "task.h"
 #include "queue.h"
 
-// Set hardware FIFO RX Interrupt level to 1/2 full (16 chars, (21.7 uSec * 16 chars) = 347 uSec.
+// These are the choices for setting the RX_FIFO watermark levels:
+//  0b001: 1/4 full ( 8 chars)
+//  0b010: 1/2 full (16 chars)
+//  0b011: 3/4 full (24 chars)
+#define RX_FIFO_WATERMARK_LEVEL_1_4  0b001
+#define RX_FIFO_LENGTH_1_4               8
 #define RX_FIFO_WATERMARK_LEVEL_1_2  0b010
-#define RX_FIFO_LENGTH               16
+#define RX_FIFO_LENGTH_1_2              16
+#define RX_FIFO_WATERMARK_LEVEL_3_4  0b011
+#define RX_FIFO_LENGTH_3_4              24
+
+// Define which setting we will use:
+#define RX_FIFO_WATERMARK_LEVEL     RX_FIFO_WATERMARK_LEVEL_1_2
+#define RX_FIFO_LENGTH              RX_FIFO_LENGTH_1_2
 
 void isr_uart0();
 void isr_uart1();
@@ -39,6 +50,7 @@ class Uart {
     int32_t tx(uint8_t byte);
     int32_t tx(uint8_t* bytes, uint8_t len);
     int32_t tx(char* string);
+    bool txBusy();
 
     void rxIntEnable();
 
@@ -60,7 +72,7 @@ class Uart {
     int32_t rxPad;
 
     // The rxQ_len needs to be longer than the hardware FIFO length (32)
-    static const uint32_t rxQ_len = 64;
+    static const uint32_t rxQ_len = 256;
     uint16_t rxQ[rxQ_len];
     uint16_t* rxQ_head;
     uint16_t* rxQ_tail;
