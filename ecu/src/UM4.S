@@ -754,10 +754,16 @@ L017B   =       0x017B                  ;holds the calculated checksum (written,
 ; To do: figure out how much stack is used by the firmware.
 
 ; These next variables are new, and extend into the original stack space.
-; They are used by the ECU data logging mechanisms.
-LOG_PORTG_DB_U8_prev          = 0x017D
-LOG_RAW_THA_U8_prev           = 0x017E
-log_tmp                       = 0x017F   ;(and 0x0180)
+; They are used by the ECU data logging mechanisms to detect changes that should get reported.
+log_tmp                       = 0x017D   ;(and 0x017E)
+;                             = 0x017E
+LOG_PORTG_DB_U8_prev          = 0x017F
+LOG_RAW_THA_U8_prev           = 0x0180
+LOG_ECU_ERROR_L000C_U8_prev   = 0x0181
+LOG_ECU_ERROR_L000D_U8_prev   = 0x0182
+LOG_RAW_AAP_U8_prev           = 0x0183
+LOG_FUEL_PUMP_B_prev          = 0x0184
+
 
 ;*****************************************************************
 ;68HC11G IO Register Map
@@ -2242,6 +2248,7 @@ reset:
         staA    PORTH
         ldaA    #1
         staA    LOG_FUEL_PUMP_B
+        staA    LOG_FUEL_PUMP_B_prev
 
         ldaA    #0x0F                   ;flush any outstanding IC events
         staA    TFLG1
@@ -2556,7 +2563,7 @@ LC3DD:  ldD     TCNT
         inc     L0107
 
 ;        ldaB    L0107
-;        stD     log_5msecEvent
+;        staB    log_5msecEvent
 
         ldaB    #0x07
         andB    L0107
@@ -2954,7 +2961,7 @@ tbl1__00:
         lsrD
         lsrD
         stD     *L0024                  ;save the right-aligned, unfiltered version of VTA in L0024
-        stD     LOG_RAW_VTA_U16         ;log reg B
+        stD     LOG_RAW_VTA_U16
         bra     3f
 
 1:      brclr   *L0010 #0b00100000 2f   ;if the sensor is not currently suspect, make it so
@@ -3020,8 +3027,12 @@ tbl1__03:
 
 tbl1__04:
         staA    *L001B_tmp
+
+        cmpA    *L002A
+        beq     10f
+        staA    LOG_RAW_VM_U8           ; log the new VM conversion if it is different than before
+10:
         staA    *L002A                  ; save the raw conversion
-        staA    LOG_RAW_VM_U8
         cmpA    #38                     ; 38 means 2.97V
         blo     2f                      ; br if the reading was below 2.97V (probably bad!)
 
@@ -3090,7 +3101,6 @@ tbl1__05:
         beq     9f
         staA    LOG_RAW_THA_U8_prev
         staA    LOG_RAW_THA_U8
-
 9:
         subA    #0x00
         bhs     4f
@@ -3155,9 +3165,12 @@ tbl1__14:
         bclr    *L000C #0b00000001      ;clear the 'broken' bit.
 
         ldaA    *L001B_tmp              ;get the 8 MSbits of the original AAP A/D reading
+        cmpA    LOG_RAW_AAP_U8_prev
+        beq     9f
+        staA    LOG_RAW_AAP_U8_prev     ;only log if it has changed
         staA    LOG_RAW_AAP_U8
-        staA    *L0027                  ;save them here
-
+9:
+        staA    *L0027                  ;but always save the new reading here
         brset   *L0000 #0b00010000 4f
 
         sei
@@ -7015,9 +7028,14 @@ LDF4D_10:
 LDF4D_11:
         sei
         ldaB    *L000C                  ;propagate all new error bits into L000E
+
+        cmpB    LOG_ECU_ERROR_L000C_U8_prev
+        beq     0f
+        staB    LOG_ECU_ERROR_L000C_U8_prev
+        staB    LOG_ECU_ERROR_L000C_U8
+0:
         oraB    *L000E                  ;This is a one-way operation: L000E bits never get cleared (except b4).
         staB    *L000E
-        staB    LOG_ECU_ERROR_L000E_U8
         cli
 
         nop
@@ -7025,9 +7043,14 @@ LDF4D_11:
 
         sei
         ldaB    *L000D                  ;propagate all new error bits into L000F
+
+        cmpB    LOG_ECU_ERROR_L000D_U8_prev
+        beq     0f
+        staB    LOG_ECU_ERROR_L000D_U8_prev
+        staB    LOG_ECU_ERROR_L000D_U8
+0:
         oraB    *L000F                  ;This is a one-way operation: L000F bits never get cleared
         staB    *L000F
-        staB    LOG_ECU_ERROR_L000F_U8
         cli
 
         ldD     *L000C                  ;br to LDF4D_13 if D != 0
@@ -7654,7 +7677,11 @@ LE3BA_7:
         andA    #0b10111111             ;enable the fuel pump driver
         staA    PORTH
         ldaB    #1
+        cmpB    LOG_FUEL_PUMP_B_prev
+        beq     0f
+        staB    LOG_FUEL_PUMP_B_prev
         staB    LOG_FUEL_PUMP_B
+0:
         bra     LE3BA_9
 
 
@@ -7663,8 +7690,11 @@ LE3BA_8:
         oraA    #0b01000000             ;disable the fuel pump driver
         staA    PORTH
         ldaB    #0
-        stD     LOG_FUEL_PUMP_B
-
+        cmpB    LOG_FUEL_PUMP_B_prev
+        beq     0f
+        staB    LOG_FUEL_PUMP_B_prev
+        staB    LOG_FUEL_PUMP_B
+0:
 LE3BA_9:
         brset   *L0005 #0b00001000 LE3BA_12  ;br if we are in DIAG TEST mode
         brclr   *L0000 #0b00000001 LE3BA_12
