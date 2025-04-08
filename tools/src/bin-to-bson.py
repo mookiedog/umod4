@@ -356,7 +356,7 @@ else:
     # If the checksum matches an RP58 build, then this image must be RP58-compatible.
     code_m3hash=mmh3.hash(image[0x4003:], 0xFFFFFFFF, signed=False)
     if args.verbose:
-        print("checksum of the code area (0x4003..0xFFFF): ", hex(code_m3hash))
+        print("checksum of the code area (0x4003..0x7FFF): ", hex(code_m3hash))
 
     # Check against the known M3 hash of the code area in an RP58 build:
     rp58_compatible = (code_m3hash == 0x4CF503CB)

@@ -4,6 +4,7 @@
 //  - Maybe panic() should log something, like a panic code
 //    ?
 
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
@@ -47,8 +48,23 @@ extern void _panic(void);
 // Linker generated symbols we need to know about
 extern uint32_t __StackOneBottom;
 extern uint32_t __StackOneTop;
-extern uint32_t __BSON_IMAGE_PARTITION_START_ADDR;
-extern uint32_t __BSON_IMAGE_PARTITION_SIZE_BYTES;
+
+// This circular buffer holds all the HC11 bus activity
+// It would be better to use the linker to place this in its own fixed RAM bank
+// to avoid any possible access contention issues.
+// We will put the ecu_busLog into RAM bank2 for the exclusive use of core1.
+// It might be better to assign this variable using the linker:
+uint8_t* ecu_busLog = (uint8_t*)0x21020000;
+
+// Temp: for testing, we make this a bit longer. It really doesn't need to be very big at all
+#define ECU_EVENTLOG_LENGTH_BYTES 256
+uint32_t ecu_eventLog[ECU_EVENTLOG_LENGTH_BYTES];
+uint32_t eventLogIdx;
+
+// To track the amount of time it takes to get the ECU booted
+absolute_time_t epoch;
+
+#if defined LFS
 extern uint32_t __FS_PARTITION_START_ADDR;
 extern uint32_t __FS_PARTITION_SIZE_BYTES;
 
@@ -56,25 +72,6 @@ extern uint32_t __FS_PARTITION_SIZE_BYTES;
 const uint32_t fsPartitionStart_addr = (uint32_t)&__FS_PARTITION_START_ADDR;
 const uint32_t fsPartitionSize_bytes = (uint32_t)&__FS_PARTITION_SIZE_BYTES;
 
-// This circular buffer holds all the HC11 bus activity
-// It would be better to use the linker to place this in its own fixed RAM bank
-// to avoid any possible access contention issues.
-// We will put the ecu_busLog into RAM bank2 for the exclusive use of core1.
-// It might be better to assign this variable using the linker:
-const uint8_t* ecu_busLog = (uint8_t*)0x21020000;
-
-// Temp: for testing, we make this a bit longer. It really doesn't need to be very big at all
-#define ECU_EVENTLOG_LENGTH_BYTES 64
-uint32_t ecu_eventLog[ECU_EVENTLOG_LENGTH_BYTES];
-uint32_t eventLogIdx;
-
-// For general elapsed time measurements
-absolute_time_t t0;
-absolute_time_t t1;
-volatile uint64_t elapsed;
-
-#if defined LFS
-// This stuff is for littlefs:
 int lfs_read(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, void *buffer, lfs_size_t size);
 int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const void *buffer, lfs_size_t size);
 int lfs_erase(const struct lfs_config *c, lfs_block_t block);
@@ -153,30 +150,24 @@ int lfs_sync(const struct lfs_config *c)
 // --------------------------------------------------------------------------------------------
 void _panic(void)
 {
-  __breakpoint();
+  //__breakpoint();
+  while(1){}
 }
 
 // --------------------------------------------------------------------------------------------
 // Decoding protected EPROMs is not a public feature.
+// Implementing these routines is left as an exercise for the student.
 
-int32_t descrambler(bool descramble, const uint8_t* inEprom, uint8_t* outEprom) __attribute__((weak));
-int32_t descrambler(bool descramble, const uint8_t* inEprom, uint8_t* outEprom)
-{
-  // Not Implemented
-  return 1;
-}
-
-// --------------------------------------------------------------------------------------------
-// Decoding scrambled EPROMs is not a public feature.
-// Implementing this routine is left as an exercise for the student.
 uint8_t readEpromViaDaughterboard(uint32_t ecuAddr, uint8_t* scrambledEpromImage) __attribute__((weak));
 uint8_t readEpromViaDaughterboard(uint32_t ecuAddr, uint8_t* scrambledEpromImage)
 {
-  uint8_t data;
+  return 0;
+}
 
-  ecuAddr &= 0x7FFF;
-  data = scrambledEpromImage[ecuAddr];
-  return data;
+bool hasDescrambler() __attribute__((weak));
+bool hasDescrambler()
+{
+  return false;
 }
 
 // --------------------------------------------------------------------------------------------
@@ -274,6 +265,9 @@ void mainCore1(void)
   multicore_fifo_drain();
   multicore_fifo_clear_irq();
 
+  // Flush the ecu_buslog
+  memset(ecu_busLog, 0, ECU_BUSLOG_LENGTH_BYTES);
+
   // Start serving HC11 EPROM bus requests, never to return!
   epromTask();
 }
@@ -330,121 +324,13 @@ void hello(uint32_t flickerCount)
 }
 
 // --------------------------------------------------------------------------------------------
-// Check every BSON document in the BSON partition to see if it defines a
-// key called "eprom" where the key value has a type of "BSON_TYPE_EMBEDDED_DOC".
-// If so, look inside the embedded doc and check if it defines a "name" key
-// with a value that matches the epromName parameter.
-//
-// Normally, multiple BSON documents could be stored as a sequence of
-// document objects with no space between them. At the moment (and
-// perhaps forever), the compiler/linker pads the space between
-// documents forcing every document to start on a word boundary.
-// Because of this, as we move from one document to the next, we
-// need to account for this padding.
-uint8_t* findEprom(const char* epromName)
-{
-  uint8_t* docP = (uint8_t*)&__BSON_IMAGE_PARTITION_START_ADDR;
-
-  while (1) {
-    // Docs are placed in the image partition starting on a word alignment.
-    // Force the docPtr into word alignment before using the document:
-    docP = (uint8_t*)(((uint32_t)(docP)+3) & ~3);
-
-    uint32_t docLength = Bson::read_unaligned_uint32(docP);
-    if (docLength == 0xFFFFFFFF) {
-      break;
-    }
-
-    // Check the doc, looking for a top-level element named "eprom"
-    element_t e;
-    bool found = Bson::findElement(docP, "eprom", e);
-
-    if (found) {
-      // Make sure that "eprom" element's data type is 'embedded document':
-      if (e.elementType == BSON_TYPE_EMBEDDED_DOC) {
-        // The element data represents the start of the embedded doc
-        uint8_t* epromDoc = e.data;
-        // Search for the "name" element inside the eprom doc:
-        element_t name_e;
-        found = Bson::findElement(epromDoc, "name", name_e);
-        if (found) {
-          if (name_e.elementType == BSON_TYPE_UTF8) {
-            const char* nameP = (const char*)name_e.data+4;
-            if (0==strcmp(epromName, nameP)) {
-              // Found it!
-              return epromDoc;
-            }
-          }
-        }
-      }
-    }
-
-    // We didn't find what we wanted in this doc.
-    // Try the next one in the BSON partition
-    docP += docLength;
-  }
-
-  return nullptr;
-}
-
-// --------------------------------------------------------------------------------------------
 // This routine is executed by Core0:
 //  - Get Core1 started
-//  - Wait for Core1 to signal us that it is running
+//  - Wait for Core1 to signal us that it is running and sync'ed to the HC11 E-clock
 //  - Release the HC11 processor from RESET
 void startCore1(void)
 {
-  // Core0 is responsible for presenting core1 with the EPROM image to be served to the ECU.
-
-  uint8_t* epromDoc_8796539;
-  uint8_t* epromDoc_UM4;
-
-  bool success;
-
-  t0 = get_absolute_time();
-  // This load operation is only here to test the descramble methods
-  // Measurements show it takes 90 mSec to get an scrambled image loaded.
-  epromDoc_8796539 = findEprom("8796539");
-  if (!epromDoc_8796539) {
-    panic("Should have found 8796539!!");
-  }
-  else {
-    // Load the image using the "mem" info found in the epromDoc
-    success = EpromLoader::loadImage(epromDoc_8796539);
-    if (!success) {
-      panic("Unable to load image 8796539!");
-    }
-  }
-  t1 = get_absolute_time();
-  elapsed = absolute_time_diff_us(t0, t1);
-
-  // For now, we will load from BSON every time.
-  // Measurements show it takes 11 mSec to get an unscrambled image loaded.
-  // In the future, it might be better to load the image to RAM but then
-  // write the "compiled" EPROM image to a special default image location in flash where it is simply
-  // copied instead of being built from parts.
-  t0 = get_absolute_time();
-  epromDoc_UM4 = findEprom("UM4");
-  if (!epromDoc_UM4) {
-    panic("UM4 eprom doc should exist!");
-  }
-  // Load the image using the "mem" info found in the epromDoc
-  success = EpromLoader::loadImage(epromDoc_UM4);
-  if (!success) {
-    panic("Unable to load image UM4!");
-  }
-  t1 = get_absolute_time();
-  elapsed = absolute_time_diff_us(t0, t1);
-
-  // Now try loading 8796539 maps on top of our UM4 image:
-  t0 = get_absolute_time();
-  success = EpromLoader::loadMapblob(epromDoc_8796539);
-  if (!success) {
-    panic("Unable to load 8796539 maps!");
-  }
-  t1 = get_absolute_time();
-  elapsed = absolute_time_diff_us(t0, t1);
-
+  printf("%s: Starting Core1\n", __FUNCTION__);
   // The SDK requires that we specify a tiny stack to get Core1 booted.
   // Once the fake EPROM code is running, it won't be used any more.
   uint32_t stackSizeBytes = (uint8_t*)&__StackOneTop - (uint8_t*)&__StackOneBottom;
@@ -459,9 +345,74 @@ void startCore1(void)
     }
   } while (!core1Rdy);
 
+  printf("%s: Core1 is running!\n", __FUNCTION__);
+
   // Now that core1 is serving memory transactions, we can finally release the HC11 out of RESET.
   // Driving the HC11 reset output signal to '0' deasserts the HC11 RESET
+  printf("%s: Releasing the ECU from RESET %ld uSecs after the EP booted\n", __FUNCTION__, get_absolute_time()-epoch);
   sio_hw->gpio_clr = HC11_RESET_BITS;
+}
+
+// --------------------------------------------------------------------------------------------
+// Prepare an EPROM image for Core1 to serve to the ECU.
+//
+// The image can be a simple EPROM image (protected or not), or it can be constructed from
+// the codebase from one image (typically the UM4 ECU logging codebase) overlayed with the
+// maps from any other RP58-compatible EPROM image. This allows any RP58-compatible EPROM
+// to get the data-logging capability of the UM4 EPROM.
+//
+// The resulting EPROM image gets placed in RAM where Core1 expects to find it.
+void prepEpromImage()
+{
+  uint32_t t0, t1, elapsed;
+  bool success;
+
+  if (hasDescrambler()){
+    // This initial load is just for testing that we can load a protected image
+    success = EpromLoader::loadImage("8796539");
+    if (!success) {
+      printf("%s: failed!\n", __FUNCTION__);
+    }
+  }
+
+  // This is the image that we really want to load:
+  printf("%s: Loading UM4 image\n", __FUNCTION__);
+  EpromLoader::bsonDoc_t b = EpromLoader::findEprom("UM4");
+  if (!b) {
+    panic("Unable to find UM4 image in BSON partition!");
+  }
+  success = EpromLoader::loadImage(b);
+  if (!success) {
+    panic("Unable to load UM4 eprom image!");
+  }
+
+  if (hasDescrambler()) {
+    // Now try loading protected 8796539 maps on top of our UM4 image:
+    t0 = get_absolute_time();
+    success = EpromLoader::loadMapblob("8796539");
+
+    if (!success) {
+      printf("Unable to load protected 8796539 mapblob!\n");
+    }
+    else {
+      t1 = get_absolute_time();
+      elapsed = absolute_time_diff_us(t0, t1);
+      printf("%s: Loaded protected mapblob in %u microseconds\n", __FUNCTION__, elapsed);
+    }
+  }
+
+  // Reload the UM4 maps back on top of the UM4 base image
+  t0 = get_absolute_time();
+  success = EpromLoader::loadMapblob(b);
+  if (!success) {
+    printf("Unable to reload UM4 mapblob!\n");
+    panic("mapblob load failed");
+  }
+  else {
+    t1 = get_absolute_time();
+    elapsed = absolute_time_diff_us(t0, t1);
+    printf("%s: Loaded unprotected UM4 mapblob in %u microseconds\n", __FUNCTION__, elapsed);
+  }
 }
 
 // --------------------------------------------------------------------------------------------
@@ -471,86 +422,97 @@ void startCore1(void)
 static void core0Mainloop(void) __attribute__((noreturn));
 void core0Mainloop(void)
 {
-  // Explicitly disable all interrupts inside the core0 NVIC
-  for (uint32_t i=0; i<32; i++) {
-    irq_set_enabled(i, false);
-  }
+  // Calculate this constant pointer address once:
+  volatile io_rw_32* const txReg = &(uart_get_hw(EP_UART)->dr);
 
-  // We only get here if the ECU processor is off and running.
-  // Peform any final initialization before we drop into the mainloop.
+  // We are ready to start Core1 and process the ECU data stream it will send us:
+  startCore1();
 
-#if defined LFS
-  // Mount the filesystem. On a freshly formatted flash, this takes 0.5 mSec
-  t0 = get_absolute_time();
-  int err = lfs_mount(&lfs, &cfg);
-  t1 = get_absolute_time();
-  elapsed = absolute_time_diff_us(t0, t1);
-
-  // Reformat if we can't mount the filesystem. This should only happen on the first boot
-  if (err) {
-    // We should probably log a message to the WP if we ever have to reformat!
-
-    // FYI: these two operations totalled out at 97 mSec.
-    // We know that the mount only takes 0.5 mSec, so format is the big one.
-    t0 = get_absolute_time();
-    lfs_format(&lfs, &cfg);
-    lfs_mount(&lfs, &cfg);
-    t1 = get_absolute_time();
-    elapsed = absolute_time_diff_us(t0, t1);
-  }
-#endif
+  // Do not delay entering the mainloop after starting core1 because
+  // ECU logging data will arrive essentially immediately!
 
   while (1) {
     // Wait for messages to arrive in the inter-core FIFO from Core1
     if (multicore_fifo_rvalid()) {
       uint32_t msg = multicore_fifo_pop_blocking();
 
-      // We should only be logging writes
+      // The fake eprom should only be sending us writes.
+      // Discard any transfers that are not writes!
       if ((msg & HC11_WR_BITS) != 0) {
+        // Save the initial log data we received for debugging purposes
         if (eventLogIdx < ECU_EVENTLOG_LENGTH_BYTES) {
           ecu_eventLog[eventLogIdx++] = msg;
         }
         else {
-          // overflow!
+          // NOP allows for a debugger breakpoint here when the buffer fills
           NOP();
         }
 
         volatile uint32_t addr = (msg & HC11_AB_BITS) >> HC11_AB_LSB;
         volatile uint32_t data = (msg & HC11_DB_BITS) >> HC11_DB_LSB;
 
-        // This is a test to see if the firmware ever does read anything other than $00 from address L4000 (see ultraMod firmware for details)
-          if (addr == LOG_L4000_EVENT_U8) {
-            if (data != 0x00) {
-              data = data;
-              __asm volatile ("bkpt #0");
-            }
-          }
-          else if (addr > LOG_LAST_ADDR) {
-            // This should never happen!
-            data = data;
-            __asm volatile ("bkpt #1");
-          }
+        #if defined EP_UART
+          // The ECU can't generate data fast enough for the FIFO to overflow.
+          // We transmit the data blindly without even checking if the FIFO has room.
+          *txReg = addr & 0xFF;
+          *txReg = data & 0xFF;
+        #endif
       }
-
-      // To do:
-      //  - Resend the incoming ECU log messages to the WP board where they will get logged to the SD card
-      //  - Process incoming commands from the WP board, such as things dealing with EPROM image management:
-      //     - add image
-      //     - remove image
-      //     - get image info
-      //     - set default image
     }
   }
 }
 
 // --------------------------------------------------------------------------------------------
-// As per the RP2040 Bootrom, main() gets executed by core0 only.
-// Core1 is stalled by the Pico bootloader until explicitly started by core0.
+void showBootMessages()
+{
+  printf("\n\nEP Booting\n");
+  uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
+  printf("System clock: %.1f MHz\n", f_clk_sys / 1000.0);
+  printf("\n");
+}
+
+
+// --------------------------------------------------------------------------------------------
+// Explicitly disable all interrupts inside the core0 NVIC.
+void disableInts()
+{
+  for (uint32_t i=0; i<NUM_IRQS; i++) {
+    irq_set_enabled(i, false);
+  }
+}
+
+// --------------------------------------------------------------------------------------------
+// Prep the UART to forward the ECU log data to the WP.
+// Note that the UART is disabled if the system is configured to drive its sysclk
+// to CLKOUT_GPIO for testing/verification purposes!
+void initUart()
+{
+  #if defined EP_UART
+    // Init the UART
+    uart_init(EP_UART, EP_UART_BAUD_RATE);
+
+    // Assign control of TX/RX GPIOs to the UART
+    gpio_set_function(TX_GPIO, UART_FUNCSEL_NUM(EP_UART, TX_GPIO));
+    gpio_set_function(RX_GPIO, UART_FUNCSEL_NUM(EP_UART, RX_GPIO));
+  #else
+    printf("%s: \n****\n**** WARNING: UART functionality is disabled due to CLKOUT testing!\n****\n")
+  #endif
+}
+
+// --------------------------------------------------------------------------------------------
 int main(void)
 {
+  epoch = get_absolute_time();
+
   initCpu();
   hello(3);
   initPins();
-  startCore1();
+
+  stdio_init_all();
+  showBootMessages();
+
+  disableInts();
+  initUart();
+  prepEpromImage();
   core0Mainloop();
 }

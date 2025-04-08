@@ -18,7 +18,7 @@
 uint32_t msgCount;
 uint32_t cksumErrorCount;
 
-static const uint32_t dbg = 1;
+static uint32_t dbg = 0;
 
 // Defining this next symbol tells the GPS to disable NMEA and communicate via UBX only
 #define UBX_ONLY_MODE
@@ -88,6 +88,9 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
   gpio_init(SPARE1_PIN);
   gpio_put(SPARE1_PIN, 0);
   gpio_set_dir(SPARE1_PIN, GPIO_OUT);
+
+  // Assume we have no fix yet
+  fixType = 0;
 }
 
 
@@ -162,6 +165,202 @@ int32_t Gps::get_int32_t(uint8_t* buffer, uint16_t offset)
 }
 
 // ----------------------------------------------------------------------------------
+// TIM-TP.  See the protocol manual pg 72-73 for the relationship between UTC and the PPS TimePulse
+void Gps::process_TIM_TP(uint8_t* payload)
+{
+  // The short story is that this packet represents the UTC time-of-week at the next PPS event.
+  if (dbg) printf("TIM-TP: ");
+  uint32_t tow = get_uint32_t(payload, 0);
+  uint32_t wkNum = get_uint16_t(payload, 12);
+  uint8_t flags = get_uint8_t(payload, 14);
+  char timeBase = (flags & 1) ? 'U' : 'G';
+  char utcAvail = (flags & 2) ? 'U' : '-';
+
+  cTime_t timeAtNextPps;
+
+  timeAtNextPps.tzOffset  = 0;
+  timeAtNextPps.millisecs = tow % 1000;
+  timeAtNextPps.secs      = (tow/(1000)) % 60;
+  timeAtNextPps.mins      = (tow/(1000*60)) % 60;
+  timeAtNextPps.hours     = (tow/(1000*3600)) % 24;
+
+  #if 0
+    uint32_t gpsEpoch_ratadie = TimeUtils::ymdToRataDie(1980, 1, 6);
+  #else
+    uint32_t gpsEpoch_ratadie = 722820;   // This is a constant so it doesn't need to be calculated each time
+  #endif
+
+  uint32_t daysSinceGpsEpoch = (wkNum*7) + (tow / MSECS_PER_DAY);
+  uint32_t today_ratadie = gpsEpoch_ratadie + daysSinceGpsEpoch;
+  TimeUtils::fromRataDie(today_ratadie, timeAtNextPps);
+
+  // Notify the rtc what the UTC time will be at the next PPS event
+  #warning "FIX ME"
+  #if 0
+  {
+    extern ArtemisRtc* rtc;
+    rtc->presetUtcTime(&timeAtNextPps);
+  }
+  #endif
+
+  if (dbg) {
+    printf("Wk:%lu TOW:%lu %c%c [%02u/%s/%04u %s %02u:%02u:%02u.%03u UTC]\n",
+          wkNum, tow, timeBase, utcAvail,
+          timeAtNextPps.date,
+          TimeUtils::monthToString(timeAtNextPps.month),
+          timeAtNextPps.years,
+          TimeUtils::dayOfWeekToString(TimeUtils::dayOfWeek(timeAtNextPps)),
+          timeAtNextPps.hours, timeAtNextPps.mins, timeAtNextPps.secs, timeAtNextPps.millisecs
+    );
+  }
+}
+
+// ----------------------------------------------------------------------------------
+// NAV-TIMELS
+void Gps::process_NAV_TIMELS(uint8_t* payload)
+{
+  uint32_t version = get_uint32_t(payload, 4);
+  if (version == 0) {
+    uint8_t srcOfCurrLs = get_uint8_t(payload, 8);
+    uint8_t currLs = get_uint8_t(payload, 9);
+    uint8_t srcOfLsChange = get_uint8_t(payload, 10);
+    uint8_t lsChange = get_uint8_t(payload, 11);
+    int32_t timeToLsEvent = get_int32_t(payload, 12);
+    uint16_t dateOfLsGpsWn = get_uint16_t(payload, 16);
+    uint16_t dateOfLsGpsDn = get_uint16_t(payload, 18);
+    uint8_t valid = get_uint8_t(payload, 23);
+    bool validCurrLs = (valid & 0x01) != 0;
+    bool validTimeToLsEvent = (valid & 0x02) != 0;
+
+    if (dbg) {
+      printf("NAV-TIMELS: V%d", version);
+      if (validCurrLs) {
+        printf(" CurrLsSrc: %s", decode_srcOfCurrLs(srcOfCurrLs));
+        printf(" CurrLs: %d", currLs);
+      }
+      if (validTimeToLsEvent) {
+        printf(" lsChgSrc: %s", decode_srcOfLsChange(srcOfLsChange));
+        printf(" lsChg: %d", lsChange);
+        if (lsChange != 0) {
+          printf(" timeToLsEvent: %ld", timeToLsEvent);
+          printf(" dateOfLsGpsWn: %lu", dateOfLsGpsWn);
+          printf(" dateOfLsGpsDn: %lu", dateOfLsGpsDn);
+        }
+      }
+      printf("\n");
+    }
+  }
+  else {
+    if (dbg) printf("NAV-TIMELS: unknown version 0x%04X\n", version);
+  }
+}
+
+// ----------------------------------------------------------------------------------
+void Gps::process_NAV_PVT(uint8_t* payload)
+{
+  // NAV-PVT
+  bool dateValid;
+  bool timeValid;
+  bool fullyResolved;
+  uint8_t _fixType;
+  uint16_t _year;
+  uint8_t _month;
+  uint8_t _day;
+  uint8_t _hours;
+  uint8_t _mins;
+  uint8_t _secs;
+  int32_t _nanos;
+  uint32_t _itow;
+
+  if (dbg) printf("NAV-PVT: ");
+  _year = _month = _day = 0;
+  uint8_t validFlags = get_uint8_t(payload, 11);
+  if (dateValid = (validFlags & 0x01)) {
+    //if (dbg) printf("Date is valid\n");
+    _year = get_uint16_t(payload, 4);
+    _month = get_uint8_t(payload, 6);
+    _day   = get_uint8_t(payload, 7);
+  }
+
+  _hours = _mins = _secs = 0;
+  if (timeValid = (validFlags & 0x02)) {
+    //if (dbg) printf("Time is valid\n");
+    _hours = get_uint8_t(payload, 8);
+    _mins  = get_uint8_t(payload, 9);
+    _secs  = get_uint8_t(payload, 10);
+    _nanos = get_int32_t(payload, 16);
+  }
+  if (fullyResolved = (validFlags & 0x04)) {
+    //if (dbg) printf("Fully Resolved\n");
+  }
+
+  if (dbg) {
+    printf("%c%c%c  ", timeValid ? 'T' : '-', dateValid ? 'D' : '-', fullyResolved ? 'R' : '-');
+    if (dateValid) printf("%04u/%02u/%02u ", _year, _month, _day);
+    if (timeValid) printf("%02u:%02u:%02u %09ld", _hours, _mins, _secs, _nanos);
+  }
+
+  _fixType = get_uint8_t(payload, 20);
+  if (dbg) printf(" F%u ", _fixType);
+  if ((_fixType == 2) || (_fixType == 3)) {
+    double lat = get_int32_t(payload, 28) * 1.0e-7;
+    double lon = get_int32_t(payload, 24) * 1.0e-7;
+
+    if (_fixType != fixType) {
+      // Our fix status has just changed
+      if (_fixType != fixType) {
+        if (_fixType >= 2) {
+          // Trigger logging our position now that we have a 2D or 3D fix even if we are not moving.
+          moving = STOP_CNT;
+        }
+
+        // Log all fix changes, upgrade or downgrade
+        printf("Log: fixType just changed to: %d\n", _fixType);
+
+        fixType = _fixType;
+      }
+    }
+
+    int32_t gSpeed_mm_per_sec = get_int32_t(payload, 60);
+    float gSpeed_mph = gSpeed_mm_per_sec / 447.04f;
+
+    if (gSpeed_mph >= MIN_MOVEMENT_VELOCITY_MPH) {
+      moving = STOP_CNT;
+    }
+    else if (moving) {
+      moving -= 1;
+      if (moving == 0) {
+        // We just stopped moving
+        printf("Log: stopped moving\n");
+      }
+    }
+
+    latitude_degrees = lat;
+    longitude_degrees = lon;
+    locationKnown = true;
+    if (dbg) printf("%10.6lf, %10.6lf (%.1f mph)\n", lat, lon, gSpeed_mph);
+
+    if (moving) {
+      printf("Log: %10.6lf, %10.6lf (%.1f mph)\n", lat, lon, gSpeed_mph);
+    }
+  }
+  else {
+    if (dbg) printf("\n");
+  }
+
+  /*
+  _itow = get_uint32_t(payload, 0);
+  if (dbg) printf("ITOW=%lu\n", _itow);
+  */
+
+  if (((_fixType == 2) || (_fixType == 3)) && timeValid) {
+    // The GPS is reporting a proper time.
+    // Set the RTC if needed
+
+  }
+}
+
+// ----------------------------------------------------------------------------------
 void Gps::processUbxBuffer()
 {
   uint8_t* payload = &ubxBuffer[4];
@@ -179,158 +378,13 @@ void Gps::processUbxBuffer()
     ubxNak = true;
   }
   else if ((ubxClass == 0x0D) && (ubxId == 0x01)) {
-    // TIM-TP.  See the protocol manual pg 72-73 for the relationship between UTC and the PPS TimePulse
-    // The short story is that this packet represents the UTC time-of-week at the next PPS event.
-    if (dbg) printf("TIM-TP: ");
-    uint32_t tow = get_uint32_t(payload, 0);
-    uint32_t wkNum = get_uint16_t(payload, 12);
-    uint8_t flags = get_uint8_t(payload, 14);
-    char timeBase = (flags & 1) ? 'U' : 'G';
-    char utcAvail = (flags & 2) ? 'U' : '-';
-
-    cTime_t timeAtNextPps;
-
-    timeAtNextPps.tzOffset  = 0;
-    timeAtNextPps.millisecs = tow % 1000;
-    timeAtNextPps.secs      = (tow/(1000)) % 60;
-    timeAtNextPps.mins      = (tow/(1000*60)) % 60;
-    timeAtNextPps.hours     = (tow/(1000*3600)) % 24;
-
-    #if 0
-      uint32_t gpsEpoch_ratadie = TimeUtils::ymdToRataDie(1980, 1, 6);
-    #else
-      uint32_t gpsEpoch_ratadie = 722820;   // This is a constant so it doesn't need to be calculated each time
-    #endif
-
-    uint32_t daysSinceGpsEpoch = (wkNum*7) + (tow / MSECS_PER_DAY);
-    uint32_t today_ratadie = gpsEpoch_ratadie + daysSinceGpsEpoch;
-    TimeUtils::fromRataDie(today_ratadie, timeAtNextPps);
-
-    // Notify the rtc what the UTC time will be at the next PPS event
-    #warning "FIX ME"
-    #if 0
-    {
-      extern ArtemisRtc* rtc;
-      rtc->presetUtcTime(&timeAtNextPps);
-    }
-    #endif
-
-    if (dbg) {
-      printf("Wk:%lu TOW:%lu %c%c [%02u/%s/%04u %s %02u:%02u:%02u.%03u UTC]\n",
-            wkNum, tow, timeBase, utcAvail,
-            timeAtNextPps.date,
-            TimeUtils::monthToString(timeAtNextPps.month),
-            timeAtNextPps.years,
-            TimeUtils::dayOfWeekToString(TimeUtils::dayOfWeek(timeAtNextPps)),
-            timeAtNextPps.hours, timeAtNextPps.mins, timeAtNextPps.secs, timeAtNextPps.millisecs
-      );
-    }
+    process_TIM_TP(payload);
   }
   else if ((ubxClass == 0x01) && (ubxId == 0x26)) {
-    // NAV-TIMELS
-    uint32_t version = get_uint32_t(payload, 4);
-    if (version == 0) {
-      uint8_t srcOfCurrLs = get_uint8_t(payload, 8);
-      uint8_t currLs = get_uint8_t(payload, 9);
-      uint8_t srcOfLsChange = get_uint8_t(payload, 10);
-      uint8_t lsChange = get_uint8_t(payload, 11);
-      int32_t timeToLsEvent = get_int32_t(payload, 12);
-      uint16_t dateOfLsGpsWn = get_uint16_t(payload, 16);
-      uint16_t dateOfLsGpsDn = get_uint16_t(payload, 18);
-      uint8_t valid = get_uint8_t(payload, 23);
-      bool validCurrLs = (valid & 0x01) != 0;
-      bool validTimeToLsEvent = (valid & 0x02) != 0;
-
-      if (dbg) {
-        printf("NAV-TIMELS: V%d", version);
-        if (validCurrLs) {
-          printf(" CurrLsSrc: %s", decode_srcOfCurrLs(srcOfCurrLs));
-          printf(" CurrLs: %d", currLs);
-        }
-        if (validTimeToLsEvent) {
-          printf(" lsChgSrc: %s", decode_srcOfLsChange(srcOfLsChange));
-          printf(" lsChg: %d", lsChange);
-          if (lsChange != 0) {
-            printf(" timeToLsEvent: %ld", timeToLsEvent);
-            printf(" dateOfLsGpsWn: %lu", dateOfLsGpsWn);
-            printf(" dateOfLsGpsDn: %lu", dateOfLsGpsDn);
-          }
-        }
-        printf("\n");
-      }
-    }
-    else {
-      if (dbg) printf("NAV-TIMELS: unknown version 0x%04X\n", version);
-    }
+    process_NAV_TIMELS(payload);
   }
   else if ((ubxClass == 0x01) && (ubxId == 0x07)) {
-    // NAV-PVT
-    bool dateValid;
-    bool timeValid;
-    bool fullyResolved;
-    uint8_t fixType;
-    uint16_t year;
-    uint8_t month;
-    uint8_t day;
-    uint8_t hours;
-    uint8_t mins;
-    uint8_t secs;
-    int32_t nanos;
-    uint32_t itow;
-
-    if (dbg) printf("NAV-PVT: ");
-    year = month = day = 0;
-    uint8_t validFlags = get_uint8_t(payload, 11);
-    if (dateValid = (validFlags & 0x01)) {
-      //if (dbg) printf("Date is valid\n");
-      year = get_uint16_t(payload, 4);
-      month = get_uint8_t(payload, 6);
-      day   = get_uint8_t(payload, 7);
-    }
-
-    hours = mins = secs = 0;
-    if (timeValid = (validFlags & 0x02)) {
-      //if (dbg) printf("Time is valid\n");
-      hours = get_uint8_t(payload, 8);
-      mins  = get_uint8_t(payload, 9);
-      secs  = get_uint8_t(payload, 10);
-      nanos = get_int32_t(payload, 16);
-    }
-    if (fullyResolved = (validFlags & 0x04)) {
-      //if (dbg) printf("Fully Resolved\n");
-    }
-
-    if (dbg) {
-      printf("%c%c%c  ", timeValid ? 'T' : '-', dateValid ? 'D' : '-', fullyResolved ? 'R' : '-');
-      if (dateValid) printf("%04u/%02u/%02u ", year, month, day);
-      if (timeValid) printf("%02u:%02u:%02u %09ld", hours, mins, secs, nanos);
-    }
-
-    fixType = get_uint8_t(payload, 20);
-    if (dbg) printf(" F%u ", fixType);
-    if ((fixType == 2) || (fixType == 3)) {
-      double lat = get_int32_t(payload, 28) * 1.0e-7;
-      double lon = get_int32_t(payload, 24) * 1.0e-7;
-
-      latitude_degrees = lat;
-      longitude_degrees = lon;
-      locationKnown = true;
-      if (dbg) printf("%10.6lf, %10.6lf\n", lat, lon);
-    }
-    else {
-      if (dbg) printf("\n");
-    }
-
-    /*
-    itow = get_uint32_t(payload, 0);
-    if (dbg) printf("ITOW=%lu\n", itow);
-    */
-
-    if (((fixType == 2) || (fixType == 3)) && timeValid) {
-      // The GPS is reporting a proper time.
-      // Set the RTC if needed
-
-    }
+    process_NAV_PVT(payload);
   }
   else {
     printf("%s: Unknown UBX Message received: %02X-%02X\n", __FUNCTION__, ubxClass, ubxId);

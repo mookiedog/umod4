@@ -29,7 +29,7 @@ Logger::Logger()
 void Logger::deinit()
 {
     lfs = nullptr;
-    memset(tempName, 0, sizeof(tempName));
+    memset(logName, 0, sizeof(logName));
     memset(&logf, 0, sizeof(logf));
 
     if (dbg) printf("%s: Logging is disabled\n", __FUNCTION__);
@@ -70,7 +70,7 @@ void Logger::getDiskInfo()
 
 bool Logger::openNewLog()
 {
-    const char* fname = "next_id";
+    const char* fname = "next_logId";
     uint16_t id;
     lfs_file_t fp;
     int32_t err;
@@ -96,17 +96,11 @@ bool Logger::openNewLog()
         id = 0;
     }
 
-    // If we get here, id contains the numeric value we will use in our temp filename
-    snprintf(tempName, sizeof(tempName), "T%05hu", id);
-    if (dbg>1) printf("%s: Creating logfile with temporary name \"%s\"\n", __FUNCTION__, tempName);
-    err = lfs_file_open(lfs, &logf, fname, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR);
-    if (err != LFS_ERR_OK) {
-        printf("%sw: Unable to open logfile\"%s\": err=%d\n", __FUNCTION__, tempName, err);
-        return err;
-    }
-
     // Increment the ID for the next time we create a log
-    id++;
+    #warning "Logfile name incrementing is disabled!!"
+    #if 0
+        id++;
+    #endif
     err = lfs_file_rewind(lfs, &fp);
     if (err != LFS_ERR_OK) {
         printf("%s: unable to rewind ID file \"%s\": err=%d", __FUNCTION__, fname, err);
@@ -121,7 +115,17 @@ bool Logger::openNewLog()
         return bytesWritten;
     }
 
-    printf("%s: Creating logfile with temporary name \"%s\"\n", __FUNCTION__, tempName);
+    // If we get here, id contains the numeric value we will use in our temp filename.
+    // We create the file if needed, and erase its contents if it already existed.
+    tempName = true;
+    snprintf(logName, sizeof(logName), "T%05hu", id);
+    printf("%s: Creating logfile with temporary name \"%s\"\n", __FUNCTION__, logName);
+    err = lfs_file_open(lfs, &logf, logName, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR);
+    if (err != LFS_ERR_OK) {
+        printf("%sw: Unable to open new logfile\"%s\": err=%d\n", __FUNCTION__, logName, err);
+        return err;
+    }
+
     return (err == LFS_ERR_OK);
 }
 

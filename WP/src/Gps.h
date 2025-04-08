@@ -75,7 +75,32 @@ class Gps : public Psm
     uint32_t get_uint32_t(uint8_t* buffer, uint16_t offset);
     int32_t  get_int32_t(uint8_t* buffer, uint16_t offset);
 
-  void processUbxBuffer();
+    void processUbxBuffer();
+    void process_TIM_TP(uint8_t* payload);
+    void process_NAV_TIMELS(uint8_t* payload);
+    void process_NAV_PVT(uint8_t* payload);
+
+    // A collection of state variables to help decide when to log certain kinds of data
+    // If moving is != 0, we are moving.
+    uint32_t moving;
+
+    // A velocity at or above this value will be considered as "moving"
+    #define MIN_MOVEMENT_VELOCITY_MPH   1.0f
+
+    // The number of times in a row we need to think we are stopped before entering the non-moving state
+    // We get positions at 10 Hz, so this means stopped for 1 second:
+    #define STOP_CNT 10
+
+    int32_t fixType;
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hours;
+    uint8_t mins;
+    uint8_t secs;
+    int32_t nanos;
+    uint32_t itow;
+
 };
 
 #endif

@@ -93,7 +93,7 @@ class SdCard {
     SdErr_t init();
 
     // These next four routines are needed to support littlefs operations.
-    // We don't need to pass around the cfg structure because the SdCard class always contains a copy.
+    // We don't need to pass around the lfs_cfg structure because the SdCard class always contains a copy.
     SdErr_t read(lfs_block_t block_num, lfs_off_t off, void *buffer, lfs_size_t size);
     SdErr_t prog(lfs_block_t block_num, lfs_off_t off, const void *buffer, lfs_size_t size_bytes);
     SdErr_t erase(lfs_block_t block_num);

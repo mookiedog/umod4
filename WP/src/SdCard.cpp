@@ -234,19 +234,19 @@ SdErr_t SdCard::testCard()
 // Warning: This routine is meant to be executed as a FreeRTOS task: it never returns!
 void SdCard::hotPlugManager(void* arg)
 {
-  hotPlugMgrCfg_t* cfg;
+  hotPlugMgrCfg_t* hotPlug_cfg;
   SdCard* sdCard;
 
   int32_t verifyPresenceCount;
   SdErr_t sdErr;
   int32_t initRetries;
 
-  cfg = static_cast<hotPlugMgrCfg_t*>(arg);
-  if (!cfg) {
-    panic("hotPlugManager: null cfg ptr");
+  hotPlug_cfg = static_cast<hotPlugMgrCfg_t*>(arg);
+  if (!hotPlug_cfg) {
+    panic("hotPlugManager: null hotPlug_cfg ptr");
   }
 
-  sdCard = cfg->sdCard;
+  sdCard = hotPlug_cfg->sdCard;
   if (!sdCard) {
     panic("hotPlugManager: null SdCard ptr");
   }
@@ -327,7 +327,7 @@ void SdCard::hotPlugManager(void* arg)
         sdErr = sdCard->testCard();
         if (sdErr == SD_ERR_NOERR) {
           // The tests passed: invoke the callback to tell the system that a card is now online and usable
-          if (cfg->comingUp(sdCard)) {
+          if (hotPlug_cfg->comingUp(sdCard)) {
             sdCard->state = OPERATIONAL;
           }
           else {
@@ -346,7 +346,7 @@ void SdCard::hotPlugManager(void* arg)
         // Check periodically to make sure the card is still present
         if (!sdCard->cardPresent()) {
           sdCard->state = NO_CARD;
-          cfg->goingDown(sdCard);
+          hotPlug_cfg->goingDown(sdCard);
         }
         else {
           vTaskDelay(pdMS_TO_TICKS(100));

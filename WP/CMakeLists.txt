@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
+include(FetchContent)
+
 if(NOT DEFINED LFS_SRC_DIR)
   message(FATAL_ERROR "LFS_SRC_DIR is undefined: Can't find LittleFS")
 endif()
@@ -57,6 +59,17 @@ include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_i
 
 #add_subdirectory(${PICO_SDK_PATH}/lib/lwip)
 
+FetchContent_Declare(tiny-regex-c
+    GIT_REPOSITORY https://github.com/kokke/tiny-regex-c
+    GIT_TAG        f2632c6d9ed25272987471cdb8b70395c2460bdb   # 2024-Oct-25
+)
+
+# We use FetchContent_populate, not _add(), because _populate() does not perform an
+# automatic addSubdirectory(). We will add it as an INTERFACE library,
+# knowing that the sources will reside in TINY_REGEX_C_SRC_DIR.
+message(STATUS "Fetching the 'tiny-regex-c' project")
+FetchContent_populate(tiny-regex-c)
+set(TINY_REGEX_C_SRC_DIR ${CMAKE_BINARY_DIR}/_deps/tiny-regex-c-src)
 
 # This is required to avoid a linker error: undefined reference to '__cxa_guard_acquire'
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-threadsafe-statics")
@@ -117,15 +130,22 @@ add_executable(${PROJECT_NAME}
   src/NeoPixelConnect.cpp
   src/Psm.cpp
   src/SdCard.cpp
+  src/Shell.cpp
   src/Spi.cpp
   src/TimeUtils.cpp
   src/Uart.cpp
   src/ws2812.pio
-
 )
 
-# Not sure the next line does what I want:
-add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
+# Override the standard Segger definitions for these symbols:
+#add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
+# This is the size of the buffer to use for sending data from the device to the host debug terminal app
+add_compile_definitions(BUFFER_SIZE_UP=2048)
+# This is the size of the buffer that the host debug terminal app can send down as a single cmdline
+add_compile_definitions(BUFFER_SIZE_DOWN=1024)
+
+add_compile_definitions(LFS_THREADSAFE=1)
+#add_compile_definitions(LFS_TRACE=printf)
 
 # Choose where stdio output goes. It should only be RTT for this project.
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
@@ -141,6 +161,12 @@ target_sources(littlefs INTERFACE
   "${LFS_SRC_DIR}/lfs_util.c"
 )
 target_include_directories(littlefs INTERFACE "${LFS_SRC_DIR}")
+
+add_library(tiny_regex_c INTERFACE)
+target_sources(tiny_regex_c INTERFACE
+  "${TINY_REGEX_C_SRC_DIR}/re.c"
+)
+target_include_directories(tiny_regex_c INTERFACE "${TINY_REGEX_C_SRC_DIR}")
 
 
 # This next section defines a number of options as described in Appendix B of the C/C++ Pico SDK manual.
@@ -163,6 +189,7 @@ target_link_libraries(${PROJECT_NAME}
   pico_runtime
   pico_stdlib
   pico_multicore
+  pico_sync
   hardware_flash
   hardware_timer
   cmsis_core
@@ -173,7 +200,8 @@ target_link_libraries(${PROJECT_NAME}
   FreeRTOS-Kernel
   FreeRTOS-Kernel-Heap1
   littlefs
-
+  tiny_regex_c
+  pico_cyw43_arch_none
   #pico_cyw43_arch_lwip_sys_freertos
 )
 

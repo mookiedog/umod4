@@ -63,6 +63,9 @@ set(DESCRAMBLE_SRC_DIR ${CMAKE_SOURCE_DIR}/../../Unprotect/src)
 if(EXISTS ${DESCRAMBLE_SRC_DIR}/descramble.cpp)
   message(STATUS "Found a descrambler!")
   set(DESCRAMBLER_SOURCE ${DESCRAMBLE_SRC_DIR}/descramble.cpp)
+  add_compile_definitions(HAS_DESCRAMBLER=1)
+else()
+  message(STATUS "No descrambler option!")
 endif()
 
 include_directories(
@@ -78,8 +81,22 @@ add_executable(${PROJECT_NAME}
   ${DESCRAMBLER_SOURCE}
 )
 
-if(EXISTS ${DESCRAMBLE_SRC_DIR}/descramble.cpp)
-  # If we are using the descrambler, make sure to add the path to its header file
+# Override the standard Segger definitions for these symbols:
+#add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
+# This is the size of the buffer to use for sending data from the device to the host debug terminal app
+add_compile_definitions(BUFFER_SIZE_UP=2048)
+# This is the size of the buffer that the host debug terminal app can send down as a single cmdline
+add_compile_definitions(BUFFER_SIZE_DOWN=1024)
+
+# Choose where stdio output goes. It should only be RTT for this project.
+pico_enable_stdio_uart(${PROJECT_NAME} 0)
+pico_enable_stdio_usb(${PROJECT_NAME} 0)
+pico_enable_stdio_rtt(${PROJECT_NAME} 1)
+
+
+if(DEFINED DESCRAMBLER_SOURCE)
+  message(STATUS "Adding descramble source dir to include path")
+  # If we have access to a descrambler source tree, make sure to add the path to its header file
   target_include_directories(${PROJECT_NAME} PRIVATE
     ${DESCRAMBLE_SRC_DIR}
   )

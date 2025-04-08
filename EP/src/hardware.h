@@ -75,13 +75,15 @@
   // Note that 24 can be used as a convenient CLKOUT pin for driving the RP2040 clock to a GPIO
   // since our Umod4 board treats GPIO24 as a TX output already.  It may annoy the receiver
   // at the other end of the clkout signal, but it will not be electrically harmful!
-#if 1
+#if 0
   // Use GPIO24/GPOUT2:
     #define CLKOUT_GPIO   24
     #define CLKOUT_SOURCE CLOCKS_CLK_GPOUT2_CTRL_AUXSRC_VALUE_CLK_SYS
 #else
-    #define TX_GPIO       24      // U1 TX
-    #define RX_GPIO       25      // U1 RX
+  #define EP_UART     uart1         // This UART is the one that is used to communicate with the EP
+  #define EP_UART_BAUD_RATE 460800  // We could go faster, if needed
+  #define TX_GPIO       24          // U1 TX
+  #define RX_GPIO       25          // U1 RX
 #endif
 
   // The CE signal passes through an inverting voltage converter. This means that
@@ -100,7 +102,7 @@
   // DBG_BSY is active low so it will turn the LED on when driven to '0'.
   #define DBG_BSY_LSB     29
   #define DBG_BSY_BITS    (1<<(DBG_BSY_LSB))
- 
+
 
 // -----------------------------------------------------------------------------------------------------
 #else

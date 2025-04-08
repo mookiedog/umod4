@@ -15,21 +15,28 @@ class EpromLoader {
   } meminfo_t;
 
   public:
+    typedef uint8_t* bsonDoc_t;
+
     // Load a sequential range of bytes from an eprom image. Bytes are always loaded to
     // the same offset in the SRAM eprom image array.
     // startOffset: the starting EPROM offset (0x0000..0x7FFF)
     // length: the number of bytes to load
     // Note: (startOffset+length) must be <= 32768 (0x8000)
-    static bool loadRange(uint8_t* epromDoc, uint32_t startOffset, uint32_t length);
+    static bool loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_t length);
 
-    // Load the entire binary image from the specified "eprom" sub-document.
-    static bool loadImage(uint8_t* epromDoc);
+    // Returns a pointer to the BSON epromDoc corresponding to the named EPROM from within the BSON document partition
+    // Returns nullptr if the BSON doc cannot be located
+    static bsonDoc_t findEprom(const char* epromName);
 
-    // Load the "mapblob", meaning the complete set of map data from the binary image specified by the "eprom" sub-document.
+    // Load an EPROM image, from a specific EPROM document or by searching the BSON partition by name.
+    static bool loadImage(const char* imageName);
+    static bool loadImage(bsonDoc_t epromDoc);
+
+    // Load a map blob, either from a specific EPROM document or by searching the BSON partition by name.
+    // The mapblob is the complete set of map data extracted from the EPROM binary image.
     // Only works for RP58-compatible EPROMs!
-    // Any RP58-compatible EPROM can get logging capabilities by loading a UM4 logging image,
-    // then loading the maps from the other EPROM on top of the UM4 image.
-    static bool loadMapblob(uint8_t* epromDoc);
+    static bool loadMapblob(const char* imageName);
+    static bool loadMapblob(bsonDoc_t epromDoc);
 
     // Search a BSON doc to find a top-level element named "mem"
     // with a value of type BSON_TYPE_EMBEDDED_DOC. The embedded doc
@@ -42,7 +49,7 @@ class EpromLoader {
     // doc: points at the BSON subdoc containing the image's mem definition
     // meminfo: gets initialized as per the BSON data
     // returns true on success, false for any sort of failure
-    static bool getMemInfo(uint8_t* doc, meminfo_t& meminfo);
+    static bool getMemInfo(bsonDoc_t doc, meminfo_t& meminfo);
 };
 
 #endif

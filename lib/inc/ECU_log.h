@@ -33,11 +33,15 @@
 
 #define   LOG_BASE                              (0x8000)
 
+// We will not assign logging address 0x8000 to mean anything.
+// For space reasons, we only store the low 8 bits of the address in the log that gets written to the filesystem.
+// By not using log address 0x8000, it means that a run of zero bytes can be ignored in the logfile, if that should be useful.
+
 // The LOG_VERSION refers to the version of this logfile.
 // The version info is a little more complex than a straight 16-bit number
 // I think it will get treated as major.minor in an 8.8 format. An increment
 // of the major number indicates a backwards-incompatible change.
-#define   LOG_LOG_VERSION_U16                   ((LOG_BASE) + 0x0000)
+#define   LOG_LOG_VERSION_U16                   ((LOG_BASE) + 0x0001)
 #define   LOG_LOG_VERSION_ID_1V0                (0x0100)
 
 #define   LOG_FW_VERSION_S

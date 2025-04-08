@@ -9,8 +9,8 @@
 // For board detection
 #define UMOD4_WP
 
-// At its heart, the umod4_WP board is a pico_w connected to a bunch of extra stuff.
-#include "boards/pico_w.h"
+// At its heart, the umod4_WP board is a pico2_w connected to a bunch of extra stuff.
+#include "boards/pico2_w.h"
 
 #include "hardware/uart.h"
 

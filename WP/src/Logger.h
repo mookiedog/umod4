@@ -19,7 +19,8 @@ class Logger {
 
   private:
     lfs_t* lfs;
-    char tempName[16];
+    char logName[16];
+    bool tempName;
     lfs_file_t logf;
 
     struct lfs_fsinfo fsinfo;
