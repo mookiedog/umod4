@@ -56,8 +56,12 @@ Uart::Uart(uart_inst_t* _uartId, int32_t _txPad, int32_t _rxPad)
   // We init that pointer to NULL:
   rxTask = 0;
 
-  gpio_set_function(txPad, GPIO_FUNC_UART);
-  gpio_set_function(rxPad, GPIO_FUNC_UART);
+  if (txPad>=0) {
+    gpio_set_function(txPad, GPIO_FUNC_UART);
+  }
+  if (rxPad>=0) {
+    gpio_set_function(rxPad, GPIO_FUNC_UART);
+  }
 
   // Enables RX and TX hardware FIFOs
   uart_set_fifo_enabled(uartId, true);

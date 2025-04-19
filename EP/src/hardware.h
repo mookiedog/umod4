@@ -80,10 +80,16 @@
     #define CLKOUT_GPIO   24
     #define CLKOUT_SOURCE CLOCKS_CLK_GPOUT2_CTRL_AUXSRC_VALUE_CLK_SYS
 #else
+  #define FLOWCTRL_GPIO 25
+
   #define EP_UART     uart1         // This UART is the one that is used to communicate with the EP
   #define EP_UART_BAUD_RATE 460800  // We could go faster, if needed
   #define TX_GPIO       24          // U1 TX
-  #define RX_GPIO       25          // U1 RX
+  #if !defined FLOWCTRL_GPIO
+    #define RX_GPIO       25          // U1 RX
+  #else
+    #define RX_GPIO       -1
+  #endif
 #endif
 
   // The CE signal passes through an inverting voltage converter. This means that

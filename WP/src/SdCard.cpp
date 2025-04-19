@@ -25,7 +25,16 @@
 #include "task.h"
 #include "Crc.h"
 
+#include "NeoPixelConnect.h"
+extern NeoPixelConnect* rgb_led;
+extern void hello(int32_t count);
+extern void pico_set_led(bool on);
+
+#if 0
 #define BREAKPT() __breakpoint();
+#else
+#define BREAKPT()
+#endif
 
 static const uint32_t dbg = 0;
 
@@ -257,6 +266,7 @@ void SdCard::hotPlugManager(void* arg)
     switch (sdCard->state) {
       case NO_CARD:
         // Turn the card power off
+        rgb_led->neoPixelSetValue(0, 16, 0, 0, true);
 
         // The 'card present' signal indicates that a card is physically present in the socket.
         if (sdCard->cardPresent()) {
@@ -275,7 +285,7 @@ void SdCard::hotPlugManager(void* arg)
         }
         else {
           // Delay between presence checks
-          vTaskDelay(pdMS_TO_TICKS(1));
+          vTaskDelay(pdMS_TO_TICKS(10));
           verifyPresenceCount--;
           if (verifyPresenceCount<0) {
             // The socket has reported a card being 'present' for enough times that we trust
@@ -288,6 +298,7 @@ void SdCard::hotPlugManager(void* arg)
       case POWER_UP:
         // V9 Spec 6.1.4.2
         // When power-cycling a card, the host needs to keep card supply voltage below 0.5V for more than 1 mSec.
+        rgb_led->neoPixelSetValue(0, 0, 0, 16, true);
         vTaskDelay(pdMS_TO_TICKS(50));
 
         // From a hardware perspective, the card supply voltage needs to ramp up
@@ -302,11 +313,14 @@ void SdCard::hotPlugManager(void* arg)
       case INIT_CARD:
         initRetries = 3;
         do {
+          rgb_led->neoPixelSetValue(0, 0, 16, 0, true);
           sdErr = sdCard->init();
+          rgb_led->neoPixelSetValue(0, 0, 16, 16, true);
           if (sdErr == SD_ERR_NOERR) {
             break;
           }
           else {
+            rgb_led->neoPixelSetValue(0, 4, 0, 0, true);
             vTaskDelay(pdMS_TO_TICKS(10));
           }
         } while (--initRetries >= 0);
@@ -328,6 +342,7 @@ void SdCard::hotPlugManager(void* arg)
         if (sdErr == SD_ERR_NOERR) {
           // The tests passed: invoke the callback to tell the system that a card is now online and usable
           if (hotPlug_cfg->comingUp(sdCard)) {
+            rgb_led->neoPixelSetValue(0, 16, 0, 16, true);
             sdCard->state = OPERATIONAL;
           }
           else {

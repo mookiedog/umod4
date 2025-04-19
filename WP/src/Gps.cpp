@@ -15,6 +15,9 @@
 
 #include "pico/time.h"
 
+#include "Logger.h"
+#include "WP_log.h"
+
 uint32_t msgCount;
 uint32_t cksumErrorCount;
 
@@ -80,7 +83,7 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
   locationKnown = false;
   latitude_degrees = 0.0;
   longitude_degrees = 0.0;
-  xTaskCreate(start_gps_rxTask, "Gps", 4096 /* words */, this, TASK_HIGH_PRIORITY, &gps_taskHandle);
+  xTaskCreate(start_gps_rxTask, "Gps", 2048 /* words */, this, TASK_HIGH_PRIORITY, &gps_taskHandle);
 
   uart->notifyOnRx(gps_taskHandle);
 
@@ -90,7 +93,18 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
   gpio_set_dir(SPARE1_PIN, GPIO_OUT);
 
   // Assume we have no fix yet
-  fixType = 0;
+  fixType = -1;
+
+  // Set time/date info to illegal values to trigger reloading them once they are known:
+  year = 0;
+  month = 0;
+  day = 0;
+  hours = 255;
+  mins = 255;
+  secs = 255;
+  nanos = 0;
+
+  moving = false;
 }
 
 
@@ -275,7 +289,8 @@ void Gps::process_NAV_PVT(uint8_t* payload)
   if (dbg) printf("NAV-PVT: ");
   _year = _month = _day = 0;
   uint8_t validFlags = get_uint8_t(payload, 11);
-  if (dateValid = (validFlags & 0x01)) {
+  dateValid = (validFlags & 0x01);
+  if (dateValid) {
     //if (dbg) printf("Date is valid\n");
     _year = get_uint16_t(payload, 4);
     _month = get_uint8_t(payload, 6);
@@ -283,15 +298,71 @@ void Gps::process_NAV_PVT(uint8_t* payload)
   }
 
   _hours = _mins = _secs = 0;
-  if (timeValid = (validFlags & 0x02)) {
+  timeValid = (validFlags & 0x02);
+  if (timeValid) {
     //if (dbg) printf("Time is valid\n");
     _hours = get_uint8_t(payload, 8);
     _mins  = get_uint8_t(payload, 9);
     _secs  = get_uint8_t(payload, 10);
     _nanos = get_int32_t(payload, 16);
   }
-  if (fullyResolved = (validFlags & 0x04)) {
+
+  if (timeValid && dateValid) {
+    bool doRest = false;
+    if (logger) {
+      if (year != _year) {
+        year = _year;
+        int8_t yr = year - 2000;
+        logger->logData(LOG_YEAR, LOG_YEAR_LEN, (uint8_t*)&yr);
+        doRest = true;
+      }
+
+      if ((month != _month) || doRest) {
+        month = _month;
+        logger->logData(LOG_MONTH, LOG_MONTH_LEN, &month);
+        doRest = true;
+      }
+
+      if ((day != _day) || doRest) {
+        day = _day;
+        logger->logData(LOG_DATE, LOG_DATE_LEN, &day);
+        doRest = true;
+      }
+
+      if ((hours != _hours) || doRest) {
+        hours = _hours;
+        logger->logData(LOG_HOURS, LOG_HOURS_LEN, &hours);
+        doRest = true;
+      }
+
+      if ((mins != _mins) || doRest) {
+        mins = _mins;
+        logger->logData(LOG_MINS, LOG_MINS_LEN, &mins);
+        doRest = true;
+      }
+
+      if ((secs != _secs) || doRest) {
+        secs = _secs;
+        logger->logData(LOG_SECS, LOG_SECS_LEN, &secs);
+        doRest = true;
+      }
+
+      if (moving && (fixType>=2)) {
+        nanos = _nanos;
+        int8_t centis = (nanos+5000000)/10000000;
+        logger->logData(LOG_CSECS, LOG_CSECS_LEN, (uint8_t*)&centis);
+      }
+    }
+  }
+
+  fullyResolved = (validFlags & 0x04);
+  if (fullyResolved) {
     //if (dbg) printf("Fully Resolved\n");
+    // "Fully resolved" means something to do with having accounted for the difference in total leap seconds between GPS time and UTC time.
+    // Apparently, the GPS firmware is originally built with the current total number of leap seconds, but that can/will change over time.
+    // The satellites send the current leap second info over a 12.5 minute period, so the actual leap second count might
+    // jump a few seconds when new leap second data is received that may differ from the built-in leap second info.
+    // See: https://portal.u-blox.com/s/question/0D52p00008HKCbFCAX/what-is-time-error-if-utc-fully-resolved-flag-not-asserted
   }
 
   if (dbg) {
@@ -302,27 +373,30 @@ void Gps::process_NAV_PVT(uint8_t* payload)
 
   _fixType = get_uint8_t(payload, 20);
   if (dbg) printf(" F%u ", _fixType);
-  if ((_fixType == 2) || (_fixType == 3)) {
-    double lat = get_int32_t(payload, 28) * 1.0e-7;
-    double lon = get_int32_t(payload, 24) * 1.0e-7;
 
-    if (_fixType != fixType) {
-      // Our fix status has just changed
-      if (_fixType != fixType) {
-        if (_fixType >= 2) {
-          // Trigger logging our position now that we have a 2D or 3D fix even if we are not moving.
-          moving = STOP_CNT;
-        }
+  if (_fixType != fixType) {
+    // Log all changes to fixType, upgrades or downgrades:
+    if (logger) logger->logData(LOG_FIXTYPE, LOG_FIXTYPE_LEN, &_fixType);
 
-        // Log all fix changes, upgrade or downgrade
-        printf("Log: fixType just changed to: %d\n", _fixType);
-
-        fixType = _fixType;
-      }
+    if ((fixType<2) && (_fixType >= 2)) {
+      // Trigger logging our position now that we have a 2D or 3D fix even if we are not moving.
+      moving = STOP_CNT;
     }
+    fixType = _fixType;
+  }
+
+  if ((_fixType == 2) || (_fixType == 3)) {
+    int32_t rawLat = get_int32_t(payload, 28);
+    int32_t rawLon = get_int32_t(payload, 24);
+
+    double lat = rawLat * 1.0e-7;
+    double lon = rawLon * 1.0e-7;
 
     int32_t gSpeed_mm_per_sec = get_int32_t(payload, 60);
     float gSpeed_mph = gSpeed_mm_per_sec / 447.04f;
+
+    // We will log our current velocity as an integer in terms of tenths of MPH, so 128 means 12.8 MPH
+    int16_t velocity = (gSpeed_mph + 0.05) * 10;
 
     if (gSpeed_mph >= MIN_MOVEMENT_VELOCITY_MPH) {
       moving = STOP_CNT;
@@ -331,7 +405,7 @@ void Gps::process_NAV_PVT(uint8_t* payload)
       moving -= 1;
       if (moving == 0) {
         // We just stopped moving
-        printf("Log: stopped moving\n");
+        //printf("Log: stopped moving\n");
       }
     }
 
@@ -341,7 +415,21 @@ void Gps::process_NAV_PVT(uint8_t* payload)
     if (dbg) printf("%10.6lf, %10.6lf (%.1f mph)\n", lat, lon, gSpeed_mph);
 
     if (moving) {
-      printf("Log: %10.6lf, %10.6lf (%.1f mph)\n", lat, lon, gSpeed_mph);
+      if (dbg) printf("Log: %10.6lf, %10.6lf (%.1f mph)\n", lat, lon, gSpeed_mph);
+      uint8_t b[10];
+      b[0] = (rawLat >> 0) & 0xFF;
+      b[1] = (rawLat >> 8) & 0xFF;
+      b[2] = (rawLat >>16) & 0xFF;
+      b[3] = (rawLat >>24) & 0xFF;
+      b[4] = (rawLon >> 0) & 0xFF;
+      b[5] = (rawLon >> 8) & 0xFF;
+      b[6] = (rawLon >>16) & 0xFF;
+      b[7] = (rawLon >>24) & 0xFF;
+      b[8] = (velocity >> 0) & 0xFF;
+      b[9] = (velocity >> 8) & 0xFF;
+
+
+      if (logger) logger->logData(LOG_PV, LOG_PV_LEN, b);
     }
   }
   else {

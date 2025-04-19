@@ -13,9 +13,6 @@ set(PICO_BOARD umod4_EP)
 # The SDK does not know about our board, so tell it where to find the board definition:
 set(PICO_BOARD_HEADER_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-# I wonder how you build for situation where one processor is ARM and the other is RISC-V?
-# Maybe you need to make two completely separate executables that get loaded to different locations.
-# Another valid platform variable is 'rp2350-riscv'
 set(PICO_PLATFORM rp2040)
 
 # As per SDK doc, this include needs to happen before project()
@@ -25,7 +22,7 @@ include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 set (CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
 
 project(EP
-  DESCRIPTION "EP: A 27C256 EPROM Emulator"
+  DESCRIPTION "EP: A 27C256 EPROM/RAM Emulator with Datalogging"
   HOMEPAGE_URL https://www.island-underground.com/projects/umod4
   LANGUAGES C CXX ASM
 )
@@ -198,21 +195,12 @@ pico_add_dis_output(${PROJECT_NAME})
 pico_add_map_output(${PROJECT_NAME})
 pico_add_hex_output(${PROJECT_NAME})
 
-# There is a problem generating UF2 files.
-# Before the pico_add_uf2_output() line below will work, the file pico-sdk/2.0.0/CmakeLists.txt needs to be modified from:
-#COMMAND picotool
-#ARGS uf2 convert
-#    --quiet
-#    ${uf2_package_args}
-#    $<TARGET_FILE:${TARGET}>
-# to
-#COMMAND picotool
-#ARGS uf2 convert
-#    --quiet
-#    ${uf2_package_args}
-#    $<TARGET_FILE:${TARGET}> -t elf  <--- explicitly tell picotool that the input file  is an elf file
-#
-#pico_add_uf2_output(${PROJECT_NAME})
+# This is annoying, but I can't figure out how to get picotool to do the right thing otherwise:
+add_custom_command(
+  TARGET ${PROJECT_NAME} POST_BUILD
+  VERBATIM
+  COMMAND picotool uf2 convert --quiet ${CMAKE_BINARY_DIR}/${PROJECT_NAME} -t elf ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.uf2 --family ${PICO_PLATFORM}
+)
 
 # Use my own linker script.
 pico_set_linker_script(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/memmap_eprom.ld)

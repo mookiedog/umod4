@@ -9,7 +9,7 @@
 // The arg must be a pointer to a hotPlugMgrCfg_t object telling the hotPlugManager
 // what SdCard to use and how to get the filesystem mounted.
 extern "C" void hotPlugManager(void* arg);
-#define HOTPLUG_MGR_STACK_SIZE_WORDS 1024
+#define HOTPLUG_MGR_STACK_SIZE_WORDS 2048
 
 // SD errors are broadly defined as 0 means OK, negative numbers are errors
 typedef int32_t SdErr_t;

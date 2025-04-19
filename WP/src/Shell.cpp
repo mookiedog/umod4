@@ -28,7 +28,7 @@ Shell::Shell(lfs_t* _lfs)
     // For the moment, our current working directory is hardcoded to be the top level directory '/'
     cwd = "/";
 
-    xTaskCreate(start_shell_task, "Shell", 8192 /* words */, this, TASK_NORMAL_PRIORITY, &shell_taskHandle);
+    xTaskCreate(start_shell_task, "Shell", 4096 /* words */, this, TASK_NORMAL_PRIORITY, &shell_taskHandle);
 }
 
 

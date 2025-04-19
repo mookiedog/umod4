@@ -61,6 +61,13 @@ uint8_t* ecu_busLog = (uint8_t*)0x21020000;
 uint32_t ecu_eventLog[ECU_EVENTLOG_LENGTH_BYTES];
 uint32_t eventLogIdx;
 
+uint8_t streamBuffer[65536];
+uint8_t* headP;
+uint8_t* tailP;
+uint8_t* lastP;
+
+uint32_t lastTxTime;
+
 // To track the amount of time it takes to get the ECU booted
 absolute_time_t epoch;
 
@@ -232,8 +239,12 @@ void initPins(void)
   gpio_put(DBG_BSY_LSB, 0);
   gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
 
-  // To Do:
-  //   - Init the pins we will use to communicate with the Pico W
+  #if defined FLOWCTRL_GPIO
+    // The WP will drive this line to '1' when it is ready to receive the ECU data stream
+    gpio_init(FLOWCTRL_GPIO);
+    gpio_set_dir(FLOWCTRL_GPIO, GPIO_IN);
+    gpio_set_pulls(FLOWCTRL_GPIO, false, true);
+  #endif
 }
 
 // --------------------------------------------------------------------------------------------
@@ -425,6 +436,11 @@ void core0Mainloop(void)
   // Calculate this constant pointer address once:
   volatile io_rw_32* const txReg = &(uart_get_hw(EP_UART)->dr);
 
+  // Init our stream buffer to hold the ECU data stream until the WP comes online
+  headP = tailP = streamBuffer;
+  lastP = &streamBuffer[sizeof(streamBuffer)-1];
+  lastTxTime = time_us_32();
+
   // We are ready to start Core1 and process the ECU data stream it will send us:
   startCore1();
 
@@ -448,16 +464,57 @@ void core0Mainloop(void)
           NOP();
         }
 
-        volatile uint32_t addr = (msg & HC11_AB_BITS) >> HC11_AB_LSB;
-        volatile uint32_t data = (msg & HC11_DB_BITS) >> HC11_DB_LSB;
+        volatile uint8_t addr = (msg & HC11_AB_BITS) >> HC11_AB_LSB;
+        volatile uint8_t data = (msg & HC11_DB_BITS) >> HC11_DB_LSB;
+        int32_t remainingSpace;
 
-        #if defined EP_UART
-          // The ECU can't generate data fast enough for the FIFO to overflow.
-          // We transmit the data blindly without even checking if the FIFO has room.
-          *txReg = addr & 0xFF;
-          *txReg = data & 0xFF;
-        #endif
+        // New data always goes into the streamBuffer
+        if (headP == tailP) {
+          remainingSpace = sizeof(streamBuffer)-1;
+        }
+        else {
+          remainingSpace = headP - tailP;
+          if (remainingSpace < 0) {
+            remainingSpace += sizeof(streamBuffer);
+          }
+        }
+
+        if (remainingSpace < 16) {
+          // crap - no room!
+          // silently discard for now - this could be changed so that we could log how much data we lost by storing a log msg in the remaining space
+          NOP();
+        }
+        else {
+          *headP++ = addr;
+          if (headP > lastP) {
+            headP = streamBuffer;
+          }
+          *headP++ = data;
+          if (headP > lastP) {
+            headP = streamBuffer;
+          }
+        }
       }
+
+      // We only remove data from the stream buffer if the WP is ready to receive it
+      #if defined FLOWCTRL_GPIO
+        uint32_t wpReady = gpio_get(FLOWCTRL_GPIO);
+        if ((wpReady) && ((uart_get_hw(EP_UART)->fr & UART_UARTFR_BUSY_BITS) == 0)) {
+
+          if (tailP != headP) {
+            #if defined EP_UART
+            uart_get_hw(EP_UART)->dr = *tailP++;
+            if (tailP > lastP) {
+              tailP = streamBuffer;
+            }
+            uart_get_hw(EP_UART)->dr = *tailP++;
+            if (tailP > lastP) {
+              tailP = streamBuffer;
+            }
+            #endif
+          }
+        }
+      #endif
     }
   }
 }
@@ -491,9 +548,12 @@ void initUart()
     // Init the UART
     uart_init(EP_UART, EP_UART_BAUD_RATE);
 
-    // Assign control of TX/RX GPIOs to the UART
-    gpio_set_function(TX_GPIO, UART_FUNCSEL_NUM(EP_UART, TX_GPIO));
-    gpio_set_function(RX_GPIO, UART_FUNCSEL_NUM(EP_UART, RX_GPIO));
+    if (TX_GPIO >= 0) {
+      gpio_set_function(TX_GPIO, UART_FUNCSEL_NUM(EP_UART, TX_GPIO));
+    }
+    if (RX_GPIO >= 0) {
+      gpio_set_function(RX_GPIO, UART_FUNCSEL_NUM(EP_UART, RX_GPIO));
+    }
   #else
     printf("%s: \n****\n**** WARNING: UART functionality is disabled due to CLKOUT testing!\n****\n")
   #endif

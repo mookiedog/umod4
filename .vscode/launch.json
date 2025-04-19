@@ -38,7 +38,7 @@
         // Debug sessions will not start without setting the adaptor speed as below
         "openOCDLaunchCommands": ["adapter speed 5000"],
 
-        // Configure the rtt IO mechanism to let the WP use printf for debug/status output
+        // Configure the rtt IO mechanism to let us use printf for debug/status output
         // To see the output stream, select 'RTT Ch:0 console' in the debugger terminal window
         "rttConfig" : {
             "enabled": true,
@@ -71,6 +71,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2350.cfg"
         ],
+        "rtos": "FreeRTOS",
         "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
         "runToEntryPoint": "main",
         // Work around for stopping at main on restart
@@ -96,7 +97,11 @@
                   "noprompt": true
               }
           ]
-      }
+        },
+        "liveWatch": {
+            "enabled": true,
+            "samplesPerSecond": 4
+        },
     },
     {
         // This config is here until a VSCode/CMake bug is fixed that allows executables to be found in

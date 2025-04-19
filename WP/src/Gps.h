@@ -8,7 +8,6 @@
 #include "Psm.h"
 #include "Uart.h"
 
-
 class Gps : public Psm
 {
   public:
@@ -100,7 +99,6 @@ class Gps : public Psm
     uint8_t secs;
     int32_t nanos;
     uint32_t itow;
-
 };
 
 #endif

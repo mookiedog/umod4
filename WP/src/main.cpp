@@ -1,36 +1,40 @@
 #include "stdio.h"
+#include <string.h>
+
 #include "pico/stdlib.h"
 #include "hardware/sync.h"
 #include "pico/mutex.h"
 
-#include "umod4_WP.h"
-#include "NeoPixelConnect.h"
-
-#include <string.h>
-
 #include "FreeRTOS.h"
 #include "task.h"
 
-#define LFS
+#define LFS 1
 
+#include "EpUart.h"
+#include "Gps.h"
 #if defined LFS
   #include "lfs.h"
 #endif
-
-#include "Uart.h"
-#include "Gps.h"
+#include "Logger.h"
+#include "NeoPixelConnect.h"
 #include "SdCard.h"
 #include "Shell.h"
 #include "Spi.h"
-#include "Logger.h"
+#include "Uart.h"
+#include "umod4_WP.h"
+
+#include "uart_tx.pio.h"
 
 #ifdef CYW43_WL_GPIO_LED_PIN
   #include "pico/cyw43_arch.h"
 #endif
 
+NeoPixelConnect* rgb_led;
+
 Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
+EpUart* epUart;
 
 #if defined LFS
 
@@ -124,6 +128,49 @@ int lfs_mutex_give(const struct lfs_config *c)
   return 0;
 }
 
+// return number of bytes that should be written before fsync for optimal
+// streaming performance/robustness. if zero, any number can be written.
+// LittleFS needs to copy the block contents to a new one if fsync is called
+// in the middle of a block. LittleFS also is guaranteed to not remember any
+// file contents until fsync is called!
+int32_t lfs_bytes_until_fsync(const struct lfs_config *lfs_cfg, lfs_file_t* fp)
+{
+    //FS_CHECK_ALLOWED(0);
+    //WITH_SEMAPHORE(fs_sem);
+
+    if (fp == nullptr) {
+        return 0;
+    }
+
+    uint32_t file_pos = fp->pos;
+    uint32_t block_size = lfs_cfg->block_size;
+
+    // first block exclusively stores data:
+    // https://github.com/littlefs-project/littlefs/issues/564#issuecomment-2555733922
+    if (file_pos < block_size) {
+        return block_size - file_pos; // so block_offset is exactly file_pos
+    }
+
+    // see https://github.com/littlefs-project/littlefs/issues/564#issuecomment-2363032827
+    // n = (N − w/8 ( popcount( N/(B − 2w/8) − 1) + 2))/(B − 2w/8))
+    // off = N − ( B − 2w/8 ) n − w/8popcount( n )
+#define BLOCK_INDEX(N, B) \
+    (N - sizeof(uint32_t) * (__builtin_popcount(N/(B - 2 * sizeof(uint32_t)) -1) + 2))/(B - 2 * sizeof(uint32_t))
+
+#define BLOCK_OFFSET(N, B, n) \
+    (N - (B - 2*sizeof(uint32_t)) * n - sizeof(uint32_t) * __builtin_popcount(n))
+
+    uint32_t block_index = BLOCK_INDEX(file_pos, block_size);
+    // offset will be 4 (or bigger) through (block_size-1) as subsequent blocks
+    // start with one or more pointers; offset will never equal block_size
+    uint32_t block_offset = BLOCK_OFFSET(file_pos, block_size, block_index);
+
+#undef BLOCK_INDEX
+#undef BLOCK_OFFSET
+
+    return block_size - block_offset;
+}
+
 // ----------------------------------------------------------------------------------
 // This routine is called when the hotplug manager is bringing a card online.
 // The SdCard is initialized and ready for access.
@@ -165,6 +212,10 @@ bool comingOnline(SdCard* sdCard)
   lfs_cfg.cache_size = blockSize;
   lfs_cfg.lookahead_size = 16;
 
+  // This disables wear-leveling because SD cards do it themselves.
+  // See https://github.com/joltwallet/esp_littlefs/issues/211#issuecomment-2585285239
+  lfs_cfg.block_cycles = -1;
+
   mutex_init(&lfs_mutex);
   lfs_cfg.lock = lfs_mutex_take;
   lfs_cfg.unlock = lfs_mutex_give;
@@ -178,14 +229,14 @@ bool comingOnline(SdCard* sdCard)
 
   // If we were unable to mount the filesystem, try reformatting it. This should only happen on the first boot.
   // As a development aid, reformat the filesystem if GPIO SPARE2 is grounded.
-  bool formatRequest = gpio_get(SPARE2_PIN);
+  bool formatRequest = !gpio_get(SPARE2_PIN);
 
   if (err || formatRequest) {
     if (err) {
       printf("%s: Mount failed! err=%d\n", __FUNCTION__, err);
     }
     else {
-      printf("%s: External request to reformat filesystem via GPIO SPARE2\n");
+      printf("\n%s: *** External request to reformat filesystem via GPIO SPARE2\n\n", __FUNCTION__);
     }
 
     // We should probably log a message if we ever have to reformat!
@@ -280,7 +331,7 @@ void startGps()
   static Gps* gps;
   static Uart* uart_gps;
 
-// Set up the UART connected to the GPS
+  // Set up the UART connected to the GPS
   uart_gps = new Uart(GPS_UART_ID, GPS_TX_PIN, GPS_RX_PIN);
   uart_gps->configFormat(8, 1, UART_PARITY_NONE);
   uart_gps->configFlowControl(false, false);
@@ -310,14 +361,25 @@ void vApplicationIdleHook( void )
 // to use any FreeRTOS constructs and call any FreeRTOS routines.
 void bootSystem()
 {
-  // Create the Spi object that we could use to drive a local LCD.
-  // There is no harm in creating it even if there is no display attached:
-  spiLcd = new Spi(LCD_SPI_PORT, LCD_SCK_PIN, LCD_MOSI_PIN, LCD_MISO_PIN);
+  #if defined DBG_UART_TX_PIN
+    // Create the object to handle UART data arriving from EP
+    epUart = new EpUart(EP_UART_ID, EP_TX_PIN, EP_RX_PIN);
+    epUart->configFormat(8, 1, UART_PARITY_NONE);
+    epUart->configFlowControl(false, false);
+    #warning "Not cool!"
+    epUart->configBaud(460800);
+    epUart->enable();
+    epUart->rxIntEnable();
+  #else
+    // Create the Spi object that we could use to drive a local LCD.
+    // There is no harm in creating it even if there is no display attached:
+    spiLcd = new Spi(LCD_SPI_PORT, LCD_SCK_PIN, LCD_MOSI_PIN, LCD_MISO_PIN);
+  #endif
 
-  // The logger object gets created here, but logging is not started until
-  // the hotplug manager decides that the filesystem is coming up
+  // It is OK to start the logger before the filesystem because the logger has a big
+  // buffer to handle long write times.
   printf("%s: Creating the logger\n", __FUNCTION__);
-  logger = new Logger();
+  logger = new Logger(LOG_BUFFER_SIZE);
 
   printf("%s: Starting the GPS\n", __FUNCTION__);
   startGps();
@@ -327,7 +389,6 @@ void bootSystem()
 
   printf("%s: Starting the debug shell\n", __FUNCTION__);
   dbgShell = new Shell(&lfs);
-
 }
 
 
@@ -337,14 +398,17 @@ void bootSystem()
 // Doing that from this task avoids having a dedicated boot task using stack space after it completes.
 void vLedTask(void* arg)
 {
+  // Get the LED working first so that it can be used by the rest of the system
+  rgb_led = new NeoPixelConnect(WS2812_PIN, WS2812_PIXCNT, PIO_WS2812, PIO_WS2812_SM);
+  rgb_led->neoPixelSetValue(0, 16, 16, 16, true);
+
   // Take care of our system boot responsibilities...
   bootSystem();
 
+  #if 0
+  rgb_led->neoPixelSetValue(0, 0, 16, 0, true);
+
   // Now we are free to be the status LED task
-  static NeoPixelConnect* rgb_led;
-
-  rgb_led = new NeoPixelConnect(WS2812_PIN, 1);
-
   int32_t count=0;
   int32_t incr=1;
 
@@ -361,8 +425,8 @@ void vLedTask(void* arg)
     }
 
     #if 1
-      rgb_led->neoPixelSetValue(0, count, 0, 16, true);
-      vTaskDelay(50);
+        rgb_led->neoPixelSetValue(0, count, 0, 16, true);
+        vTaskDelay(50);
     #else
       // Measure min/max power for the LED by putting it at min/max brightness for a few seconds at a time
       bool foo;
@@ -372,6 +436,11 @@ void vLedTask(void* arg)
       vTaskDelay(3000);
     #endif
   }
+  #else
+  while (1) {
+    vTaskDelay(1000);
+  }
+  #endif
 }
 
 // --------------------------------------------------------------------------------------------
@@ -379,10 +448,16 @@ void vLedTask(void* arg)
 // These functions hides the differences.
 int32_t pico_led_init(void)
 {
-  #if defined(PICO_DEFAULT_LED_PIN)
-    // non-wireless boards access the LED GPIO directly
-    gpio_init(PICO_DEFAULT_LED_PIN);
-    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+  #if defined SPARE1_LED_PIN
+    gpio_init(SPARE1_LED_PIN);
+    gpio_put(SPARE1_LED_PIN, 0);
+    gpio_set_dir(SPARE1_LED_PIN, GPIO_OUT);
+  #else
+    #if defined(PICO_DEFAULT_LED_PIN)
+      // non-wireless boards access the LED GPIO directly
+      gpio_init(PICO_DEFAULT_LED_PIN);
+      gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    #endif
   #endif
 
   return PICO_OK;
@@ -390,21 +465,25 @@ int32_t pico_led_init(void)
 
 void pico_set_led(bool led_on)
 {
-  #if defined(PICO_DEFAULT_LED_PIN)
-    gpio_put(PICO_DEFAULT_LED_PIN, led_on);
-  #elif defined(CYW43_WL_GPIO_LED_PIN)
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
+  #if defined SPARE1_LED_PIN
+    gpio_put(SPARE1_LED_PIN, led_on);
+  #else
+    #if defined(PICO_DEFAULT_LED_PIN)
+      gpio_put(PICO_DEFAULT_LED_PIN, led_on);
+    #elif defined(CYW43_WL_GPIO_LED_PIN)
+      cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
+    #endif
   #endif
 }
 
 // --------------------------------------------------------------------------------------------
-// Fast flash the LED 3 times as a most basic sign of life as we boot.
-void hello()
+// Fast flash the LED 'count' times as a most basic sign of life as we boot.
+void hello(int32_t count)
 {
   int32_t rval = pico_led_init();
   hard_assert(rval == PICO_OK);
 
-  for (uint32_t i=0; i<3; i++) {
+  for (uint32_t i=0; i<count; i++) {
     pico_set_led(true);
     sleep_ms(10);
     pico_set_led(false);
@@ -418,15 +497,38 @@ void initSpareIos()
 {
   gpio_init(SPARE0_PIN);
   gpio_set_dir(SPARE0_PIN, GPIO_IN);
-  gpio_set_pulls(SPARE0_PIN, false, true);
+  gpio_set_pulls(SPARE0_PIN, false, true);    // pulldown
 
-  gpio_init(SPARE1_PIN);
-  gpio_set_dir(SPARE1_PIN, GPIO_IN);
-  gpio_set_pulls(SPARE1_PIN, false, true);
+  #if !defined SPARE1_LED_PIN
+    gpio_init(SPARE1_PIN);
+    gpio_set_dir(SPARE1_PIN, GPIO_IN);
+    gpio_set_pulls(SPARE1_PIN, false, true);    // pulldown
+  #endif
 
   gpio_init(SPARE2_PIN);
   gpio_set_dir(SPARE2_PIN, GPIO_IN);
-  gpio_set_pulls(SPARE2_PIN, false, true);
+  gpio_set_pulls(SPARE2_PIN, true, false);    // pullup
+}
+
+// ----------------------------------------------------------------------------------
+void initEpFlowControl()
+{
+  #if defined EP_FLOWCTRL_PIN && (EP_FLOWCTRL_PIN >= 0)
+  gpio_init(EP_FLOWCTRL_PIN);
+  gpio_put(EP_FLOWCTRL_PIN, 0);
+  gpio_set_dir(EP_FLOWCTRL_PIN, GPIO_OUT);
+  #endif
+}
+
+// ----------------------------------------------------------------------------------
+void initDbgUart()
+{
+  const uint32_t SERIAL_BAUD = 115200;
+
+  uint offset = pio_add_program(PIO_UART, &uart_tx_program);
+  uart_tx_program_init(PIO_UART, PIO_UART_SM, offset, DBG_UART_TX_PIN, SERIAL_BAUD);
+
+  uart_tx_program_puts(PIO_UART, PIO_UART_SM, "\r\n\nInitializing PIO-based Debug UART\r\n");
 }
 
 // ----------------------------------------------------------------------------------
@@ -435,10 +537,19 @@ void initSpareIos()
 // That is where all the behind-the-scenes initialization of the runtime occurs.
 int main()
 {
-  // Pico2_W boards need to do this before we can even access the LED
+  initEpFlowControl();
+  #if defined SPARE1_LED_PIN
+    hello(3);
+  #endif
+
+  // Pico2_W boards need to do this before we can even access the Pico's on-board LED
   cyw43_arch_init();
-  hello();
+  #if !defined SPARE1_LED_PIN
+    hello(3);
+  #endif
+
   initSpareIos();
+  initDbgUart();
   stdio_init_all();
 
   printf("\n\nWP Booting on %s\n", STRINGIFY(PICO_BOARD));
@@ -447,7 +558,7 @@ int main()
   printf("\n");
 
   // The LED task will boot the rest of the system
-  BaseType_t err = xTaskCreate(vLedTask, "LED Task", 512, NULL, 1, NULL);
+  BaseType_t err = xTaskCreate(vLedTask, "LED Task", 2048, NULL, 1, NULL);
   if (err != pdPASS) {
     panic("Task creation failed!");
   }

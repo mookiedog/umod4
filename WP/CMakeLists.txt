@@ -124,6 +124,7 @@ include_directories(
 add_executable(${PROJECT_NAME}
   src/Clock.cpp
   src/Crc.cpp
+  src/EpUart.cpp
   src/Gps.cpp
   src/Logger.cpp
   src/main.cpp
@@ -135,7 +136,11 @@ add_executable(${PROJECT_NAME}
   src/TimeUtils.cpp
   src/Uart.cpp
   src/ws2812.pio
+  src/uart_tx.pio
 )
+
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_LIST_DIR}/src/uart_tx.pio)
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_LIST_DIR}/src/ws2812.pio)
 
 # Override the standard Segger definitions for these symbols:
 #add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
@@ -209,3 +214,10 @@ target_link_libraries(${PROJECT_NAME}
 pico_add_dis_output(${PROJECT_NAME})
 pico_add_map_output(${PROJECT_NAME})
 pico_add_hex_output(${PROJECT_NAME})
+
+# This is annoying, but I can't figure out how to get picotool to do the right thing otherwise:
+add_custom_command(
+  TARGET ${PROJECT_NAME} POST_BUILD
+  VERBATIM
+  COMMAND picotool uf2 convert --quiet ${CMAKE_BINARY_DIR}/${PROJECT_NAME} -t elf ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.uf2 --family ${PICO_PLATFORM}
+)

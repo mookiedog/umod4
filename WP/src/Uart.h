@@ -45,7 +45,7 @@ class Uart {
     void enableInts();
     void disableInts();
 
-    void isr();
+    virtual void isr();
 
     int32_t tx(uint8_t byte);
     int32_t tx(uint8_t* bytes, uint8_t len);
@@ -58,7 +58,6 @@ class Uart {
 
     void notifyOnRx(TaskHandle_t t) {rxTask = t;}
 
-  private:
     // This is a pointer to the specific instance of the UART hardware registers.
     // HOWEVER... the pico header file says that it may not remain that way in the future.
     uart_inst_t* uartId;
@@ -66,6 +65,7 @@ class Uart {
     // THEREFORE, we make our own pointer to the specific instance of the UART hardware registers
     uart_hw_t* hw;
 
+  private:
     int32_t irqId;
 
     int32_t txPad;

@@ -103,6 +103,8 @@
 #define   LOG_TS_CRANKREF_START_U16             ((LOG_BASE) + 0x0090)           // Timestamp of the start of the most recent crankshaft sub-rotation (6 crankrefs per full crank rotation)
 #define   LOG_CRANKREF_ID_U8                    ((LOG_BASE) + 0x0092)           // The ID of the specific crankshaft subroutation (0..11): 2 full rotations == all 4 strokes of the 4-stroke engine
 
-#define   LOG_LAST_ADDR                         ((LOG_BASE) + 0x00FF)
+// The ECU is not allowed to define any LOG IDs beyond this next value.
+// The remaining log space up to offset 0xFF is reserved for the use of the WP.
+#define   LOG_ECU_LAST_ADDR                     ((LOG_BASE) + 0x00DF)
 
 #endif
