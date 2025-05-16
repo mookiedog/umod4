@@ -207,8 +207,8 @@ log:                                                                            
 // not including execution time of the WFI.
 // Don't forget that the falling E will not be recognized for 2 more clocks as it moves
 // through the GPIO synchronizers, so there is even a bit more margin.
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [57]
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [58]
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [57]
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [58]
 #endif
 _wfi:   wfi                                                                     // 1 [59] Wait for the next falling edge of E signifying the start of the next bus cycle
 
@@ -224,8 +224,8 @@ _wfi:   wfi                                                                     
         str     r0,[r1]                                                         // 5 [18] Clear the falling edge interrupt request from the GPIO unit (yes, this store takes 5 cycles!!)
         str     r0,[r2]                                                         // 2 [20] Clear the GPIO's pending interrupt in the NVIC
 
-// Drive DBG_BSY high to indicate that we are about to read the bus signals
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [21] Scope must show the STR instruction completing at 160 to 168 nSec (20 to 21 clocks)
+// Drive DBG_BSY low to indicate that we are about to read the bus signals
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [21] Scope must show the STR instruction completing at 160 to 168 nSec (20 to 21 clocks)
 
 // The HC11 bus spec guarantees that the ADDR and control signals will be valid no later than 95 nS (12 clocks) after falling E.
 // We are well past that, so we have a lots of margin.
@@ -258,9 +258,9 @@ _wfi:   wfi                                                                     
         bne     1b
 
 // We will drive our debug signal active, then sample 2 clocks later to account for the GPIO input synchronizer delay.
-// An oscilloscope will show DBG_BSY going low just before the data gets sampled.
+// An oscilloscope will show DBG_BSY going high just before the data gets sampled.
         nop                                                                     // 1 [42]
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [43] Drive DBG_BSY low
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [43] Drive DBG_BSY high
         nop                                                                     // 1 [44]
         ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [45] Sample the HC11 bus data from 2 clocks ago, note that E/A15 is guaranteed to be a '1'
 
@@ -288,7 +288,7 @@ _writeLog2:                                                                     
 
 // We will drive our debug signal active, then sample 2 clocks later to account for the input synchronizer delay.
 // An oscilloscope will show DBG_BSY going low in the same cycle as the data gets sampled.
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [43] Drive DBG_BSY low at 43 clocks/344 nS
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [43] Drive DBG_BSY high at 43 clocks/344 nS
         nop                                                                     // 1 [44]
         ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [45] Sample the HC11 bus data from 2 clocks ago, note that E/A15 is guaranteed to be a '1'
         str     r0, [r_SIO_BASE_PTR, #SIO_FIFO_WR_OFFSET]                       // 1 [46] Send the write info to the other core for further processing
@@ -315,8 +315,8 @@ _readCycle:                                                                     
         str     r0, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]                   // 1 [34] Put the proper data in the outputs, leaving all other IOs untouched
         str     r_HC11_DATA_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OE_SET_OFFSET]       // 1 [35] Now that all updates are complete: enable the output drivers
 
-// Drive DBG_BSY low to indicate that read data is active (needs to be <=53 clocks, 425 nS)
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [36]
+// Drive DBG_BSY high to indicate that read data is active (needs to be <=53 clocks, 425 nS)
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [36]
 
 // Re-read the data bus now that it reflects our new output data and E/A15 is guaranteed to be '1'.
         nop                                                                     // 1 [37] May not be req'd: it depends if our data bus outputs need to get resampled through the synchronizers or not. This is safe!
@@ -339,8 +339,8 @@ _readCycle:                                                                     
 // The address bits and control signals are correct, but the data is not!
 // We will not bother logging the bus cycle.
 no_CE:                                                                          // 1 [25] taken branch to get here
-// Drive DBG_BSY low to indicate we are done:
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [26] Oscope says this instr completes at 200nS to 208 nS, 25 to 26 clocks, so our accounting is correct!
+// Drive DBG_BSY high to indicate we are done:
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [26] Oscope says this instr completes at 200nS to 208 nS, 25 to 26 clocks, so our accounting is correct!
         b       _wfi                                                            // 1 [27] Nothing to log, so go back to sleep
 
 
