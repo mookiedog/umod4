@@ -14,6 +14,9 @@ Parking the bike and plugging in a USB supply allows the umod4 to perform wifi o
 For the purposes of bench testing, it makes most sense to supply power to the ECU in the same manner as the ignition switch would.
 The USB power connection to the Pico2-W can also be used to verify that the umod4 runs even when the main power source is OFF.
 
+Note: the yellow LED marked LED2 on the umod4 indicates the presence of ECU power.
+In the situation where the umod4 is powered via USB but the ECU is OFF, the yellow LED will remain OFF to indicate that the ECU is not running.
+
 ## Wiring
 
 For a minimal bench test system, all you need is a source of nominal +12V power and GND.
