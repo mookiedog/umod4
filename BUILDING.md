@@ -7,7 +7,7 @@ It is significantly more complicated than loading an Arduino sketch and going ri
 To get the project working requires building tools and executables for four separate processors:
 
 1) 68HC11 assembly code for ECU firmware
-1) C, C++ and assembly language for ARM Cortex M0+: the EP and WP processors (both running dual-core RP2040 processors)
+1) C, C++ and assembly language for ARM Cortex M0+ for the WP processor (RP2040), and ARM Cortex M33 for the EP processor (RP2350).
 1) various C, C++, and Python tools that will run on the development host (an x86 PC or ARM Raspberry Pi)
 
 ## Development System Overview

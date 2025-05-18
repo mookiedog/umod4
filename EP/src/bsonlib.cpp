@@ -105,7 +105,7 @@ int32_t Bson::elementLength_bytes(uint8_t* elementP)
             break;
 
         case BSON_TYPE_JS_CODE_W_S:    // JavaScript code with scope — Deprecated
-            // todo: fix this...
+            // todo: for completeness, this could be added but this system never uses this deprecated data type.
             break;
 
         case BSON_TYPE_INT32:
@@ -136,54 +136,6 @@ int32_t Bson::elementLength_bytes(uint8_t* elementP)
 // The doc pointer needs to point to the first byte of the length of the embedded doc.
 // Returns a pointer to the first byte of the element data matching the desired name
 // i.e. to the data type of the element.
-#if 0
-uint8_t* Bson::findElement(uint8_t* doc, const char* elementNameToFind)
-{
-    bool found = false;
-
-    // As we search through the doc, these next 3 vars get set to reflect
-    // info for the latest element we are looking at:
-    uint8_t* element;
-    int8_t elementType;
-    char* elementName;
-    uint8_t* elementValue;
-
-    uint8_t* p = doc;
-    printf("%s: findElement named '%s'\n", __FUNCTION__, elementNameToFind);
-    uint32_t docLen = Bson::read_unaligned_uint32(&p);
-    printf("%s: docLen: %d\n", __FUNCTION__, docLen);
-    while ((*p != 0) && (p<doc+docLen)){
-        element = p;
-        elementType = *p++;
-        elementName = (char*)p;
-        elementValue = p+strlen(elementName)+1;
-        p = elementValue;
-
-        printf("%s: Checking element name %s, type %d\n", __FUNCTION__, elementName, elementType);
-
-        if (0 == strcmp(elementNameToFind, elementName)) {
-            printf("%s: found it!\n", __FUNCTION__);
-            return(element);
-        }
-
-        #warning "need consistency here about what length we are using"
-        // We need to skip over the value section of this element
-        p = elementValue + elementLength_bytes(element);
-        printf("%s: *p=0x%02x\n", __FUNCTION__, *p);
-    }
-
-    printf("%s: not found\n", __FUNCTION__);
-    return nullptr;
-}
-#endif
-
-#if 0
-bool Bson::findElement(const char* elementName, element_t* e)
-{
-    return false;
-}
-#endif
-
 bool Bson::findElement(uint8_t* docP, const char* elementName, element_t &e)
 {
     if (dbg) printf("%s: Begin search for '%s'\n", __FUNCTION__, elementName);
@@ -221,4 +173,3 @@ bool Bson::findElement(uint8_t* docP, const char* elementName, element_t &e)
     if (dbg) printf("%s: returning FALSE\n", __FUNCTION__);
     return false;
 }
-

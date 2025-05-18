@@ -1,9 +1,3 @@
-// To Do:
-//  - get rid of calls to panic(): the system needs to do *something* no matter what.
-//    It can't just strand a rider at the side of the road!
-//  - Maybe panic() should log something, like a panic code
-//    ?
-
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -38,8 +32,6 @@
 #if defined LFS
   #include "../littlefs/lfs.h"
 #endif
-
-extern void _panic(void);
 
 // This can be handy in order to insert an instruction that will
 // be guaranteed to exist for the purposes of setting a debugger breakpoint.
@@ -152,14 +144,6 @@ int lfs_sync(const struct lfs_config *c)
   return LFS_ERR_OK;
 }
 #endif
-
-
-// --------------------------------------------------------------------------------------------
-void _panic(void)
-{
-  //__breakpoint();
-  while(1){}
-}
 
 // --------------------------------------------------------------------------------------------
 // Decoding protected EPROMs is not a public feature.
@@ -297,13 +281,12 @@ void initCpu(void)
 
   // We need to run at a specific frequency for the fake EPROM code timing to be accurate.
   // Explicitly set the clock rate to 125 Mhz resulting in a cycle time of 8 nS.
-  if (!set_sys_clock_khz(125000, true)) {
-    _panic();
-  }
+  // No need to check for errors because we know that a request for 125 MHz is always OK.
+  set_sys_clock_khz(125000, true);
 
   #if defined CLKOUT_GPIO
-    // Bringup Debug: prove our clock is running at the right frequency
-    // by driving a square wave of 125MHz/64 or 1.953125 MHz on the specified GPIO
+    // Bringup Debug: Use a scope or freq counter to prove the sysclk is running at the right frequency.
+    // We will drive a square wave of 125MHz/64 or 1.953125 MHz on the specified GPIO.
     clock_gpio_init(CLKOUT_GPIO, CLOCKS_CLK_GPOUT2_CTRL_AUXSRC_VALUE_CLK_SYS, 64);
   #endif
 

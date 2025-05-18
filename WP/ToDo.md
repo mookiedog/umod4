@@ -2,8 +2,8 @@
 
 ## To Do Features
 
-* Rename temp files to just be log.N where N can be up to 9 digits.
-Scan the directory at boot to find the largest value of N present, then add 1 to it to create the new tempname.
+* EP Feature: change panic() routine to flash the LED "SOS"
+Should actually try to get rid of all panic events though!!
 
 * Add renaming of temp files to time-stamped version.
 Files of the form log.N get renamed to log.YYMMDD-HHMMSS

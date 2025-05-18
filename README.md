@@ -109,7 +109,7 @@ At the moment, things are in a state of flux. On the plus side:
 
 Since the Bluetooth interface is not yet developed, the existing code serves a single EPROM image.
 But the interesting part is that I can get the system to "mix and match" my special data-logging firmware with the maps out of any Aprilia EPROM that is compatible with the RP58 codebase.
-In short, basically any Aprilia EPROM codebase except the early small valve engines.
+In short, that means that basically any Aprilia EPROM codebase except the early small valve engines can be converted to have data-logging capabilities.
 
 ### Next Steps
 

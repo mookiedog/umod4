@@ -63,7 +63,7 @@
 #define     LOG_CPU_EVENT_ID_OC3F               (0xA)
 #define     LOG_CPU_EVENT_ID_IC3                (0xB)
 
-#define     LOG_L4000_EVENT_U8                  ((LOG_BASE) + 0x0011)
+#define   LOG_L4000_EVENT_U8                    ((LOG_BASE) + 0x0011)
 
 #define   LOG_TS_FRT_INJ_ON_U16                 ((LOG_BASE) + 0x0020)
 #define   LOG_TS_FRT_INJ_OFF_U16                ((LOG_BASE) + 0x0022)
