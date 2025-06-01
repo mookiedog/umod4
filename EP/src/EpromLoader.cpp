@@ -29,22 +29,21 @@ const char* s = "The quick brown fox jumps over the lazy dog";
 // key called "eprom" where the key value has a type of "BSON_TYPE_EMBEDDED_DOC".
 // If so, look inside the embedded doc and check if it defines a "name" key
 // with a value that matches the epromName parameter.
-//
-// Normally, multiple BSON documents could be stored as a sequence of
-// document objects with no space between them. At the moment (and
-// perhaps forever), the compiler/linker pads the space between
-// documents forcing every document to start on a word boundary.
-// Because of this, as we move from one document to the next, we
-// need to account for this padding.
 uint8_t* EpromLoader::findEprom(const char* epromName)
 {
   uint8_t* docP = (uint8_t*)&__BSON_IMAGE_PARTITION_START_ADDR;
 
   printf("%s: Locating EPROM \"%s\"\n", __FUNCTION__, epromName);
   while (1) {
-    // Docs are placed in the image partition starting on a word alignment.
-    // Force the docPtr into word alignment before using the document:
-    docP = (uint8_t*)(((uint32_t)(docP)+3) & ~3);
+    #if !defined BSON_PARTITION_IS_PADDED
+      #error "Need to define if the BSON partition is padded or not!"
+    #elif BSON_PARTITION_IS_PADDED != 0
+      // WARNING: if this system is compiled with -Os, the EPROM BSON documents
+      // are packed into the BSON partition with no space between them.
+      // If you compile with -Og, the compiler and/or linker pads the space between
+      // each document in the partition forcing every document to start on a word boundary.
+      docP = (uint8_t*)(((uint32_t)(docP)+3) & ~3);
+    #endif
 
     uint32_t docLength = Bson::read_unaligned_uint32(docP);
     if (docLength == 0xFFFFFFFF) {

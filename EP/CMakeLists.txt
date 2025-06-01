@@ -48,9 +48,20 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 
 # This is probably the wrong way to do this...
-# For now, compile all the Cortex code with -Og for optimized, but debuggable.
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Og")
-set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -Og")
+# For now, compile all the Cortex code with -Os.
+# **** WARNING ****:
+# For some reason, if you compile with -Og, the linker aligns each generated BSON doc within
+# the BSON partition to start on a word boundary. If you compile with -Os, the linker
+# does NOT align the docs to start on a word boundary.
+if(0)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Os")
+  set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -Os")
+  set(BSON_PARTITION_IS_PADDED 0)
+else()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Og")
+  set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -Og")
+  set(BSON_PARTITION_IS_PADDED 1)
+endif()
 
 pico_sdk_init()
 
@@ -76,6 +87,10 @@ add_executable(${PROJECT_NAME}
   src/bsonlib.cpp
   src/EpromLoader.cpp
   ${DESCRAMBLER_SOURCE}
+)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+  BSON_PARTITION_IS_PADDED=${BSON_PARTITION_IS_PADDED}
 )
 
 # Override the standard Segger definitions for these symbols:
