@@ -58,8 +58,6 @@ uint8_t* headP;
 uint8_t* tailP;
 uint8_t* lastP;
 
-uint32_t lastTxTime;
-
 // To track the amount of time it takes to get the ECU booted
 absolute_time_t epoch;
 
@@ -220,7 +218,7 @@ void initPins(void)
   // using an oscilloscope or logic analyzer.
   // Note: There is an active-low LED connected to this pin.
   gpio_init(DBG_BSY_LSB);
-  gpio_put(DBG_BSY_LSB, 0);
+  gpio_put(DBG_BSY_LSB, 1);                   // Init LED to OFF state
   gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
 
   #if defined FLOWCTRL_GPIO
@@ -315,6 +313,8 @@ void hello(uint32_t flickerCount)
     gpio_put(DBG_BSY_LSB, 1);
     busy_wait_us_32(45000);
   }
+
+  // Leave LED in the OFF state
 }
 
 // --------------------------------------------------------------------------------------------
@@ -410,19 +410,128 @@ void prepEpromImage()
 }
 
 // --------------------------------------------------------------------------------------------
-// Perform the remainder of the EPROM support tasks that Core1 is not capable of doing.
-//   - Send incoming log messages from Core1 over to the WiFi Processor (WP)
-//   - Process any commands that might arrive from the WP
-static void core0Mainloop(void) __attribute__((noreturn));
-void core0Mainloop(void)
+// If a message is present in the inter-core FIFO, remove it and place it in the circular
+// streamBuffer to be sent to the WP via the UART.
+static void processFifo()
+{
+  uint32_t msg = multicore_fifo_pop_blocking();
+
+  // The fake eprom should only be sending us writes.
+  // Discard any transfers that are not writes!
+  if ((msg & HC11_WR_BITS) != 0) {
+    // Save the initial log data we received for debugging purposes
+    if (eventLogIdx < ECU_EVENTLOG_LENGTH_BYTES) {
+      ecu_eventLog[eventLogIdx++] = msg;
+    }
+    else {
+      // NOP allows for a debugger breakpoint here when the buffer fills
+      NOP();
+    }
+
+    volatile uint8_t addr = (msg & HC11_AB_BITS) >> HC11_AB_LSB;
+    volatile uint8_t data = (msg & HC11_DB_BITS) >> HC11_DB_LSB;
+    int32_t remainingSpace;
+
+    // New data always goes into the streamBuffer
+    if (headP == tailP) {
+      remainingSpace = sizeof(streamBuffer)-1;
+    }
+    else {
+      remainingSpace = headP - tailP;
+      if (remainingSpace < 0) {
+        remainingSpace += sizeof(streamBuffer);
+      }
+    }
+
+    if (remainingSpace < 16) {
+      // crap - no room!
+      // silently discard for now - this could be changed so that we could log how much data we lost by storing a log msg in the remaining space
+      NOP();
+    }
+    else {
+      *headP++ = addr;
+      if (headP > lastP) {
+        headP = streamBuffer;
+      }
+      *headP++ = data;
+      if (headP > lastP) {
+        headP = streamBuffer;
+      }
+    }
+  }
+}
+
+
+// --------------------------------------------------------------------------------------------
+static void sendToWp(void)
 {
   // Calculate this constant pointer address once:
   volatile io_rw_32* const txReg = &(uart_get_hw(EP_UART)->dr);
 
+  while (gpio_get(HC11_E_LSB) != 0);
+  while (gpio_get(HC11_E_LSB) == 0);
+
+  if ((uart_get_hw(EP_UART)->fr & UART_UARTFR_BUSY_BITS) == 0) {
+
+    if (tailP != headP) {
+      uint8_t byte1, byte2;
+
+      #if defined EP_UART
+      byte1 = *tailP++;
+      if (tailP > lastP) {
+        tailP = streamBuffer;
+      }
+      byte2 = *tailP++;
+      if (tailP > lastP) {
+        tailP = streamBuffer;
+      }
+
+      // We definitely saw trouble before adding the following check!
+      // Critical section! Do not access the UART unit unless E-clk is '1'.
+      // When E-clk is '0', the EPROM core needs exclusive access to the APB bridge.
+      // Delay until we observe a 0->1 transition on E:
+      while (gpio_get(HC11_E_LSB) != 0);
+      while (gpio_get(HC11_E_LSB) == 0);
+      // Write to the UART while we know that E==1:
+      *txReg = byte1;
+      *txReg = byte2;
+      #endif
+    }
+  }
+}
+
+
+// --------------------------------------------------------------------------------------------
+static bool wpReady()
+{
+  #if defined FLOWCTRL_GPIO
+    return (gpio_get(FLOWCTRL_GPIO) != 0);
+  #else
+    return false;
+  #endif
+}
+
+
+// --------------------------------------------------------------------------------------------
+// Send incoming log messages from Core1 over to the WiFi Processor (WP)
+//
+// Both cores need to access peripherals behind the APB crossbar port:
+//   - core1 must access the GPIO unit behind the APB port to clear its falling-E interrupt
+//   - core0 must write to the UART unit behind the APB port to send the ECU data to the WP
+// It has been proven that the UART writes can impact the timing of the core1 EPROM code
+// due to bus fabric contention. Core1 has bus priority if the two transactions arrive at the
+// same time. The issue is if a multicycle UART transaction from core0 arrives first.
+// A transaction from core1 arriving on the next cycle will be delayed until the UART
+// transaction completes, altering the timing of the EPROM code.
+// To avoid this contention problem, we define that core1 will have exclusive access
+// to the APB port when E='0'. Core0 may only access the APB port when E='1'.
+
+static void core0Mainloop(void) __attribute__((noreturn));
+void core0Mainloop(void)
+{
   // Init our stream buffer to hold the ECU data stream until the WP comes online
   headP = tailP = streamBuffer;
   lastP = &streamBuffer[sizeof(streamBuffer)-1];
-  lastTxTime = time_us_32();
 
   // We are ready to start Core1 and process the ECU data stream it will send us:
   startCore1();
@@ -431,73 +540,12 @@ void core0Mainloop(void)
   // ECU logging data will arrive essentially immediately!
 
   while (1) {
-    // Wait for messages to arrive in the inter-core FIFO from Core1
     if (multicore_fifo_rvalid()) {
-      uint32_t msg = multicore_fifo_pop_blocking();
+      processFifo();
+    }
 
-      // The fake eprom should only be sending us writes.
-      // Discard any transfers that are not writes!
-      if ((msg & HC11_WR_BITS) != 0) {
-        // Save the initial log data we received for debugging purposes
-        if (eventLogIdx < ECU_EVENTLOG_LENGTH_BYTES) {
-          ecu_eventLog[eventLogIdx++] = msg;
-        }
-        else {
-          // NOP allows for a debugger breakpoint here when the buffer fills
-          NOP();
-        }
-
-        volatile uint8_t addr = (msg & HC11_AB_BITS) >> HC11_AB_LSB;
-        volatile uint8_t data = (msg & HC11_DB_BITS) >> HC11_DB_LSB;
-        int32_t remainingSpace;
-
-        // New data always goes into the streamBuffer
-        if (headP == tailP) {
-          remainingSpace = sizeof(streamBuffer)-1;
-        }
-        else {
-          remainingSpace = headP - tailP;
-          if (remainingSpace < 0) {
-            remainingSpace += sizeof(streamBuffer);
-          }
-        }
-
-        if (remainingSpace < 16) {
-          // crap - no room!
-          // silently discard for now - this could be changed so that we could log how much data we lost by storing a log msg in the remaining space
-          NOP();
-        }
-        else {
-          *headP++ = addr;
-          if (headP > lastP) {
-            headP = streamBuffer;
-          }
-          *headP++ = data;
-          if (headP > lastP) {
-            headP = streamBuffer;
-          }
-        }
-      }
-
-      // We only remove data from the stream buffer if the WP is ready to receive it
-      #if defined FLOWCTRL_GPIO
-        uint32_t wpReady = gpio_get(FLOWCTRL_GPIO);
-        if ((wpReady) && ((uart_get_hw(EP_UART)->fr & UART_UARTFR_BUSY_BITS) == 0)) {
-
-          if (tailP != headP) {
-            #if defined EP_UART
-            uart_get_hw(EP_UART)->dr = *tailP++;
-            if (tailP > lastP) {
-              tailP = streamBuffer;
-            }
-            uart_get_hw(EP_UART)->dr = *tailP++;
-            if (tailP > lastP) {
-              tailP = streamBuffer;
-            }
-            #endif
-          }
-        }
-      #endif
+    if (wpReady) {
+      sendToWp();
     }
   }
 }

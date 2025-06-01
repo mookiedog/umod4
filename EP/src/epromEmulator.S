@@ -116,8 +116,14 @@
 
         .thumb_func
 
-// The epromTask code is placed in its own exclusive RP2040 SRAM bank so
-// that it will run with zero-waitstate instruction fetches guaranteed.
+// The epromTask code will be placed by the linker into its own exclusive RP2040 SRAM bank, currently scratch_y.
+// In addition, the EPROM image to be served to the ECU is placed in its own private SRAM bank.
+// These steps are necessary (but sadly, not sufficient) to prevent core0 operation from causing any bus fabric
+// contention events that would impact the accuracy of the cycleCounting inside the epromTask.
+// The remaining source of contention  is that the epromTask needs to clear an interrupt inside the GPIO unit.
+// This means that if core0 accesses *anything* behind the APB bridge on the crossbar (like the UART!),
+// bad things could happen...
+
         .section .scratch_y.epromTask.code, "ax"
 
 // When epromTask gets called, the HC11 is being held in reset.
