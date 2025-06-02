@@ -52,7 +52,11 @@
                     "noprompt": true
                 }
             ]
-        }
+        },
+        "liveWatch": {
+            "enabled": true,
+            "samplesPerSecond": 4
+        },
     },
     {
         // This config is here until a VSCode/CMake bug is fixed that allows executables to be found in
