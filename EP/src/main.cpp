@@ -53,10 +53,20 @@ uint8_t* ecu_busLog = (uint8_t*)0x21020000;
 uint32_t ecu_eventLog[ECU_EVENTLOG_LENGTH_BYTES];
 uint32_t eventLogIdx;
 
-uint8_t streamBuffer[65536];
-uint8_t* headP;
-uint8_t* tailP;
-uint8_t* lastP;
+#if 0
+  uint8_t streamBuffer[65536];
+  uint8_t* headP;
+  uint8_t* tailP;
+  uint8_t* lastP;
+#else
+  uint16_t streamBuffer[32768];
+  uint32_t head, tail;
+  uint32_t inUse, inUse_max;
+  uint32_t critical_fails;
+  uint32_t totalStreamWrites;
+  uint32_t totalStreamDrops;
+
+#endif
 
 // To track the amount of time it takes to get the ECU booted
 absolute_time_t epoch;
@@ -409,15 +419,12 @@ void prepEpromImage()
   }
 }
 
+#if 0
 // --------------------------------------------------------------------------------------------
-// If a message is present in the inter-core FIFO, remove it and place it in the circular
-// streamBuffer to be sent to the WP via the UART.
-static void processFifo()
+//
+static void processFifo(uint32_t msg)
 {
-  uint32_t msg = multicore_fifo_pop_blocking();
-
-  // The fake eprom should only be sending us writes.
-  // Discard any transfers that are not writes!
+  // The fake eprom should only be sending us writes. Ignore all read transactions.
   if ((msg & HC11_WR_BITS) != 0) {
     // Save the initial log data we received for debugging purposes
     if (eventLogIdx < ECU_EVENTLOG_LENGTH_BYTES) {
@@ -461,7 +468,42 @@ static void processFifo()
   }
 }
 
+#else
+// --------------------------------------------------------------------------------------------
+//
+static void processFifo(uint32_t msg)
+{
+  // The fake eprom should only be sending us writes. Ignore all read transactions.
+  if ((msg & HC11_WR_BITS) != 0) {
+    // Save the initial log data we received for debugging purposes
+    if (eventLogIdx < ECU_EVENTLOG_LENGTH_BYTES) {
+      ecu_eventLog[eventLogIdx++] = msg;
+    }
+    else {
+      // NOP allows for a debugger breakpoint here when the buffer fills
+      NOP();
+    }
 
+    volatile uint8_t addr = (msg & HC11_AB_BITS) >> HC11_AB_LSB;
+    volatile uint8_t data = (msg & HC11_DB_BITS) >> HC11_DB_LSB;
+
+    if (inUse < sizeof(streamBuffer)-8) {
+      streamBuffer[head] = (addr<<8) | data;
+      head = (head+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
+      inUse++;
+      if (inUse > inUse_max) {
+        inUse_max = inUse;
+      }
+    }
+    else {
+      totalStreamDrops++;
+    }
+  }
+}
+#endif
+
+
+#if 0
 // --------------------------------------------------------------------------------------------
 static void sendToWp(void)
 {
@@ -499,7 +541,47 @@ static void sendToWp(void)
     }
   }
 }
+#else
+// --------------------------------------------------------------------------------------------
+// This routine is overly-complicated due to the fact that it must not perturb the timing of
+// the EPROM core's loop.
+//
+// It might be worth considering a PIO UART implementation. There are 2 main advantages:
+//  1) the PIO FIFOs are on the AHB-Lite port of the crossbar, not behind the APB port
+//  2) I could do 16 bit transfers instead of a pair of 8-bit transfers
+void __time_critical_func(sendToWp)(void)
+{
+  if (inUse > 0) {
+    // Calculate this constant pointer address once:
+    volatile io_rw_32* const txReg = &(uart_get_hw(EP_UART)->dr);
 
+    uint8_t lsb = streamBuffer[tail];
+    uint8_t msb = streamBuffer[tail] >> 8;
+    // DMB tells the CPU that it is not allowed to reorder memory accesses across the barrier.
+    // A desirable side effect is that it also prevents the compiler's annoying tendency to move
+    // at least one of the loads (above) into our critical section, below.
+    __DMB();
+
+    // *** Critical Section: Wait for rising edge on E...
+    while (gpio_get(HC11_E_LSB) != 0);
+    while (gpio_get(HC11_E_LSB) == 0);
+    // ...then quickly execute the following 3 lines that access the UART unit on the far side of the APB bridge:
+    if ((uart_get_hw(EP_UART)->fr & UART_UARTFR_BUSY_BITS) == 0) {
+      *txReg = lsb;
+      *txReg = msb;
+      // *** End Critical Section
+
+      if (gpio_get(HC11_E_LSB) == 0) {
+        critical_fails++;
+      }
+
+      inUse--;
+      tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
+      totalStreamWrites++;
+    }
+  }
+}
+#endif
 
 // --------------------------------------------------------------------------------------------
 static bool wpReady()
@@ -530,10 +612,14 @@ static void core0Mainloop(void) __attribute__((noreturn));
 void core0Mainloop(void)
 {
   // Init our stream buffer to hold the ECU data stream until the WP comes online
-  headP = tailP = streamBuffer;
-  lastP = &streamBuffer[sizeof(streamBuffer)-1];
+  #if 0
+    headP = tailP = streamBuffer;
+    lastP = &streamBuffer[sizeof(streamBuffer)-1];
+  #else
+    inUse = inUse_max = head = tail = totalStreamWrites = totalStreamDrops = 0;
+  #endif
 
-  // We are ready to start Core1 and process the ECU data stream it will send us:
+    // We are ready to start Core1 and process the ECU data stream it will send us:
   startCore1();
 
   // Do not delay entering the mainloop after starting core1 because
@@ -541,10 +627,10 @@ void core0Mainloop(void)
 
   while (1) {
     if (multicore_fifo_rvalid()) {
-      processFifo();
+      processFifo(sio_hw->fifo_rd);
     }
 
-    if (wpReady) {
+    if (wpReady()) {
       sendToWp();
     }
   }
