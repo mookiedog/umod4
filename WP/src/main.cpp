@@ -367,7 +367,7 @@ void bootSystem()
     epUart->configFormat(8, 1, UART_PARITY_NONE);
     epUart->configFlowControl(false, false);
     #warning "Not cool!"
-    epUart->configBaud(460800);
+    epUart->configBaud(921600);
     epUart->enable();
     epUart->rxIntEnable();
   #else

@@ -3,23 +3,25 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Pico SDK related:
 #include <RP2040.h>
+
 #include "pico/types.h"
 #include "pico/stdlib.h"
+#include "pico/binary_info.h"
+#include "pico/multicore.h"
+#include "pico/time.h"
+
 #include "hardware/gpio.h"
 #include "hardware/structs/scb.h"
-#include "pico/binary_info.h"
+#include "hardware/pio.h"
 #include "hardware/irq.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/clocks.h"
-#include "pico/multicore.h"
-#include "pico/time.h"
 #include "hardware/flash.h"
 #include "hardware/timer.h"
 
+#include "uart_tx.pio.h"
 
-// Eprom project related:
 #include "config.h"
 #include "EpromLoader.h"
 #include "hardware.h"
@@ -53,20 +55,15 @@ uint8_t* ecu_busLog = (uint8_t*)0x21020000;
 uint32_t ecu_eventLog[ECU_EVENTLOG_LENGTH_BYTES];
 uint32_t eventLogIdx;
 
-#if 0
-  uint8_t streamBuffer[65536];
-  uint8_t* headP;
-  uint8_t* tailP;
-  uint8_t* lastP;
-#else
   uint16_t streamBuffer[32768];
   uint32_t head, tail;
   uint32_t inUse, inUse_max;
-  uint32_t critical_fails;
   uint32_t totalStreamWrites;
   uint32_t totalStreamDrops;
 
-#endif
+
+PIO const uart_pio = pio0;
+const uint uart_sm = 0;
 
 // To track the amount of time it takes to get the ECU booted
 absolute_time_t epoch;
@@ -419,76 +416,29 @@ void prepEpromImage()
   }
 }
 
-#if 0
+
 // --------------------------------------------------------------------------------------------
-//
-static void processFifo(uint32_t msg)
+// Core1 sends over a full 32-bit grab of the GPIO bus when it logs something.
+// To cut the size of the log in half, we extract the LS 8 bits of the address along with
+// the 8 data bits, and just log that.
+static void processFifo(uint32_t msg32)
 {
   // The fake eprom should only be sending us writes. Ignore all read transactions.
-  if ((msg & HC11_WR_BITS) != 0) {
-    // Save the initial log data we received for debugging purposes
+  if ((msg32 & HC11_WR_BITS) != 0) {
+    // For debugging purposes, log the first few events as full 32-bit entries
     if (eventLogIdx < ECU_EVENTLOG_LENGTH_BYTES) {
-      ecu_eventLog[eventLogIdx++] = msg;
+      ecu_eventLog[eventLogIdx++] = msg32;
     }
     else {
       // NOP allows for a debugger breakpoint here when the buffer fills
       NOP();
     }
-
-    volatile uint8_t addr = (msg & HC11_AB_BITS) >> HC11_AB_LSB;
-    volatile uint8_t data = (msg & HC11_DB_BITS) >> HC11_DB_LSB;
-    int32_t remainingSpace;
-
-    // New data always goes into the streamBuffer
-    if (headP == tailP) {
-      remainingSpace = sizeof(streamBuffer)-1;
-    }
-    else {
-      remainingSpace = headP - tailP;
-      if (remainingSpace < 0) {
-        remainingSpace += sizeof(streamBuffer);
-      }
-    }
-
-    if (remainingSpace < 16) {
-      // crap - no room!
-      // silently discard for now - this could be changed so that we could log how much data we lost by storing a log msg in the remaining space
-      NOP();
-    }
-    else {
-      *headP++ = addr;
-      if (headP > lastP) {
-        headP = streamBuffer;
-      }
-      *headP++ = data;
-      if (headP > lastP) {
-        headP = streamBuffer;
-      }
-    }
-  }
-}
-
-#else
-// --------------------------------------------------------------------------------------------
-//
-static void processFifo(uint32_t msg)
-{
-  // The fake eprom should only be sending us writes. Ignore all read transactions.
-  if ((msg & HC11_WR_BITS) != 0) {
-    // Save the initial log data we received for debugging purposes
-    if (eventLogIdx < ECU_EVENTLOG_LENGTH_BYTES) {
-      ecu_eventLog[eventLogIdx++] = msg;
-    }
-    else {
-      // NOP allows for a debugger breakpoint here when the buffer fills
-      NOP();
-    }
-
-    volatile uint8_t addr = (msg & HC11_AB_BITS) >> HC11_AB_LSB;
-    volatile uint8_t data = (msg & HC11_DB_BITS) >> HC11_DB_LSB;
 
     if (inUse < sizeof(streamBuffer)-8) {
-      streamBuffer[head] = (addr<<8) | data;
+      uint8_t addr = (msg32 & HC11_AB_BITS) >> HC11_AB_LSB;
+      uint8_t data = (msg32 & HC11_DB_BITS) >> HC11_DB_LSB;
+      uint16_t msg = (addr<<8) | data;
+      streamBuffer[head] = msg;
       head = (head+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
       inUse++;
       if (inUse > inUse_max) {
@@ -496,92 +446,31 @@ static void processFifo(uint32_t msg)
       }
     }
     else {
+      // Not enough room in the buffer. Drop the message.
       totalStreamDrops++;
     }
   }
 }
-#endif
 
 
-#if 0
 // --------------------------------------------------------------------------------------------
-static void sendToWp(void)
-{
-  // Calculate this constant pointer address once:
-  volatile io_rw_32* const txReg = &(uart_get_hw(EP_UART)->dr);
-
-  while (gpio_get(HC11_E_LSB) != 0);
-  while (gpio_get(HC11_E_LSB) == 0);
-
-  if ((uart_get_hw(EP_UART)->fr & UART_UARTFR_BUSY_BITS) == 0) {
-
-    if (tailP != headP) {
-      uint8_t byte1, byte2;
-
-      #if defined EP_UART
-      byte1 = *tailP++;
-      if (tailP > lastP) {
-        tailP = streamBuffer;
-      }
-      byte2 = *tailP++;
-      if (tailP > lastP) {
-        tailP = streamBuffer;
-      }
-
-      // We definitely saw trouble before adding the following check!
-      // Critical section! Do not access the UART unit unless E-clk is '1'.
-      // When E-clk is '0', the EPROM core needs exclusive access to the APB bridge.
-      // Delay until we observe a 0->1 transition on E:
-      while (gpio_get(HC11_E_LSB) != 0);
-      while (gpio_get(HC11_E_LSB) == 0);
-      // Write to the UART while we know that E==1:
-      *txReg = byte1;
-      *txReg = byte2;
-      #endif
-    }
-  }
-}
-#else
-// --------------------------------------------------------------------------------------------
-// This routine is overly-complicated due to the fact that it must not perturb the timing of
-// the EPROM core's loop.
-//
-// It might be worth considering a PIO UART implementation. There are 2 main advantages:
-//  1) the PIO FIFOs are on the AHB-Lite port of the crossbar, not behind the APB port
-//  2) I could do 16 bit transfers instead of a pair of 8-bit transfers
+// If the stream buffer has data in it, send the oldest message then remove it from
+// the stream buffer.
 void __time_critical_func(sendToWp)(void)
 {
   if (inUse > 0) {
-    // Calculate this constant pointer address once:
-    volatile io_rw_32* const txReg = &(uart_get_hw(EP_UART)->dr);
+    uint16_t msg = streamBuffer[tail];
 
-    uint8_t lsb = streamBuffer[tail];
-    uint8_t msb = streamBuffer[tail] >> 8;
-    // DMB tells the CPU that it is not allowed to reorder memory accesses across the barrier.
-    // A desirable side effect is that it also prevents the compiler's annoying tendency to move
-    // at least one of the loads (above) into our critical section, below.
-    __DMB();
-
-    // *** Critical Section: Wait for rising edge on E...
-    while (gpio_get(HC11_E_LSB) != 0);
-    while (gpio_get(HC11_E_LSB) == 0);
-    // ...then quickly execute the following 3 lines that access the UART unit on the far side of the APB bridge:
-    if ((uart_get_hw(EP_UART)->fr & UART_UARTFR_BUSY_BITS) == 0) {
-      *txReg = lsb;
-      *txReg = msb;
-      // *** End Critical Section
-
-      if (gpio_get(HC11_E_LSB) == 0) {
-        critical_fails++;
-      }
-
-      inUse--;
-      tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
-      totalStreamWrites++;
-    }
+    #if 1
+    uart_tx_program_putc(uart_pio, uart_sm, (msg >> 0) & 0xFF);
+    uart_tx_program_putc(uart_pio, uart_sm, (msg >> 8) & 0xFF);
+    #endif
+    inUse--;
+    tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
+    totalStreamWrites++;
   }
 }
-#endif
+
 
 // --------------------------------------------------------------------------------------------
 static bool wpReady()
@@ -595,36 +484,15 @@ static bool wpReady()
 
 
 // --------------------------------------------------------------------------------------------
-// Send incoming log messages from Core1 over to the WiFi Processor (WP)
-//
-// Both cores need to access peripherals behind the APB crossbar port:
-//   - core1 must access the GPIO unit behind the APB port to clear its falling-E interrupt
-//   - core0 must write to the UART unit behind the APB port to send the ECU data to the WP
-// It has been proven that the UART writes can impact the timing of the core1 EPROM code
-// due to bus fabric contention. Core1 has bus priority if the two transactions arrive at the
-// same time. The issue is if a multicycle UART transaction from core0 arrives first.
-// A transaction from core1 arriving on the next cycle will be delayed until the UART
-// transaction completes, altering the timing of the EPROM code.
-// To avoid this contention problem, we define that core1 will have exclusive access
-// to the APB port when E='0'. Core0 may only access the APB port when E='1'.
+// Core0's whole job is to forward the incoming ECU message stream from Core1 over to the
+// WiFi Processor (WP).
 
 static void core0Mainloop(void) __attribute__((noreturn));
 void core0Mainloop(void)
 {
-  // Init our stream buffer to hold the ECU data stream until the WP comes online
-  #if 0
-    headP = tailP = streamBuffer;
-    lastP = &streamBuffer[sizeof(streamBuffer)-1];
-  #else
-    inUse = inUse_max = head = tail = totalStreamWrites = totalStreamDrops = 0;
-  #endif
-
-    // We are ready to start Core1 and process the ECU data stream it will send us:
-  startCore1();
-
   // Do not delay entering the mainloop after starting core1 because
   // ECU logging data will arrive essentially immediately!
-
+  startCore1();
   while (1) {
     if (multicore_fifo_rvalid()) {
       processFifo(sio_hw->fifo_rd);
@@ -657,21 +525,23 @@ void disableInts()
 
 // --------------------------------------------------------------------------------------------
 // Prep the UART to forward the ECU log data to the WP.
-// Note that the UART is disabled if the system is configured to drive its sysclk
-// to CLKOUT_GPIO for testing/verification purposes!
+// We use a TX-only UART implemented as a PIO state machine.
+//
+// The EPROM loop needs exclusive bus fabric access to the APB bridge so it can clear
+// its GPIO interrupt.
+// If this code used a real UART, there would potentially be bus contention for the APB bridge
+// whenever we accessed a UART register.
+//
+// Using a PIO-based UART means that there can be no bus contention because the PIO unit
+// is not located behind the APB bridge.
 void initUart()
 {
   #if defined EP_UART
-    // Init the UART
-    uart_init(EP_UART, EP_UART_BAUD_RATE);
-
-    if (TX_GPIO >= 0) {
-      gpio_set_function(TX_GPIO, UART_FUNCSEL_NUM(EP_UART, TX_GPIO));
-    }
-    if (RX_GPIO >= 0) {
-      gpio_set_function(RX_GPIO, UART_FUNCSEL_NUM(EP_UART, RX_GPIO));
-    }
+    uint offset = pio_add_program(uart_pio, &uart_tx_program);
+    uart_tx_program_init(uart_pio, uart_sm, offset, TX_GPIO, EP_UART_BAUD_RATE);
   #else
+  // The UART must be disabled if the system is configured to drive its sysclk
+  // to CLKOUT_GPIO for testing/verification purposes since they share the same GPIO pad!
     printf("%s: \n****\n**** WARNING: UART functionality is disabled due to CLKOUT testing!\n****\n")
   #endif
 }

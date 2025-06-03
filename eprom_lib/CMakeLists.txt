@@ -18,15 +18,15 @@ set(EPROM_NAMES
 # you need to have a copy of the .bin file named exactly as below, such as "549EuroC.bin".
 # Put your properly named .bin files into the eprom_lib/bin_files directory,
 # then uncomment the appropriate name[s], below:
-# RP58
-# PA59
-# 549USA
-# Edwards
-# 549EuroC
-# 549EuroKatD
-# 8796505
-# 8796529
-# 8796539
+  RP58
+  PA59
+  549USA
+  Edwards
+  549EuroC
+  549EuroKatD
+  8796505
+  8796529
+  8796539
 )
 
 # Define how to construct the .bson and .c files from the .dsc & .bin files:

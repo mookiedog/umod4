@@ -19,11 +19,12 @@ include(ExternalProject)
 # It is assumed that there is a 'projects' dir somewhere that is used as the root directory
 # for everything this project needs. At a minimum, the directory hierarchy must look like this:
 #   projects/
-#   ├── FreeRTOS-Kernel
+#   ├── pico-examples
 #   ├── pico-sdk
 #   └── umod4
 
 set(PROJECTS_PATH ${CMAKE_SOURCE_DIR}/..)
+set(PICO_EXAMPLES_PATH ${PROJECTS_PATH}/pico-examples)
 
 # The Pico SDK is too big to download for every project on this machine that might want to use it.
 # Instead, it is assumed that a user has downloaded a single, sharable copy to a known location.
@@ -174,6 +175,7 @@ set(EP_CMAKE_ARG_LIST
     -DEPROM_LIB_DIR=${EPROM_LIB_DIR}
     -DECU_BINARY_DIR=${CMAKE_BINARY_DIR}/ecu
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
+    -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
 #    -DLFS_SRC_DIR=${LFS_SRC_DIR}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
 )
