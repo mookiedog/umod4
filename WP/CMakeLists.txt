@@ -135,12 +135,10 @@ add_executable(${PROJECT_NAME}
   src/Spi.cpp
   src/TimeUtils.cpp
   src/Uart.cpp
-  src/ws2812.pio
-  src/uart_tx.pio
 )
 
-pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_LIST_DIR}/src/uart_tx.pio)
-pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_LIST_DIR}/src/ws2812.pio)
+pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/uart_tx/uart_tx.pio)
+pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/ws2812/ws2812.pio)
 
 # Override the standard Segger definitions for these symbols:
 #add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)

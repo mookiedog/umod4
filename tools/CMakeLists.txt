@@ -29,3 +29,9 @@ target_include_directories(checksum PRIVATE ${LIB_DIR}/inc)
 add_custom_target(checksum-wrapper
   DEPENDS checksum
 )
+
+add_custom_command(
+  TARGET checksum POST_BUILD
+  VERBATIM
+  COMMAND ${CMAKE_COMMAND} -E copy checksum ${TOOLS_INSTALL_DIR}
+)
