@@ -101,7 +101,7 @@ set(LIB_DIR ${CMAKE_SOURCE_DIR}/lib)
 
 # Inform the other external projects where the tools external project will store the tool binaries that it creates:
 # The source dir is required for accessing python scripts
-set(TOOLS_INSTALL_DIR ${CMAKE_BINARY_DIR}/tools)
+set(TOOLS_INSTALL_DIR $ENV{HOME}/.local/bin)
 set(TOOLS_SOURCE_DIR ${CMAKE_SOURCE_DIR}/tools/src)
 
 # ---------------------------------------------------------------------------------------------
@@ -197,8 +197,8 @@ message(STATUS "Adding the 'WP' project")
 set(WP_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
     -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
-    -DPROJECTS_PATH=${PROJECTS_PATH}
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
+    -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
     -DLFS_SRC_DIR=${LFS_SRC_DIR}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
 )
