@@ -84,7 +84,7 @@ project(umod4)
 # Littlefs is a small enough project that we just pull it into our superbuild's build tree
 FetchContent_Declare(littlefs
     GIT_REPOSITORY https://github.com/littlefs-project/littlefs
-    GIT_TAG v2.10.1
+    GIT_TAG v2.11.0
 )
 
 # We use FetchContent_populate, not _add(), because _populate() does not perform an
