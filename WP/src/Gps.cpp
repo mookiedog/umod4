@@ -92,7 +92,7 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
   gpio_put(SPARE1_PIN, 0);
   gpio_set_dir(SPARE1_PIN, GPIO_OUT);
 
-  // Assume we have no fix yet
+  // Flag that we have never seen any fixtype yet
   fixType = -1;
 
   // Set time/date info to illegal values to trigger reloading them once they are known:
@@ -287,6 +287,23 @@ void Gps::process_NAV_PVT(uint8_t* payload)
   uint32_t _itow;
 
   if (dbg) printf("NAV-PVT: ");
+
+  // Start off by looking for changes to the satellite fix information.
+  // Certain other data in this NAV PVT payload will only be valid if we have a 2D or 3D fix.
+  _fixType = get_uint8_t(payload, 20);
+  if (dbg) printf(" F%u ", _fixType);
+
+  if (_fixType != fixType) {
+    // Log all changes to fixType, upgrades or downgrades:
+    if (logger) logger->logData(LOG_FIXTYPE, LOG_FIXTYPE_LEN, &_fixType);
+
+    if ((fixType<2) && (_fixType >= 2)) {
+      // We went from no fix to having a 2D or 3D fix: trigger logging our position even if we are not moving.
+      moving = STOP_CNT;
+    }
+    fixType = _fixType;
+  }
+
   _year = _month = _day = 0;
   uint8_t validFlags = get_uint8_t(payload, 11);
   dateValid = (validFlags & 0x01);
@@ -307,10 +324,15 @@ void Gps::process_NAV_PVT(uint8_t* payload)
     _nanos = get_int32_t(payload, 16);
   }
 
-  if (timeValid && dateValid) {
+  // When the device boots, it will report the time and date being valid when it is not true!
+  // Specifically, it seems to set the time to an epoch back in Dec 2016, but set the valid bit anyway.
+  // Therefore, we don't trust any date/time info until we have a solid 2D or 3D fix:
+  if (((fixType==2) || (fixType==3)) && (timeValid && dateValid)) {
+    if (dbg) printf("time and date are valid\n");
     bool doRest = false;
     if (logger) {
       if (year != _year) {
+        if (dbg && (_year < 2025)) printf("%s: reported year %d < 2025!\n", _year);
         year = _year;
         int8_t yr = year - 2000;
         logger->logData(LOG_YEAR, LOG_YEAR_LEN, (uint8_t*)&yr);
@@ -369,20 +391,6 @@ void Gps::process_NAV_PVT(uint8_t* payload)
     printf("%c%c%c  ", timeValid ? 'T' : '-', dateValid ? 'D' : '-', fullyResolved ? 'R' : '-');
     if (dateValid) printf("%04u/%02u/%02u ", _year, _month, _day);
     if (timeValid) printf("%02u:%02u:%02u %09ld", _hours, _mins, _secs, _nanos);
-  }
-
-  _fixType = get_uint8_t(payload, 20);
-  if (dbg) printf(" F%u ", _fixType);
-
-  if (_fixType != fixType) {
-    // Log all changes to fixType, upgrades or downgrades:
-    if (logger) logger->logData(LOG_FIXTYPE, LOG_FIXTYPE_LEN, &_fixType);
-
-    if ((fixType<2) && (_fixType >= 2)) {
-      // Trigger logging our position now that we have a 2D or 3D fix even if we are not moving.
-      moving = STOP_CNT;
-    }
-    fixType = _fixType;
   }
 
   if ((_fixType == 2) || (_fixType == 3)) {
