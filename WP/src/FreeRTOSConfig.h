@@ -72,7 +72,7 @@
 /* Memory allocation related definitions. */
 #define configSUPPORT_STATIC_ALLOCATION         0
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
-#define configTOTAL_HEAP_SIZE                   (128*1024)
+#define configTOTAL_HEAP_SIZE                   0       // Heap is defined by linker as all SRAM above BSS to end of RAM
 #define configAPPLICATION_ALLOCATED_HEAP        0
 
 /* Hook function related definitions. */
@@ -148,6 +148,9 @@ to exclude the API function. */
 #define INCLUDE_xQueueGetMutexHolder            1
 
 /* A header file that defines trace macro can be included here. */
+
+/* Additional defines for this umod4 project */
+#define configRECORD_STACK_HIGH_ADDRESS         1
 
 #endif /* FREERTOS_CONFIG_H */
 

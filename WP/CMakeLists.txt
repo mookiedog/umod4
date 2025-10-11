@@ -126,6 +126,7 @@ add_executable(${PROJECT_NAME}
   src/Crc.cpp
   src/EpUart.cpp
   src/Gps.cpp
+  src/Heap.cpp
   src/Logger.cpp
   src/main.cpp
   src/NeoPixelConnect.cpp
@@ -149,6 +150,9 @@ add_compile_definitions(BUFFER_SIZE_DOWN=1024)
 
 add_compile_definitions(LFS_THREADSAFE=1)
 #add_compile_definitions(LFS_TRACE=printf)
+
+# We will define new/delete ourselves
+add_compile_definitions(PICO_CXX_DISABLE_ALLOCATION_OVERRIDES=1)
 
 # Choose where stdio output goes. It should only be RTT for this project.
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
@@ -201,7 +205,6 @@ target_link_libraries(${PROJECT_NAME}
   hardware_uart
   hardware_spi
   FreeRTOS-Kernel
-  FreeRTOS-Kernel-Heap1
   littlefs
   tiny_regex_c
   pico_cyw43_arch_none
