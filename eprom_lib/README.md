@@ -33,7 +33,7 @@ Nothing is stopping you!
 
 Certain EPROMs required using a daughterboard to operate inside an ECU.
 The EPROMs that needed daughterboards had their contents pre-scrambled.
-A duaghterboard would unscramble those pre-scrambled contents 'on-the-fly' as the ECU would read it.
+A daughterboard would unscramble those pre-scrambled contents 'on-the-fly' as the ECU would read it.
 Plugging a copied scrambled EPROM into another ECU would not work unless you also had a daughterboard.
 
 In essence, these scrambled EPROMs were freely copyable, but useless without their descrambling board. But once a rider owned a single descrambler board, any scrambled EPROM could be duplicated in the normal fashion using an EPROM reader/writer, then installed into the daughterboard and used in an ECU. So 'scrambling' was certainly not the ultimate in security.

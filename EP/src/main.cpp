@@ -55,12 +55,10 @@ uint8_t* ecu_busLog = (uint8_t*)0x21020000;
 uint32_t ecu_eventLog[ECU_EVENTLOG_LENGTH_BYTES];
 uint32_t eventLogIdx;
 
-  uint16_t streamBuffer[32768];
-  uint32_t head, tail;
-  uint32_t inUse, inUse_max;
-  uint32_t totalStreamWrites;
-  uint32_t totalStreamDrops;
-
+uint16_t streamBuffer[32768];
+uint32_t head, tail;
+uint32_t inUse, inUse_max;
+uint32_t totalStreamDrops;
 
 PIO const uart_pio = pio0;
 const uint uart_sm = 0;
@@ -188,6 +186,7 @@ uint8_t readEprom(uint32_t ecuAddr, uint8_t* epromImage, char dbId)
   return b;
 }
 
+
 // --------------------------------------------------------------------------------------------
 // Init all the Processor GPIO pins to proper, safe states.
 void initPins(void)
@@ -229,10 +228,10 @@ void initPins(void)
   gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
 
   #if defined FLOWCTRL_GPIO
-    // The WP will drive this line to '1' when it is ready to receive the ECU data stream
+    // The WP will drive this line to '0' when it is ready to receive the ECU data stream
     gpio_init(FLOWCTRL_GPIO);
     gpio_set_dir(FLOWCTRL_GPIO, GPIO_IN);
-    gpio_set_pulls(FLOWCTRL_GPIO, false, true);
+    gpio_set_pulls(FLOWCTRL_GPIO, true, false);   // default state is '1'
   #endif
 }
 
@@ -307,7 +306,7 @@ void initCpu(void)
 // It should flicker within a fraction of a second of applying power to the ECU.
 // The flickering only takes 50 mSec per flash, so the delay of a few flashes
 // is imperceptible to a rider turning the ignition key on.
-void hello(uint32_t flickerCount)
+void flicker(uint32_t flickerCount, uint32_t onDuration, uint32_t offDuration)
 {
   gpio_init(DBG_BSY_LSB);
   gpio_put(DBG_BSY_LSB, 1);
@@ -316,12 +315,23 @@ void hello(uint32_t flickerCount)
   for (uint32_t i=0; i<flickerCount; i++) {
     // BDG_BSY LED is active low: '0' means LED lights up
     gpio_put(DBG_BSY_LSB, 0);
-    busy_wait_us_32(5000);
+    busy_wait_us_32(onDuration);
     gpio_put(DBG_BSY_LSB, 1);
-    busy_wait_us_32(45000);
+    busy_wait_us_32(offDuration);
   }
 
   // Leave LED in the OFF state
+}
+
+void hello(uint32_t flickerCount)
+{
+  flicker(3, 5000, 45000);
+}
+
+void blinkCode(uint32_t count)
+{
+  flicker(count, 10000, 290000);
+  busy_wait_ms(500);
 }
 
 // --------------------------------------------------------------------------------------------
@@ -355,6 +365,26 @@ void startCore1(void)
 }
 
 // --------------------------------------------------------------------------------------------
+void __time_critical_func(enqueue)(uint8_t id, uint8_t data)
+{
+  if (inUse < sizeof(streamBuffer)-8) {
+    uint16_t event = (data << 8) | id;
+
+    streamBuffer[head] = event;
+    head = (head+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
+    inUse++;
+    if (inUse > inUse_max) {
+      inUse_max = inUse;
+    }
+  }
+  else {
+    // Not enough room in the buffer. Drop the message.
+    totalStreamDrops++;
+  }
+}
+
+
+// --------------------------------------------------------------------------------------------
 // Prepare an EPROM image for Core1 to serve to the ECU.
 //
 // The image can be a simple EPROM image (protected or not), or it can be constructed from
@@ -366,120 +396,164 @@ void startCore1(void)
 void prepEpromImage()
 {
   uint32_t t0, t1, elapsed;
-  bool success;
+  uint8_t err;
+  const char* name;
+  EpromLoader::bsonDoc_t b;
 
+  #if 1
   if (hasDescrambler()){
     // This initial load is just for testing that we can load a protected image
-    success = EpromLoader::loadImage("8796539");
-    if (!success) {
-      printf("%s: failed!\n", __FUNCTION__);
+    name = "8796539";
+    //logEpromName(name);
+    err = EpromLoader::loadImage(name);
+    enqueue(LOG_EP_LOAD_ERR, err);
+    if (err) {
+      printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
     }
   }
 
   // This is the image that we really want to load:
-  printf("%s: Loading UM4 image\n", __FUNCTION__);
-  EpromLoader::bsonDoc_t b = EpromLoader::findEprom("UM4");
-  if (!b) {
-    panic("Unable to find UM4 image in BSON partition!");
-  }
-  success = EpromLoader::loadImage(b);
-  if (!success) {
-    panic("Unable to load UM4 eprom image!");
-  }
+  do {
+    name = "UM4";
+    printf("%s: Loading image %s\n", __FUNCTION__, name);
+    //logEpromName(name);
+    b = EpromLoader::findEprom(name);
+    if (!b) {
+      enqueue(LOG_EP_LOAD_ERR, LOG_EP_LOAD_ERR_NOTFOUND);
+      //panic("Unable to find UM4 image in BSON partition!");
+    blinkCode(2);
+    }
+    else {
+      err = EpromLoader::loadImage(b);
+      enqueue(LOG_EP_LOAD_ERR, err);
+      if (err) {
+        //panic("Unable to load UM4 eprom image!");
+        blinkCode(3);
+      }
+    }
+  } while (!b || err);
 
   if (hasDescrambler()) {
     // Now try loading protected 8796539 maps on top of our UM4 image:
     t0 = get_absolute_time();
-    success = EpromLoader::loadMapblob("8796539");
-
-    if (!success) {
-      printf("Unable to load protected 8796539 mapblob!\n");
+    name = "8796539";
+    //logEpromName(name);
+    err = EpromLoader::loadMapblob(name);
+    enqueue(LOG_EP_LOAD_ERR, err);
+    if (err) {
+      printf("%s: Unable to load protected %s mapblob: err=%02x!\n", __FUNCTION__, name, err);
     }
     else {
       t1 = get_absolute_time();
       elapsed = absolute_time_diff_us(t0, t1);
-      printf("%s: Loaded protected mapblob in %u microseconds\n", __FUNCTION__, elapsed);
+      printf("%s: Loaded protected %s mapblob in %u microseconds\n", __FUNCTION__, name, elapsed);
     }
   }
 
-  // Reload the UM4 maps back on top of the UM4 base image
-  t0 = get_absolute_time();
-  success = EpromLoader::loadMapblob(b);
-  if (!success) {
-    printf("Unable to reload UM4 mapblob!\n");
-    panic("mapblob load failed");
-  }
-  else {
-    t1 = get_absolute_time();
-    elapsed = absolute_time_diff_us(t0, t1);
-    printf("%s: Loaded unprotected UM4 mapblob in %u microseconds\n", __FUNCTION__, elapsed);
-  }
-}
-
-
-// --------------------------------------------------------------------------------------------
-// Core1 sends over a full 32-bit grab of the GPIO bus when it logs something.
-// To cut the size of the log in half, we extract the LS 8 bits of the address along with
-// the 8 data bits, and just log that.
-static void processFifo(uint32_t msg32)
-{
-  // The fake eprom should only be sending us writes. Ignore all read transactions.
-  if ((msg32 & HC11_WR_BITS) != 0) {
-    // For debugging purposes, log the first few events as full 32-bit entries
-    if (eventLogIdx < ECU_EVENTLOG_LENGTH_BYTES) {
-      ecu_eventLog[eventLogIdx++] = msg32;
+  do {
+    // Reload the UM4 maps back on top of the UM4 base image
+    t0 = get_absolute_time();
+    err = EpromLoader::loadMapblob(b);
+    enqueue(LOG_EP_LOAD_ERR, err);
+    if (err) {
+      printf("Unable to reload UM4 mapblob!\n");
+      blinkCode(4);
+      //panic("mapblob load failed");
     }
     else {
-      // NOP allows for a debugger breakpoint here when the buffer fills
-      NOP();
+      t1 = get_absolute_time();
+      elapsed = absolute_time_diff_us(t0, t1);
+      printf("%s: Loaded unprotected UM4 mapblob in %u microseconds\n", __FUNCTION__, elapsed);
     }
+  } while (err);
 
-    if (inUse < sizeof(streamBuffer)-8) {
-      uint8_t addr = (msg32 & HC11_AB_BITS) >> HC11_AB_LSB;
-      uint8_t data = (msg32 & HC11_DB_BITS) >> HC11_DB_LSB;
-      uint16_t msg = (addr<<8) | data;
-      streamBuffer[head] = msg;
-      head = (head+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
-      inUse++;
-      if (inUse > inUse_max) {
-        inUse_max = inUse;
-      }
-    }
-    else {
-      // Not enough room in the buffer. Drop the message.
-      totalStreamDrops++;
-    }
+  #else
+  // Load a plain 549USA to see if the bike runs better
+  name = "549USA";
+  //logEpromName(name);
+  err = EpromLoader::loadImage(name);
+  enqueue(LOG_EP_LOAD_ERR, err);
+  if (err) {
+    printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
   }
+  #endif
 }
 
+uint32_t burstTime;
 
 // --------------------------------------------------------------------------------------------
-// If the stream buffer has data in it, send the oldest message then remove it from
-// the stream buffer.
-void __time_critical_func(sendToWp)(void)
+// If possible, send the oldest data in the streamBuffer to the WP.
+// There are some things to think about here.
+// - we can't spend so much time in here that the inter-core FIFO overflows
+// - we can't overfill the PIO fifo on this end, or we risk overflowing the intercore FIFO
+// - as things stand, the WP does not read serial data as it arrives, but after the RX timeout has expired (~35 uSec at 921K baud)
+//
+// To deal with all this:
+// - We only send data out in 4 byte chunks (~44 uSec to TX it all)
+// - We will make sure that chunks will not start closer than 100 uSec to each other.
+//   This means ~56 uSec from end of chunk to start of next.
+//   It also means that there is about 21 uSec (56-35) for the WP to completely
+//   process the timeout interrupt before the next byte starts to arrive (if any).
+//
+// All of this is to avoid a situation on the far end where the WP receives 1 byte of an event, but needs to leave the ISR
+// before the second byte arrives. I think the real solution is to fix the WP end by putting a state machine into its ISR.
+void __time_critical_func(processOutgoing)(void)
 {
+  static uint64_t nextTx_us=0;
+
   if (inUse > 0) {
-    uint16_t msg = streamBuffer[tail];
+    uint64_t now = time_us_64();
+    if (nextTx_us < now) {
+      // We only send data in groups of up to 2 ECU events (4 bytes, ~44 uSec to TX)
+      uint32_t count = (inUse > 2) ? 2 : inUse;
+      for (uint32_t i=0; i<count; i++) {
+        uint16_t msg = streamBuffer[tail];
 
-    #if 1
-    uart_tx_program_putc(uart_pio, uart_sm, (msg >> 0) & 0xFF);
-    uart_tx_program_putc(uart_pio, uart_sm, (msg >> 8) & 0xFF);
-    #endif
-    inUse--;
-    tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
-    totalStreamWrites++;
+        // Stream the addr/eventID (the LSB) out first, followed by the data associated with that eventID (MSB).
+        // This is a blocking TX so there is no worry about overrunning the TX machine.
+        // The call to _putc will block if the PIO FIFO is full, but by limiting the number of bytes we send in a burst, this will never happen.
+        uart_tx_program_putc(uart_pio, uart_sm, (msg >> 0) & 0xFF);
+        uart_tx_program_putc(uart_pio, uart_sm, (msg >> 8) & 0xFF);
+
+        inUse--;
+        tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
+      }
+
+      burstTime = time_us_64() - now;
+
+      // This enforces a minimum time between EP transmission bursts to allow the WP time to process its receive FIFO
+      nextTx_us = now+100;
+    }
   }
 }
 
 
 // --------------------------------------------------------------------------------------------
+// Both com lines between EP ane WP are init'd to have a pullup by default.
+// WP indicates it is ready for ECU data when it drives the FLOWCTRL_GPIO to '0'.
 static bool wpReady()
 {
   #if defined FLOWCTRL_GPIO
-    return (gpio_get(FLOWCTRL_GPIO) != 0);
+    return (gpio_get(FLOWCTRL_GPIO) == 0);
   #else
     return false;
   #endif
+}
+
+// --------------------------------------------------------------------------------------------
+void __time_critical_func(processIncoming)(void)
+{
+  if (multicore_fifo_rvalid()) {
+    uint32_t busSigs = sio_hw->fifo_rd;
+
+    // We convert the raw 32-bit data stream event into a 16-bit value where the
+    // ID (LS 8 bits of HC11 bus address) is in the LS byte, and the 8 bits of HC11 data bus is in the MS byte:
+    uint8_t id   = (busSigs & HC11_AB_BITS) >> HC11_AB_LSB;
+    uint8_t data = (busSigs & HC11_DB_BITS) >> HC11_DB_LSB;
+
+    // Enqueue the ECU data stream event until it can be transmitted out
+    enqueue(id, data);
+  }
 }
 
 
@@ -493,14 +567,15 @@ void core0Mainloop(void)
   // Do not delay entering the mainloop after starting core1 because
   // ECU logging data will arrive essentially immediately!
   startCore1();
-  while (1) {
-    if (multicore_fifo_rvalid()) {
-      processFifo(sio_hw->fifo_rd);
-    }
 
-    if (wpReady()) {
-      sendToWp();
-    }
+  // Until the WP is ready for data, all we can do is buffer the incoming ECU data stream
+  while (!wpReady()) {
+    processIncoming();
+  }
+
+  while (1) {
+    processIncoming();
+    processOutgoing();
   }
 }
 
@@ -552,6 +627,13 @@ int main(void)
   epoch = get_absolute_time();
 
   initCpu();
+
+  // Before doing anything, we init the pin we will be transmitting on to the WP to have a pullup.
+  // A better solution would be to install a pullup resistor on the 4.2 PCB
+  gpio_init(TX_GPIO);
+  gpio_set_dir(TX_GPIO, GPIO_IN);
+  gpio_set_pulls(TX_GPIO, true, false);    // pullup
+
   hello(3);
   initPins();
 
