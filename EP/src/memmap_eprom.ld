@@ -256,7 +256,7 @@ SECTIONS
     {
         __end__ = .;
         end = __end__;
-        *(.heap*)
+        KEEP(*(.heap*))
         __HeapLimit = .;
     } > RAM
 
@@ -267,7 +267,7 @@ SECTIONS
 
     .stack_dummy (COPY):
     {
-        *(.stack*)
+        KEEP(*(.stack*))
     } > RAM
 
     .flash_end : {
