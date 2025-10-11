@@ -1,22 +1,21 @@
 {
     "eprom": {
-        "name": "Edwards",
-        "RP58-Compatible": "Y",
+        "name": "RP58USA",
         "info": {
             "models": [
-                "Edwards Replica"
+                "RSV 2001-2003"
             ]
         },
         "maps": {
             "info": {
-                "exhaust": "stock, street legal",
+                "exhaust": "stock",
                 "airbox": "stock",
-                "trimpots": "inactive",
-                "throttlebody": "57mm",
+                "trimpots": "inactive",     // Need to confirm this: I'm not actually sure if the original RP58 supported trimpots or not!
+                "throttlebody": "51mm",
                 "heads": "stock",
                 "mapselect": [
+                    // Map0 and MAP1 are identical
                     {
-                        // Map0 and Map1 appear to be identical
                         "info": {
                             "name": "Street",
                             "airbox": "restricted",
@@ -25,10 +24,6 @@
                     }
                 ]
             }
-        },
-        // Useful links
-        "links": [
-            "https://www.apriliaforum.com/forums/showthread.php?331447-Edwards-Eprom&p=4243999&viewfull=1#post4243999"
-        ]
+        }
     }
 }

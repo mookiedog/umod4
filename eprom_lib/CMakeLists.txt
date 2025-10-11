@@ -19,6 +19,7 @@ set(EPROM_NAMES
 # Put your properly named .bin files into the eprom_lib/bin_files directory,
 # then uncomment the appropriate name[s], below:
   RP58
+  RP58USA
   PA59
   549USA
   Edwards
