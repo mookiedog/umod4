@@ -1,0 +1,18 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]
+  then
+    echo "$0: Usage: $0 <binfilename>"
+    exit 1
+fi
+
+if [ ! -f "$1" ]; then
+    echo "$0: Bin file <$1> does not exist."
+    exit 1
+fi
+
+binfilename=$1
+# echo $binfilename
+od -v -t x1 -A none -j 0xA2  -N 0x7b4 $binfilename > $binfilename.restricted
+od -v -t x1 -A none -j 0x856 -N 0x7b4 $binfilename > $binfilename.derestricted
+diff -b $binfilename.restricted $binfilename.derestricted
