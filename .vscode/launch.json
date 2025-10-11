@@ -21,7 +21,7 @@
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
-        "gdbPath" : "/opt/arm/arm-none-eabi/13.3.rel1/bin/arm-none-eabi-gdb",
+        "gdbPath" : "/opt/arm/arm-none-eabi/14.2.rel1/bin/arm-none-eabi-gdb",
         "device": "RP2040",
         "configFiles": [
             "interface/cmsis-dap.cfg",
@@ -69,13 +69,15 @@
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
-        "gdbPath" : "/opt/arm/arm-none-eabi/13.3.rel1/bin/arm-none-eabi-gdb",
+        "gdbPath" : "/opt/arm/arm-none-eabi/14.2.rel1/bin/arm-none-eabi-gdb",
         "device": "RP2350",
         "configFiles": [
             "interface/cmsis-dap.cfg",
             "target/rp2350.cfg"
         ],
-        "rtos": "FreeRTOS",
+        // Enabling this next line causes all kinds of trouble, like only showing 1 core, not stopping at breakpoints.
+        // Things seem to work fine without it...
+        //"rtos": "FreeRTOS",
         "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
         "runToEntryPoint": "main",
         // Work around for stopping at main on restart
@@ -83,9 +85,13 @@
             "break main",
             "help", "help",
             "continue"
+            ,"monitor rp2350.core1 arp_reset assert 0 ; rp2350.core0 arp_reset assert 0 ; reset halt"
         ],
         // Debug sessions will not start without setting the adaptor speed as below
         "openOCDLaunchCommands": ["adapter speed 5000"],
+
+        // See: https://forums.raspberrypi.com/viewtopic.php?t=349795
+        //"postLaunchCommands": ["monitor rp2040.core1 arp_reset assert 0 ; rp2040.core0 arp_reset assert 0 ; reset halt"],
 
         // Configure the rtt IO mechanism to let the WP use printf for debug/status output
         // To see the output stream, select 'RTT Ch:0 console' in the debugger terminal window
@@ -118,7 +124,7 @@
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
-        "gdbPath" : "/opt/arm/arm-none-eabi/13.3.rel1/bin/arm-none-eabi-gdb",
+        "gdbPath" : "/opt/arm/arm-none-eabi/14.2.rel1/bin/arm-none-eabi-gdb",
         "device": "RP2040",
         "configFiles": [
             "interface/cmsis-dap.cfg",
@@ -227,7 +233,7 @@
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
-        "gdbPath" : "/opt/arm/arm-none-eabi/13.3.rel1/bin/arm-none-eabi-gdb",
+        "gdbPath" : "/opt/arm/arm-none-eabi/14.2.rel1/bin/arm-none-eabi-gdb",
         "device": "RP2040",
         "configFiles": [
             "interface/picoprobe.cfg",
