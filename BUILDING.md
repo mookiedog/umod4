@@ -514,6 +514,8 @@ Install source code for OpenOCD, making sure to get the sources from raspberrypi
 ```bash
 cd ~/projects
 git clone https://github.com/raspberrypi/openocd.git
+git submodule init
+git submodule update
 ```
 
 You will need to install a bunch of packages for building OpenOCD:
@@ -527,7 +529,7 @@ Finally, build OpenOCD:
 ```bash
 cd ~/projects/openocd
 ./bootstrap
-./configure --enable-ftdi --enable-sysfsgpio --enable-bcm2835gpio --enable-cmsis-dap
+./configure --enable-ftdi --enable-sysfsgpio --enable-bcm2835gpio --enable-cmsis-dap --enable-internal-jimtcl
 make
 sudo make install
 openocd --version
