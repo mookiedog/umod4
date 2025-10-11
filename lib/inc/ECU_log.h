@@ -103,8 +103,58 @@
 #define   LOG_TS_CRANKREF_START_U16             ((LOG_BASE) + 0x0090)           // Timestamp of the start of the most recent crankshaft sub-rotation (6 crankrefs per full crank rotation)
 #define   LOG_CRANKREF_ID_U8                    ((LOG_BASE) + 0x0092)           // The ID of the specific crankshaft subroutation (0..11): 2 full rotations == all 4 strokes of the 4-stroke engine
 
+#define   LOG_CAMSHAFT_U16                      ((LOG_BASE) + 0x0093)           // Timestamp of most recent camshaft sensor falling-edge event
+#define   LOG_CAM_ERR_U8                        ((LOG_BASE) + 0x0095)           // Error while processing CAM ISR
+
 // The ECU is not allowed to define any LOG IDs beyond this next value.
 // The remaining log space up to offset 0xFF is reserved for the use of the WP.
-#define   LOG_ECU_LAST_ADDR                     ((LOG_BASE) + 0x00DF)
+#define   LOG_ECU_LAST_ADDR                     (((LOG_BASE) + 0x00CF) & 0xFF)
+
+// EP gets D0..DF
+#define   LOG_EP_STRT_ADDR                      ((LOG_ECU_LAST_ADDR) + 1)
+#define   LOG_EP_LAST_ADDR                      ((LOG_EP_STRT_ADDR) + 0x000F)
+
+// For the moment:
+// In keeping with always writing ECU data in 2-byte chunks (log ID then data),
+// the multi-byte EPROM log data will be written as logID, then data.
+// The same log ID will be written in front of each data byte.
+// Example: writing a 4-byte EPROM M3 with a value of 0x11223344 would get sent as:
+//    LOG_EP_LOAD_M3, 0x44
+//    LOG_EP_LOAD_M3, 0x33
+//    LOG_EP_LOAD_M3, 0x22
+//    LOG_EP_LOAD_M3, 0x11
+
+#define   LOG_EP_LOAD_NAME                      ((LOG_EP_STRT_ADDR) + 0x00)     // The name of the EPROM to be loaded, written as sequence of UTF-8 chars, NULL terminated
+#define   LOG_EP_LOAD_ADDR                      ((LOG_EP_STRT_ADDR) + 0x01)     // 2 bytes, LSB first
+#define   LOG_EP_LOAD_LEN                       ((LOG_EP_STRT_ADDR) + 0x02)     // 4 bytes, 2-byte start addr LSB first, then length (LSB first)
+
+#define   LOG_EP_LOAD_ERR                       ((LOG_EP_STRT_ADDR) + 0x03)     // The error status byte of the most recent load operation
+#define   LOG_EP_LOAD_ERR_NOERR                 0x00                            //   * no error: the load succeeded
+#define   LOG_EP_LOAD_ERR_NOTFOUND              0x01                            //   * The specified image name was not found in the BSON lib
+#define   LOG_EP_LOAD_ERR_NONAME                0x02                            //   * BSON EPROM object does not contain a name key
+#define   LOG_EP_LOAD_ERR_CKSUMERR              0x03                            //   * BSON memory contents verification failure
+#define   LOG_EP_LOAD_ERR_VERIFYERR             0x04                            //   * Verification failure after being copied to RAM
+#define   LOG_EP_LOAD_ERR_BADOFFSET             0x05
+#define   LOG_EP_LOAD_ERR_BADLENGTH             0x06
+#define   LOG_EP_LOAD_ERR_NODAUGHTERBOARDKEY    0x07
+#define   LOG_EP_LOAD_ERR_NOMEMKEY              0x08
+#define   LOG_EP_LOAD_ERR_BADMEMINFO            0x09
+#define   LOG_EP_LOAD_ERR_M3FAIL                0x0A
+#define   LOG_EP_LOAD_ERR_MISSING_KEY_START     0x0B
+#define   LOG_EP_LOAD_ERR_MISSING_KEY_LENGTH    0x0C
+#define   LOG_EP_LOAD_ERR_MISSING_KEY_M3        0x0D
+#define   LOG_EP_LOAD_ERR_BAD_M3_BSON_TYPE      0x0E
+#define   LOG_EP_LOAD_ERR_BAD_M3_VALUE          0x0F
+#define   LOG_EP_LOAD_ERR_NOBINKEY              0x10
+#define   LOG_EP_LOAD_ERR_BADBINLENGTH          0x11
+#define   LOG_EP_LOAD_ERR_BADBINSUBTYPE         0x12
+
+
+
+
+
+// WP gets E0..FF
+#define   LOG_WP_STRT_ADDR                      ((LOG_EP_LAST_ADDR) + 1)
+#define   LOG_WP_LAST_ADDR                      ((LOG_EP_STRT_ADDR) + 0x000F)
 
 #endif
