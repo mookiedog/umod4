@@ -29,7 +29,16 @@
     "type_traits": "cpp",
     "utility": "cpp",
     "cerrno": "cpp",
-    "*.dsc": "jsonc"
+    "*.dsc": "jsonc",
+    "*.tcc": "cpp",
+    "fstream": "cpp",
+    "iosfwd": "cpp",
+    "limits": "cpp",
+    "streambuf": "cpp",
+    "climits": "cpp",
+    "cstdlib": "cpp",
+    "cstdio": "cpp",
+    "cstring": "cpp"
   },
   "cmake.configureOnOpen": true,
 }
