@@ -3,7 +3,7 @@ set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
 # Specify the exact release of the cross-compilation tools we want to use...
-set(ARM_NONE_EABI_VERSION "13.3.rel1")
+set(ARM_NONE_EABI_VERSION "14.2.rel1")
 
 # ...as well as where to find the them
 set(CROSSCOMPILE_TOOL_PATH "/opt/arm/arm-none-eabi/${ARM_NONE_EABI_VERSION}/bin")
