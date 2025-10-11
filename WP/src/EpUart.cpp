@@ -1,6 +1,11 @@
 #include "EpUart.h"
 #include "Logger.h"
 
+// TEMP for scope trigger
+#include "umod4_WP.h"
+#include "pico/stdlib.h"
+
+
 EpUart::EpUart(uart_inst_t* uartId, int32_t txPad, int32_t rxPad) : Uart(uartId, txPad, rxPad)
 {
 
@@ -49,7 +54,19 @@ void __time_critical_func(EpUart::isr)()
           }
 
           d = rxData & 0xFF;
-          logger->logData(addr, d);
+
+          // TEMP!
+          #define LOG_CRANKREF_ID_U8 0x92
+          bool trigger = ((addr == LOG_CRANKREF_ID_U8) && (d >= 0x30));
+          gpio_put(SCOPE_TRIGGER_PIN, trigger);
+
+          logger->logData(addr, d, true);
+          #if 0
+          uint8_t buf[2];
+          buf[0] = addr;
+          buf[1] = d;
+          logSource->log(sizeof(buf), buf);
+          #endif
           addrValid = false;
         }
         else {

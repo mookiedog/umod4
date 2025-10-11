@@ -10,6 +10,7 @@
 #define UMOD4_WP
 
 // At its heart, the umod4_WP board is a pico2_w connected to a bunch of extra stuff.
+#include "pico.h"
 #include "boards/pico2_w.h"
 
 #include "hardware/uart.h"
@@ -35,12 +36,12 @@
 //  - The WP TX/GPIO0 is tied to the EP RX signal
 //  - The WP RX/GPIO1 is tied to the EP TX signal
 #define EP_UART_ID        uart0
-#define EP_TX_PIN         -1      // -1 means don't let the UART use it
-#define EP_RX_PIN         1
+#define EP_TX_PIN         -1      // WP transmits to the EP on this pad (-1 means don't let the UART use it)
+#define EP_RX_PIN         1       // WP receives from the EP on this pad
 
 #if EP_TX_PIN == -1
   // The UART is not using the TX pad: we use it as a flow control mechanism.
-  // A '1' tells the EP that we are ready to receive the ECU data stream.
+  // A '1' tells the EP that we are NOT ready to receive the ECU data stream.
   #define EP_FLOWCTRL_PIN   0
 #endif
 
@@ -50,6 +51,9 @@
 
 // Spare IOs for future use
 #define SPARE0_PIN        27
+
+// Spare0 will be used as a scope trigger output
+#define SCOPE_TRIGGER_PIN (SPARE0_PIN)
 
 // SPARE1 has been redefined as an add-on LED indicator wired as postive logic: 1 means LED ON
 #define SPARE1_PIN        26
@@ -68,8 +72,10 @@
 #define LCD_MISO_PIN      16
 #define LCD_CS_PIN        17
 
+#if 0
 // We will allow attaching a USB to serial adaptor on the LCD port
 #define DBG_UART_TX_PIN   LCD_MISO_PIN//(LCD_MOSI_PIN)
+#endif
 
 // Interface to MicroSD card using SPI0
 #define SD_SPI_PORT       spi1

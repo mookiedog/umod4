@@ -1,6 +1,6 @@
 #include "pico/stdlib.h"
+#include "pico/sync.h"
 #include "Logger.h"
-#include "hardware/sync.h"
 #include "NeoPixelConnect.h"
 #include "SdCard.h"
 #include "umod4_WP.h"
@@ -26,8 +26,6 @@ void start_logger_task(void *pvParameters)
 // ----------------------------------------------------------------------------------
 Logger::Logger(int32_t _size)
 {
-  deinit();
-
   buffer = (uint8_t*)malloc(_size);
   if (!buffer) {
       panic("Unable to malloc log buffer!");
@@ -52,16 +50,25 @@ void Logger::deinit()
 }
 
 // ----------------------------------------------------------------------------------
-void Logger::init(lfs_t* _lfs)
+bool Logger::init(lfs_t* _lfs)
 {
-  lfs = _lfs;
-  getDiskInfo();
+  if (!_lfs) {
+    return false;
+  }
+
+  int32_t err = getDiskInfo(_lfs);
+  bool ok = (err == 0);
+  if (ok) {
+    lfs = _lfs;
+  }
+
+  return ok;
 }
 
 // ----------------------------------------------------------------------------------
-void Logger::getDiskInfo()
+int32_t Logger::getDiskInfo(lfs_t* _lfs)
 {
-  int32_t err = lfs_fs_stat(lfs, &fsinfo);
+  int32_t err = lfs_fs_stat(_lfs, &fsinfo);
   if (err) {
       printf("%s: Unable to stat the filesystem: err=%d\n", __FUNCTION__, err);
   }
@@ -77,6 +84,8 @@ void Logger::getDiskInfo()
     printf("  Max file name length: %d bytes\n", fsinfo.name_max);
     printf("  Max file length: %d bytes\n", fsinfo.file_max);
   }
+
+  return err;
 }
 
 
@@ -213,7 +222,7 @@ bool Logger::openNewLog()
 #endif
 
 // ----------------------------------------------------------------------------------
-bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t data)
+bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t data, bool fromISR)
 {
   bool rVal = true;
 
@@ -222,7 +231,7 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t data)
   printf("%s: %02X %02X\n", __FUNCTION__, logId, data);
   #endif
 
-  uint32_t ints = save_and_disable_interrupts();
+  taskENTER_CRITICAL();
 
   //check if there is enough room left in the log buffer for both bytes
   int32_t spaceRemaining = bufferLen - inUse();
@@ -240,21 +249,22 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t data)
     rVal = false;
   }
 
-  restore_interrupts(ints);
+  taskEXIT_CRITICAL();
   return rVal;
 }
 
+#if 0
 // ----------------------------------------------------------------------------------
 bool __time_critical_func(Logger::logData)(uint8_t logId, uint16_t data)
 {
   bool rVal = true;
 
-  #if 0
+  #if 1
   // Print out what we are being asked to log
   printf("%s: %02X %02X %02X\n", __FUNCTION__, logId, data & 0xFF, (data>>8)&0xFF);
   #endif
 
-  uint32_t ints = save_and_disable_interrupts();
+  taskENTER_CRITICAL();
 
   //check if there is enough room left in the log buffer for both bytes
   int32_t spaceRemaining = bufferLen - inUse();
@@ -272,9 +282,10 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint16_t data)
       headP = buffer;
     }
   }
-  restore_interrupts(ints);
+  taskEXIT_CRITICAL();
   return rVal;
 }
+#endif
 
 
 // ----------------------------------------------------------------------------------
@@ -293,7 +304,7 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, int8_t len, uint8_t* d
   printf("[%d bytes]\n", len+1);
   #endif
 
-  uint32_t ints = save_and_disable_interrupts();
+  taskENTER_CRITICAL();
 
   //check if there is enough room left in the log buffer
   int32_t spaceRemaining = bufferLen - inUse();
@@ -316,7 +327,7 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, int8_t len, uint8_t* d
     rVal = false;
   }
 
-  restore_interrupts(ints);
+  taskEXIT_CRITICAL();
   return rVal;
 }
 
@@ -341,6 +352,10 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
   absolute_time_t t0 = get_absolute_time();
   int32_t bytesWritten = lfs_file_write(lfs, &logf, buf, len);
   absolute_time_t elapsed = get_absolute_time() - t0;
+  static uint32_t writeCount;
+
+  writeCount++;
+  printf("%s: %d: Write time: %lld uSec\n", __FUNCTION__, writeCount, elapsed);
 
   totalWriteEvents += 1;
   totalTimeWriting += elapsed;
@@ -358,7 +373,8 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
       else {
         mSecs = (uint32_t)elapsed / 1000;
       }
-      logData(LOG_WR_TIME, mSecs);
+      // Nuke this for now: it makes the log decoding more complicated
+      //logData(LOG_WR_TIME, mSecs);
     }
   }
 
@@ -388,7 +404,8 @@ int32_t Logger::syncLog()
       else {
         mSecs = (uint32_t)elapsed / 1000;
       }
-      logData(LOG_SYNC_TIME, mSecs);
+      // Nuke this for now: it makes the log decoding more complicated
+      //logData(LOG_SYNC_TIME, mSecs);
     }
   }
 
@@ -416,8 +433,9 @@ void Logger::logTask()
   int32_t logLength = 0;
 
   state_prev = UNUSED;
-
   state = UNMOUNTED;
+
+  deinit();
 
   // Clear our stats
   totalTimeWriting = maxTimeWriting = 0;
@@ -427,11 +445,7 @@ void Logger::logTask()
   minTimeSyncing = ~0;
   totalSyncEvents = 0;
 
-  #if defined EP_FLOWCTRL_PIN && (EP_FLOWCTRL_PIN >= 0)
-    // Tell the EP we are ready for data
-    gpio_put(EP_FLOWCTRL_PIN, 1);
-  #endif
-  #if 1
+  #if defined DBG_UART_TX_PIN
   uart_tx_program_puts(PIO_UART, PIO_UART_SM, decodeState[state]);
   uart_tx_program_puts(PIO_UART, PIO_UART_SM, "\r\n");
   #endif
@@ -442,7 +456,7 @@ void Logger::logTask()
     }
 
     if (state != state_prev) {
-      #if 1
+      #if defined DBG_UART_TX_PIN
         // printf("%s: Moving from state %s to state %s\n", __FUNCTION__, decodeState[state_prev], decodeState[state]);
         //uart_tx_program_puts(pio1, 0, __FUNCTION__": ");
         uart_tx_program_puts(pio1, 0, decodeState[state_prev]);
@@ -516,42 +530,42 @@ void Logger::logTask()
         bool err = false;
         pico_set_led(1);
 
+        uint8_t* tP = tailP;
         do {
-          int32_t bytesToEndOfBuffer = (lastBufferP - tailP + 1);
+          int32_t bytesToEndOfBuffer = (lastBufferP - tP + 1);
           int32_t len = (bytesToEndOfBuffer < totalToWrite) ? bytesToEndOfBuffer : totalToWrite;
           //printf("%s: Write chunk %c [%d bytes]\n", __FUNCTION__, c++, len);
-          int32_t bytesWritten = writeChunk(tailP, len);
+          int32_t bytesWritten = writeChunk(tP, len);
           if (bytesWritten < len) {
             printf("%s: Write %d bytes failed: %d bytes written\n", __FUNCTION__, len, bytesWritten);
             state = WRITE_FAILURE;
             err = true;
-            if (bytesWritten >= 0) {
-              tailP += bytesWritten;
-            }
           }
           else {
-            tailP += bytesWritten;
-            if (tailP > lastBufferP) {
-              tailP = buffer;
+            tP += bytesWritten;
+            if (tP > lastBufferP) {
+              tP = buffer;
             }
             totalToWrite -= bytesWritten;
           }
         } while (!err && (totalToWrite > 0));
 
-        // Now that the write[s] are done, we sync to commit them to flash
-        syncLog();
-
-        // Print some stats every megabyte written
-        totalByteCount += bytesToWriteBeforeSyncing;
-        if (totalByteCount > (1024*1024)) {
-          totalByteCount -= (1024*1024);
-          printf("%s: Writes: min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeWriting, maxTimeWriting, totalTimeWriting/totalWriteEvents);
-          printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeSyncing, maxTimeSyncing, totalTimeSyncing/totalSyncEvents);
-        }
-        // Calculate when to do the next sync:
         if (!err) {
+          tailP = tP;
+          // Now that the write[s] are done, we sync to commit them to flash
+          syncLog();
+
+          // Print some stats every megabyte written
+          totalByteCount += bytesToWriteBeforeSyncing;
+          if (totalByteCount > (1024*1024)) {
+            totalByteCount -= (1024*1024);
+            printf("%s: Writes: min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeWriting, maxTimeWriting, totalTimeWriting/totalWriteEvents);
+            printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeSyncing, maxTimeSyncing, totalTimeSyncing/totalSyncEvents);
+          }
+          // Calculate when to do the next sync:
           state = CALC_WR_SIZE;
         }
+
         pico_set_led(0);
         break;
       }

@@ -2,8 +2,9 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
-#include "hardware/sync.h"
 #include "pico/mutex.h"
+#include "pico/multicore.h"
+
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -12,10 +13,12 @@
 
 #include "EpUart.h"
 #include "Gps.h"
+#include "Heap.h"
 #if defined LFS
   #include "lfs.h"
 #endif
 #include "Logger.h"
+//#include "LogSource.h"
 #include "NeoPixelConnect.h"
 #include "SdCard.h"
 #include "Shell.h"
@@ -40,6 +43,10 @@ EpUart* epUart;
 
 // Configuration of the filesystem is provided by this struct
 struct lfs_config lfs_cfg;
+
+// LittleFS has a serious problem where worst case write times can be extremely long (minutes!)
+// apparently due to having to scan the entire disk when it needs to find free blocks.
+// See: https://github.com/littlefs-project/littlefs/issues/75#issuecomment-410065792
 
 // littlefs needs these 4 "C" routines to be defined so that it can work with a block-based
 // flash-based device:
@@ -181,6 +188,7 @@ bool comingOnline(SdCard* sdCard)
   uint32_t t0, t1;
   static uint32_t mountTime_us;
   static uint32_t formatTime_us;
+  int32_t mount_err;
 
   printf("%s: Bringing SD card online\n", __FUNCTION__);
 
@@ -212,6 +220,13 @@ bool comingOnline(SdCard* sdCard)
   lfs_cfg.cache_size = blockSize;
   lfs_cfg.lookahead_size = 16;
 
+  printf("Filesystem Configuration\n");
+  printf("  sd read_size: %d\n", lfs_cfg.read_size);
+  printf("  sd prog_size: %d\n", lfs_cfg.prog_size);
+  printf("  sd page_count: 0x%08X\n", capacity_blocks);
+  printf("  lfs block_size: %d\n", lfs_cfg.block_size);
+  printf("  lfs cache_size: %d\n", lfs_cfg.cache_size);
+
   // This disables wear-leveling because SD cards do it themselves.
   // See https://github.com/joltwallet/esp_littlefs/issues/211#issuecomment-2585285239
   lfs_cfg.block_cycles = -1;
@@ -220,43 +235,44 @@ bool comingOnline(SdCard* sdCard)
   lfs_cfg.lock = lfs_mutex_take;
   lfs_cfg.unlock = lfs_mutex_give;
 
-  // Mount the filesystem.
-  printf("%s: Mounting filesystem\n", __FUNCTION__);
-  t0 = time_us_32();
-  int err = lfs_mount(&lfs, &lfs_cfg);
-  t1 = time_us_32();
-  mountTime_us = t1 - t0;
-
-  // If we were unable to mount the filesystem, try reformatting it. This should only happen on the first boot.
   // As a development aid, reformat the filesystem if GPIO SPARE2 is grounded.
   bool formatRequest = !gpio_get(SPARE2_PIN);
 
-  if (err || formatRequest) {
-    if (err) {
-      printf("%s: Mount failed! err=%d\n", __FUNCTION__, err);
+  if (formatRequest) {
+    printf("\n%s: *** External request to reformat filesystem via GPIO SPARE2\n\n", __FUNCTION__);
+  }
+  else {
+    // Attempt to mount an existing filesystem
+    printf("%s: Mounting filesystem\n", __FUNCTION__);
+    t0 = time_us_32();
+    mount_err = lfs_mount(&lfs, &lfs_cfg);
+    t1 = time_us_32();
+    mountTime_us = t1 - t0;
+    if (mount_err) {
+      printf("%s: Mount failed! err=%d\n", __FUNCTION__, mount_err);
     }
-    else {
-      printf("\n%s: *** External request to reformat filesystem via GPIO SPARE2\n\n", __FUNCTION__);
-    }
+  }
 
+  // If we were unable to mount the filesystem, try reformatting it. This should only happen on the first boot.
+  if (mount_err || formatRequest) {
     // We should probably log a message if we ever have to reformat!
 
     printf("%s: Formatting a filesystem\n", __FUNCTION__);
     t0 = time_us_32();
-    err = lfs_format(&lfs, &lfs_cfg);
+    mount_err = lfs_format(&lfs, &lfs_cfg);
     t1 = time_us_32();
     formatTime_us = t1 - t0;
-    if (err < 0) {
+    if (mount_err < 0) {
       // Format operation failed
-      printf("%s: Format failed! err=%d\n", __FUNCTION__, err);
+      printf("%s: Format failed! mount_err=%d\n", __FUNCTION__, mount_err);
     return false;
     }
     // Mount the freshly formatted device
-    printf("%s: Mounting new filesystem\n", __FUNCTION__);
-    err = lfs_mount(&lfs, &lfs_cfg);
-    if (err<0) {
+    printf("%s: Mounting reformatted filesystem\n", __FUNCTION__);
+    mount_err = lfs_mount(&lfs, &lfs_cfg);
+    if (mount_err<0) {
       // Still unable to mount the device!
-      printf("%s: Mount of new filesystem failed! err=%d\n", __FUNCTION__, err);
+      printf("%s: Mount of reformatted filesystem failed! mount_err=%d\n", __FUNCTION__, mount_err);
       return false;
     }
     mountTime_us = time_us_32() - t1;
@@ -281,7 +297,10 @@ bool comingOnline(SdCard* sdCard)
 
   // Reinit the logger if for some reason a card got hotplugged after the system had booted.
   if (logger) {
-    logger->init(&lfs);
+    if (!logger->init(&lfs)) {
+      logger->deinit();
+      return false;
+    }
   }
 
   return true;
@@ -354,6 +373,40 @@ void vApplicationIdleHook( void )
     __wfi();
 }
 
+// ----------------------------------------------------------------------------------
+// The EP UART receives the ECU data stream.
+void startEpUart() {
+// Create the object to handle UART data arriving from EP
+  epUart = new EpUart(EP_UART_ID, EP_TX_PIN, EP_RX_PIN);
+  epUart->configFormat(8, 1, UART_PARITY_NONE);
+  epUart->configFlowControl(false, false);
+
+  #warning "Should be defined somewhere that both EP & WP sources see!"
+  epUart->configBaud(921600);
+
+  epUart->enable();
+  epUart->rxIntEnable();
+}
+
+// ----------------------------------------------------------------------------------
+void allowEpToSendData()
+{
+  assert(epUart != nullptr);
+  assert(logger != nullptr);
+
+  // Make sure the rxQ is empty prior to giving the EP the OK to send
+  // in case we received some garbage during boot.
+  while(!(epUart->rxQ_empty())) {
+    uint16_t c;
+    epUart->rx(c, 0);
+  }
+
+  #if defined EP_FLOWCTRL_PIN
+    // Tell the EP we are ready for data
+    gpio_put(EP_FLOWCTRL_PIN, 0);
+    gpio_set_dir(EP_FLOWCTRL_PIN, GPIO_OUT);
+  #endif
+}
 
 // ----------------------------------------------------------------------------------
 // This function is used to perform the FreeRTOS task initialization.
@@ -361,31 +414,20 @@ void vApplicationIdleHook( void )
 // to use any FreeRTOS constructs and call any FreeRTOS routines.
 void bootSystem()
 {
-  #if defined DBG_UART_TX_PIN
-    // Create the object to handle UART data arriving from EP
-    epUart = new EpUart(EP_UART_ID, EP_TX_PIN, EP_RX_PIN);
-    epUart->configFormat(8, 1, UART_PARITY_NONE);
-    epUart->configFlowControl(false, false);
-    #warning "Not cool!"
-    epUart->configBaud(921600);
-    epUart->enable();
-    epUart->rxIntEnable();
-  #else
-    // Create the Spi object that we could use to drive a local LCD.
-    // There is no harm in creating it even if there is no display attached:
-    spiLcd = new Spi(LCD_SPI_PORT, LCD_SCK_PIN, LCD_MOSI_PIN, LCD_MISO_PIN);
-  #endif
+  startEpUart();
 
-  // It is OK to start the logger before the filesystem because the logger has a big
-  // buffer to handle long write times.
+  // The logger may be started early since it has a big buffer to handle extremely long LittleFS write times.
   printf("%s: Creating the logger\n", __FUNCTION__);
   logger = new Logger(LOG_BUFFER_SIZE);
 
-  printf("%s: Starting the GPS\n", __FUNCTION__);
-  startGps();
-
   printf("%s: Starting the filesystem\n", __FUNCTION__);
   startFileSystem();
+
+  // Now that the UART and logger are up: signal the EP that is is OK to send us data
+  allowEpToSendData();
+
+  printf("%s: Starting the GPS\n", __FUNCTION__);
+  startGps();
 
   printf("%s: Starting the debug shell\n", __FUNCTION__);
   dbgShell = new Shell(&lfs);
@@ -495,9 +537,16 @@ void hello(int32_t count)
 // Init all three SPAREx GPIOs as inputs, with pullups.
 void initSpareIos()
 {
-  gpio_init(SPARE0_PIN);
-  gpio_set_dir(SPARE0_PIN, GPIO_IN);
-  gpio_set_pulls(SPARE0_PIN, false, true);    // pulldown
+  #if defined SCOPE_TRIGGER_PIN
+    // Scope trigger will be rising edge
+    gpio_init(SCOPE_TRIGGER_PIN);
+    gpio_put(SCOPE_TRIGGER_PIN, 0);
+    gpio_set_dir(SCOPE_TRIGGER_PIN, GPIO_OUT);
+  #else
+    gpio_init(SPARE0_PIN);
+    gpio_set_dir(SPARE0_PIN, GPIO_IN);
+    gpio_set_pulls(SPARE0_PIN, false, true);    // pulldown
+  #endif
 
   #if !defined SPARE1_LED_PIN
     gpio_init(SPARE1_PIN);
@@ -511,24 +560,16 @@ void initSpareIos()
 }
 
 // ----------------------------------------------------------------------------------
-void initEpFlowControl()
-{
-  #if defined EP_FLOWCTRL_PIN && (EP_FLOWCTRL_PIN >= 0)
-  gpio_init(EP_FLOWCTRL_PIN);
-  gpio_put(EP_FLOWCTRL_PIN, 0);
-  gpio_set_dir(EP_FLOWCTRL_PIN, GPIO_OUT);
-  #endif
-}
-
-// ----------------------------------------------------------------------------------
 void initDbgUart()
 {
   const uint32_t SERIAL_BAUD = 115200;
 
-  uint offset = pio_add_program(PIO_UART, &uart_tx_program);
-  uart_tx_program_init(PIO_UART, PIO_UART_SM, offset, DBG_UART_TX_PIN, SERIAL_BAUD);
+  #if defined DBG_UART_TX_PIN
+    uint offset = pio_add_program(PIO_UART, &uart_tx_program);
+    uart_tx_program_init(PIO_UART, PIO_UART_SM, offset, DBG_UART_TX_PIN, SERIAL_BAUD);
 
-  uart_tx_program_puts(PIO_UART, PIO_UART_SM, "\r\n\nInitializing PIO-based Debug UART\r\n");
+    uart_tx_program_puts(PIO_UART, PIO_UART_SM, "\r\n\nInitializing PIO-based Debug UART\r\n");
+  #endif
 }
 
 // ----------------------------------------------------------------------------------
@@ -537,7 +578,18 @@ void initDbgUart()
 // That is where all the behind-the-scenes initialization of the runtime occurs.
 int main()
 {
-  initEpFlowControl();
+  // Simulate having pullup resistors on EP_RX_PIN and FLOWCTRL_PIN.
+  // A future rev of the PCB should add pullups to both of these signals!
+  gpio_init(EP_RX_PIN);
+  gpio_set_dir(EP_RX_PIN, GPIO_IN);
+  gpio_set_pulls(EP_RX_PIN, true, false);
+
+  #if defined EP_FLOWCTRL_PIN
+    gpio_init(EP_FLOWCTRL_PIN);
+    gpio_set_pulls(EP_FLOWCTRL_PIN, true, false);
+    gpio_set_dir(EP_FLOWCTRL_PIN, GPIO_IN);
+  #endif
+
   #if defined SPARE1_LED_PIN
     hello(3);
   #endif
@@ -549,14 +601,35 @@ int main()
   #endif
 
   initSpareIos();
-  initDbgUart();
+
+  #if defined DBG_UART_TX_PIN
+    initDbgUart();
+  #endif
+
   stdio_init_all();
 
   printf("\n\nWP Booting on %s\n", STRINGIFY(PICO_BOARD));
   uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
   printf("WP System clock: %.1f MHz\n", f_clk_sys / 1000.0);
+  printf("Heap Range: 0x%08x..0x%08X (%u bytes)\n", heap_start, heap_end, (heap_end-heap_start));
   printf("\n");
 
+  #if 0
+  {
+    // WAY TEMP!!
+    LogSource* testLogSource;
+    uint8_t foo[] = {0x12, 0x34, 0x56, 0x78};
+    uint8_t bar[4];
+    testLogSource = new LogSource(128);
+    testLogSource->log(4, foo);
+    uint64_t ts = testLogSource->get_timestamp();
+    uint16_t len = testLogSource->get_data_length();
+    LogSource::error err = testLogSource->get_data(bar);
+
+    printf("log test: %04X %02X%02X%02X%02X\n",len, bar[0], bar[1], bar[2], bar[3]);
+  }
+  #endif
+  
   // The LED task will boot the rest of the system
   BaseType_t err = xTaskCreate(vLedTask, "LED Task", 2048, NULL, 1, NULL);
   if (err != pdPASS) {

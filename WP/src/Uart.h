@@ -54,6 +54,9 @@ class Uart {
 
     void rxIntEnable();
 
+    bool rxQ_full();
+    bool rxQ_empty();
+
     BaseType_t rx(uint16_t &c, TickType_t xTicksToWait);
 
     void notifyOnRx(TaskHandle_t t) {rxTask = t;}
@@ -76,9 +79,6 @@ class Uart {
     uint16_t rxQ[rxQ_len];
     uint16_t* rxQ_head;
     uint16_t* rxQ_tail;
-
-    bool rxQ_full();
-    bool rxQ_empty();
 
     bool rxIntsEnabled;
     bool txIntsEnabled;

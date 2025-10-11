@@ -6,6 +6,8 @@
 #include "task.h"
 
 #include "lfs.h"
+#include "pico/sync.h"
+
 
 // The log buffer needs to be able to absorb incoming data while data in the
 // buffer is being written to the file system. The LittleFS file system can
@@ -16,16 +18,15 @@ class Logger {
   public:
     Logger(int32_t size);
 
-    void init(lfs_t* lfs);
+    bool init(lfs_t* lfs);
     void deinit();
 
     void logTask();
-    void getDiskInfo();
     void startTask();
 
     bool logData(uint8_t logId, int8_t len, uint8_t* buffer);
-    bool logData(uint8_t logId, uint8_t data);
-    bool logData(uint8_t logId, uint16_t data);
+    bool logData(uint8_t logId, uint8_t data, bool fromISR = false);
+    //bool logData(uint8_t logId, uint16_t data);
 
   private:
     lfs_t* lfs;
@@ -37,6 +38,8 @@ class Logger {
     struct lfs_fsinfo fsinfo;
 
     TaskHandle_t log_taskHandle;
+
+    int32_t getDiskInfo(lfs_t* _lfs);
 
     bool openNewLog();
 
@@ -59,20 +62,6 @@ class Logger {
     uint32_t totalSyncEvents;
 };
 
-#endif
-
-
-#if 0
-
-  // We will use SPARE1 as a development aid.
-  // If shorted to ground, it will not perform any logging,
-  // mainly to save wear and tear on the SD card during development.
-  gpio_init(SPARE1_PIN);
-  gpio_set_dir(SPARE1_PIN, GPIO_IN);
-  // Enable pullup. If the pin is not grounded, it will read 'high'.
-  gpio_set_pulls(SPARE1_PIN, true, false);
-  vTaskDelay(1);
-  uint32_t pinState = gpio_get(SPARE1);
 #endif
 
 extern Logger* logger;
