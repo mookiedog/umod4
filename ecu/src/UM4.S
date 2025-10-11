@@ -336,7 +336,7 @@ L0010   =       0x0010
 ;xxxxxx1x               <not used>
 ;xxxxx1xx               <not used>
 ;xxxx1xxx               <not used>
-;xxx1xxxx
+;xxx1xxxx               set to '1' if the cam sensor is broken, will be zeroed if we ever see a cam event
 ;xx1xxxxx
 ;x1xxxxxx               set to '1' if the crank sensor is broken (30 cam events without a single crank event)
 ;1xxxxxxx
@@ -712,9 +712,15 @@ L014D   =       0x014D
 
 L014E   =       0x014E
 L014F   =       0x014F                  ;incs every time 1/6 period is cal'd (max 0xFF). cleared under certain conditions.
-L0150   =       0x0150
-L0151   =       0x0151
-L0152   =       0x0152
+
+L0150   =       0x0150                  ;I think this variable tracks the CRID as 0 through 11 under conditions
+                                        ;where we had a missing CAM event.
+
+L0151   =       0x0151                  ;Counts the number of crank events we have seen since the last cam event.
+                                        ;Crank ISR zeroes it if it sees that a cam event has occurred since the last crank event.
+
+L0152   =       0x0152                  ;zeroed by the crank event ISR on every falling (leading) edge of a crank sensor event
+                                        ;It is used by the camshaft ISR to detect a malfunctioning crankshaft sensor.
 
 ;At one point (at least) this contain VTA massaged into an 8.8 value suitable for indexing an 18-entry interpolation table.
 L0153   =       0x0153                  ;This is an 8.8 value used to interpolate along a column in a table
@@ -783,6 +789,7 @@ OC1D    =       0x100D
 ;From the HC11G5 doc:
 ;   - TCNT1 is associated with OC1-OC4, OC5/IC4 and OC6/IC5.
 TCNT    =       0x100E
+TIC1    =       0x1010
 TIC2    =       0x1012
 TOC1    =       0x1016
 TOC2    =       0x1018
@@ -1963,7 +1970,7 @@ LC05C:  ldaA    #0x90                   ;Disable interrupts, disable STOP mode
 ;IC3 - watches ignition events on IG11-FRT and IG21-REAR
 ;IC4 - watches ignition events on IG12-FRT and IG22-REAR
 
-        ldaA    #0x69                   ;Ignition=IC4=01=rising, camshaft=IC1=10=falling, crankshaft=IC2=10=falling, IC3=01=rising
+        ldaA    #0x69                   ;Ignition=IC4=01xxxxxx=rising, camshaft=IC1=xx10xxxx=falling, crankshaft=IC2=xxxx10xx=falling, IC3=xxxxxx01=rising
         staA    TCTL2
 
         ldaA    #0x0F                   ;IC5/IC6 disabled, OC6/OC7 are set to 1 on timer compare match
@@ -3396,7 +3403,7 @@ LC7D2:  ldaA    #14
         ldD     #0x0000
         stD     *L004D                  ; we don't know the current engine 8.8 RPM50
 
-        ldaA    #0x80                   ;mark the crank posn as being "unknown"
+        ldaA    #0x80                   ;mark the crank posn as being "unknown, and never seen a cam event yet'
         staA    *L0055
 
         ldD     #0xFFFF
@@ -7954,10 +7961,11 @@ IC2F_ISR_5:
         oraB    #0b00000001             ;set Tach drive (TAC) to 1
 IC2F_ISR_6:
         staB    PORTJ
-
         bset    *L0003 #0b00000100
         bset    *L0000 #0b00001000
 
+;This counter gets incremented on each cam ISR, and cleared right here on every crank ISR.
+;If the cam ISR increments the value past a threshold, it deems that the crank sensor is broken.
         clrB
         staB    L0152
 
@@ -7974,24 +7982,31 @@ IC2F_ISR_7:
         bhs     IC2F_ISR_8              ;br if current crankref is >= 11 (meaning we don't know where the crank is)
 
         inc     L0150
-        jmp     IC2F_ISR_15             ;lots more work to do
+        jmp     IC2F_ISR_15             ;Everything is fine. Go increment the crankRef ID value!
 
+;We get here if the crankref ID is > 11.
+;If we saw a camshaft event since the last crank ISR, everything is fine, and this really is CR0.
+;If not, we are in trouble!
 IC2F_ISR_8:
-        brset   *L0003 #0b00000001 IC2F_ISR_13  ;br if the cam event occurred since the last crank event
+        brset   *L0003 #0b00000001 IC2F_ISR_13  ;br if a cam event occurred since the last crank event, all is good
 
-;We have not seen a cam event since the last crank event.
+;Things are not good: we should have seen a cam event since the last crank event!
         ldaA    *L0055
-        cmpA    #0x80                   ;do we know where the crank is?
-        blo     IC2F_ISR_11             ;br if we do know (if A<0x80)
+        cmpA    #0x80                   ;Have we *ever* seen a cam event yet? If so, A will be < 0x80
+        blo     IC2F_ISR_11             ;br if we have
 
-        addA    #0x01                   ;else we don't, but inc the posn anyway...
-        sbcA    #0x00                   ;...to a maximum of 0xFF
+;We have never seen a cam event since the ECU booted.
+;If the crankref counter hits a max value of 0xFF, we decide that the cam sensor is broken
+        addA    #0x01
+        sbcA    #0x00                   ;Limit the crankshaft event counter 0xFF, max
         staA    *L0055
-        cmpA    #0xFF                   ;have we maxed out? (is A < 0xFF)
-        blo     IC2F_ISR_9              ;br if not
+        cmpA    #0xFF                   ;have we maxed out at 0xFF yet?
+        blo     IC2F_ISR_9              ;if not
 
-;If our crank pulse counter gets to 255 without being cleared by
-;seeing a cam event, the cam sensor is probably broken.
+;If we get here, the crankref event counter incremented from 0x80 to 0xFF without seeing a cam event, the cam sensor is broken.
+;127 cranks events means (127/6) or just over 21 full rotations of the crank.
+;If the starter cranks at roughly 300 RPM, it would take about 4 seconds of cranking
+;without a cam signal for the ECU to decide that the cam sensor was broken:
         bset    *L0011 #0b00010000
         bset    *L000C #0b10000000      ;set the 'cam sensor is broken' bit
         bset    *L000E #0b10000000      ;set the 'cam sensor is broken' sticky bit
@@ -8009,8 +8024,14 @@ IC2F_ISR_10:
         rti                             ;all done
 
 ;-----------------------------------------------------------------
-;We get here if we did not see a cam event since the last crank
-;event, but we do know where the crank is.
+;We get here if:
+;       - the crankref went past 11
+;       - and we did not see a cam event since the last crank like we should have
+;       - but we have seen the cam sensor in the past
+;I believe that this code is trusting that the engine still knows where it is even though
+;it didn't see a cam event. It marks its unhappiness with the cam sensor by adding 0x30
+;to the CRID. So CRID 0x30 is the same as CR0, except that we never did see a cam event
+;that would have triggered the normal CR11->CR0 processing.
 
 IC2F_ISR_11:
         andA    #0b00111111
@@ -8018,9 +8039,9 @@ IC2F_ISR_11:
         staA    L015E
 
         cmpA    #0b00111011
-        blo     IC2F_ISR_12
+        blo     IC2F_ISR_12     ;br if it has been less than 12 CR periods since the missing cam event
 
-        ldaA    #0b00101111
+        ldaA    #0b00101111     ;arrange for the CRID to get set to $30
         staA    L015E
 
 IC2F_ISR_12:
@@ -8028,26 +8049,27 @@ IC2F_ISR_12:
         addB    #0x01
         staB    L0150
         cmpB    #0x0C
-        blo     IC2F_ISR_15
+        blo     IC2F_ISR_15             ;CRid will be set to A+1
         clr     L0150
 
-        ldaB    L0151
-        addB    #0x01
+        ldaB    L0151                   ;Holds number of crank events since we saw a cam event
+        addB    #0x01                   ;increment, but clamp max value to 0xFF
         sbcB    #0x00
         staB    L0151
 
         ldaA    L015E
         cmpB    L9A55                   ;0x1E
-        blo     IC2F_ISR_15
+        blo     IC2F_ISR_15             ;CRid will be set to A+1
 
         bset    *L0011 #0b00010000
-        bset    *L000C #0b10000000
-        bset    *L000E #0b10000000
+        bset    *L000C #0b10000000      ;Mark that the CAM sensor is broken
+        bset    *L000E #0b10000000      ;Also mark the sticky copy of L000C
         dec     L0150
-        bra     IC2F_ISR_15
+        bra     IC2F_ISR_15             ;CRid will be set to A+1
 
 ;-----------------------------------------------------------------
-;CR ISR: We get here if a cam event occurred since the last crank event.
+;We get here when everything is fine: We know were the crank is, we were expecting to see a CAM event
+;and we did see a cam event since the last crank event!
 IC2F_ISR_13:
         bset    *L0003 #0b00001000      ;mark that a cam event has occurred since last crank event
 
@@ -8056,22 +8078,24 @@ IC2F_ISR_13:
         staA    *L0011
 
         ldaA    #0x00
-        staA    L0150
-        staA    L0151
+        staA    L0150                   ;zero the crank event counter that is used to a detect bad cam sensor
+        staA    L0151                   ;we saw a cam event before this crank event so we rezero the counter
 
-        ldaA    *L0055                  ;do we know where the crank posn is?
+        ldaA    *L0055                  ;Have we ever seen a cam signal yet?
         cmpA    #0x80
-        blo     IC2F_ISR_14             ;br if we do: the cam event signals that it is time to
+        blo     IC2F_ISR_14             ;br if so: the cam event signals that it is time to
                                         ;reset the crank posn counter to 0
 
 ;If we get here, it means that we just found out where the crank
-;was for the first time.  We set the crank posn counter to 0, but
+;was for the first time since booting.  We set the crank posn counter to 0, but
 ;we also mark the event by setting some flags:
         bset    *L0000 #0b10000000      ;we have achieved initial crank sync
         bset    *L0001 #0b00001000
 
+;If we get here, it's normal operation and all is good: we know that the this ISR represents CR0:
 IC2F_ISR_14:
-        ldaA    #0xFF                   ;crank posn counter will become 0
+        ldaA    #0xFF                   ;Arrange for crank posn counter to get set to 0
+
 IC2F_ISR_15:
         incA                            ;inc the current crank posn
         staA    *L0055                  ;the only legitimate store to the crank posn
@@ -10107,8 +10131,26 @@ OC2F_ISR:
 
 ;*****************************************************************
 ;The IC1F Interrupt Service Routine: camshaft sensor cam event.
+;  - The cam sensor is normally a 0 output
+;  - The 0->1 leading edge is not interesting
+;  - The 1->0 trailing edge marks that the next crank event will be CR0
+;FYI: Scope traces show that the camshaft sensor falling-edge appears to be generated by a zero-cross circuit.
+;
+; Scope traces also show that ignition noise can cause spurious positive pulses on the PA2/IC1F pin.
+; It is conceivable that this code would respond to the falling edge of the noise event.
+; As things stand, this is not detectable.
+; It might be better if this code responded to both edges, and measured the width of the cam pulse.
+; If the pulse was too narrow, it could discard the falling edge as being spurious.
+; The scope shows that the spurious pulses are very narrow, like less than 500 nSec.
+; At idle, a cam pulse is about 5 mSec wide. At 10 times that speed (well past redline), the pulse
+; would be 500 uSec wide.
+; It would be safe to discard anything less than say 100 uSec.
+; It would be worth logging the fact that a spruious cam pulse was detected.
 
 IC1F_ISR:
+        ldD     TIC1                    ;Log the timestamp of this most recent camshaft event
+        stD     LOG_CAMSHAFT_U16
+
         ldaA    TCTL2                   ;read TCTL2
         andA    #0b00110000             ;only interested in the T1 edge control bits
         cmpA    #0b00100000             ;was it set to %xx10xxxx (T1 falling edge)?
@@ -10117,12 +10159,25 @@ IC1F_ISR:
 ;We should never get here since we never program TCTL2/T1 for
 ;anything other than a falling edge interrupt.  In any case, we
 ;don't care about rising edge interrupts:
-        ldaA    #0x04                   ;clear the IC1F flag...
+
+#if 0
+;BUG FIX
+;The ECU firmware initializes TCTL2 for a falling edge interrupt ONLY.
+;If we get here, it means that the edge1 control bits are wrong, and yet the original ISR
+;simply exited without resetting them back to the desired state.
+        ldaA    TCTL2                   ;set the edge1 control bits back to 'falling edge only'
+        andA    0b11001111
+        oraA    0b00100000
+        staA    TCTL2
+;End bug fix
+#endif
+        ldaA    #0x04                   ;clear the IC1F flag
         staA    TFLG1
 0:
-        rti                             ;...and bail immediately
+        staA    LOG_CAM_ERR_U8          ;if (A bit 2 == 1) then edge control bits were wrong, if (A bit 2 == 0) then TFLG1.ICF1 was unexpectedly not set
+        rti
 
-;We are processing a falling edge interrupt.
+;We are processing a falling edge interrupt, the trailing edge of the cam sensor.
 1:
         ldaA    TFLG1                   ;read TFLG1
         bitA    #0b00000100             ;test if IC1F is set
@@ -10133,18 +10188,15 @@ IC1F_ISR:
         brclr   *L0000 #0b00000001 2f
 
         ldaA    *L0055
-        cmpA    #0x80                   ;do we know where the crank is?
-        blo     2f                      ;if A<0x80, we do!
+        cmpA    #0x80                   ;Have we ever seen a crank event yet?
+        blo     2f                      ;if A<0x80, we have!
 
         bset    *L0003 #0b00010000      ;mark that we don't know where the crank is?
-                                        ;This conflicts with DON_FILT at <search on conflict>
-
 2:
         bset    *L0003 #0b00001000
 
-;This _might_ be some sort of error check: if we see 30 cam
-;events without seeing a single crank event, then our crank
-;sensor is buggered up:
+;Sensor error check: if we see 30 cam events without seeing a single crank event,
+;then our crank sensor is not working:
         ldaA    L0152                   ;this var gets cleared on every falling edge of IC2F crank sensor
         incA                            ;inc L0152 on every cam event
         staA    L0152
@@ -10156,7 +10208,7 @@ IC1F_ISR:
         bset    *L0011 #0b01000000      ;sets crank error
         bset    *L000C #0b01000000
         bset    *L000E #0b01000000
-        dec     L0152
+        dec     L0152                   ;set the error flags on each subsequent cam event
         bra     4f
 
 3:
