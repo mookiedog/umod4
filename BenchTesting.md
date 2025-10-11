@@ -82,3 +82,27 @@ All 4 of these connector pins are tied to the same GND on the circuit board.
 
 This is the GND for the ignition coil driver transistors.
 For a bench setup, it is fine to connect E03 to the same power supply GND as the ECU uses.
+
+## Bench Testing Enhancements
+
+It might be worthwhile to expand the bench-test setup for more realistic ECU firmware operation.
+"More realistic" would be best defined as being able to simulate a rotating engine.
+The key to that would be the ability to drive fake cam and crank position signals.
+
+Sensors could be added:
+* Air temp (could just be a simple resistor, or maybe a pot)
+* Water temp (could just be a pot)
+* throttle
+* intake pressure (difficult)
+
+Less useful sensors:
+* fall sensor
+* clutch
+
+Additional outputs:
+* fuel pump relay
+* ignition coils
+  * could be 2 or all 4
+* injectors
+    Might just be a blinking light
+* tachometer
