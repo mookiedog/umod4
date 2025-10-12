@@ -225,13 +225,19 @@ bool Logger::openNewLog()
 bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t data, bool fromISR)
 {
   bool rVal = true;
+  UBaseType_t interruptStatus;
 
   #if 0
   // Print out what we are being asked to log
   printf("%s: %02X %02X\n", __FUNCTION__, logId, data);
   #endif
 
-  taskENTER_CRITICAL();
+  if (fromISR) {
+    interruptStatus = taskENTER_CRITICAL_FROM_ISR();
+  }
+  else {
+    taskENTER_CRITICAL();
+  }
 
   //check if there is enough room left in the log buffer for both bytes
   int32_t spaceRemaining = bufferLen - inUse();
@@ -249,7 +255,13 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t data, bool fro
     rVal = false;
   }
 
-  taskEXIT_CRITICAL();
+  if (fromISR) {
+    taskEXIT_CRITICAL_FROM_ISR(interruptStatus);  
+  }
+  else {
+    taskEXIT_CRITICAL();
+  }
+
   return rVal;
 }
 
