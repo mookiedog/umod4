@@ -96,6 +96,7 @@ class Gps : public Psm
     uint8_t day;
     uint8_t hours;
     uint8_t mins;
+    uint8_t csecs;
     uint8_t secs;
     int32_t nanos;
     uint32_t itow;

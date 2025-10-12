@@ -367,6 +367,14 @@ void Gps::process_NAV_PVT(uint8_t* payload)
         secs = _secs;
         logger->logData(LOG_SECS, LOG_SECS_LEN, &secs);
         doRest = true;
+
+        // Every 10 seconds, we log our location even when stopped
+        if (csecs != (_secs/10)) {
+          csecs = (_secs/10);
+          if (!moving) {
+            moving = 1;
+          }
+        }
       }
 
       if (moving && (fixType>=2)) {
