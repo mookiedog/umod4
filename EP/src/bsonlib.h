@@ -46,7 +46,6 @@ typedef struct {
     const char* name;
     int8_t elementType;
     uint8_t* data;
-    int32_t dataLength;
 } element_t;
 
 typedef struct {

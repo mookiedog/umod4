@@ -85,21 +85,22 @@ int32_t Bson::elementLength_bytes(uint8_t* elementP)
             {
                 char* s1 = (char*)(elementValueP);
                 uint32_t s1Len = strlen(s1);
-                char* s2 = s1+strlen(s1)+1;
+                char* s2 = s1 + s1Len + 1;
                 uint32_t s2Len = strlen(s2);
                 size += (s1Len + 1 + s2Len + 1);
             }
             break;
 
         case BSON_TYPE_DBPOINTER:   // deprecated
-            // account for the length of the string
+            // account for the 4 bytes that holds the int32 string length field we are about to read
+            size += 4;
+
+            // Read the actual length of the string that follows the int32 string length field
             {
                 int32_t stringLen = (int32_t)read_unaligned_uint32(elementValueP);
                 size += stringLen;
             }
-            // account for the 4 bytes needed to hold the string length
-            size += 4;              // int32 string length
-
+            
             // account for the 12 bytes of DB Pointer data
             size += 12;
             break;
@@ -148,26 +149,26 @@ bool Bson::findElement(uint8_t* docP, const char* elementName, element_t &e)
         if (dbg) printf("%s: ERR: document does not end with a zero byte!\n", __FUNCTION__);
     }
     else {
-        if (dbg) printf("%s: Doc ends with zero byte!\n", __FUNCTION__);
-    }
-    while ((*elementListP != 0x00) && (elementListP < docEndP)) {
-        e.elementP = elementListP;
-        e.elementType = *elementListP;
-        e.name = (char*)(elementListP+1);
-        e.data = elementListP + 1 + strlen(e.name) + 1;
+        if (dbg) printf("%s: Doc correctly ends with zero byte!\n", __FUNCTION__);
 
-        if (dbg) printf("%s: Checking '%s' against e_name '%s', type %d\n", __FUNCTION__, elementName, e.name, e.elementType);
+        while ((elementListP < docEndP) && (*elementListP != 0x00)) {
+            e.elementP = elementListP;
+            e.elementType = *elementListP;
+            e.name = (char*)(elementListP+1);
+            e.data = elementListP + 1 + strlen(e.name) + 1;
+            e.elementLength = elementLength_bytes(e.elementP);
+            
+            if (dbg) printf("%s: Checking '%s' against e_name '%s', type %d\n", __FUNCTION__, elementName, e.name, e.elementType);
 
-        if (0 == strcmp(elementName, e.name)) {
-            if (dbg) printf("%s: found it!\n", __FUNCTION__);
-            return(true);
+            if (0 == strcmp(elementName, e.name)) {
+                if (dbg) printf("%s: found it!\n", __FUNCTION__);
+                return(true);
+            }
+
+            // We need to skip over the value section of this element
+            elementListP += e.elementLength;
+            if (dbg) printf("%s: No match: skipping %d bytes to next element\n", __FUNCTION__, e.elementLength);
         }
-
-        // We need to skip over the value section of this element
-        if (dbg) printf("%s: no match\n", __FUNCTION__);
-        uint32_t skipCount = elementLength_bytes(e.elementP);
-        elementListP += skipCount;
-        if (dbg) printf("%s: Skipping %d bytes to next element\n", __FUNCTION__, skipCount);
     }
 
     if (dbg) printf("%s: returning FALSE\n", __FUNCTION__);
