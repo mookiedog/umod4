@@ -26,13 +26,13 @@
 #include "EpromLoader.h"
 #include "hardware.h"
 #include "epromEmulator.h"
-#include "ECU_log.h"
+#include "EP_log.h"
 #include "bsonlib.h"
 
 #include "RP58_memorymap.h"
 
 #if defined LFS
-  #include "../littlefs/lfs.h"
+#include "../littlefs/lfs.h"
 #endif
 
 // This can be handy in order to insert an instruction that will
@@ -89,7 +89,7 @@ const struct lfs_config cfg = {
     .prog  = lfs_prog,
     .erase = lfs_erase,
     .sync  = lfs_sync,
-
+    
     // Block device configuration
     .read_size = 16,
     .prog_size = 256,                               // Needs to be 256 because the Pico flash writer demands writing full 256 byte pages
@@ -98,53 +98,53 @@ const struct lfs_config cfg = {
     .block_cycles = 500,
     .cache_size = 512,
     .lookahead_size = 16,
-
+    
 };
 
 // --------------------------------------------------------------------------------------------
 int lfs_read(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, void *buffer, lfs_size_t size)
 {
-  // Convert the block address to where that block really sits in the flash device.
-  uint32_t flashAddr = (block * 4096) + fsPartitionStart_addr;
-  memcpy(buffer, (const void*)(flashAddr + off), size);
-
-  return LFS_ERR_OK;
+    // Convert the block address to where that block really sits in the flash device.
+    uint32_t flashAddr = (block * 4096) + fsPartitionStart_addr;
+    memcpy(buffer, (const void*)(flashAddr + off), size);
+    
+    return LFS_ERR_OK;
 }
 
 // --------------------------------------------------------------------------------------------
 int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const void *buffer, lfs_size_t size)
 {
-  const uint32_t fsStartOffset = (fsPartitionStart_addr - XIP_BASE);
-
-  if ((size & 0xFF) != 0) {
-    return LFS_ERR_INVAL;
-  }
-
-  flash_range_program((block * 4096) + fsStartOffset, (uint8_t *)buffer, size);
-
-  // verify the write???
-
-  return LFS_ERR_OK;
+    const uint32_t fsStartOffset = (fsPartitionStart_addr - XIP_BASE);
+    
+    if ((size & 0xFF) != 0) {
+        return LFS_ERR_INVAL;
+    }
+    
+    flash_range_program((block * 4096) + fsStartOffset, (uint8_t *)buffer, size);
+    
+    // verify the write???
+    
+    return LFS_ERR_OK;
 }
 
 // --------------------------------------------------------------------------------------------
 int lfs_erase(const struct lfs_config *c, lfs_block_t block)
 {
-  // Calculate where the start of our file system sits relative to the start of the flash.
-  const uint32_t fsStartOffset = (fsPartitionStart_addr - XIP_BASE);
-
-  // The flash_range_erase() function wants an address relative to the start of flash
-  uint32_t flashAddr = (block * 4096) + fsStartOffset;
-  flash_range_erase(flashAddr, 4096);
-
-  return LFS_ERR_OK;
+    // Calculate where the start of our file system sits relative to the start of the flash.
+    const uint32_t fsStartOffset = (fsPartitionStart_addr - XIP_BASE);
+    
+    // The flash_range_erase() function wants an address relative to the start of flash
+    uint32_t flashAddr = (block * 4096) + fsStartOffset;
+    flash_range_erase(flashAddr, 4096);
+    
+    return LFS_ERR_OK;
 }
 
 // --------------------------------------------------------------------------------------------
 int lfs_sync(const struct lfs_config *c)
 {
-  // Systems that don't support sync operation should just return OK
-  return LFS_ERR_OK;
+    // Systems that don't support sync operation should just return OK
+    return LFS_ERR_OK;
 }
 #endif
 
@@ -155,13 +155,13 @@ int lfs_sync(const struct lfs_config *c)
 uint8_t readEpromViaDaughterboard(uint32_t ecuAddr, uint8_t* scrambledEpromImage) __attribute__((weak));
 uint8_t readEpromViaDaughterboard(uint32_t ecuAddr, uint8_t* scrambledEpromImage)
 {
-  return 0;
+    return 0;
 }
 
 bool hasDescrambler() __attribute__((weak));
 bool hasDescrambler()
 {
-  return false;
+    return false;
 }
 
 // --------------------------------------------------------------------------------------------
@@ -169,21 +169,21 @@ bool hasDescrambler()
 // dbId == 'A' means a standard Aprilia daughterboard, address and data mangling is required
 uint8_t readEprom(uint32_t ecuAddr, uint8_t* epromImage, char dbId)
 {
-  // Make sure we don't access off the end of the EPROM image
-  ecuAddr &= 0x7FFF;
-
-  uint8_t b;
-
-  if (dbId == 'A') {
-    b = readEpromViaDaughterboard(ecuAddr, epromImage);
-  }
-  else {
-    // All other cases are treated as 'no daughterboard'.
-    // Leave the input address and output data untouched
-    b = epromImage[ecuAddr];
-  }
-
-  return b;
+    // Make sure we don't access off the end of the EPROM image
+    ecuAddr &= 0x7FFF;
+    
+    uint8_t b;
+    
+    if (dbId == 'A') {
+        b = readEpromViaDaughterboard(ecuAddr, epromImage);
+    }
+    else {
+        // All other cases are treated as 'no daughterboard'.
+        // Leave the input address and output data untouched
+        b = epromImage[ecuAddr];
+    }
+    
+    return b;
 }
 
 
@@ -191,48 +191,48 @@ uint8_t readEprom(uint32_t ecuAddr, uint8_t* epromImage, char dbId)
 // Init all the Processor GPIO pins to proper, safe states.
 void initPins(void)
 {
-  // The ECU control signal pins will always be inputs
-  gpio_init(HC11_E_LSB);
-  gpio_set_dir(HC11_E_LSB, GPIO_IN);
-
-  gpio_init(HC11_CE_LSB);
-  gpio_set_dir(HC11_CE_LSB, GPIO_IN);
-
-  gpio_init(HC11_WR_LSB);
-  gpio_set_dir(HC11_WR_LSB, GPIO_IN);
-
-  // The address bus pins will always be inputs
-  for (int i=HC11_AB_LSB; i<=HC11_AB_MSB; i++) {
-    gpio_init(i);
-    gpio_set_dir(i, GPIO_IN);
-  }
-
-  // The data bus pins get inited to a tri-state condition (input)
-  for (int i=HC11_DB_LSB; i<=HC11_DB_MSB; i++) {
-    gpio_init(i);
-    gpio_set_dir(i, GPIO_IN);
-  }
-
-  // External circuitry guarantees that the HC11 RESET is asserted by default at power-up.
-  // Init the pin we will use to control RESET, but leave RESET asserted
-  // until such time as we are ready to serve HC11 bus cycles.
-  gpio_init(HC11_RESET_LSB);
-  gpio_put(HC11_RESET_LSB, 1);                // Driving a '1' keeps the HC11 in RESET
-  gpio_set_dir(HC11_RESET_LSB, GPIO_OUT);
-
-  // Init the debug output GPIO pin we will use to time our bus transactions
-  // using an oscilloscope or logic analyzer.
-  // Note: There is an active-low LED connected to this pin.
-  gpio_init(DBG_BSY_LSB);
-  gpio_put(DBG_BSY_LSB, 1);                   // Init LED to OFF state
-  gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
-
-  #if defined FLOWCTRL_GPIO
+    // The ECU control signal pins will always be inputs
+    gpio_init(HC11_E_LSB);
+    gpio_set_dir(HC11_E_LSB, GPIO_IN);
+    
+    gpio_init(HC11_CE_LSB);
+    gpio_set_dir(HC11_CE_LSB, GPIO_IN);
+    
+    gpio_init(HC11_WR_LSB);
+    gpio_set_dir(HC11_WR_LSB, GPIO_IN);
+    
+    // The address bus pins will always be inputs
+    for (int i=HC11_AB_LSB; i<=HC11_AB_MSB; i++) {
+        gpio_init(i);
+        gpio_set_dir(i, GPIO_IN);
+    }
+    
+    // The data bus pins get inited to a tri-state condition (input)
+    for (int i=HC11_DB_LSB; i<=HC11_DB_MSB; i++) {
+        gpio_init(i);
+        gpio_set_dir(i, GPIO_IN);
+    }
+    
+    // External circuitry guarantees that the HC11 RESET is asserted by default at power-up.
+    // Init the pin we will use to control RESET, but leave RESET asserted
+    // until such time as we are ready to serve HC11 bus cycles.
+    gpio_init(HC11_RESET_LSB);
+    gpio_put(HC11_RESET_LSB, 1);                // Driving a '1' keeps the HC11 in RESET
+    gpio_set_dir(HC11_RESET_LSB, GPIO_OUT);
+    
+    // Init the debug output GPIO pin we will use to time our bus transactions
+    // using an oscilloscope or logic analyzer.
+    // Note: There is an active-low LED connected to this pin.
+    gpio_init(DBG_BSY_LSB);
+    gpio_put(DBG_BSY_LSB, 1);                   // Init LED to OFF state
+    gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
+    
+    #if defined FLOWCTRL_GPIO
     // The WP will drive this line to '0' when it is ready to receive the ECU data stream
     gpio_init(FLOWCTRL_GPIO);
     gpio_set_dir(FLOWCTRL_GPIO, GPIO_IN);
     gpio_set_pulls(FLOWCTRL_GPIO, true, false);   // default state is '1'
-  #endif
+    #endif
 }
 
 // --------------------------------------------------------------------------------------------
@@ -250,55 +250,55 @@ void initPins(void)
 static void mainCore1(void) __attribute__((noreturn));
 void mainCore1(void)
 {
-  // Completely disable ALL interrupts on core1 at the CPU PRIMASK level.
-  // Core1 will not be servicing any interrupts. Instead, it will use GPIO
-  // NVIC interrupt requests to wake itself from WFI sleep.
-  __disable_irq();
-
-  // Explicitly disable all interrupts inside the core1 NVIC except for GPIO interrupts.
-  for (uint32_t i=0; i<32; i++) {
-    irq_set_enabled(i, i == IO_IRQ_BANK0);
-  }
-
-  // Make sure that the Core0 <--> Core1 FIFO is completely flushed on the Core1 side
-  multicore_fifo_drain();
-  multicore_fifo_clear_irq();
-
-  // Flush the ecu_buslog
-  memset(ecu_busLog, 0, ECU_BUSLOG_LENGTH_BYTES);
-
-  // Start serving HC11 EPROM bus requests, never to return!
-  epromTask();
+    // Completely disable ALL interrupts on core1 at the CPU PRIMASK level.
+    // Core1 will not be servicing any interrupts. Instead, it will use GPIO
+    // NVIC interrupt requests to wake itself from WFI sleep.
+    __disable_irq();
+    
+    // Explicitly disable all interrupts inside the core1 NVIC except for GPIO interrupts.
+    for (uint32_t i=0; i<32; i++) {
+        irq_set_enabled(i, i == IO_IRQ_BANK0);
+    }
+    
+    // Make sure that the Core0 <--> Core1 FIFO is completely flushed on the Core1 side
+    multicore_fifo_drain();
+    multicore_fifo_clear_irq();
+    
+    // Flush the ecu_buslog
+    memset(ecu_busLog, 0, ECU_BUSLOG_LENGTH_BYTES);
+    
+    // Start serving HC11 EPROM bus requests, never to return!
+    epromTask();
 }
 
 // --------------------------------------------------------------------------------------------
 // Initialize any shared global CPU resources that need to get set up early on in the boot process.
 void initCpu(void)
 {
-  #if 0
-  // This appears to be unnecessary and just slows down the boot process
-  // Reset Core1 into a known state while we initialize Core0
-  multicore_reset_core1();
-	#endif
-
-  bi_decl(bi_program_description("Umod4 HC11 EPROM Emulator"));
-
-  // We need to run at a specific frequency for the fake EPROM code timing to be accurate.
-  // Explicitly set the clock rate to 125 Mhz resulting in a cycle time of 8 nS.
-  // No need to check for errors because we know that a request for 125 MHz is always OK.
-  set_sys_clock_khz(125000, true);
-
-  #if defined CLKOUT_GPIO
+    #if 0
+    // This appears to be unnecessary and just slows down the boot process
+    // Reset Core1 into a known state while we initialize Core0
+    multicore_reset_core1();
+    #endif
+    
+    bi_decl(bi_program_description("Umod4 HC11 EPROM Emulator"));
+    
+    // We need to run at a specific frequency for the fake EPROM code timing to be accurate.
+    // Explicitly set the clock rate to 125 Mhz resulting in a cycle time of 8 nS.
+    // No need to check for errors because we know that a request for 125 MHz is always OK.
+    set_sys_clock_khz(125000, true);
+    
+    #if defined CLKOUT_GPIO
     // Bringup Debug: Use a scope or freq counter to prove the sysclk is running at the right frequency.
     // We will drive a square wave of 125MHz/64 or 1.953125 MHz on the specified GPIO.
     clock_gpio_init(CLKOUT_GPIO, CLOCKS_CLK_GPOUT2_CTRL_AUXSRC_VALUE_CLK_SYS, 64);
-  #endif
-
-  // Core1 instruction timing must be completely deterministic.
-  // This *should* be taken care of by loading the core1 code and the EPROM image
-  // into their own private SRAM banks. To be absolutely sure, assign core1 to
-  // have priority over core0 if bus contention ever arises between the two.
-  bus_ctrl_hw->priority = 0x10;
+    #endif
+    
+    // Core1 instruction timing must be completely deterministic.
+    // This *should* be taken care of by loading the core1 code and the EPROM image
+    // into their own private SRAM banks. To be absolutely sure, assign core1 to
+    // have priority over core0 if bus contention ever arises between the two.
+    bus_ctrl_hw->priority = 0x10;
 }
 
 // --------------------------------------------------------------------------------------------
@@ -308,30 +308,30 @@ void initCpu(void)
 // is imperceptible to a rider turning the ignition key on.
 void flicker(uint32_t flickerCount, uint32_t onDuration, uint32_t offDuration)
 {
-  gpio_init(DBG_BSY_LSB);
-  gpio_put(DBG_BSY_LSB, 1);
-  gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
-
-  for (uint32_t i=0; i<flickerCount; i++) {
-    // BDG_BSY LED is active low: '0' means LED lights up
-    gpio_put(DBG_BSY_LSB, 0);
-    busy_wait_us_32(onDuration);
+    gpio_init(DBG_BSY_LSB);
     gpio_put(DBG_BSY_LSB, 1);
-    busy_wait_us_32(offDuration);
-  }
-
-  // Leave LED in the OFF state
+    gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
+    
+    for (uint32_t i=0; i<flickerCount; i++) {
+        // BDG_BSY LED is active low: '0' means LED lights up
+        gpio_put(DBG_BSY_LSB, 0);
+        busy_wait_us_32(onDuration);
+        gpio_put(DBG_BSY_LSB, 1);
+        busy_wait_us_32(offDuration);
+    }
+    
+    // Leave LED in the OFF state
 }
 
 void hello(uint32_t flickerCount)
 {
-  flicker(3, 5000, 45000);
+    flicker(3, 5000, 45000);
 }
 
 void blinkCode(uint32_t count)
 {
-  flicker(count, 10000, 290000);
-  busy_wait_ms(500);
+    flicker(count, 10000, 290000);
+    busy_wait_ms(500);
 }
 
 // --------------------------------------------------------------------------------------------
@@ -341,46 +341,46 @@ void blinkCode(uint32_t count)
 //  - Release the HC11 processor from RESET
 void startCore1(void)
 {
-  printf("%s: Starting Core1\n", __FUNCTION__);
-  // The SDK requires that we specify a tiny stack to get Core1 booted.
-  // Once the fake EPROM code is running, it won't be used any more.
-  uint32_t stackSizeBytes = (uint8_t*)&__StackOneTop - (uint8_t*)&__StackOneBottom;
-  multicore_launch_core1_with_stack(mainCore1, &__StackOneBottom, stackSizeBytes);
-
-  // Wait for core1 to signal us that it is actively servicing HC11 bus transactions
-  bool core1Rdy = false;
-  do {
-    if (multicore_fifo_rvalid()) {
-      uint32_t msg = multicore_fifo_pop_blocking();
-      core1Rdy = (msg == 0x12345678);     // fix me: this should not be hardcoded
-    }
-  } while (!core1Rdy);
-
-  printf("%s: Core1 is running!\n", __FUNCTION__);
-
-  // Now that core1 is serving memory transactions, we can finally release the HC11 out of RESET.
-  // Driving the HC11 reset output signal to '0' deasserts the HC11 RESET
-  printf("%s: Releasing the ECU from RESET %ld uSecs after the EP booted\n", __FUNCTION__, get_absolute_time()-epoch);
-  sio_hw->gpio_clr = HC11_RESET_BITS;
+    printf("%s: Starting Core1\n", __FUNCTION__);
+    // The SDK requires that we specify a tiny stack to get Core1 booted.
+    // Once the fake EPROM code is running, it won't be used any more.
+    uint32_t stackSizeBytes = (uint8_t*)&__StackOneTop - (uint8_t*)&__StackOneBottom;
+    multicore_launch_core1_with_stack(mainCore1, &__StackOneBottom, stackSizeBytes);
+    
+    // Wait for core1 to signal us that it is actively servicing HC11 bus transactions
+    bool core1Rdy = false;
+    do {
+        if (multicore_fifo_rvalid()) {
+            uint32_t msg = multicore_fifo_pop_blocking();
+            core1Rdy = (msg == 0x12345678);     // fix me: this should not be hardcoded
+        }
+    } while (!core1Rdy);
+    
+    printf("%s: Core1 is running!\n", __FUNCTION__);
+    
+    // Now that core1 is serving memory transactions, we can finally release the HC11 out of RESET.
+    // Driving the HC11 reset output signal to '0' deasserts the HC11 RESET
+    printf("%s: Releasing the ECU from RESET %ld uSecs after the EP booted\n", __FUNCTION__, get_absolute_time()-epoch);
+    sio_hw->gpio_clr = HC11_RESET_BITS;
 }
 
 // --------------------------------------------------------------------------------------------
 void __time_critical_func(enqueue)(uint8_t id, uint8_t data)
 {
-  if (inUse < sizeof(streamBuffer)-8) {
-    uint16_t event = (data << 8) | id;
-
-    streamBuffer[head] = event;
-    head = (head+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
-    inUse++;
-    if (inUse > inUse_max) {
-      inUse_max = inUse;
+    if (inUse < sizeof(streamBuffer)-8) {
+        uint16_t event = (data << 8) | id;
+        
+        streamBuffer[head] = event;
+        head = (head+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
+        inUse++;
+        if (inUse > inUse_max) {
+            inUse_max = inUse;
+        }
     }
-  }
-  else {
-    // Not enough room in the buffer. Drop the message.
-    totalStreamDrops++;
-  }
+    else {
+        // Not enough room in the buffer. Drop the message.
+        totalStreamDrops++;
+    }
 }
 
 
@@ -395,88 +395,85 @@ void __time_critical_func(enqueue)(uint8_t id, uint8_t data)
 // The resulting EPROM image gets placed in RAM where Core1 expects to find it.
 void prepEpromImage()
 {
-  uint32_t t0, t1, elapsed;
-  uint8_t err;
-  const char* name;
-  EpromLoader::bsonDoc_t b;
-
-  #if 1
-  if (hasDescrambler()){
-    // This initial load is just for testing that we can load a protected image
-    name = "8796539";
-    //logEpromName(name);
+    uint32_t t0, t1, elapsed;
+    uint8_t err;
+    const char* name;
+    EpromLoader::bsonDoc_t bsonDoc;
+    
+    #if 1
+    if (hasDescrambler()){
+        // This initial load is just for testing that we can load a protected image
+        name = "8796539";
+        err = EpromLoader::loadImage(name);
+        enqueue(LOGID_EP_LOAD_ERR_U8, err);
+        if (err) {
+            printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
+        }
+    }
+    
+    // This is the image that we really want to load.
+    // If there are any issues while loading, all we can do is keep trying.
+    do {
+        name = "UM4";
+        printf("%s: Loading image %s\n", __FUNCTION__, name);
+        bsonDoc = EpromLoader::findEprom(name);
+        if (!bsonDoc) {
+            enqueue(LOGID_EP_LOAD_ERR_U8, LOAD_ERR_NOTFOUND);
+            //panic("Unable to find UM4 image in BSON partition!");
+            blinkCode(2);
+        }
+        else {
+            err = EpromLoader::loadImage(bsonDoc);
+            enqueue(LOGID_EP_LOAD_ERR_U8, err);
+            if (err != LOAD_ERR_NOERR) {
+                //panic("Unable to load UM4 eprom image!");
+                blinkCode(3);
+            }
+        }
+    } while (!bsonDoc || (err != LOAD_ERR_NOERR));
+    
+    if (hasDescrambler()) {
+        // Now try loading protected 8796539 maps on top of our UM4 image:
+        t0 = get_absolute_time();
+        name = "8796539";
+        err = EpromLoader::loadMapblob(name);
+        enqueue(LOGID_EP_LOAD_ERR_U8, err);
+        if (err != LOAD_ERR_NOERR) {
+            printf("%s: Unable to load protected %s mapblob: err=%02x!\n", __FUNCTION__, name, err);
+        }
+        else {
+            t1 = get_absolute_time();
+            elapsed = absolute_time_diff_us(t0, t1);
+            printf("%s: Loaded protected %s mapblob in %u microseconds\n", __FUNCTION__, name, elapsed);
+        }
+    }
+    
+    do {
+        // Reload the UM4 maps back on top of the UM4 base image
+        t0 = get_absolute_time();
+        err = EpromLoader::loadMapblob(bsonDoc);
+        enqueue(LOGID_EP_LOAD_ERR_U8, err);
+        if (err) {
+            printf("Unable to reload UM4 mapblob!\n");
+            blinkCode(4);
+            //panic("mapblob load failed");
+        }
+        else {
+            t1 = get_absolute_time();
+            elapsed = absolute_time_diff_us(t0, t1);
+            printf("%s: Loaded unprotected UM4 mapblob in %u microseconds\n", __FUNCTION__, elapsed);
+        }
+    } while (err != LOAD_ERR_NOERR);
+    
+    #else
+    // Load a plain 549USA to see if the bike runs better
+    name = "549USA";
     err = EpromLoader::loadImage(name);
-    enqueue(LOG_EP_LOAD_ERR, err);
+    enqueue(LOGID_EP_LOAD_ERR_U8, err);
     if (err) {
-      printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
+        printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
     }
-  }
-
-  // This is the image that we really want to load:
-  do {
-    name = "UM4";
-    printf("%s: Loading image %s\n", __FUNCTION__, name);
-    //logEpromName(name);
-    b = EpromLoader::findEprom(name);
-    if (!b) {
-      enqueue(LOG_EP_LOAD_ERR, LOG_EP_LOAD_ERR_NOTFOUND);
-      //panic("Unable to find UM4 image in BSON partition!");
-    blinkCode(2);
-    }
-    else {
-      err = EpromLoader::loadImage(b);
-      enqueue(LOG_EP_LOAD_ERR, err);
-      if (err) {
-        //panic("Unable to load UM4 eprom image!");
-        blinkCode(3);
-      }
-    }
-  } while (!b || err);
-
-  if (hasDescrambler()) {
-    // Now try loading protected 8796539 maps on top of our UM4 image:
-    t0 = get_absolute_time();
-    name = "8796539";
-    //logEpromName(name);
-    err = EpromLoader::loadMapblob(name);
-    enqueue(LOG_EP_LOAD_ERR, err);
-    if (err) {
-      printf("%s: Unable to load protected %s mapblob: err=%02x!\n", __FUNCTION__, name, err);
-    }
-    else {
-      t1 = get_absolute_time();
-      elapsed = absolute_time_diff_us(t0, t1);
-      printf("%s: Loaded protected %s mapblob in %u microseconds\n", __FUNCTION__, name, elapsed);
-    }
-  }
-
-  do {
-    // Reload the UM4 maps back on top of the UM4 base image
-    t0 = get_absolute_time();
-    err = EpromLoader::loadMapblob(b);
-    enqueue(LOG_EP_LOAD_ERR, err);
-    if (err) {
-      printf("Unable to reload UM4 mapblob!\n");
-      blinkCode(4);
-      //panic("mapblob load failed");
-    }
-    else {
-      t1 = get_absolute_time();
-      elapsed = absolute_time_diff_us(t0, t1);
-      printf("%s: Loaded unprotected UM4 mapblob in %u microseconds\n", __FUNCTION__, elapsed);
-    }
-  } while (err);
-
-  #else
-  // Load a plain 549USA to see if the bike runs better
-  name = "549USA";
-  //logEpromName(name);
-  err = EpromLoader::loadImage(name);
-  enqueue(LOG_EP_LOAD_ERR, err);
-  if (err) {
-    printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
-  }
-  #endif
+    #endif
 }
 
 uint32_t burstTime;
@@ -499,32 +496,32 @@ uint32_t burstTime;
 // before the second byte arrives. I think the real solution is to fix the WP end by putting a state machine into its ISR.
 void __time_critical_func(processOutgoing)(void)
 {
-  static uint64_t nextTx_us=0;
-
-  if (inUse > 0) {
-    uint64_t now = time_us_64();
-    if (nextTx_us < now) {
-      // We only send data in groups of up to 2 ECU events (4 bytes, ~44 uSec to TX)
-      uint32_t count = (inUse > 2) ? 2 : inUse;
-      for (uint32_t i=0; i<count; i++) {
-        uint16_t msg = streamBuffer[tail];
-
-        // Stream the addr/eventID (the LSB) out first, followed by the data associated with that eventID (MSB).
-        // This is a blocking TX so there is no worry about overrunning the TX machine.
-        // The call to _putc will block if the PIO FIFO is full, but by limiting the number of bytes we send in a burst, this will never happen.
-        uart_tx_program_putc(uart_pio, uart_sm, (msg >> 0) & 0xFF);
-        uart_tx_program_putc(uart_pio, uart_sm, (msg >> 8) & 0xFF);
-
-        inUse--;
-        tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
-      }
-
-      burstTime = time_us_64() - now;
-
-      // This enforces a minimum time between EP transmission bursts to allow the WP time to process its receive FIFO
-      nextTx_us = now+100;
+    static uint64_t nextTx_us=0;
+    
+    if (inUse > 0) {
+        uint64_t now = time_us_64();
+        if (nextTx_us < now) {
+            // We only send data in groups of up to 2 ECU events (4 bytes, ~44 uSec to TX)
+            uint32_t count = (inUse > 2) ? 2 : inUse;
+            for (uint32_t i=0; i<count; i++) {
+                uint16_t msg = streamBuffer[tail];
+                
+                // Stream the addr/eventID (the LSB) out first, followed by the data associated with that eventID (MSB).
+                // This is a blocking TX so there is no worry about overrunning the TX machine.
+                // The call to _putc will block if the PIO FIFO is full, but by limiting the number of bytes we send in a burst, this will never happen.
+                uart_tx_program_putc(uart_pio, uart_sm, (msg >> 0) & 0xFF);
+                uart_tx_program_putc(uart_pio, uart_sm, (msg >> 8) & 0xFF);
+                
+                inUse--;
+                tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
+            }
+            
+            burstTime = time_us_64() - now;
+            
+            // This enforces a minimum time between EP transmission bursts to allow the WP time to process its receive FIFO
+            nextTx_us = now+100;
+        }
     }
-  }
 }
 
 
@@ -533,27 +530,27 @@ void __time_critical_func(processOutgoing)(void)
 // WP indicates it is ready for ECU data when it drives the FLOWCTRL_GPIO to '0'.
 static bool wpReady()
 {
-  #if defined FLOWCTRL_GPIO
+    #if defined FLOWCTRL_GPIO
     return (gpio_get(FLOWCTRL_GPIO) == 0);
-  #else
+    #else
     return false;
-  #endif
+    #endif
 }
 
 // --------------------------------------------------------------------------------------------
 void __time_critical_func(processIncoming)(void)
 {
-  if (multicore_fifo_rvalid()) {
-    uint32_t busSigs = sio_hw->fifo_rd;
-
-    // We convert the raw 32-bit data stream event into a 16-bit value where the
-    // ID (LS 8 bits of HC11 bus address) is in the LS byte, and the 8 bits of HC11 data bus is in the MS byte:
-    uint8_t id   = (busSigs & HC11_AB_BITS) >> HC11_AB_LSB;
-    uint8_t data = (busSigs & HC11_DB_BITS) >> HC11_DB_LSB;
-
-    // Enqueue the ECU data stream event until it can be transmitted out
-    enqueue(id, data);
-  }
+    if (multicore_fifo_rvalid()) {
+        uint32_t busSigs = sio_hw->fifo_rd;
+        
+        // We convert the raw 32-bit data stream event into a 16-bit value where the
+        // ID (LS 8 bits of HC11 bus address) is in the LS byte, and the 8 bits of HC11 data bus is in the MS byte:
+        uint8_t id   = (busSigs & HC11_AB_BITS) >> HC11_AB_LSB;
+        uint8_t data = (busSigs & HC11_DB_BITS) >> HC11_DB_LSB;
+        
+        // Enqueue the ECU data stream event until it can be transmitted out
+        enqueue(id, data);
+    }
 }
 
 
@@ -564,28 +561,28 @@ void __time_critical_func(processIncoming)(void)
 static void core0Mainloop(void) __attribute__((noreturn));
 void core0Mainloop(void)
 {
-  // Do not delay entering the mainloop after starting core1 because
-  // ECU logging data will arrive essentially immediately!
-  startCore1();
-
-  // Until the WP is ready for data, all we can do is buffer the incoming ECU data stream
-  while (!wpReady()) {
-    processIncoming();
-  }
-
-  while (1) {
-    processIncoming();
-    processOutgoing();
-  }
+    // Do not delay entering the mainloop after starting core1 because
+    // ECU logging data will arrive essentially immediately!
+    startCore1();
+    
+    // Until the WP is ready for data, all we can do is buffer the incoming ECU data stream
+    while (!wpReady()) {
+        processIncoming();
+    }
+    
+    while (1) {
+        processIncoming();
+        processOutgoing();
+    }
 }
 
 // --------------------------------------------------------------------------------------------
 void showBootMessages()
 {
-  printf("\n\nEP Booting\n");
-  uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
-  printf("System clock: %.1f MHz\n", f_clk_sys / 1000.0);
-  printf("\n");
+    printf("\n\nEP Booting\n");
+    uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
+    printf("System clock: %.1f MHz\n", f_clk_sys / 1000.0);
+    printf("\n");
 }
 
 
@@ -593,9 +590,9 @@ void showBootMessages()
 // Explicitly disable all interrupts inside the core0 NVIC.
 void disableInts()
 {
-  for (uint32_t i=0; i<NUM_IRQS; i++) {
-    irq_set_enabled(i, false);
-  }
+    for (uint32_t i=0; i<NUM_IRQS; i++) {
+        irq_set_enabled(i, false);
+    }
 }
 
 // --------------------------------------------------------------------------------------------
@@ -611,37 +608,39 @@ void disableInts()
 // is not located behind the APB bridge.
 void initUart()
 {
-  #if defined EP_UART
+    #if defined EP_UART
     uint offset = pio_add_program(uart_pio, &uart_tx_program);
     uart_tx_program_init(uart_pio, uart_sm, offset, TX_GPIO, EP_UART_BAUD_RATE);
-  #else
-  // The UART must be disabled if the system is configured to drive its sysclk
-  // to CLKOUT_GPIO for testing/verification purposes since they share the same GPIO pad!
+    #else
+    // The UART must be disabled if the system is configured to drive its sysclk
+    // to CLKOUT_GPIO for testing/verification purposes since they share the same GPIO pad!
     printf("%s: \n****\n**** WARNING: UART functionality is disabled due to CLKOUT testing!\n****\n")
-  #endif
+    #endif
 }
 
 // --------------------------------------------------------------------------------------------
 int main(void)
 {
-  epoch = get_absolute_time();
-
-  initCpu();
-
-  // Before doing anything, we init the pin we will be transmitting on to the WP to have a pullup.
-  // A better solution would be to install a pullup resistor on the 4.2 PCB
-  gpio_init(TX_GPIO);
-  gpio_set_dir(TX_GPIO, GPIO_IN);
-  gpio_set_pulls(TX_GPIO, true, false);    // pullup
-
-  hello(3);
-  initPins();
-
-  stdio_init_all();
-  showBootMessages();
-
-  disableInts();
-  initUart();
-  prepEpromImage();
-  core0Mainloop();
+    epoch = get_absolute_time();
+    
+    initCpu();
+    
+    // Before doing anything, we init the pin we will be transmitting on to the WP to have a pullup.
+    // A better solution would be to install a pullup resistor on the 4.2 PCB
+    gpio_init(TX_GPIO);
+    gpio_set_dir(TX_GPIO, GPIO_IN);
+    gpio_set_pulls(TX_GPIO, true, false);    // pullup
+    
+    hello(3);
+    initPins();
+    
+    enqueue(LOGID_EP_LOG_VER_U8, EP_LOG_VER_V0);
+    
+    stdio_init_all();
+    showBootMessages();
+    
+    disableInts();
+    initUart();
+    prepEpromImage();
+    core0Mainloop();
 }

@@ -367,7 +367,7 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
   static uint32_t writeCount;
 
   writeCount++;
-  printf("%s: %d: Write time: %lld uSec\n", __FUNCTION__, writeCount, elapsed);
+  printf("%s: %d: Write time: %lld uSec, bytes written: %d\n", __FUNCTION__, writeCount, elapsed, bytesWritten);
 
   totalWriteEvents += 1;
   totalTimeWriting += elapsed;
@@ -563,19 +563,28 @@ void Logger::logTask()
         } while (!err && (totalToWrite > 0));
 
         if (!err) {
-          tailP = tP;
-          // Now that the write[s] are done, we sync to commit them to flash
-          syncLog();
+          // The write[s] succeeded, but the way LittleFS works, the data that got written
+          // is not actually committed to flash until a sync succeeds (or the file gets closed):
+          int32_t lfs_err = syncLog();
 
-          // Print some stats every megabyte written
-          totalByteCount += bytesToWriteBeforeSyncing;
-          if (totalByteCount > (1024*1024)) {
-            totalByteCount -= (1024*1024);
-            printf("%s: Writes: min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeWriting, maxTimeWriting, totalTimeWriting/totalWriteEvents);
-            printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeSyncing, maxTimeSyncing, totalTimeSyncing/totalSyncEvents);
+          if (lfs_err == LFS_ERR_OK) {
+            // Now that the log data is written & committed, we can finally remove it from the queue!
+            tailP = tP;
+            
+            // Print some stats every megabyte written
+            totalByteCount += bytesToWriteBeforeSyncing;
+            if (totalByteCount > (1024*1024)) {
+              totalByteCount -= (1024*1024);
+              printf("%s: Writes: min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeWriting, maxTimeWriting, totalTimeWriting/totalWriteEvents);
+              printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeSyncing, maxTimeSyncing, totalTimeSyncing/totalSyncEvents);
+            }
+            // Calculate when to do the next sync:
+            state = CALC_WR_SIZE;
           }
-          // Calculate when to do the next sync:
-          state = CALC_WR_SIZE;
+          else {
+            printf("%s: syncLog() failed with error %d\n", __FUNCTION__, lfs_err);
+            state = WRITE_FAILURE;
+          }
         }
 
         pico_set_led(0);

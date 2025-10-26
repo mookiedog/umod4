@@ -346,9 +346,9 @@ void SdCard::hotPlugManager(void* arg)
             sdCard->state = OPERATIONAL;
           }
           else {
-            // Give the card a long 10-second rest before retrying.
+            // Give the card a long 5-second rest before retrying.
             // This should never happen...
-            vTaskDelay(pdMS_TO_TICKS(10000));
+            vTaskDelay(pdMS_TO_TICKS(5000));
             sdCard->state = NO_CARD;
           }
         }

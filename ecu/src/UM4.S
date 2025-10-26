@@ -761,14 +761,12 @@ L017B   =       0x017B                  ;holds the calculated checksum (written,
 
 ; These next variables are new, and extend into the original stack space.
 ; They are used by the ECU data logging mechanisms to detect changes that should get reported.
-log_tmp                       = 0x017D   ;(and 0x017E)
-;                             = 0x017E
-LOG_PORTG_DB_U8_prev          = 0x017F
-LOG_RAW_THA_U8_prev           = 0x0180
-LOG_ECU_ERROR_L000C_U8_prev   = 0x0181
-LOG_ECU_ERROR_L000D_U8_prev   = 0x0182
-LOG_RAW_AAP_U8_prev           = 0x0183
-LOG_FUEL_PUMP_B_prev          = 0x0184
+PORTG_DB_U8_prev              = 0x017D
+RAW_THA_U8_prev               = 0x017E
+ECU_ERROR_L000C_U8_prev       = 0x017F
+ECU_ERROR_L000D_U8_prev       = 0x0180
+RAW_AAP_U8_prev               = 0x0181
+FUEL_PUMP_B_prev              = 0x0182
 
 
 ;*****************************************************************
@@ -863,9 +861,9 @@ ECMP1B  =       0x1078
 ;to a FRT or REAR event.  By pairing a FRT with a REAR, they only
 ;need two Input Compare circuits to watch all 4 coil inputs.
 
-;PA7/OC1:  IG11,IG12 (output) drives the front cyl ignition coils
+;PA7/OC1:  IG11,IG12 (output) drives the front cyl ignition coils ('0' energizes ignition coil to charge it, 0-->1 causes spark to fire)
 ;PA6/OC2:  IG21,IG22 (output) drives the rear  cyl ignition coils
-;PA5/OC3:  #11       (output) drives the front cyl fuel injector
+;PA5/OC3:  #11       (output) drives the front cyl fuel injector  ('1' energizes injector causing fuel to spray. '0' turns spray off)
 ;PA4/OC4:  #21       (output) drives the rear  cyl fuel injector
 ;PA3/IC4:            (input)  watches rising edge of ignition event pulse on IG12-FRT and IG22-REAR
 ;PA2/IC1:            (input)  camshaft sensor   (1 pulse  per revolution)
@@ -918,7 +916,7 @@ ECMP1B  =       0x1078
 ;PG4 -     T         (input)  Diagnostic Test connector
 ;PG3 -     MS1       (input)  Map Select #1
 ;PG2 -     SS        (input)  Sidestand switch
-;PG1 -     ??        (input)  A weird-ass signal that appears to be a free-running toggle signal
+;PG1 -     ??        (input)  A weird-ass signal that appears to be a free-running toggle signal: is this the watchdog signal for the voltage regulator?
 ;PG0 -     CLT       (input)  Clutch switch
 
 ;The PORTG inputs are debounced by software.  A change is not
@@ -1728,8 +1726,8 @@ L9A5A:  .byte   0xC8
 L9A5B:  .byte   0x19
 L9A5C:  .byte   0xBA
 L9A5D:  .word   0x0340
-L9A5F:  .byte   0xB0                    ;used by water temp converter
-L9A60:  .byte   0x70
+L9A5F:  .byte   0xB0                    ;used by water temp converter as a default temperature if the sensor is broken
+L9A60:  .byte   0x70                    ;used by air   temp converter as a default temperature if the sensor is broken
 L9A61:  .byte   0xBA
 L9A62:  .byte   0x80
 L9A63:  .byte   0x84
@@ -1874,7 +1872,7 @@ LC000:  .byte   'U', 'M', '4'
 LC003:  ldaA    L4000                   ; This appears to always reads as $00
          cmpA   #0x00
          beq    0f
-         staA   LOG_L4000_EVENT_U8      ; A non-zero value is unusual!!! Log it!
+         staA   LW+LOGID_ECU_L4000_EVENT_U8 ; A non-zero value is unusual!!! Log it!
         cmpA    #0x19
         bne     0f                      ; always taken
         jsr     L5000
@@ -1956,12 +1954,18 @@ LC05C:  ldaA    #0x90                   ;Disable interrupts, disable STOP mode
         ldD     #0xFFFF                 ;PORTJ=0xFF, DDRJ=0xFF
         stD     PORTJ
 
-        ldaA    #0x80                   ;OC1M[OC1M7] = 1
+; Program OC1 so that it will drive PA7 to '1' on a match (stop charging the front ignition coils)
+        ldaA    #0x80
         staA    OC1M
-        ldaA    #0x80                   ;OC1D[OC1D7] = 1, OC1 match event will set PA7=1 (1 == not charging)
+        ldaA    #0x80
         staA    OC1D
 
-        ldaA    #0xFC                   ;TCTL1 = OM1 | OL2 | OM3 | OL3 | OM4 | OL4
+; Init TCTL1 so that:
+; 11xxxxxx OC2 will drive PA6/OC2 to '1' on a match (stop charging rear ignition coils)
+; xx11xxxx OC3 will drive PA5/OC3 to '1' on a match (disable driving front fuel injector)
+; xxxx11xx OC4 will drive PA4/OC4 to '1' on a match (disable driving rear fuel injector)
+; xxxxxx00 OC5 is disconnected from PA3 (GPIO PA3/OC5/IC4 will be used as IC4 #2 spark event capture)
+        ldaA    #0xFC
         staA    TCTL1
 
 ;Program the edge directions that will cause the Input Capture events to trigger:
@@ -1993,6 +1997,10 @@ LC05C:  ldaA    #0x90                   ;Disable interrupts, disable STOP mode
         stD     TOC5                    ;...TOC5 (only mention)
         stD     TO6I5                   ;...TOC6 (only mention)
 
+; Any OC mechanism set up above will trigger around now, driving all the OC GPIO pins to the initial state
+; that was programmed, above.
+
+; In the same fashion, arrange for TCNT2 to trigger any OCx events to initialize them:
         ldD     TCNT2                   ;read the current time
         addD    #0x000C                 ;calc a time 24 uSec in the future
         stD     TO7I6                   ;use the future time as the OC match time
@@ -2254,8 +2262,8 @@ reset:
         andA    #0xBF                   ;%10111111 active low to enable fuel pump drive
         staA    PORTH
         ldaA    #1
-        staA    LOG_FUEL_PUMP_B
-        staA    LOG_FUEL_PUMP_B_prev
+        staA    LW+LOGID_ECU_FUEL_PUMP_B
+        staA    FUEL_PUMP_B_prev
 
         ldaA    #0x0F                   ;flush any outstanding IC events
         staA    TFLG1
@@ -2968,7 +2976,7 @@ tbl1__00:
         lsrD
         lsrD
         stD     *L0024                  ;save the right-aligned, unfiltered version of VTA in L0024
-        stD     LOG_RAW_VTA_U16
+        stD     LW+LOGID_ECU_RAW_VTA_U16
         bra     3f
 
 1:      brclr   *L0010 #0b00100000 2f   ;if the sensor is not currently suspect, make it so
@@ -3037,7 +3045,7 @@ tbl1__04:
 
         cmpA    *L002A
         beq     10f
-        staA    LOG_RAW_VM_U8           ; log the new VM conversion if it is different than before
+        staA    LW+LOGID_ECU_RAW_VM_U8  ; log the new VM conversion if it is different than before
 10:
         staA    *L002A                  ; save the raw conversion
         cmpA    #38                     ; 38 means 2.97V
@@ -3085,8 +3093,9 @@ tbl1__05:
         cmpA    #0x40
         blo     5f
         bset    *L000C #0b00000010
-        ldaA    L9A60
-        staA    *L0031
+
+        ldaA    L9A60                           ; 0x70 maps to 23.5C using S-H conversion method
+        staA    *L0031                          ; We use that as a default air temp if the air temp thermistor seems broken
         bra     5f
 
 1:      bset    *L0010 #0b00001000
@@ -3104,10 +3113,10 @@ tbl1__05:
         staA    *L0029
 
 ;We only log rawTha data if it is different from what we last sent
-        cmpA    LOG_RAW_THA_U8_prev
+        cmpA    RAW_THA_U8_prev
         beq     9f
-        staA    LOG_RAW_THA_U8_prev
-        staA    LOG_RAW_THA_U8
+        staA    RAW_THA_U8_prev
+        staA    LW+LOGID_ECU_RAW_THA_U8
 9:
         subA    #0x00
         bhs     4f
@@ -3172,10 +3181,10 @@ tbl1__14:
         bclr    *L000C #0b00000001      ;clear the 'broken' bit.
 
         ldaA    *L001B_tmp              ;get the 8 MSbits of the original AAP A/D reading
-        cmpA    LOG_RAW_AAP_U8_prev
+        cmpA    RAW_AAP_U8_prev
         beq     9f
-        staA    LOG_RAW_AAP_U8_prev     ;only log if it has changed
-        staA    LOG_RAW_AAP_U8
+        staA    RAW_AAP_U8_prev         ;only log if it has changed
+        staA    LW+LOGID_ECU_RAW_AAP_U8
 9:
         staA    *L0027                  ;but always save the new reading here
         brset   *L0000 #0b00010000 4f
@@ -3275,28 +3284,31 @@ tbl1__12:
 tbl1__09:
         staA    *L001B_tmp              ;save upper 8 bits in the tmp variable
 
-        cmpA    #0x07
-        blo     0f                      ;br if the new reading is < 7 (the water is REALLY hot)
-        cmpA    #0xF8
+; We compare our reading to a pair of min/max endpoints.
+; The min/max values were converted to temperatures using Steinhart-Hart NTC resistor calculations.
+; They may not be completely precise, but you get the picture.
+        cmpA    #0x07                   ; S-H calculations indicate that this value represents about 141C
+        blo     0f                      ;br if the new reading is < 7 (so hot that the temp sensor must be reading wrong)
+        cmpA    #0xF8                   ; S-H calculations indicate that this value represents about -47C
         blo     2f                      ;br if the new reading is <0xF8 (the water is in a 'normal' range)
 
-;The water is either REALLY hot or REALLY cold:
+; The sensor response is out of our valid min/max range.
+; We must assume that is not operating properly.
 0:      brclr   *L0010 #0b00000010 1f   ;br if this is the first suspect THW conversion
 
         ldaA    L0134                   ;counts suspect THW readings
         cmpA    #0x40                   ;have we had 63 suspect readings in a row?
         blo     6f                      ;if not
 
-;The THW sensor is probably bad.
-        bset    *L000C #0b00000100      ;mark the THW sensor as being "bad"
-        ldaA    L9A5F                   ;0xB0 (176.) could this be a default ("limp" mode) temp for the code to use?
-        staA    *L0030                  ;save this value as the converted, interpolated water temp.
+; After so many failures in a row, we decide that the THW sensor is bad.
+        bset    *L000C #0b00000100      ; mark the THW sensor as being "bad"
+        ldaA    L9A5F                   ; 0xB0 (176.) which converts to about 0C using S-H conversion.
+                                        ; This appears to be a default "limp" mode temp to use if the sensor seems broken
+        staA    *L0030                  ; save this value as the converted, interpolated water temp.
         bra     5f
-
 
 1:      bset    *L0010 #0b00000010      ;mark the fact that the THW conversion is suspect
         bra     6f                      ;(enables the suspect conversion counter L0134)
-
 
 ;Water temp is in the NORMAL range:
 2:      brclr   *L0010 #0b00000010 3f   ;if our THW sensor is considered to be "good"
@@ -3312,7 +3324,7 @@ tbl1__09:
         bclr    *L000C #0b00000100      ;definitivly clear the "bad THW sensor" bit
 
         ldaA    *L001B_tmp              ;get the original A/D conversion back again
-        staA    LOG_RAW_THW_U8
+        staA    LW+LOGID_ECU_RAW_THW_U8
         staA    *L0028                  ;for debug? never used again!
 
         subA    #0x00                   ;clip to a lower limit of 0x00 (useless, in this case)
@@ -5769,10 +5781,10 @@ LD82E:  bclr    *L0002 #0b01000000
                                         ;and the raw version to L004A_PORTG_prev
 
 ;We only log portG data if it is different from what we last sent
-        cmpA    LOG_PORTG_DB_U8_prev
+        cmpA    PORTG_DB_U8_prev
         beq     LD82E_999
-        staA    LOG_PORTG_DB_U8_prev
-        staA    LOG_PORTG_DB_U8
+        staA    PORTG_DB_U8_prev
+        staA    LW+LOGID_ECU_PORTG_DB_U8
 LD82E_999:
 
 
@@ -7036,10 +7048,10 @@ LDF4D_11:
         sei
         ldaB    *L000C                  ;propagate all new error bits into L000E
 
-        cmpB    LOG_ECU_ERROR_L000C_U8_prev
+        cmpB    ECU_ERROR_L000C_U8_prev
         beq     0f
-        staB    LOG_ECU_ERROR_L000C_U8_prev
-        staB    LOG_ECU_ERROR_L000C_U8
+        staB    ECU_ERROR_L000C_U8_prev
+        staB    LW+LOGID_ECU_ECU_ERROR_L000C_U8
 0:
         oraB    *L000E                  ;This is a one-way operation: L000E bits never get cleared (except b4).
         staB    *L000E
@@ -7051,10 +7063,10 @@ LDF4D_11:
         sei
         ldaB    *L000D                  ;propagate all new error bits into L000F
 
-        cmpB    LOG_ECU_ERROR_L000D_U8_prev
+        cmpB    ECU_ERROR_L000D_U8_prev
         beq     0f
-        staB    LOG_ECU_ERROR_L000D_U8_prev
-        staB    LOG_ECU_ERROR_L000D_U8
+        staB    ECU_ERROR_L000D_U8_prev
+        staB    LW+LOGID_ECU_ECU_ERROR_L000D_U8
 0:
         oraB    *L000F                  ;This is a one-way operation: L000F bits never get cleared
         staB    *L000F
@@ -7684,10 +7696,10 @@ LE3BA_7:
         andA    #0b10111111             ;enable the fuel pump driver
         staA    PORTH
         ldaB    #1
-        cmpB    LOG_FUEL_PUMP_B_prev
+        cmpB    FUEL_PUMP_B_prev
         beq     0f
-        staB    LOG_FUEL_PUMP_B_prev
-        staB    LOG_FUEL_PUMP_B
+        staB    FUEL_PUMP_B_prev
+        staB    LW+LOGID_ECU_FUEL_PUMP_B
 0:
         bra     LE3BA_9
 
@@ -7697,10 +7709,10 @@ LE3BA_8:
         oraA    #0b01000000             ;disable the fuel pump driver
         staA    PORTH
         ldaB    #0
-        cmpB    LOG_FUEL_PUMP_B_prev
+        cmpB    FUEL_PUMP_B_prev
         beq     0f
-        staB    LOG_FUEL_PUMP_B_prev
-        staB    LOG_FUEL_PUMP_B
+        staB    FUEL_PUMP_B_prev
+        staB    LW+LOGID_ECU_FUEL_PUMP_B
 0:
 LE3BA_9:
         brset   *L0005 #0b00001000 LE3BA_12  ;br if we are in DIAG TEST mode
@@ -7903,7 +7915,7 @@ IC2F_ISR_2:
         addD    #0x0010                 ;which will fire the Front coil
         stD     TOC1
 
-        stD     LOG_TS_FRT_COIL_MAN_OFF_U16
+        stD     LW+LOGID_ECU_TS_FRT_COIL_MAN_OFF_U16
 
         ldaA    #0x80                   ;writing B7 clears the OC1I interrupt request bit
         staA    TFLG1
@@ -7936,7 +7948,7 @@ IC2F_ISR_3:
         addD    #0x0010
         stD     TOC2
 
-        stD     LOG_TS_REAR_COIL_MAN_OFF_U16
+        stD     LW+LOGID_ECU_TS_REAR_COIL_MAN_OFF_U16
 
         ldaA    #0x40                   ;setting B6 clears the OC2 interrupt request flag
         staA    TFLG1
@@ -8162,7 +8174,7 @@ IC2F_ISR_21:
         cmpA    #0x21                   ;if 0x21 represents 33 5 mSec counts this would be 165 mSec
         blo     IC2F_ISR_22             ;br if L0054 < 0x21
 
-        staA    LOG_CRANK_P6_MAX_V
+        staA    LW+LOGID_ECU_CRANK_P6_MAX_V
         bra     IC2F_ISR_23
 
 IC2F_ISR_22:
@@ -8180,10 +8192,10 @@ IC2F_ISR_23:
 IC2F_ISR_24:
         ldD     L015E                   ;get the current_IC2_count
         stD     *L0059                  ;  - save it as start time for the current crank ref
-        stD     LOG_TS_CRANKREF_START_U16
+        stD     LW+LOGID_ECU_TS_CRANKREF_START_U16
 
-        ldaA    *L0055                  ;get the current crank ID
-        staA    LOG_CRANKREF_ID_U8      ;log the crank ID
+        ldaA    *L0055                  ;get the current crank ID and log it
+        staA    LW+LOGID_ECU_CRANKREF_ID_U8
         cmpA    #0x00
         beq     IC2F_ISR_27             ;if crankRef == cr0
         decA
@@ -8755,7 +8767,7 @@ IC2F_ISR_80:
         stD     *L00E9                  ;this is the delay (in timer ticks) that defines the spark advance for the FRT cyl
 
         ldaB    *L00DC                  ;log the ignition delay in terms of a fraction of 90 degrees
-        staB    LOG_TS_FRT_IGN_DLY_0P8
+        staB    LW+LOGID_ECU_TS_FRT_IGN_DLY_0P8
 
 ;In rough terms, *L00E8 is based strictly on RPM:
 ;  At 800RPM:0x00, 1200:0x18, ... , over 6000RPM, values gradually increase from about 0x80 to 0x8C.
@@ -8872,7 +8884,7 @@ IC2F_ISR_90:
         stD     *L00EB
 
         ldaB    *L00DF                  ;log the ignition delay in terms of a fraction of 90 degrees
-        staB    LOG_TS_REAR_IGN_DLY_0P8
+        staB    LW+LOGID_ECU_TS_REAR_IGN_DLY_0P8
 
         ldaB    *L00E8
         clrA
@@ -9048,7 +9060,7 @@ IC2F_ISR_108:
         brset   *L000B #0b00100000 IC2F_ISR_112
 
         staA    *L001E                  ;save the PM/MAP
-        staA    LOG_RAW_MAP_U8
+        staA    LW+LOGID_ECU_RAW_MAP_U8
         bra     IC2F_ISR_111
 
 IC2F_ISR_109:
@@ -10058,7 +10070,7 @@ OC1F_ISR:
 ;some time during this crankref period.
 
         ldD     *L00FF                  ;get the precalculated time from start of CR4 event to spark fire
-        stD     LOG_TS_FRT_COIL_OFF_U16
+        stD     LW+LOGID_ECU_TS_FRT_COIL_OFF_U16
 
 4:
         stD     TOC1                    ;use that time to fire the spark
@@ -10113,7 +10125,7 @@ OC2F_ISR:
 3:
         brset   *L000B #0b00000100 2b   ;branch if a spark is NOT armed?
         ldD     L0101
-        stD     LOG_TS_REAR_COIL_OFF_U16
+        stD     LW+LOGID_ECU_TS_REAR_COIL_OFF_U16
 
 4:
         stD     TOC2
@@ -10149,7 +10161,7 @@ OC2F_ISR:
 
 IC1F_ISR:
         ldD     TIC1                    ;Log the timestamp of this most recent camshaft event
-        stD     LOG_CAMSHAFT_U16
+        stD     LW+LOGID_ECU_CAMSHAFT_U16
 
         ldaA    TCTL2                   ;read TCTL2
         andA    #0b00110000             ;only interested in the T1 edge control bits
@@ -10174,7 +10186,7 @@ IC1F_ISR:
         ldaA    #0x04                   ;clear the IC1F flag
         staA    TFLG1
 0:
-        staA    LOG_CAM_ERR_U8          ;if (A bit 2 == 1) then edge control bits were wrong, if (A bit 2 == 0) then TFLG1.ICF1 was unexpectedly not set
+        staA    LW+LOGID_ECU_CAM_ERR_U8 ;if (A bit 2 == 1) then edge control bits were wrong, if (A bit 2 == 0) then TFLG1.ICF1 was unexpectedly not set
         rti
 
 ;We are processing a falling edge interrupt, the trailing edge of the cam sensor.
@@ -10265,7 +10277,7 @@ LF309_5:
         ldD     TOC3                    ;TOC3 controls front injector
         subD    TCNT
         blo     LF309_6                 ; <
-        subD    LC012
+        subD    LC012                   ; 96 uSec
         bhs     LF309_7                 ; >=
 LF309_6:
         ldD     #0x0000
@@ -10309,7 +10321,7 @@ LF309_14:
         ldD     TOC4
         subD    TCNT
         blo     LF309_15
-        subD    LC012
+        subD    LC012                   ; 96 uSec
         bhs     LF309_16
 LF309_15:
         ldD     #0x0000
@@ -10598,15 +10610,19 @@ LF48C:  ldaA    TCTL1
         ldaA    TMSK1
         andA    #0b11011111             ;disable OC3 interrupts
         staA    TMSK1
+        
+#if 1
         ldD     TCNT
         addD    #0x0005
         stD     TOC3
 
-#if 1
-; D contains the injector ON timestamp.  Save it in a tmp.
-        stD     log_tmp                 ;5E [14]  +7.0 uSec: useful, this time
-        addD    TOC3                    ;6E [20] +10.0 uSec: also pointless, except as a NOP
+        stD     LW+LOGID_ECU_F_INJ_ON_TS_U16 ; 5E [14]  +7.0 uSec: log the injector ON timestamp
+        addD    TOC3                    ;6E [20] +10.0 uSec: pointless, except as a NOP
 #else
+        ldD     TCNT
+        addD    #0x0005
+        stD     TOC3
+
         ldD     TCNT                   ;5E [14]  +7.0 uSec: seemingly pointless, except as a NOP
         addD    TOC3                   ;6E [20] +10.0 uSec: also pointless, except as a NOP
 #endif
@@ -10619,73 +10635,67 @@ LF48C:  ldaA    TCTL1
         ldaA    TCTL1
         oraA    #0b00110000
         staA    TCTL1
-        ldD     L0166                   ;the amount of time that the injector drive will be applied.
+        ldD     L0166                   ; Injector pulse duration (in ticks)
+        stD     LW+LOGID_ECU_F_INJ_DUR_U16
         addD    TOC3
         stD     TOC3
-
-        stD     LOG_TS_FRT_INJ_OFF_U16  ;log the timestamp when the injector will shut off
-
-        ldD     log_tmp
-        stD     LOG_TS_FRT_INJ_ON_U16
 
         rts
 
 ;*****************************************************************
-;OC4 is the REAR cyl fuel injector.
+; OC4 controls operation of the REAR cyl fuel injector.
 
-;Mess with OC4 to generate OC4 matchs, but OC4 interrupts are
-;inhibited.
+; OC4 match function drives PA4 that controls injector PNP driver transistor T461.
+; OC4 interrupts are never used.
 
 LF4D1:  ldaA    TCTL1
         oraA    #0b00001000
-        andA    #0b11111011             ;xxxx10xx means that an OC4 event will set OC4=0 (means injector squirting)
+        andA    #0b11111011             ; xxxx10xx means that an OC4 match event will drive PA4=0 (means injector squirting)
         staA    TCTL1
 
-        ldaA    #0x10                   ;clear the OC4 interrupt request flag
+        ldaA    #0x10                   ; clear the OC4 interrupt request flag
         staA    TFLG1
 
         ldaA    TMSK1
-        andA    #0b11101111             ;inhibit OC4 interrupts
+        andA    #0b11101111             ; inhibit OC4 interrupts
         staA    TMSK1
 
-        ldD     TCNT                    ;T0
-        addD    #0x0005                 ;4E [ 4]  +2.0 uSec: 10 uSec from T0...
-        stD     TOC4                    ;5E [ 9]  +4.5 uSec: ...we will generate an inhibited OC4 event
-                                        ;                    that starts the REAR fuel injector squirting
-
 #if 1
-; D contains the injector ON timestamp.  Save it in a tmp.
-        stD     log_tmp                 ;5E [14]  +7.0 uSec: useful, this time
-        addD    TOC4                    ;6E [20] +10.0 uSec: also pointless, except as a NOP
+        ldD     TCNT                    ; mark time T0
+        addD    #0x0005                 ; 4E [ 4]  +2.0 uSec: 10 uSec from T0, an OC4 match event will occur...
+        stD     TOC4                    ; 5E [ 9]  +4.5 uSec: ...that that enables the REAR fuel injector
+
+; D contains the injector ON timestamp:
+        stD     LW+LOGID_ECU_R_INJ_ON_TS_U16 ; 5E [14]  +7.0 uSec: log it
+        addD    TOC4                    ; 6E [20] +10.0 uSec: a NOP, since D is not used
 #else
-        ldD     TCNT                   ;5E [14]  +7.0 uSec: seemingly pointless, except as a NOP
-        addD    TOC4                   ;6E [20] +10.0 uSec: also pointless, except as a NOP
+        ldD     TCNT                    ; mark time T0
+        addD    #0x0005                 ; 4E [ 4]  +2.0 uSec: 10 uSec from T0, an OC4 match event will occur...
+        stD     TOC4                    ; 5E [ 9]  +4.5 uSec: ...that that enables the REAR fuel injector
+        
+        ldD     TCNT                    ; 5E [14]  +7.0 uSec: these two instrs are NOPs since we never use D
+        addD    TOC4                    ; 6E [20] +10.0 uSec: OC4 should match during this instruction, driving PA4=0
 #endif
 
-        ldaA    #0x10                   ;2E [22] +11.0 uSec: OC4 should have matched by now, thus setting OC4=0
+        ldaA    #0x10                   ;2E [22] +11.0 uSec:  clear OC4F interrupt flag that was set by the OC4 match
         staA    TFLG1                   ;4E [26] +13.0 uSec
 
         ldaA    #0x10                   ;2E [28] +14.0 uSec: weird: why do this twice in a row?
         staA    TFLG1                   ;4E [32] +16.0 uSec: paranoia perhaps?
 
         ldaA    TMSK1
-        andA    #0b11101111             ;inhibit OC4 interrupts (again!)
+        andA    #0b11101111             ; inhibit OC4 interrupts (more paranoia? We already inhibited them, above)
         staA    TMSK1
 
-        ldaA    TCTL1
-        oraA    #0b00001100             ;xxxx11xx means that an OC4 match event will set OC4=1 (stop squirting)
+        ldaA    TCTL1                   ; Program the next OC4 match to disable the fuel injector
+        oraA    #0b00001100             ; xxxx11xx means that an OC4 match event will set PA4 back to 1
         staA    TCTL1
 
-;Program the OC4 event to stop the injector from squirting at
-;some future point in time:
-        ldD     L0168                   ;get the real time we want to delay
-        addD    TOC4                    ;add it to (T0 + 10 uSec)
-        stD     TOC4                    ;that is the new OC4 event match time
-
-        stD     LOG_TS_REAR_INJ_OFF_U16 ;log the timestamp when the injector will shut off
-
-        ldD     log_tmp
-        stD     LOG_TS_REAR_INJ_ON_U16
+; Calculate the future time at which to stop the injector from squirting
+        ldD     L0168                   ; get the previously calculated injection pulse duration
+        stD     LW+LOGID_ECU_R_INJ_DUR_U16 ;log the injector duration
+        addD    TOC4                    ; add the duration to the injection pulse start time (T0 + 10 uSec)
+        stD     TOC4                    ; the result becomes the new OC4 event match time
 
         rts
 
@@ -10746,7 +10756,7 @@ LF54B:  ldaA    PORTA
         stD     L0168
 
 3:
-        jsr     LF4D1                   ;start the injector injecting
+        jsr     LF4D1                   ;start the rear injector injecting
         clr     L016C
         rts
 
@@ -11224,59 +11234,50 @@ LF734:  ldaA    *L00C7
         rts
 
 ;-----------------------------------------------------------------
-; Put in some handlers to notify the UltraMod if bad things happen to us
+; Put in some handlers to notify the UltraMod log if bad things happen to the ECU
 
-_oc5f:  ldaA    #LOG_CPU_EVENT_ID_OC5F
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_oc5f:  ldaA    #LOGID_ECU_CPU_EVENT_ID_OC5F
+        bra     _log
 
-_oc4f:  ldaA    #LOG_CPU_EVENT_ID_OC4F
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_oc4f:  ldaA    #LOGID_ECU_CPU_EVENT_ID_OC4F
+        bra     _log
 
-_oc3f:  ldaA    #LOG_CPU_EVENT_ID_OC3F
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_oc3f:  ldaA    #LOGID_ECU_CPU_EVENT_ID_OC3F
+        bra     _log
 
-_ic3:   ldaA    #LOG_CPU_EVENT_ID_IC3
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_ic3:   ldaA    #LOGID_ECU_CPU_EVENT_ID_IC3
+        bra     _log
 
-_rti:   ldaA    #LOG_CPU_EVENT_ID_RTI
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_rti:   ldaA    #LOGID_ECU_CPU_EVENT_ID_RTI
+        bra     _log
 
-_irq:   ldaA    #LOG_CPU_EVENT_ID_IRQ
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_irq:   ldaA    #LOGID_ECU_CPU_EVENT_ID_IRQ
+        bra     _log
 
-_xirq:  ldaA    #LOG_CPU_EVENT_ID_XIRQ
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_xirq:  ldaA    #LOGID_ECU_CPU_EVENT_ID_XIRQ
+        bra     _log
 
-_swi:   ldaA    #LOG_CPU_EVENT_ID_SWI
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_swi:   ldaA    #LOGID_ECU_CPU_EVENT_ID_SWI
+        bra     _log
 
 _illegalOp:
-        ldaA    #LOG_CPU_EVENT_ID_IOP
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+        ldaA    #LOGID_ECU_CPU_EVENT_ID_IOP
+        bra     _log
 
-_cop:   ldaA    #LOG_CPU_EVENT_ID_COP
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_cop:   ldaA    #LOGID_ECU_CPU_EVENT_ID_COP
+        bra     _log
 
-_cmf:   ldaA    #LOG_CPU_EVENT_ID_CMF
-        staA    LOG_CPU_EVENT_U8
-        jmp     _por
+_cmf:   ldaA    #LOGID_ECU_CPU_EVENT_ID_CMF
+        bra     _log
 
-_por:   ldD     #LOG_LOG_VERSION_ID_1V0         ;log the version of the log we are using
-        stD     LOG_LOG_VERSION_U16
+_por:   ldaA    #LOGID_ECU_CPU_EVENT_ID_RESET
+; Intentional fall through!
 
-        ldaA    #LOG_CPU_EVENT_ID_RESET
-        staA    LOG_CPU_EVENT_U8
-        jmp     reset
+_log:   ldaB    #LOGID_ECU_LOG_VER_V0
+        staB    LW+LOGID_ECU_LOG_VER_U8                 ; #1: log version information before anything else
+
+        staA    LW+LOGID_ECU_CPU_EVENT_U8               ; #2: log the specific CPU event that got us here
+        jmp     reset                                   ; Boot the ECU
 
 ;----------------------------------------------------------------
 lastInstr:

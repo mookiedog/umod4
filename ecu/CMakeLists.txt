@@ -31,6 +31,7 @@ add_custom_command(
   DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
     ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.S
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ECU_log.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/custom_eprom.ld
     ${TOOLS_SOURCE_DIR}/bin-to-bson.py
 

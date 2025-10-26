@@ -243,17 +243,27 @@ bool comingOnline(SdCard* sdCard)
   }
   else {
     // Attempt to mount an existing filesystem
-    printf("%s: Mounting filesystem\n", __FUNCTION__);
-    t0 = time_us_32();
-    mount_err = lfs_mount(&lfs, &lfs_cfg);
-    t1 = time_us_32();
-    mountTime_us = t1 - t0;
-    if (mount_err) {
-      printf("%s: Mount failed! err=%d\n", __FUNCTION__, mount_err);
-    }
+    int32_t mountAttempts = 1;
+    do {
+      printf("%s: Mounting filesystem attempt %d\n", __FUNCTION__, mountAttempts);
+      t0 = time_us_32();
+      mount_err = lfs_mount(&lfs, &lfs_cfg);
+      t1 = time_us_32();
+      mountTime_us = t1 - t0;
+      if (mount_err) {
+        printf("%s: Mount failed! err=%d\n", __FUNCTION__, mount_err);
+        if (mount_err == LFS_ERR_IO) {
+          if (mountAttempts > 5) {
+            return false;
+          }
+          vTaskDelay(pdMS_TO_TICKS(500));
+        }
+      }
+    } while (mount_err == LFS_ERR_IO);
   }
 
-  // If we were unable to mount the filesystem, try reformatting it. This should only happen on the first boot.
+  // If we were unable to mount the filesystem for some reason other than an IO error.
+  // Try reformatting it. This should only happen on the first boot.
   if (mount_err || formatRequest) {
     // We should probably log a message if we ever have to reformat!
 
