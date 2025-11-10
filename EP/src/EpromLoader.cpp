@@ -115,7 +115,7 @@ uint8_t EpromLoader::loadImage(const char* imageName)
     epromDoc = findEprom(imageName);
     if (!epromDoc) {
         printf("%s: FATAL: Unable to find BSON eprom doc named \"%s\"!\n", __FUNCTION__, imageName);
-        return LOAD_ERR_NOTFOUND;
+        return LOGID_EP_LOAD_ERR_VAL_NOTFOUND;
     }
     else {
         // Load the image using the "mem" info found in the epromDoc
@@ -128,7 +128,7 @@ uint8_t EpromLoader::loadImage(const char* imageName)
     t1 = time_us_32();
     elapsed = t1 - t0;
     printf("%s: Image %s loaded in %u milliseconds\n", __FUNCTION__, imageName, (elapsed+500) / 1000);
-    return LOAD_ERR_NOERR;
+    return LOGID_EP_LOAD_ERR_VAL_NOERR;
 }
 
 
@@ -150,7 +150,7 @@ uint8_t EpromLoader::loadMapblob(const char* imageName)
     epromDoc = findEprom(imageName);
     if (!epromDoc) {
         printf("%s: FATAL: Unable to find BSON eprom doc named \"%s\"!\n", __FUNCTION__, imageName);
-        return LOAD_ERR_NOTFOUND;
+        return LOGID_EP_LOAD_ERR_VAL_NOTFOUND;
     }
     else {
         // Load the image using the "mem" info found in the epromDoc
@@ -163,7 +163,7 @@ uint8_t EpromLoader::loadMapblob(const char* imageName)
     t1 = time_us_32();
     elapsed = t1 - t0;
     printf("%s: Image %s loaded in %u milliseconds\n", __FUNCTION__, imageName, (elapsed+500) / 1000);
-    return LOAD_ERR_NOERR;
+    return LOGID_EP_LOAD_ERR_VAL_NOERR;
 }
 
 // --------------------------------------------------------------------------------------------
@@ -185,7 +185,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     found = Bson::findElement(epromDoc, "name", name_element);
     if (!found) {
         printf("%s: ERR: Unable to find the \"name\" key in the BSON doc\n", __FUNCTION__);
-        return LOAD_ERR_NONAME;
+        return LOGID_EP_LOAD_ERR_VAL_NONAME;
     }
     if (name_element.elementType == BSON_TYPE_UTF8) {
         #warning "Fix me!"
@@ -203,17 +203,17 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     
     if (startOffset > 32767) {
         printf("%s: ERR: startOffset out of range [0..32767]: %u\n", __FUNCTION__, startOffset);
-        return LOAD_ERR_BADOFFSET;
+        return LOGID_EP_LOAD_ERR_VAL_BADOFFSET;
     }
     
     if ((startOffset+length)>32768) {
         printf("%s: ERR: requested startOffset+length [%u] goes past end EPROM [32768]: %u\n", __FUNCTION__, startOffset+length);
-        return LOAD_ERR_BADLENGTH;
+        return LOGID_EP_LOAD_ERR_VAL_BADLENGTH;
     }
     
     if (length == 0) {
         printf("%s: Requested length of 0: ignored\n", __FUNCTION__);
-        return LOAD_ERR_NOERR;
+        return LOGID_EP_LOAD_ERR_VAL_NOERR;
     }
     
     char daughterboard = 'N';
@@ -223,7 +223,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     found = Bson::findElement(epromDoc, "daughterboard", db_element);
     if (!found) {
         printf("%s: ERR: Unable to find the \"daughterboard\" key in the BSON doc\n", __FUNCTION__);
-        return LOAD_ERR_NODAUGHTERBOARDKEY;
+        return LOGID_EP_LOAD_ERR_VAL_NODAUGHTERBOARDKEY;
     }
     
     if (db_element.elementType == BSON_TYPE_UTF8) {
@@ -242,7 +242,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     found = Bson::findElement(epromDoc, "mem", mem_element);
     if (!found || (mem_element.elementType != BSON_TYPE_EMBEDDED_DOC)) {
         printf("%s: ERR: Unable to find the \"mem\" key in the BSON doc\n", __FUNCTION__);
-        return LOAD_ERR_NOMEMKEY;
+        return LOGID_EP_LOAD_ERR_VAL_NOMEMKEY;
     }
     
     // Extract the details for the image:
@@ -268,7 +268,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     uint32_t hash = murmur3_32(imageMemInfo.binData, imageMemInfo.length, ~0x0);
     if (hash != imageMemInfo.m3) {
         printf("%s: Hash checksum failed: calculated 0x%08X, expected 0x%08X\n", __FUNCTION__, hash, imageMemInfo.m3);
-        return LOAD_ERR_M3FAIL;
+        return LOGID_EP_LOAD_ERR_VAL_M3FAIL;
     }
     
     if (daughterboard == 'A') {
@@ -287,7 +287,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     }
     
     printf("%s: Success!\n", __FUNCTION__);
-    return LOAD_ERR_NOERR;
+    return LOGID_EP_LOAD_ERR_VAL_NOERR;
 }
 
 uint8_t EpromLoader::getMemInfo(bsonDoc_t memDoc, meminfo_t& meminfo)
@@ -297,33 +297,33 @@ uint8_t EpromLoader::getMemInfo(bsonDoc_t memDoc, meminfo_t& meminfo)
     bool found = Bson::findElement(memDoc, "startOffset", e);
     if (!found || (e.elementType != BSON_TYPE_INT32)) {
         printf("%s: ERR: missing key \"startOffset\"\n", __FUNCTION__);
-        return LOAD_ERR_MISSINGKEYSTART;
+        return LOGID_EP_LOAD_ERR_VAL_MISSINGKEYSTART;
     }
     meminfo.startOffset = Bson::read_unaligned_uint32(e.data);
     
     found = Bson::findElement(memDoc, "length", e);
     if (!found || (e.elementType != BSON_TYPE_INT32)) {
         printf("%s: ERR: missing key \"length\"\n", __FUNCTION__);
-        return LOAD_ERR_MISSINGKEYLENGTH;
+        return LOGID_EP_LOAD_ERR_VAL_MISSINGKEYLENGTH;
     }
     meminfo.length = Bson::read_unaligned_uint32(e.data);
     
     found = Bson::findElement(memDoc, "m3", e);
     if (!found) {
         printf("%s: ERR: missing key \"m3\"\n", __FUNCTION__);
-        return LOAD_ERR_MISSINGKEYM3;
+        return LOGID_EP_LOAD_ERR_VAL_MISSINGKEYM3;
     }
     // The M3 output is always a 32-bit number. However, the JSON to BSON library will generate a 64-bit BSON data type if the
     // MS bit of the M3 output is a '1'. As a result, we need to be ready to deal with either data type we might find here:
     if ((e.elementType != BSON_TYPE_INT32) && (e.elementType != BSON_TYPE_INT64)) {
         printf("%s: ERR: m3 data has bad BSON data type 0x%02X, expected 0x10 or 0x12\n", __FUNCTION__, e.elementType);
-        return LOAD_ERR_BADM3BSONTYPE;
+        return LOGID_EP_LOAD_ERR_VAL_BADM3BSONTYPE;
     }
     if (e.elementType == BSON_TYPE_INT64) {
         uint32_t ms_word = Bson::read_unaligned_uint32(e.data+4);
         if (ms_word != 0) {
             printf("%s: ERR: 64-bit M3 value has a non-zero MS word: %u\n", __FUNCTION__, ms_word);
-            return LOAD_ERR_BADM3VALUE;
+            return LOGID_EP_LOAD_ERR_VAL_BADM3VALUE;
         }
     }
     // Since the data is stored little-endian, this works for either 32 or 64 bit data:
@@ -333,25 +333,25 @@ uint8_t EpromLoader::getMemInfo(bsonDoc_t memDoc, meminfo_t& meminfo)
     found = Bson::findElement(memDoc, "bin", e);
     if (!found || (e.elementType != BSON_TYPE_BINARY_DATA)) {
         printf("%s: ERR: missing key \"bin\"\n", __FUNCTION__);
-        return LOAD_ERR_NOBINKEY;
+        return LOGID_EP_LOAD_ERR_VAL_NOBINKEY;
     }
     
     // A binary field starts off with a 32-bit length
     uint32_t length = Bson::read_unaligned_uint32(e.data);
     if (length != 32768) {
         printf("%s: ERR: bad length field: expected 32768, saw %u\"\n", __FUNCTION__, length);
-        return LOAD_ERR_BADBINLENGTH;
+        return LOGID_EP_LOAD_ERR_VAL_BADBINLENGTH;
     }
     
     // We ignore the subtype, but we need to be aware that it is present:
     uint8_t binaryDataSubtype = (uint8_t)*(e.data+4);
     if (binaryDataSubtype != 0x00) {
         printf("%s: ERR: expected binary data subtype 0x00, saw 0x%02X\n", __FUNCTION__, binaryDataSubtype);
-        return LOAD_ERR_BADBINSUBTYPE;
+        return LOGID_EP_LOAD_ERR_VAL_BADBINSUBTYPE;
     }
     
     // The real EPROM binary image starts 1 byte after the binary subtype byte
     meminfo.binData = e.data+5;
     
-    return LOAD_ERR_NOERR;
+    return LOGID_EP_LOAD_ERR_VAL_NOERR;
 }

@@ -295,7 +295,7 @@ void Gps::process_NAV_PVT(uint8_t* payload)
 
   if (_fixType != fixType) {
     // Log all changes to fixType, upgrades or downgrades:
-    if (logger) logger->logData(LOGID_WP_FIXTYPE_U8, sizeof(uint8_t), &_fixType);
+    if (logger) logger->logData(LOGID_WP_FIXTYPE_TYPE_U8, LOGID_WP_FIXTYPE_DLEN, &_fixType);
 
     if (((fixType<2) && (_fixType >= 2)) || ((fixType == 2) && (_fixType == 3))) {
       // We went from no fix to having a 2D or 3D fix or from a 2D to a 3D fix : trigger logging our position even if we are not moving.
@@ -335,37 +335,37 @@ void Gps::process_NAV_PVT(uint8_t* payload)
         if (dbg && (_year < 2025)) printf("%s: reported year %d < 2025!\n", _year);
         year = _year;
         int8_t yr = year - 2000;
-        logger->logData(LOGID_WP_YEAR_U8, sizeof(uint8_t), (uint8_t*)&yr);
+        logger->logData(LOGID_WP_YEAR_TYPE_U8, LOGID_WP_YEAR_DLEN, (uint8_t*)&yr);
         doRest = true;
       }
 
       if ((month != _month) || doRest) {
         month = _month;
-        logger->logData(LOGID_WP_MONTH_U8, sizeof(uint8_t), &month);
+        logger->logData(LOGID_WP_MONTH_TYPE_U8, LOGID_WP_MONTH_DLEN, &month);
         doRest = true;
       }
 
       if ((day != _day) || doRest) {
         day = _day;
-        logger->logData(LOGID_WP_DATE_U8, sizeof(uint8_t), &day);
+        logger->logData(LOGID_WP_DATE_TYPE_U8, LOGID_WP_DATE_DLEN, &day);
         doRest = true;
       }
 
       if ((hours != _hours) || doRest) {
         hours = _hours;
-        logger->logData(LOGID_WP_HOURS_U8, sizeof(uint8_t), &hours);
+        logger->logData(LOGID_WP_HOURS_TYPE_U8, LOGID_WP_HOURS_DLEN, &hours);
         doRest = true;
       }
 
       if ((mins != _mins) || doRest) {
         mins = _mins;
-        logger->logData(LOGID_WP_MINS_U8, sizeof(uint8_t), &mins);
+        logger->logData(LOGID_WP_MINS_TYPE_U8, LOGID_WP_MINS_DLEN, &mins);
         doRest = true;
       }
 
       if ((secs != _secs) || doRest) {
         secs = _secs;
-        logger->logData(LOGID_WP_SECS_U8, sizeof(uint8_t), &secs);
+        logger->logData(LOGID_WP_SECS_TYPE_U8, LOGID_WP_SECS_DLEN, &secs);
         doRest = true;
 
         // Every 10 seconds, we log our location even when stopped
@@ -380,7 +380,7 @@ void Gps::process_NAV_PVT(uint8_t* payload)
       if (moving && (fixType>=2)) {
         nanos = _nanos;
         int8_t centis = (nanos+5000000)/10000000;
-        logger->logData(LOGID_WP_CSECS_U8, sizeof(uint8_t), (uint8_t*)&centis);
+        logger->logData(LOGID_WP_CSECS_TYPE_U8, LOGID_WP_CSECS_DLEN, (uint8_t*)&centis);
       }
     }
   }
@@ -438,7 +438,7 @@ void Gps::process_NAV_PVT(uint8_t* payload)
       b[9] = (velocity >> 8) & 0xFF;
 
 
-      if (logger) logger->logData(LOGID_WP_PV, LOGID_WP_PV_LEN, b);
+      if (logger) logger->logData(LOGID_WP_PV, LOGID_WP_PV_DLEN, b);
 
       moving -= 1;
     }

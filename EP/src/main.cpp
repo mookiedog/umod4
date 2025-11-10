@@ -189,27 +189,34 @@ uint8_t readEprom(uint32_t ecuAddr, uint8_t* epromImage, char dbId)
 
 // --------------------------------------------------------------------------------------------
 // Init all the Processor GPIO pins to proper, safe states.
+// We put pulldowns on all input pins in case the driver ASICs driving those input pins
+// might be unpowered.
 void initPins(void)
 {
     // The ECU control signal pins will always be inputs
     gpio_init(HC11_E_LSB);
+    gpio_set_pulls(HC11_E_LSB, false, true);        // pulldown
     gpio_set_dir(HC11_E_LSB, GPIO_IN);
     
     gpio_init(HC11_CE_LSB);
+    gpio_set_pulls(HC11_CE_LSB, false, true);       // pulldown
     gpio_set_dir(HC11_CE_LSB, GPIO_IN);
     
     gpio_init(HC11_WR_LSB);
+    gpio_set_pulls(HC11_WR_LSB, false, true);       // pulldown
     gpio_set_dir(HC11_WR_LSB, GPIO_IN);
     
     // The address bus pins will always be inputs
     for (int i=HC11_AB_LSB; i<=HC11_AB_MSB; i++) {
         gpio_init(i);
+        gpio_set_pulls(i, false, true);             // pulldown
         gpio_set_dir(i, GPIO_IN);
     }
     
     // The data bus pins get inited to a tri-state condition (input)
     for (int i=HC11_DB_LSB; i<=HC11_DB_MSB; i++) {
         gpio_init(i);
+        gpio_set_pulls(i, false, true);             // pulldown
         gpio_set_dir(i, GPIO_IN);
     }
     
@@ -405,7 +412,7 @@ void prepEpromImage()
         // This initial load is just for testing that we can load a protected image
         name = "8796539";
         err = EpromLoader::loadImage(name);
-        enqueue(LOGID_EP_LOAD_ERR_U8, err);
+        enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
         if (err) {
             printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
         }
@@ -418,27 +425,27 @@ void prepEpromImage()
         printf("%s: Loading image %s\n", __FUNCTION__, name);
         bsonDoc = EpromLoader::findEprom(name);
         if (!bsonDoc) {
-            enqueue(LOGID_EP_LOAD_ERR_U8, LOAD_ERR_NOTFOUND);
+            enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
             //panic("Unable to find UM4 image in BSON partition!");
             blinkCode(2);
         }
         else {
             err = EpromLoader::loadImage(bsonDoc);
-            enqueue(LOGID_EP_LOAD_ERR_U8, err);
-            if (err != LOAD_ERR_NOERR) {
+            enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
+            if (err != LOGID_EP_LOAD_ERR_VAL_NOERR) {
                 //panic("Unable to load UM4 eprom image!");
                 blinkCode(3);
             }
         }
-    } while (!bsonDoc || (err != LOAD_ERR_NOERR));
+    } while (!bsonDoc || (err != LOGID_EP_LOAD_ERR_VAL_NOERR));
     
     if (hasDescrambler()) {
         // Now try loading protected 8796539 maps on top of our UM4 image:
         t0 = get_absolute_time();
         name = "8796539";
         err = EpromLoader::loadMapblob(name);
-        enqueue(LOGID_EP_LOAD_ERR_U8, err);
-        if (err != LOAD_ERR_NOERR) {
+        enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
+        if (err != LOGID_EP_LOAD_ERR_VAL_NOERR) {
             printf("%s: Unable to load protected %s mapblob: err=%02x!\n", __FUNCTION__, name, err);
         }
         else {
@@ -452,7 +459,7 @@ void prepEpromImage()
         // Reload the UM4 maps back on top of the UM4 base image
         t0 = get_absolute_time();
         err = EpromLoader::loadMapblob(bsonDoc);
-        enqueue(LOGID_EP_LOAD_ERR_U8, err);
+        enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
         if (err) {
             printf("Unable to reload UM4 mapblob!\n");
             blinkCode(4);
@@ -463,13 +470,13 @@ void prepEpromImage()
             elapsed = absolute_time_diff_us(t0, t1);
             printf("%s: Loaded unprotected UM4 mapblob in %u microseconds\n", __FUNCTION__, elapsed);
         }
-    } while (err != LOAD_ERR_NOERR);
+    } while (err != LOGID_EP_LOAD_ERR_VAL_NOERR);
     
     #else
     // Load a plain 549USA to see if the bike runs better
     name = "549USA";
     err = EpromLoader::loadImage(name);
-    enqueue(LOGID_EP_LOAD_ERR_U8, err);
+    enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
     if (err) {
         printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
     }
@@ -634,7 +641,7 @@ int main(void)
     hello(3);
     initPins();
     
-    enqueue(LOGID_EP_LOG_VER_U8, EP_LOG_VER_V0);
+    enqueue(LOGID_GEN_EP_LOG_VER_TYPE_U8, LOGID_GEN_EP_LOG_VER_VAL_V0);
     
     stdio_init_all();
     showBootMessages();

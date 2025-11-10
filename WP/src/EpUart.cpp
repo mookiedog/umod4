@@ -29,6 +29,7 @@ void __time_critical_func(EpUart::isr)()
   uint16_t rxData;
   uint8_t d;
 
+  # warning "fix this: it's not testing what the comment says it is!"
   if (hw->mis & (UART_UARTMIS_RXMIS_BITS | UART_UARTMIS_RTMIS_BITS)) {
     // We got here because the FIFO reached a trigger level or we had an RX timeout
     // Either way, we read everything out of the FIFO until it is empty

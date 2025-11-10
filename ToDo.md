@@ -1,5 +1,121 @@
 # To Do
 
+## Current Data Path
+
+EP.Core1 puts 32-bit logging transfers captured from the HC11 bus into the inter-processor FIFO 1->0.
+
+EP.core0 runs a polling loop
+while (1) {
+  if (fifo not empty) {
+    remove 32-bit data
+    convert to 16-bit data AA/DD
+    enqueue 16-bit data
+  }
+  if (WP is ready) {
+    dequeue no more than 4 bytes
+    put them in EP PIO 8-bit serial TX FIFO
+      8-bit TX chosen because WP uses silicon UART that only does 8 bit RX
+      FIFO length is 8 because the example code joins the FIFOs (RX will not be possible)
+      FIFO width is 32-bits
+      Current PIO code TXs the bottom 8 bits of each FIFO entry
+  }
+}
+
+## Proposed Changes
+
+Givens:
+
+* We can guarantee that:
+  * the EP and ECU will never break up characters being sent as part of a string
+  * the ECU will never break up sending MSB/LSB of a 16-bit value
+
+  Conceivably, those rules could be violated if the EP rebooted in the middle of a string transmission or a MSB/LSB transmission.
+  We ignore those cases.
+  In fact, we could protect ourselves by having the EP always start off by transmitting a two 0x0000 transmissions.
+  That could be used to detect an incomplete string or MSB/LSB operation.
+  Any 0x0000 pairs that ended up in the log would be ignored anyway since 0x00 bytes are ignored on a single-byte basis.
+
+Proposal:
+
+1) Use PIO UART on both EP and WP, not just the EP as now.
+    1) Change PIO transmission size to be 16 bits (total 18 after start and stop)
+
+1) 16-bit transfers will ALWAYS take the form of a combined LogID/LogData pair. This implies that:
+    1) Strings are still sent as 16-bit pairs defining single chars of a string
+    1) Writes of 16-bit ECU data will arrive as LogID/MSB then LogID+1/LSB
+
+1) Change the WP ISR to interrupt immediately on receiving a 16-bit value
+    1) The ISR will need to process data statefully
+        1) Characters will get built into strings.
+        When the NULL is received (or a non-string LogID is observed), the whole string captured so far gets logged as 1 string of length N.
+        1) 16-bit writes will get statefully recombined into 16 bit data.
+        When the LSB byte arrives, we log a 3-byte event (1 logid + 2 data)
+
+
+The PIO FIFO on the WP end could be 8 long, meaning 8 byte-pairs.
+It is 4-long at a minimum.
+An 8-long fifo would fill in 8 * 18 uSec per byte-pair (1 megabaud) or 144 uSec.
+
+Plan:
+
+1) Before starting: get a GIT checkin of the current state, the last 8-bit UART communication mechanism.
+
+1) Instead of including the PIO Uart code from the examples directory, we will copy in what we need to both EP and WP source trees.
+Update code to use 16-bit transmission units.
+
+1) Update the WP UART ISR to deal with the PIO FIFO, not the UART.
+
+1) The EP code that drains the streamBuffer after being enabled by the WP might need to be altered in case rate limiting of the drain process needs to be adjusted.
+
+## Logfile Decoding and Visualization
+
+I think I need to make a pass over the logfile definition.
+It must describe how data gets written.
+Why are some things MSB/LSB that can even have another event between them?
+Why are others ID followed by some number of bytes?
+What IDs do not completely follow a naming convention?
+Should the naming convention get expanded for GPS (as Claude suggested) so that a position/velo record might end in _PV_10B to explain that it is 10 bytes in length?
+
+I probably need to explain for each data type how to convert it to something else for displaying.
+Simple examples:
+
+* ADC to Volts for battery measurements
+* ADC to degrees C for thermistor measurements
+* placeholder for things I don't know yet like ADC to manifold air pressure value
+
+## PCB Support
+
+1) See if I can make 4-bit SD Card operations work
+
+1) Supercap operation
+    1) charging
+    1) switchover after power fail
+
+1) Do I need a star GND on bottom layer?
+
+## Experiments
+
+1) Power the Pico2W externally to relieve the ECU from powering the umod4 at all.
+
+    Theory: if the ECU power supply has a problem due to the extra load, either by
+    average power consumption or short term power spikes, this experiment will remove
+    the umod4 board from the equation.
+
+1) Graph all the data to see if there is anything that correlates to the RPM changes and engine loss of power.
+
+
+
+## Software Short Term
+
+### Log ALL Ignition Events
+
+At the moment, logs such as 2025-10-22/log.10.decoded show that FC_OFF events are missing for large stretches of time
+even though the engine is clearly running.
+
+### Find Out Why Board Draws High Current at ECU Power-Off
+
+If the umod4 is powered via USB, when the ECU gets
+
 ## Short-Term Plan
 
 * Test running the system off a 5.4V power supply fed into the Pico2 WP USB port.
