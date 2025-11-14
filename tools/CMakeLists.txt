@@ -41,11 +41,6 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy checksum ${TOOLS_INSTALL_DIR}
 )
 
-
-# Find Python
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
-
-
 ####################################################################################################
 # This section creates the log_sym.py source code.
 
@@ -113,28 +108,14 @@ else()
     message(FATAL_ERROR "No virtual environment found at ${VENV_PATH}")
 endif()
 
-# Get the Python version from the virtual environment
-execute_process(
-    COMMAND ${Python3_EXECUTABLE} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-    OUTPUT_VARIABLE PYTHON_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE PYTHON_VERSION_RESULT
-)
-
-if(NOT PYTHON_VERSION_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to determine Python version from virtual environment")
-endif()
-
-message(STATUS "Detected Python version: ${PYTHON_VERSION}")
-
 # Add installation command that only runs when the package files change
 # This approach should work without creating circular dependencies
 add_custom_command(
     TARGET update_log_symbols
     COMMAND ${CMAKE_COMMAND} -E make_directory ${VENV_PATH}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${VENV_PATH}/lib/python${PYTHON_VERSION}/site-packages/Logsyms
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LOGSYMS_PY_FILE} ${VENV_PATH}/lib/python${PYTHON_VERSION}/site-packages/Logsyms/
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${INIT_PY_FILE} ${VENV_PATH}/lib/python${PYTHON_VERSION}/site-packages/Logsyms/
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYTHON_SITEPACKAGES}/Logsyms
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LOGSYMS_PY_FILE} ${PYTHON_SITEPACKAGES}/Logsyms/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${INIT_PY_FILE} ${PYTHON_SITEPACKAGES}/Logsyms/
     COMMENT "Installing Logsyms package to virtual environment (Python ${PYTHON_VERSION})"
     VERBATIM
 )

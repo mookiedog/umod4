@@ -1,3 +1,7 @@
+; This file is based on pico-examples/pio/uart_tx.
+; It has been modified for use with the umod4 project:
+;   - Instead of 8n1, we implement 32n1: all data transfers are 32-bits wide
+;     where the LS bit of the LS byte will be transmitted first.
 ;
 ; Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
 ;
@@ -5,30 +9,31 @@
 ;
 .pio_version 0 // only requires PIO version 0
 
-.program uart_tx
+.program uart_tx32
 .side_set 1 opt
 
-; An 8n1 UART transmit program.
+; A 32n1 UART transmit program.
 ; OUT pin 0 and side-set pin 0 are both mapped to UART TX pin.
+; The bit transmission loop is 8 cycles per bit
 
     pull       side 1 [7]  ; Assert stop bit, or stall with line in idle state
-    set x, 7   side 0 [7]  ; Preload bit counter, assert start bit for 8 clocks
-bitloop:                   ; This loop will run 8 times (8n1 UART)
+    set x, 31  side 0 [7]  ; Preload bit counter for 32n1 operation, assert start bit for 8 clocks, then fall into bit loop
+bitloop:
     out pins, 1            ; Shift 1 bit from OSR to the first OUT pin
-    jmp x-- bitloop   [6]  ; Each loop iteration is 8 cycles.
+    jmp x-- bitloop   [6]  ; Delay 6 extra cycles here for a total of 8 cycles in the bitloop
 
 
 % c-sdk {
 #include "hardware/clocks.h"
 
-static inline void uart_tx_program_init(PIO pio, uint sm, uint offset, uint pin_tx, uint baud) {
+static inline void uart_tx32_program_init(PIO pio, uint sm, uint offset, uint pin_tx, uint baud) {
     // Tell PIO to initially drive output-high on the selected pin, then map PIO
     // onto that pin with the IO muxes.
-    pio_sm_set_pins_with_mask(pio, sm, 1u << pin_tx, 1u << pin_tx);
-    pio_sm_set_pindirs_with_mask(pio, sm, 1u << pin_tx, 1u << pin_tx);
+    pio_sm_set_pins_with_mask64(pio, sm, 1ull << pin_tx, 1ull << pin_tx);
+    pio_sm_set_pindirs_with_mask64(pio, sm, 1ull << pin_tx, 1ull << pin_tx);
     pio_gpio_init(pio, pin_tx);
 
-    pio_sm_config c = uart_tx_program_get_default_config(offset);
+    pio_sm_config c = uart_tx32_program_get_default_config(offset);
 
     // OUT shifts to right, no autopull
     sm_config_set_out_shift(&c, true, false, 32);
@@ -50,13 +55,8 @@ static inline void uart_tx_program_init(PIO pio, uint sm, uint offset, uint pin_
     pio_sm_set_enabled(pio, sm, true);
 }
 
-static inline void uart_tx_program_putc(PIO pio, uint sm, char c) {
-    pio_sm_put_blocking(pio, sm, (uint32_t)c);
-}
-
-static inline void uart_tx_program_puts(PIO pio, uint sm, const char *s) {
-    while (*s)
-        uart_tx_program_putc(pio, sm, *s++);
+static inline void uart_tx32_program_put(PIO pio, uint sm, uint32_t w32) {
+    pio_sm_put_blocking(pio, sm, w32);
 }
 
 %}

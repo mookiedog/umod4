@@ -7925,7 +7925,7 @@ IC2F_ISR_2:
         addD    #0x0010                 ;which will fire the Front coil
         stD     TOC1
 
-        stD     LW+LOGID_ECU_FRT_COIL_MAN_OFF_TYPE_TS
+        stD     LW+LOGID_ECU_F_COIL_MAN_OFF_TYPE_TS
 
         ldaA    #0x80                   ;writing B7 clears the OC1I interrupt request bit
         staA    TFLG1
@@ -7958,7 +7958,7 @@ IC2F_ISR_3:
         addD    #0x0010
         stD     TOC2
 
-        stD     LW+LOGID_ECU_REAR_COIL_MAN_OFF_TYPE_TS
+        stD     LW+LOGID_ECU_R_COIL_MAN_OFF_TYPE_TS
 
         ldaA    #0x40                   ;setting B6 clears the OC2 interrupt request flag
         staA    TFLG1
@@ -8812,7 +8812,7 @@ IC2F_ISR_80:
         stD     *L00E9                  ;this is the delay (in timer ticks) that defines the spark advance for the FRT cyl
 
         ldaB    *L00DC                  ;log the ignition delay in terms of a fraction of 90 degrees
-        staB    LW+LOGID_ECU_FRT_IGN_DLY_TYPE_0P8
+        staB    LW+LOGID_ECU_F_IGN_DLY_TYPE_0P8
 
 ;In rough terms, *L00E8 is based strictly on RPM:
 ;  At 800RPM:0x00, 1200:0x18, ... , over 6000RPM, values gradually increase from about 0x80 to 0x8C.
@@ -8929,7 +8929,7 @@ IC2F_ISR_90:
         stD     *L00EB
 
         ldaB    *L00DF                  ;log the ignition delay in terms of a fraction of 90 degrees
-        staB    LW+LOGID_ECU_REAR_IGN_DLY_TYPE_0P8
+        staB    LW+LOGID_ECU_R_IGN_DLY_TYPE_0P8
 
         ldaB    *L00E8
         clrA
@@ -10115,7 +10115,7 @@ OC1F_ISR:
 ;some time during this crankref period.
 
         ldD     *L00FF                  ;get the precalculated time from start of CR4 event to spark fire
-        stD     LW+LOGID_ECU_FRT_COIL_OFF_TYPE_TS
+        stD     LW+LOGID_ECU_F_COIL_OFF_TYPE_TS
 
 4:
         stD     TOC1                    ;use that time to fire the spark
@@ -10170,7 +10170,7 @@ OC2F_ISR:
 3:
         brset   *L000B #0b00000100 2b   ;branch if a spark is NOT armed?
         ldD     L0101
-        stD     LW+LOGID_ECU_REAR_COIL_OFF_TYPE_TS
+        stD     LW+LOGID_ECU_R_COIL_OFF_TYPE_TS
 
 4:
         stD     TOC2

@@ -124,7 +124,6 @@ include_directories(
 add_executable(${PROJECT_NAME}
   src/Clock.cpp
   src/Crc.cpp
-  src/EpUart.cpp
   src/Gps.cpp
   src/Heap.cpp
   src/Logger.cpp
@@ -138,7 +137,8 @@ add_executable(${PROJECT_NAME}
   src/Uart.cpp
 )
 
-pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/uart_tx/uart_tx.pio)
+# Include the PIO program header files:
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_rx32.pio)
 pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/ws2812/ws2812.pio)
 
 # Override the standard Segger definitions for these symbols:
@@ -175,6 +175,8 @@ target_sources(tiny_regex_c INTERFACE
 )
 target_include_directories(tiny_regex_c INTERFACE "${TINY_REGEX_C_SRC_DIR}")
 
+# Possibly temp: allow WP to include 'hardware.h' from the EP directory to access certain shared info
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../EP/src)
 
 # This next section defines a number of options as described in Appendix B of the C/C++ Pico SDK manual.
 target_compile_definitions(${PROJECT_NAME} PRIVATE

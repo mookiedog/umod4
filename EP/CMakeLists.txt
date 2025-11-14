@@ -89,10 +89,9 @@ add_executable(${PROJECT_NAME}
   ${DESCRAMBLER_SOURCE}
 )
 
-# Generate a PIO header file for use by this project by referencing the sample code directly from
-# the Pico Examples source tree.
-# FYI: the header file will be generated into "build/EP/uart_tx_pio.h".
-pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/uart_tx/uart_tx.pio)
+# Generate the uart PIO header file for use by this project.
+# FYI: the header file will be generated into "build/EP/uart_tx32_pio.h".
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_tx32.pio)
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
   BSON_PARTITION_IS_PADDED=${BSON_PARTITION_IS_PADDED}
@@ -181,6 +180,22 @@ target_sources(murmur3 INTERFACE
 )
 target_include_directories(murmur3 INTERFACE "${LIB_DIR}/inc")
 
+# Include the EP to WP transmission encoder array as an interface library.
+add_library(tx_encoder INTERFACE)
+target_sources(tx_encoder INTERFACE
+  ${CMAKE_CURRENT_BINARY_DIR}/tx_encoder.c
+)
+
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tx_encoder.c
+  VERBATIM
+  COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/generate_encoder.py -i ${PYTHON_SITEPACKAGES}/Logsyms/Logsyms.py -o ${CMAKE_CURRENT_BINARY_DIR}/tx_encoder.c
+  DEPENDS
+    ${PYTHON_SITEPACKAGES}/Logsyms/Logsyms.py
+    ${TOOLS_SOURCE_DIR}/generate_encoder.py
+  COMMENT "Generating ${CMAKE_CURRENT_BINARY_DIR}/tx_encoder.c from Logsyms.py"
+)
+
 # **********************************************************************************************************************************************
 # This next section defines a number of options as described in Appendix B of the C/C++ Pico SDK manual.
 target_compile_definitions(${PROJECT_NAME} PRIVATE
@@ -210,6 +225,7 @@ target_link_libraries(${PROJECT_NAME}
   images
   #littlefs
   murmur3
+  tx_encoder
   )
 
 # Create some useful output files

@@ -28,7 +28,7 @@ def parse_skip_bytes(value):
     except ValueError:
         raise argparse.ArgumentTypeError(f"skipBytes must be an integer, got '{value}'")
 
-tNow = -1
+cr_ts = -1
 fc_off = 0
 rc_off = 0
 map = -1
@@ -36,7 +36,7 @@ aap = -1
 vm_V = -1
 vta = -1
 vtaPrev = -1
-tPrev = -1
+cr_ts_prev = -1
 elapsed = -1
 cridPrev = -1
 crid = -1
@@ -60,33 +60,6 @@ import array as arr
 rpm_hist = arr.array('d', [])
 
 f=""
-stashed_id = -1
-stashed_data = -1
-
-def stash(id, data):
-    global stashed_id
-    global stashed_data
-    
-    if (stashed_id >= 0):
-        print(f"ERR: attempt to stash msb for ID ${id} when ID ${msb_id} has something stashed already")
-        return -1
-    
-    stashed_id = id
-    stashed_data = data
-    return 0
-
-def retrieve(expectedId):
-    global stashed_id
-    global stashed_data
-
-    if (stashed_id != expectedId):
-        print(f"ERR: expecting that ID {expectedId:02X} had been stashed, saw {stashed_id:02X}")
-        stashed_id = -1
-        return -1
-    
-    stashed_id = -1
-    return stashed_data
-
 
 def decodeL000C(byte):
     if (byte & 0x80):
@@ -201,7 +174,7 @@ def read(f, readCount, showAddress=False, newLine=True):
 
 def main():
     global headingsPrinted
-    global tNow
+    global cr_ts
     global fc_off
     global rc_off
     global aap
@@ -209,7 +182,7 @@ def main():
     global vm_V
     global vta
     global skipBytes
-    global tPrev
+    global cr_ts_prev
     global elapsed
     global cridPrev
     global crid
@@ -318,150 +291,60 @@ def main():
                     print(f"{recordCnt:10}: L4000:  {rd[0]}")
                 
                 elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_F_INJ_ON_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_F_INJ_ON_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        fi_on = data16
-                        print(f"{recordCnt:10}: FI_ON:  {data16}")
+                    fi_on = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_ON_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: FI_ON:  {fi_on}")
 
                 elif byte == L.LOGID_ECU_F_INJ_DUR_TYPE_U16:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_F_INJ_DUR_TYPE_U16, msb)
-
-                elif byte == L.LOGID_ECU_F_INJ_DUR_TYPE_U16+1:
-                    msb = retrieve(L.LOGID_ECU_F_INJ_DUR_TYPE_U16)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        fi_dur = data16
-                        print(f"{recordCnt:10}: FI_DUR: {fi_dur}")
+                    fi_dur = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_DUR_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: FI_DUR: {fi_dur}")
 
                 elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_R_INJ_ON_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_R_INJ_ON_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        ri_on = data16
-                        print(f"{recordCnt:10}: RI_ON:  {data16}")
+                    ri_on = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_ON_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: RI_ON:  {ri_on}")
 
                 elif byte == L.LOGID_ECU_R_INJ_DUR_TYPE_U16:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_R_INJ_DUR_TYPE_U16, msb)
+                    ri_dur = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_DUR_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: RI_DUR: {ri_dur}")
 
-                elif byte == L.LOGID_ECU_R_INJ_DUR_TYPE_U16+1:
-                    msb = retrieve(L.LOGID_ECU_R_INJ_DUR_TYPE_U16)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        ri_dur = data16
-                        print(f"{recordCnt:10}: RI_DUR: {ri_dur}")
-
-                elif byte == L.LOGID_ECU_FRT_COIL_ON_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_FRT_COIL_ON_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_FRT_COIL_ON_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_FRT_COIL_ON_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: FC_ON:  {data16}")
+                elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_TS:
+                    fc_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_ON_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: FC_ON:  {fc_on}")
                 
-                elif byte == L.LOGID_ECU_FRT_COIL_OFF_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_FRT_COIL_OFF_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_FRT_COIL_OFF_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_FRT_COIL_OFF_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        fc_off = data16
-                        print(f"{recordCnt:10}: FC_OFF: {fc_off}")
+                elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_TS:
+                    fc_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_OFF_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: FC_OFF: {fc_off}")
                 
-                elif byte == L.LOGID_ECU_REAR_COIL_ON_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_REAR_COIL_ON_TYPE_TS, msb)
+                elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_TS:
+                    rc_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_ON_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: RC_ON:  {rc_on}")
 
-                elif byte == L.LOGID_ECU_REAR_COIL_ON_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_REAR_COIL_ON_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: RC_ON:  {data16}")
+                elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_TS:
+                    rc_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_OFF_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: RC_OFF: {rc_off}")
 
-                elif byte == L.LOGID_ECU_REAR_COIL_OFF_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_REAR_COIL_OFF_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_REAR_COIL_OFF_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_REAR_COIL_OFF_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        rc_off = data16
-                        print(f"{recordCnt:10}: RC_OFF: {rc_off}")
-
-                elif byte == L.LOGID_ECU_FRT_COIL_MAN_ON_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_FRT_COIL_MAN_ON_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_FRT_COIL_MAN_ON_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_FRT_COIL_MAN_ON_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: FC_MON: {data16}")
+                elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_TS:
+                    fcm_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: FC_MON: {fcm_on}")
                 
-                elif byte == L.LOGID_ECU_FRT_COIL_MAN_OFF_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_FRT_COIL_MAN_OFF_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_FRT_COIL_MAN_OFF_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_FRT_COIL_MAN_OFF_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: FC_MOF: {data16}")
+                elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_TS:
+                    fcm_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: FC_MOF: {fcm_off}")
                 
-                elif byte == L.LOGID_ECU_REAR_COIL_MAN_ON_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_REAR_COIL_MAN_ON_TYPE_TS, msb)
+                elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_TS:
+                    rcm_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: RC_MON: {rcm_on}")
 
-                elif byte == L.LOGID_ECU_REAR_COIL_MAN_ON_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_REAR_COIL_MAN_ON_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: RC_MON: {data16}")
+                elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_TS:
+                    rcm_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: RC_MOF: {rcm_off}")
 
-                elif byte == L.LOGID_ECU_REAR_COIL_MAN_OFF_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_REAR_COIL_MAN_OFF_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_REAR_COIL_MAN_OFF_TYPE_TS+1:
-                    msb = retrieve(L.LOGID_ECU_REAR_COIL_MAN_OFF_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: RC_MOF: {data16}")
-
-                elif byte == L.LOGID_ECU_FRT_IGN_DLY_TYPE_0P8:
-                    b = read(f, L.LOGID_ECU_FRT_IGN_DLY_DLEN)[0]
+                elif byte == L.LOGID_ECU_F_IGN_DLY_TYPE_0P8:
+                    b = read(f, L.LOGID_ECU_F_IGN_DLY_DLEN)[0]
                     dly= (b/256)*90.0
                     print(f"{recordCnt:10}: FID:    {dly:.1f}")
 
-                elif byte == L.LOGID_ECU_REAR_IGN_DLY_TYPE_0P8:
-                    b = read(f, L.LOGID_ECU_REAR_IGN_DLY_DLEN)[0]
+                elif byte == L.LOGID_ECU_R_IGN_DLY_TYPE_0P8:
+                    b = read(f, L.LOGID_ECU_R_IGN_DLY_DLEN)[0]
                     dly= (b/256)*90.0
                     print(f"{recordCnt:10}: RID:    {dly:.1f}")
 
@@ -498,16 +381,8 @@ def main():
                     decodeL000D(L000F)
 
                 elif byte == L.LOGID_ECU_RAW_VTA_TYPE_U16:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_RAW_VTA_TYPE_U16, msb)
-
-                elif byte == L.LOGID_ECU_RAW_VTA_TYPE_U16 + 1:
-                    msb = retrieve(L.LOGID_ECU_RAW_VTA_TYPE_U16)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        vta = data16
-                        print(f"{recordCnt:10}: VTA:    {data16}")
+                    vta = int.from_bytes(read(f, L.LOGID_ECU_RAW_VTA_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: VTA:    {vta}")
                         
 
                 elif byte == L.LOGID_ECU_RAW_MAP_TYPE_U8:
@@ -542,32 +417,24 @@ def main():
                     print(f"{recordCnt:10}: PTG:    " + "{:08b}".format(portg))
 
                 elif byte == L.LOGID_ECU_CRANKREF_START_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_CRANKREF_START_TYPE_TS, msb)
+                    cr_ts = int.from_bytes(read(f, L.LOGID_ECU_CRANKREF_START_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: CRK_TS: {cr_ts}")
 
-                elif byte == L.LOGID_ECU_CRANKREF_START_TYPE_TS + 1:
-                    msb = retrieve(L.LOGID_ECU_CRANKREF_START_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        tNow = data16
-                        print(f"{recordCnt:10}: CRK_TS: {tNow}")
+                    if (cr_ts_prev > -1):
+                        elapsed = cr_ts - cr_ts_prev
+                        if (elapsed<0):
+                            elapsed += 65536
+                    
+                    cr_ts_prev = cr_ts
+                    if (elapsed >= 0):
+                        rpm = 60000000 / (elapsed * 2 * 6)
 
-                        if (tPrev > -1):
-                            elapsed = tNow - tPrev
-                            if (elapsed<0):
-                                elapsed += 65536
-                        
-                        tPrev = tNow
-                        if (elapsed >= 0):
-                            rpm = 60000000 / (elapsed * 2 * 6)
+                        rpm_hist.append(rpm)
+                        if (len(rpm_hist) == 7):
+                            rpm_hist.pop(0)
+                        rpm_avg = sum(rpm_hist) / len(rpm_hist)
 
-                            rpm_hist.append(rpm)
-                            if (len(rpm_hist) == 7):
-                                rpm_hist.pop(0)
-                            rpm_avg = sum(rpm_hist) / len(rpm_hist)
-
-                            print(f"{recordCnt:10}: tNow: {tNow}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
+                        print(f"{recordCnt:10}: cr_ts: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
 
                 elif byte == L.LOGID_ECU_CRANKREF_ID_TYPE_U8:
                     crid = read(f, 1)[0]
@@ -575,14 +442,14 @@ def main():
                     if (elapsed > 0):
                         if not headingsPrinted:
                             headingsPrinted = True
-                            print(f"XL, secs, crid, tNow, elapsed, tha_C, thw_C, vm_V, map, aap, vta, rpm_avg, fi_dur, ri_dur, fc_off, rc_off")
+                            print(f"XL, secs, crid, cr_ts, elapsed, tha_C, thw_C, vm_V, map, aap, vta, rpm_avg, fi_dur, ri_dur, fc_off, rc_off")
                         
                         fco = rco = 0
                         if crid == 5:
                             fco = fc_off
                         elif crid == 10:
                             rco = rc_off
-                        print(f"XL, {secs:2}, {crid:2}, {tNow:5}, {elapsed:5}, {tha_C:.1f}, {thw_C:.1f}, {vm_V:.1f}, {map}, {aap}, {vta:3}, {rpm_avg:5.0f}, {fi_dur}, {ri_dur}, {fco}, {rco}")
+                        print(f"XL, {secs:2}, {crid:2}, {cr_ts:5}, {elapsed:5}, {tha_C:.1f}, {thw_C:.1f}, {vm_V:.1f}, {map}, {aap}, {vta:3}, {rpm_avg:5.0f}, {fi_dur}, {ri_dur}, {fco}, {rco}")
                         if (fi_dur != 0):
                             fi_dur = 0
                         if (ri_dur != 0):
@@ -596,41 +463,20 @@ def main():
                             print(f"{recordCnt:10}: ERROR: expected CRID {expectedId}, saw {crid}")
 
                 elif byte == L.LOGID_ECU_CAMSHAFT_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_CAMSHAFT_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_CAMSHAFT_TYPE_TS + 1:
-                    msb = retrieve(L.LOGID_ECU_CAMSHAFT_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: CAM_TS:  {data16}")
+                    cam_ts = int.from_bytes(read(f, L.LOGID_ECU_CAMSHAFT_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: CAM_TS:  {cam_ts}")
 
                 elif byte == L.LOGID_ECU_CAM_ERR_TYPE_U8:
                     camErr = read(f, 1)[0]
                     print(f"{recordCnt:10}: CAM ERR: {camErr:02X}")
 
                 elif byte == L.LOGID_ECU_SPRK_X1_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_SPRK_X1_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_SPRK_X1_TYPE_TS + 1:
-                    msb = retrieve(L.LOGID_ECU_SPRK_X1_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: SP1_TS: {data16}")
+                    spx1_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: SP1_TS: {spx1_ts}")
 
                 elif byte == L.LOGID_ECU_SPRK_X2_TYPE_TS:
-                    msb = read(f, 1)[0]
-                    stash(L.LOGID_ECU_SPRK_X2_TYPE_TS, msb)
-
-                elif byte == L.LOGID_ECU_SPRK_X2_TYPE_TS + 1:
-                    msb = retrieve(L.LOGID_ECU_SPRK_X2_TYPE_TS)
-                    if (msb >= 0):
-                        lsb = read(f, 1)[0]
-                        data16 = (msb*256) + lsb
-                        print(f"{recordCnt:10}: SP2_TS: {data16}")
+                    spx2_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: SP2_TS: {spx2_ts}")
 
                 elif byte == L.LOGID_ECU_NOSPARK_TYPE_U8:
                     sparkErr = read(f, 1)[0]
@@ -641,7 +487,7 @@ def main():
                     rd = read(f, 1)
                     print(f"{recordCnt:10}: EPV:    {rd[0]}")
 
-                elif byte == L.LOGID_EP_LOAD_NAME:
+                elif byte == L.LOGID_EP_LOAD_NAME_TYPE_U8:
                     # Each write to this address appends the next byte as a char to the EPROM_ID_STR
                     c = read(f, 1)[0]
                     if (c != 0):
@@ -651,24 +497,13 @@ def main():
                         epromIdString = ""
                         print(f"{recordCnt:10}: LOAD:   {currentEpromId}")
 
-                elif byte == L.LOGID_EP_LOAD_ADDR:
-                    # This might need fixing. It takes advantage of the fact that the ECU is not running (for sure),
-                    # and that the GPS is probably not running either. 
-                    # It should probably convert to logging low and hi to different addresses.
-                    # The name needs data typing added too
-                    rd = read(f, 3)
-                    hi=rd[0]
-                    lo=rd[2]
-                    epromStartaddr = (hi*256) + lo
-                    print(f"{recordCnt:10}: ADDR:   0x{epromStartaddr:04X}")
+                elif byte == L.LOGID_EP_LOAD_ADDR_TYPE_U16:
+                    epromStartAddr = int.from_bytes(read(f, L.LOGID_EP_LOAD_ADDR_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: ADDR:   0x{epromStartAddr:04X}")
 
-                elif byte == L.LOGID_EP_LOAD_LEN:
-                    # Also potentially broken, as above
-                    rd = read(f, 3)
-                    hi=rd[0]
-                    lo=rd[2]
-                    epromLen = (hi*256) + lo
-                    print(f"{recordCnt:10}: LEN:  0x{epromLen:04X}")
+                elif byte == L.LOGID_EP_LOAD_LEN_TYPE_U16:
+                    epromLen = int.from_bytes(read(f, L.LOGID_EP_LOAD_LEN_DLEN), byteorder='little', signed=False)
+                    print(f"{recordCnt:10}: LEN:    0x{epromLen:04X}")
 
                 elif byte == L.LOGID_EP_LOAD_ERR_TYPE_U8:
                     loadErr = read(f, L.LOGID_EP_LOAD_ERR_DLEN)[0]
@@ -748,19 +583,24 @@ def main():
                     fix = read(f, L.LOGID_WP_FIXTYPE_DLEN)[0]
                     print(f"{recordCnt:10}: FIX:    {fix}")
 
-                elif byte == L.LOGID_WP_PV:
-                    # Position & Velocity data: 3 args in the 10 bytes that follow
-                    lat =  int.from_bytes(read(f, 4, newLine=False), byteorder='little', signed=True) / 10000000.0
-                    long = int.from_bytes(read(f, 4, newLine=False), byteorder='little', signed=True) / 10000000.0
-                    vel =  int.from_bytes(read(f, 2), byteorder='little', signed=True) / 10.0
-                    print(f"{recordCnt:10}: GPS:    {lat:.8f} {long:.8f} {vel:.1f}")
+                elif byte == L.LOGID_WP_GPS_POSN_TYPE_8B:
+                    # Position & Velocity data: 2 args in the 8 bytes that follow
+                    argLen = L.LOGID_WP_GPS_POSN_DLEN / 2
+                    lat =  int.from_bytes(read(f, argLen, newLine=False), byteorder='little', signed=True) / 10000000.0
+                    long = int.from_bytes(read(f, argLen, newLine=False), byteorder='little', signed=True) / 10000000.0
+                    print(f"{recordCnt:10}: GPS_POSN: {lat:.8f} {long:.8f}")
 
-                elif byte == L.LOGID_WP_WR_TIME:
+                elif byte == L.LOGID_WP_GPS_VELO_TYPE_U16:
+                    # Velocity is encoded in a uint16_t as (velocity*10) MPH
+                    vel =  int.from_bytes(read(f, L.LOGID_WP_GPS_VELO_DLEN), byteorder='little', signed=True) / 10.0
+                    print(f"{recordCnt:10}: GPS_VEL: {vel:.1f}")
+
+                elif byte == L.LOGID_WP_WR_TIME_TYPE_U16:
                     # Time follows as 2 bytes, LSB first
                     wrTime = int.from_bytes(read(f, 2), byteorder='little', signed=False)
                     print(f"{recordCnt:10}: WRT:    {wrTime} msec")
 
-                elif byte == L.LOGID_WP_SYNC_TIME:
+                elif byte == L.LOGID_WP_SYNC_TIME_TYPE_U16:
                     # Log filesystem sync() time follows as 2 bytes, LSB first
                     syncTime = int.from_bytes(read(f, 2), byteorder='little', signed=False)
                     print(f"{recordCnt:10}: SYT:    {syncTime} msec")

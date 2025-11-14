@@ -55,35 +55,35 @@
 #define   LOGID_ECU_R_INJ_DUR_DLEN                  2
 
 // Ignition coil events, front and rear
-#define   LOGID_ECU_FRT_COIL_ON_TYPE_TS             ((LOGID_ECU_BASE) + 0x20)
-#define   LOGID_ECU_FRT_COIL_ON_DLEN                2
+#define   LOGID_ECU_F_COIL_ON_TYPE_TS               ((LOGID_ECU_BASE) + 0x20)
+#define   LOGID_ECU_F_COIL_ON_DLEN                  2
 
-#define   LOGID_ECU_FRT_COIL_OFF_TYPE_TS            ((LOGID_ECU_BASE) + 0x22)
-#define   LOGID_ECU_FRT_COIL_OFF_DLEN               2
+#define   LOGID_ECU_F_COIL_OFF_TYPE_TS              ((LOGID_ECU_BASE) + 0x22)
+#define   LOGID_ECU_F_COIL_OFF_DLEN                 2
 
-#define   LOGID_ECU_REAR_COIL_ON_TYPE_TS            ((LOGID_ECU_BASE) + 0x24)
-#define   LOGID_ECU_REAR_COIL_ON_DLEN               2
+#define   LOGID_ECU_R_COIL_ON_TYPE_TS               ((LOGID_ECU_BASE) + 0x24)
+#define   LOGID_ECU_R_COIL_ON_DLEN                  2
 
-#define   LOGID_ECU_REAR_COIL_OFF_TYPE_TS           ((LOGID_ECU_BASE) + 0x26)
-#define   LOGID_ECU_REAR_COIL_OFF_DLEN              2
+#define   LOGID_ECU_R_COIL_OFF_TYPE_TS              ((LOGID_ECU_BASE) + 0x26)
+#define   LOGID_ECU_R_COIL_OFF_DLEN                 2
 
-#define   LOGID_ECU_FRT_COIL_MAN_ON_TYPE_TS         ((LOGID_ECU_BASE) + 0x28)
-#define   LOGID_ECU_FRT_COIL_MAN_ON_DLEN            2
+#define   LOGID_ECU_F_COIL_MAN_ON_TYPE_TS           ((LOGID_ECU_BASE) + 0x28)
+#define   LOGID_ECU_F_COIL_MAN_ON_DLEN              2
 
-#define   LOGID_ECU_FRT_COIL_MAN_OFF_TYPE_TS        ((LOGID_ECU_BASE) + 0x2A)
-#define   LOGID_ECU_FRT_COIL_MAN_OFF_DLEN           2
+#define   LOGID_ECU_F_COIL_MAN_OFF_TYPE_TS          ((LOGID_ECU_BASE) + 0x2A)
+#define   LOGID_ECU_F_COIL_MAN_OFF_DLEN             2
 
-#define   LOGID_ECU_REAR_COIL_MAN_ON_TYPE_TS        ((LOGID_ECU_BASE) + 0x2C)
-#define   LOGID_ECU_REAR_COIL_MAN_ON_DLEN           2
+#define   LOGID_ECU_R_COIL_MAN_ON_TYPE_TS           ((LOGID_ECU_BASE) + 0x2C)
+#define   LOGID_ECU_R_COIL_MAN_ON_DLEN              2
 
-#define   LOGID_ECU_REAR_COIL_MAN_OFF_TYPE_TS       ((LOGID_ECU_BASE) + 0x2E)
-#define   LOGID_ECU_REAR_COIL_MAN_OFF_DLEN          2
+#define   LOGID_ECU_R_COIL_MAN_OFF_TYPE_TS          ((LOGID_ECU_BASE) + 0x2E)
+#define   LOGID_ECU_R_COIL_MAN_OFF_DLEN             2
 
-#define   LOGID_ECU_FRT_IGN_DLY_TYPE_0P8            ((LOGID_ECU_BASE) + 0x30)           // 0.8 fraction of 90 degrees (the value of L00DC during CR3)
-#define   LOGID_ECU_FRT_IGN_DLY_DLEN                1
+#define   LOGID_ECU_F_IGN_DLY_TYPE_0P8              ((LOGID_ECU_BASE) + 0x30)           // 0.8 fraction of 90 degrees (the value of L00DC during CR3)
+#define   LOGID_ECU_F_IGN_DLY_DLEN                  1
 
-#define   LOGID_ECU_REAR_IGN_DLY_TYPE_0P8           ((LOGID_ECU_BASE) + 0x32)           // 0.8 fraction of 90 degrees (the value of L00DF during CR8)
-#define   LOGID_ECU_REAR_IGN_DLY_DLEN               1
+#define   LOGID_ECU_R_IGN_DLY_TYPE_0P8              ((LOGID_ECU_BASE) + 0x32)           // 0.8 fraction of 90 degrees (the value of L00DF during CR8)
+#define   LOGID_ECU_R_IGN_DLY_DLEN                  1
 
 // Here are various other ungrouped events:
 #define   LOGID_ECU_5MILLISEC_EVENT_TYPE_V          ((LOGID_ECU_BASE) + 0x38)           // indicates every time the 5 msec routine runs
@@ -134,11 +134,11 @@
 #define   LOGID_ECU_CRANKREF_ID_TYPE_U8             ((LOGID_ECU_BASE) + 0x62)           // The ID of the specific crankshaft subroutation (0..11): 2 full rotations == all 4 strokes of the 4-stroke engine
 #define   LOGID_ECU_CRANKREF_ID_DLEN                1
 
-#define   LOGID_ECU_CAMSHAFT_TYPE_TS                ((LOGID_ECU_BASE) + 0x63)           // Timestamp of most recent camshaft sensor falling-edge event
-#define   LOGID_ECU_CAMSHAFT_DLEN                   2
-
-#define   LOGID_ECU_CAM_ERR_TYPE_U8                 ((LOGID_ECU_BASE) + 0x65)           // Error while processing CAM ISR
+#define   LOGID_ECU_CAM_ERR_TYPE_U8                 ((LOGID_ECU_BASE) + 0x63)           // Error while processing CAM ISR
 #define   LOGID_ECU_CAM_ERR_DLEN                    1
+
+#define   LOGID_ECU_CAMSHAFT_TYPE_TS                ((LOGID_ECU_BASE) + 0x64)           // Timestamp of most recent camshaft sensor falling-edge event
+#define   LOGID_ECU_CAMSHAFT_DLEN                   2
 
 #define   LOGID_ECU_SPRK_X1_TYPE_TS                 ((LOGID_ECU_BASE) + 0x70)           // Timestamp when front OR rear coil #1 fired
 #define   LOGID_ECU_SPRK_X1_DLEN                    2

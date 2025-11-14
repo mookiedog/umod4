@@ -22,12 +22,17 @@
 
 #define     LOGID_GEN_EP_LOG_VER_VAL_V0                 (0x00)                          // Version 0
 
-#define LOGID_EP_LOAD_NAME                          ((LOGID_EP_BASE) + 0x01)        // The name of the EPROM to be loaded, written as sequence of UTF-8 chars, NULL terminated
-#define LOGID_EP_LOAD_ADDR                          ((LOGID_EP_BASE) + 0x02)        // 2 bytes, LSB first
-#define LOGID_EP_LOAD_LEN                           ((LOGID_EP_BASE) + 0x03)        // 4 bytes, 2-byte start addr LSB first, then length (LSB first)
+#define LOGID_EP_LOAD_NAME_TYPE_U8                      ((LOGID_EP_BASE) + 0x00)        // The name of the EPROM to be loaded, written as sequence of UTF-8 chars, NULL terminated
+#define LOGID_EP_LOAD_NAME_DLEN                         1
 
-#define LOGID_EP_LOAD_ERR_TYPE_U8                       ((LOGID_EP_BASE) + 0x04)        // The error status byte of the most recent load operation
-#define LOGID_EP_LOAD_ERR_DLEN                      1
+#define LOGID_EP_LOAD_ADDR_TYPE_U16                     ((LOGID_EP_BASE) + 0x02)        // 2 bytes, LSB first
+#define LOGID_EP_LOAD_ADDR_DLEN                         2
+
+#define LOGID_EP_LOAD_LEN_TYPE_U16                      ((LOGID_EP_BASE) + 0x04)        // 4 bytes, 2-byte start addr LSB first, then length (LSB first)
+#define LOGID_EP_LOAD_LEN_DLEN                          2
+
+#define LOGID_EP_LOAD_ERR_TYPE_U8                       ((LOGID_EP_BASE) + 0x06)        // The error status byte of the most recent load operation
+#define LOGID_EP_LOAD_ERR_DLEN                          1
 #define     LOGID_EP_LOAD_ERR_VAL_NOERR                 0x00                            //   * no error: the load succeeded
 #define     LOGID_EP_LOAD_ERR_VAL_NOTFOUND              0x01                            //   * The specified image name was not found in the BSON lib
 #define     LOGID_EP_LOAD_ERR_VAL_NONAME                0x02                            //   * BSON EPROM object does not contain a name key

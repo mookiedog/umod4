@@ -20,7 +20,8 @@
 #include "hardware/flash.h"
 #include "hardware/timer.h"
 
-#include "uart_tx.pio.h"
+#include "tx_encoder.h"
+#include "uart_tx32.pio.h"
 
 #include "config.h"
 #include "EpromLoader.h"
@@ -487,38 +488,67 @@ uint32_t burstTime;
 
 // --------------------------------------------------------------------------------------------
 // If possible, send the oldest data in the streamBuffer to the WP.
-// There are some things to think about here.
-// - we can't spend so much time in here that the inter-core FIFO overflows
-// - we can't overfill the PIO fifo on this end, or we risk overflowing the intercore FIFO
-// - as things stand, the WP does not read serial data as it arrives, but after the RX timeout has expired (~35 uSec at 921K baud)
+// 
+// Data is transmitted as 32-bit words:
+// bits 0..8:   length (either 2 or 3, tells WP how many of the bytes following this one to log)
+// bits 8..15:  8-bit LogID
+// bits 16..23: LSB of the log data
+// bits 24..31: MSB of the log data (if any)
+// 
+// The main issue is that we can't spend so much time in here that the inter-core FIFO overflows.
+// We probably don't want to TX data as fast as we can because to may overflow the small amount
+// or receive buffering on the WP end: it's PIO FIFO only has room for 8 entries.
 //
-// To deal with all this:
-// - We only send data out in 4 byte chunks (~44 uSec to TX it all)
-// - We will make sure that chunks will not start closer than 100 uSec to each other.
-//   This means ~56 uSec from end of chunk to start of next.
-//   It also means that there is about 21 uSec (56-35) for the WP to completely
-//   process the timeout interrupt before the next byte starts to arrive (if any).
+// Note that under normal conditions, the ECU is generating events pretty far apart in time
+// meaning tens if not hundreds of microseconds.
+// We only really need to worry about swamping the WP at the very start when we have been buffering
+// up EP and ECU events while waiting for the WP to signal us that it is ready to receive.
 //
-// All of this is to avoid a situation on the far end where the WP receives 1 byte of an event, but needs to leave the ISR
-// before the second byte arrives. I think the real solution is to fix the WP end by putting a state machine into its ISR.
+// Therefore:
+// - Regardless of how full the stream buffer is, we will not send out more than two 16-bit messages
+//   every 50 microseconds.
+const uint32_t tx_delay = 50;
+
 void __time_critical_func(processOutgoing)(void)
 {
     static uint64_t nextTx_us=0;
-    
+    static uint32_t tx32data;
+
     if (inUse > 0) {
         uint64_t now = time_us_64();
         if (nextTx_us < now) {
-            // We only send data in groups of up to 2 ECU events (4 bytes, ~44 uSec to TX)
+            // We only send data in groups of up to 2 ECU events 
             uint32_t count = (inUse > 2) ? 2 : inUse;
             for (uint32_t i=0; i<count; i++) {
                 uint16_t msg = streamBuffer[tail];
                 
-                // Stream the addr/eventID (the LSB) out first, followed by the data associated with that eventID (MSB).
-                // This is a blocking TX so there is no worry about overrunning the TX machine.
-                // The call to _putc will block if the PIO FIFO is full, but by limiting the number of bytes we send in a burst, this will never happen.
-                uart_tx_program_putc(uart_pio, uart_sm, (msg >> 0) & 0xFF);
-                uart_tx_program_putc(uart_pio, uart_sm, (msg >> 8) & 0xFF);
-                
+                uint8_t logid = msg & 0xff;
+                uint8_t data8 = msg >> 8;
+
+                uint8_t t = logEncoder[logid];
+                if (t == D_BYTE) {
+                    // It's a single byte to be logged, 
+                    // Create the word to be sent as 0x00|data|logid|len:2
+                    uint32_t d32 = (data8<<16) | (logid<<8) | 2;
+                    uart_tx32_program_put(uart_pio, uart_sm, d32);
+                    tx32data = 0;
+                }
+                else if (t == D_MSB) {
+                    // This is the MSB of a 16-bit quantity
+                    // Prep the word for what we know (MSB, logid, length), but don't send it until we get the LSB
+                    tx32data = (data8<<24) | (logid<<8) | 3; 
+                }
+                else if (t == D_LSB) {
+                    // Add the LSB to our existing word then send it
+                    tx32data |= (data8<<16);
+                    uart_tx32_program_put(uart_pio, uart_sm, tx32data);
+                    tx32data = 0;
+                }
+                else {
+                    #warning "Remove this at some point because it should never occur"
+                    panic("Bad value in tx_encoder array!");
+                }
+
                 inUse--;
                 tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
             }
@@ -526,7 +556,7 @@ void __time_critical_func(processOutgoing)(void)
             burstTime = time_us_64() - now;
             
             // This enforces a minimum time between EP transmission bursts to allow the WP time to process its receive FIFO
-            nextTx_us = now+100;
+            nextTx_us = now + tx_delay;
         }
     }
 }
@@ -615,13 +645,14 @@ void disableInts()
 // is not located behind the APB bridge.
 void initUart()
 {
-    #if defined EP_UART
-    uint offset = pio_add_program(uart_pio, &uart_tx_program);
-    uart_tx_program_init(uart_pio, uart_sm, offset, TX_GPIO, EP_UART_BAUD_RATE);
+    #if defined CLKOUT_GPIO
+        // The UART must be disabled if the system is configured to drive its sysclk
+        // to CLKOUT_GPIO for testing/verification purposes since they share the same GPIO pad!
+        printf("%s: \n****\n**** WARNING: UART functionality is disabled due to CLKOUT testing!\n****\n");
     #else
-    // The UART must be disabled if the system is configured to drive its sysclk
-    // to CLKOUT_GPIO for testing/verification purposes since they share the same GPIO pad!
-    printf("%s: \n****\n**** WARNING: UART functionality is disabled due to CLKOUT testing!\n****\n")
+        // We will be implementing a PIO program to send data to the WP in 32-bit chunks
+        uint offset = pio_add_program(uart_pio, &uart_tx32_program);
+        uart_tx32_program_init(uart_pio, uart_sm, offset, EP_TO_WP_TX_GPIO, EP_TO_WP_BAUDRATE);
     #endif
 }
 
@@ -632,12 +663,14 @@ int main(void)
     
     initCpu();
     
-    // Before doing anything, we init the pin we will be transmitting on to the WP to have a pullup.
-    // A better solution would be to install a pullup resistor on the 4.2 PCB
-    gpio_init(TX_GPIO);
-    gpio_set_dir(TX_GPIO, GPIO_IN);
-    gpio_set_pulls(TX_GPIO, true, false);    // pullup
-    
+    #if defined EP_TO_WP_TX_GPIO
+        // Before doing anything, we init the pin we will be transmitting on to the WP to have a pullup.
+        // A future PCB rev will install a pullup resistor
+        gpio_init(EP_TO_WP_TX_GPIO);
+        gpio_set_dir(EP_TO_WP_TX_GPIO, GPIO_IN);
+        gpio_set_pulls(EP_TO_WP_TX_GPIO, true, false);    // pullup
+    #endif
+
     hello(3);
     initPins();
     

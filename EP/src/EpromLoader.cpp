@@ -36,7 +36,7 @@ void logEpromName(const char* nameP)
     if (nameP) {
         do {
             c = *nameP++;
-            enqueue(LOGID_EP_LOAD_NAME, c);
+            enqueue(LOGID_EP_LOAD_NAME_TYPE_U8, c);
         } while (c != '\0');
     }
 }
@@ -194,10 +194,10 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     logEpromName(name);
     
     // Addr & length are sent out big-endian like the rest of the 16-bit ECU data
-    enqueue(LOGID_EP_LOAD_ADDR, (startOffset >> 8) & 0xFF);
-    enqueue(LOGID_EP_LOAD_ADDR, startOffset & 0xFF);
-    enqueue(LOGID_EP_LOAD_LEN, (length >> 8) & 0xFF);
-    enqueue(LOGID_EP_LOAD_LEN, length & 0xFF);
+    enqueue(LOGID_EP_LOAD_ADDR_TYPE_U16, (startOffset >> 8) & 0xFF);
+    enqueue(LOGID_EP_LOAD_ADDR_TYPE_U16+1, startOffset & 0xFF);
+    enqueue(LOGID_EP_LOAD_LEN_TYPE_U16, (length >> 8) & 0xFF);
+    enqueue(LOGID_EP_LOAD_LEN_TYPE_U16+1, length & 0xFF);
     
     printf("%s: Loading offset 0x%04X for 0x%04X bytes\n", __FUNCTION__, startOffset, length);
     

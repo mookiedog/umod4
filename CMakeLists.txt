@@ -65,19 +65,43 @@ else()
     set (Python3_FIND_VIRTUALENV FIRST)
     ## unset Python3_EXECUTABLE because it is also an input variable (see documentation, Artifacts Specification section)
     unset (Python3_EXECUTABLE)
-    ## Launch a new search
+    ## Launch a new search which will find it in the venv
     find_package (Python3 COMPONENTS Interpreter Development)
-
-    # Use the 'pip' from within the new virtual enviroment to install the packages
-    message(STATUS "   ---> Installing python lib: pymongo")
-    execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pymongo)
-
-    message(STATUS "   ---> Installing python lib: JSON_minify")
-    execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install JSON_minify)
-
-    message(STATUS "   ---> Installing python lib: mmh3")
-    execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install mmh3)
 endif()
+
+# Get the Python version from the virtual environment.
+# We will pass this down to the external projects that need it.
+execute_process(
+    COMMAND ${Python3_EXECUTABLE} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+    OUTPUT_VARIABLE PYTHON_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE PYTHON_VERSION_RESULT
+)
+
+if(NOT PYTHON_VERSION_RESULT EQUAL 0)
+    message(FATAL_ERROR "Failed to determine Python version from virtual environment")
+endif()
+
+message(STATUS "Detected Python version: ${PYTHON_VERSION}")
+
+# At this point: python3 is found, a venv exists, and a specific version has been identified.
+# Bundle those symbols to pass to all external_projects
+set(PYTHON_DEFS
+    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+    -DVENV_PATH=${VENV_PATH}
+    -DPYTHON_VERSION=${PYTHON_VERSION}
+    -DPYTHON_SITEPACKAGES=${VENV_PATH}/lib/python${PYTHON_VERSION}/site-packages
+)
+
+# Use the 'pip' from within the new virtual enviroment to install the packages
+message(STATUS "   ---> Installing python lib: pymongo")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pymongo)
+
+message(STATUS "   ---> Installing python lib: JSON_minify")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install JSON_minify)
+
+message(STATUS "   ---> Installing python lib: mmh3")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install mmh3)
 
 project(umod4)
 
@@ -111,7 +135,7 @@ set(TOOLS_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/host.cmake
     -DLIB_DIR=${LIB_DIR}
     -DTOOLS_INSTALL_DIR=${TOOLS_INSTALL_DIR}
-    -DVENV_PATH=${VENV_PATH}
+    ${PYTHON_DEFS}
 )
 
 ExternalProject_Add(tools
@@ -130,8 +154,8 @@ message(STATUS "Adding the 'ecu' project")
 set(ECU_CMAKE_ARG_LIST
     -DLIB_DIR=${LIB_DIR}
     -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
-    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/host.cmake
+    ${PYTHON_DEFS}
 )
 
 ExternalProject_Add(ecu
@@ -152,7 +176,7 @@ message(STATUS "Adding the 'eprom_lib' project")
 
 set(EPROM_LIB_CMAKE_ARG_LIST
     -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
-    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+    ${PYTHON_DEFS}
 )
 
 ExternalProject_Add(eprom_lib
@@ -177,8 +201,9 @@ set(EP_CMAKE_ARG_LIST
     -DECU_BINARY_DIR=${CMAKE_BINARY_DIR}/ecu
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
-#    -DLFS_SRC_DIR=${LFS_SRC_DIR}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
+    -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
+    ${PYTHON_DEFS}
 )
 
 ExternalProject_Add(EP
@@ -203,6 +228,7 @@ set(WP_CMAKE_ARG_LIST
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
     -DLFS_SRC_DIR=${LFS_SRC_DIR}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
+    ${PYTHON_DEFS}
 )
 
 ExternalProject_Add(WP
