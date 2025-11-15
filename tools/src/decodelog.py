@@ -508,43 +508,43 @@ def main():
                 elif byte == L.LOGID_EP_LOAD_ERR_TYPE_U8:
                     loadErr = read(f, L.LOGID_EP_LOAD_ERR_DLEN)[0]
                     if loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOERR:
-                        print(f"{recordCnt:10}: STAT: ERR_NOERR")
+                        print(f"{recordCnt:10}: STAT:   ERR_NOERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOTFOUND:
-                        print(f"{recordCnt:10}: STAT: ERR_NOTFOUND")
+                        print(f"{recordCnt:10}: STAT:   ERR_NOTFOUND")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NONAME:
-                        print(f"{recordCnt:10}: STAT: ERR_NONAME")
+                        print(f"{recordCnt:10}: STAT:   ERR_NONAME")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_CKSUMERR:
-                        print(f"{recordCnt:10}: STAT: ERR_CKSUMERR")
+                        print(f"{recordCnt:10}: STAT:   ERR_CKSUMERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_VERIFYERR:
-                        print(f"{recordCnt:10}: STAT: ERR_VERIFYERR")
+                        print(f"{recordCnt:10}: STAT:   ERR_VERIFYERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADOFFSET:
-                        print(f"{recordCnt:10}: STAT: ERR_BADOFFSET")
+                        print(f"{recordCnt:10}: STAT:   ERR_BADOFFSET")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADLENGTH:
-                        print(f"{recordCnt:10}: STAT: ERR_BADLENGTH")
+                        print(f"{recordCnt:10}: STAT:   ERR_BADLENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NODAUGHTERBOARDKEY:
-                        print(f"{recordCnt:10}: STAT: ERR_NODAUGHTERBOARDKEY")
+                        print(f"{recordCnt:10}: STAT:   ERR_NODAUGHTERBOARDKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOMEMKEY:
-                        print(f"{recordCnt:10}: STAT: ERR_NOMEMKEY")
+                        print(f"{recordCnt:10}: STAT:   ERR_NOMEMKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_M3FAIL:
-                        print(f"{recordCnt:10}: STAT: ERR_M3FAIL")
+                        print(f"{recordCnt:10}: STAT:   ERR_M3FAIL")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYSTART:
-                        print(f"{recordCnt:10}: STAT: ERR_MISSING_KEY_START")
+                        print(f"{recordCnt:10}: STAT:   ERR_MISSING_KEY_START")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYLENGTH:
-                        print(f"{recordCnt:10}: STAT: ERR_MISSING_KEY_LENGTH")
+                        print(f"{recordCnt:10}: STAT:   ERR_MISSING_KEY_LENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYM3:
-                        print(f"{recordCnt:10}: STAT: ERR_KEY_M3")
+                        print(f"{recordCnt:10}: STAT:   ERR_KEY_M3")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADM3BSONTYPE:
-                        print(f"{recordCnt:10}: STAT: ERR_BAD_M3_BSON_TYPE")
+                        print(f"{recordCnt:10}: STAT:   ERR_BAD_M3_BSON_TYPE")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADM3VALUE:
-                        print(f"{recordCnt:10}: STAT: ERR_BAD_M3_VALUE")
+                        print(f"{recordCnt:10}: STAT:   ERR_BAD_M3_VALUE")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOBINKEY:
-                        print(f"{recordCnt:10}: STAT: ERR_NOBINKEY")
+                        print(f"{recordCnt:10}: STAT:   ERR_NOBINKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADBINLENGTH:
-                        print(f"{recordCnt:10}: STAT: ERR_BADBINLENGTH")
+                        print(f"{recordCnt:10}: STAT:   ERR_BADBINLENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADBINSUBTYPE:
-                        print(f"{recordCnt:10}: STAT: ERR_BADBINSUBTYPE")
+                        print(f"{recordCnt:10}: STAT:   ERR_BADBINSUBTYPE")
                     else:
-                        print(f"{recordCnt:10}: STAT: Unknown error: 0x{loadErr:02X}")
+                        print(f"{recordCnt:10}: STAT:   *** Unknown error: 0x{loadErr:02X}")
 
                 # WP-specific events
                 elif byte == L.LOGID_GEN_WP_LOG_VER_TYPE_U8:
@@ -584,10 +584,11 @@ def main():
                     print(f"{recordCnt:10}: FIX:    {fix}")
 
                 elif byte == L.LOGID_WP_GPS_POSN_TYPE_8B:
-                    # Position & Velocity data: 2 args in the 8 bytes that follow
-                    argLen = L.LOGID_WP_GPS_POSN_DLEN / 2
-                    lat =  int.from_bytes(read(f, argLen, newLine=False), byteorder='little', signed=True) / 10000000.0
-                    long = int.from_bytes(read(f, argLen, newLine=False), byteorder='little', signed=True) / 10000000.0
+                    # Position & Velocity data: 2 args in the 8 bytes that follow.
+                    # You have to use integer division here or else read() fails silently!
+                    alen = L.LOGID_WP_GPS_POSN_DLEN // 2
+                    lat =  int.from_bytes(read(f, alen, newLine=False), byteorder='little', signed=True) / 10000000.0
+                    long = int.from_bytes(read(f, alen), byteorder='little', signed=True) / 10000000.0
                     print(f"{recordCnt:10}: GPS_POSN: {lat:.8f} {long:.8f}")
 
                 elif byte == L.LOGID_WP_GPS_VELO_TYPE_U16:
