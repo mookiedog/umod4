@@ -1,71 +1,25 @@
 # To Do
 
-## Current Data Path
+## Bugs To Fix
 
-EP.Core1 puts 32-bit logging transfers captured from the HC11 bus into the inter-processor FIFO 1->0.
-
-EP.core0 runs a polling loop
-while (1) {
-  if (fifo not empty) {
-    remove 32-bit data
-    convert to 16-bit data AA/DD
-    enqueue 16-bit data
-  }
-  if (WP is ready) {
-    dequeue no more than 4 bytes
-    put them in EP PIO 8-bit serial TX FIFO
-      8-bit TX chosen because WP uses silicon UART that only does 8 bit RX
-      FIFO length is 8 because the example code joins the FIFOs (RX will not be possible)
-      FIFO width is 32-bits
-      Current PIO code TXs the bottom 8 bits of each FIFO entry
-  }
-}
-
-## Proposed Changes
-
-Givens:
-
-* We can guarantee that:
-  * the EP and ECU will never break up characters being sent as part of a string
-  * the ECU will never break up sending MSB/LSB of a 16-bit value
-
-  Conceivably, those rules could be violated if the EP rebooted in the middle of a string transmission or a MSB/LSB transmission.
-  We ignore those cases.
-  In fact, we could protect ourselves by having the EP always start off by transmitting a two 0x0000 transmissions.
-  That could be used to detect an incomplete string or MSB/LSB operation.
-  Any 0x0000 pairs that ended up in the log would be ignored anyway since 0x00 bytes are ignored on a single-byte basis.
-
-Proposal:
-
-1) Use PIO UART on both EP and WP, not just the EP as now.
-    1) Change PIO transmission size to be 16 bits (total 18 after start and stop)
-
-1) 16-bit transfers will ALWAYS take the form of a combined LogID/LogData pair. This implies that:
-    1) Strings are still sent as 16-bit pairs defining single chars of a string
-    1) Writes of 16-bit ECU data will arrive as LogID/MSB then LogID+1/LSB
-
-1) Change the WP ISR to interrupt immediately on receiving a 16-bit value
-    1) The ISR will need to process data statefully
-        1) Characters will get built into strings.
-        When the NULL is received (or a non-string LogID is observed), the whole string captured so far gets logged as 1 string of length N.
-        1) 16-bit writes will get statefully recombined into 16 bit data.
-        When the LSB byte arrives, we log a 3-byte event (1 logid + 2 data)
+* Hardware.h only defines PCB 4V0
 
 
-The PIO FIFO on the WP end could be 8 long, meaning 8 byte-pairs.
-It is 4-long at a minimum.
-An 8-long fifo would fill in 8 * 18 uSec per byte-pair (1 megabaud) or 144 uSec.
+## Data Path From ECU to WP
 
-Plan:
+### Recombine All XX_log.h files into logid.h?
 
-1) Before starting: get a GIT checkin of the current state, the last 8-bit UART communication mechanism.
+Right now, I have 4 log header files.
+The ECU, EP, and WP all include the base file and they are forced to include it from the same include dir.
 
-1) Instead of including the PIO Uart code from the examples directory, we will copy in what we need to both EP and WP source trees.
-Update code to use 16-bit transmission units.
+The point of doing this was so that changes to say the WP log would not force the ecu and EP firmware to be rebuilt.
+That is _perhaps_ useful, but probably not totally useful.
+In the long-term, a software update would almost certainly reflash WP and EP/ECU.
+Note that the ECU image is always part of the EP image (in the BSON partition), so it cannot be reflashed independently.
 
-1) Update the WP UART ISR to deal with the PIO FIFO, not the UART.
+It would make things a tiny bit easier on the toolchain if ECU/EP/WP all just included the same global log file that defined everything.
+The build subsystem doesn't really care though.
 
-1) The EP code that drains the streamBuffer after being enabled by the WP might need to be altered in case rate limiting of the drain process needs to be adjusted.
 
 ## Logfile Decoding and Visualization
 
