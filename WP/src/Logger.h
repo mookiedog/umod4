@@ -25,7 +25,7 @@ class Logger {
         void startTask();
         
         // GPS uses this one
-        bool logData(uint8_t logId, int8_t len, uint8_t* buffer);
+        bool logData(uint8_t logId, uint8_t len, uint8_t* buffer);
         
         // This one is exclusively for the RX32 UART that the ECU uses.
         // It will be called by the RX ISR!
@@ -52,8 +52,8 @@ class Logger {
         
         uint8_t* buffer;
         int32_t bufferLen;
-        uint8_t* lastBufferP;   // points to the last byte in the circular buffer
-        uint8_t* headP;
+        uint8_t* lastBufferP;           // always points to the last byte in the circular buffer
+        volatile uint8_t* headP;        // needs to be volatile since RX32 ISR updates it
         uint8_t* tailP;
         int32_t inUse();
         int32_t writeChunk(uint8_t* buffer, int32_t len);

@@ -281,7 +281,7 @@ bool Logger::logEcuData(uint32_t ecuData)
 
 // ----------------------------------------------------------------------------------
 // For WP use ONLY!
-bool __time_critical_func(Logger::logData)(uint8_t logId, int8_t len, uint8_t* data)
+bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* data)
 {
     bool rVal = true;
     
