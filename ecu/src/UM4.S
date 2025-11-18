@@ -777,6 +777,11 @@ ECU_ERROR_L000D_U8_prev       = 0x0180
 RAW_AAP_U8_prev               = 0x0181
 FUEL_PUMP_B_prev              = 0x0182
 
+; The crank event ISR always sets CRANK_TIMEOUT to MAX.
+; The ADC conversion result processing routine decrements CRANK_TIMEOUT every ADC conversion.
+CRANK_TIMEOUT                 = 0x0183
+CRANK_TIMEOUT_MAX             = (7-1)
+
 
 ;*****************************************************************
 ;68HC11G IO Register Map
@@ -2702,7 +2707,20 @@ LC46F:  ldaA    ADCTL
 0:      rts
 
 ;A/D Conversion is complete.
-1:      clr     *L001A                  ;reset the conversion timeout counter for the next conversion
+1:      
+        ldaA    CRANK_TIMEOUT           ;This will trigger the very first time since RAM is zeroed
+        tstA
+        bne     99f
+
+; We haven't seen a crank event for ((CRANK_TIMEOUT_MAX+1) * ADC conversion attempts)
+; We emit a timestamp just so that a log decoder will not miss any overflow events
+        ldD     TCNT
+        stD     LW+LOGID_ECU_TIME_MARKER_TYPE_TS
+        ldaA    CRANK_TIMEOUT_MAX+1
+99:     decA
+        staA    CRANK_TIMEOUT
+        
+        clr     *L001A                  ;reset the conversion timeout counter for the next conversion
 
         ldaB    ADCTL                   ;which channel did we just convert?
         andB    #0b00000111
@@ -8203,6 +8221,9 @@ IC2F_ISR_24:
         ldD     L015E                   ;get the current_IC2_count
         stD     *L0059                  ;  - save it as start time for the current crank ref
         stD     LW+LOGID_ECU_CRANKREF_START_TYPE_TS
+
+        ldaA    #CRANK_TIMEOUT_MAX      ;reset the crank timeout to its max value every time we see a crank event
+        staA    CRANK_TIMEOUT
 
         ldaA    *L0055                  ;get the current crank ID and log it
         staA    LW+LOGID_ECU_CRANKREF_ID_TYPE_U8

@@ -41,6 +41,9 @@
 #define   LOGID_ECU_L4000_EVENT_TYPE_U8             ((LOGID_ECU_BASE) + 0x08)
 #define   LOGID_ECU_L4000_EVENT_DLEN                1
 
+#define   LOGID_ECU_TIME_MARKER_TYPE_TS             ((LOGID_ECU_BASE) + 0x0E)       // ECU emits time marker events to track elapsed time, but only if the crank is not turning
+#define   LOGID_ECU_TIME_MARKER_TYPE_DLEN           2
+
 // Injector events, front and rear
 #define   LOGID_ECU_F_INJ_ON_TYPE_TS                ((LOGID_ECU_BASE) + 0x10)       // timestamp of injector on time in ticks
 #define   LOGID_ECU_F_INJ_ON_DLEN                   2

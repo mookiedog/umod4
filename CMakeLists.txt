@@ -103,6 +103,21 @@ execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install JSON_minify)
 message(STATUS "   ---> Installing python lib: mmh3")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install mmh3)
 
+message(STATUS "   ---> Installing python lib: numpy")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install numpy)
+
+message(STATUS "   ---> Installing python lib: h5py")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install h5py)
+
+message(STATUS "   ---> Installing python lib: PyQt6")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install PyQt6)
+
+message(STATUS "   ---> Installing python lib: pyqtgraph")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pyqtgraph)
+
+message(STATUS "   ---> Installing python lib: pandas")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pandas)
+
 project(umod4)
 
 # Littlefs is a small enough project that we just pull it into our superbuild's build tree
