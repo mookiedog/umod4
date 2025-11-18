@@ -228,9 +228,11 @@ bool Logger::openNewLog()
 bool Logger::logEcuData(uint32_t ecuData)
 {
     bool rVal = true;
-    //UBaseType_t interruptStatus;
+    UBaseType_t interruptStatus;
     
-    //interruptStatus = taskENTER_CRITICAL_FROM_ISR();
+    // Even though this is an ISR, we need to lock the critical section
+    // since the WP logging calls could be running on a different core.
+    interruptStatus = taskENTER_CRITICAL_FROM_ISR();
     
     uint8_t len   = ecuData >> 0;
     uint8_t logId = ecuData >> 8;
@@ -274,7 +276,7 @@ bool Logger::logEcuData(uint32_t ecuData)
         }
     }
     
-    //taskEXIT_CRITICAL_FROM_ISR(interruptStatus);
+    taskEXIT_CRITICAL_FROM_ISR(interruptStatus);
     return true;
 }
 
