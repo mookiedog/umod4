@@ -38,48 +38,52 @@
 #define     LOGID_ECU_CPU_EVENT_VAL_OC3F            (0xA)
 #define     LOGID_ECU_CPU_EVENT_VAL_IC3             (0xB)
 
+#define   LOGID_ECU_T1_OFLO_TYPE_TS                 ((LOGID_ECU_BASE) + 0x02)       // Emitted just after time T1 overflows (every 131072 uSec, or ~7.6Hz )
+#define   LOGID_ECU_T1_OFLO_DLEN                    2
+
 #define   LOGID_ECU_L4000_EVENT_TYPE_U8             ((LOGID_ECU_BASE) + 0x08)
 #define   LOGID_ECU_L4000_EVENT_DLEN                1
 
-#define   LOGID_ECU_TIME_MARKER_TYPE_TS             ((LOGID_ECU_BASE) + 0x0E)       // ECU emits time marker events to track elapsed time, but only if the crank is not turning
-#define   LOGID_ECU_TIME_MARKER_TYPE_DLEN           2
+#define   LOGID_ECU_T1_HOFLO_TYPE_TS                ((LOGID_ECU_BASE) + 0x0E)       // Marks when the ECU has observed a 'half overflow',
+#define   LOGID_ECU_T1_HOFLO_TYPE_DLEN              2                               // meaning the timer has advanced into the upper 15 bits of the timer count
+
 
 // Injector events, front and rear
-#define   LOGID_ECU_F_INJ_ON_TYPE_TS                ((LOGID_ECU_BASE) + 0x10)       // timestamp of injector on time in ticks
+#define   LOGID_ECU_F_INJ_ON_TYPE_PTS               ((LOGID_ECU_BASE) + 0x10)       // timestamp of injector on time in ticks
 #define   LOGID_ECU_F_INJ_ON_DLEN                   2
 
 #define   LOGID_ECU_F_INJ_DUR_TYPE_U16              ((LOGID_ECU_BASE) + 0x12)       // duration of injector pulse in ticks
 #define   LOGID_ECU_F_INJ_DUR_DLEN                  2
 
-#define   LOGID_ECU_R_INJ_ON_TYPE_TS                ((LOGID_ECU_BASE) + 0x14)       // timestamp of injector on time in ticks
+#define   LOGID_ECU_R_INJ_ON_TYPE_PTS               ((LOGID_ECU_BASE) + 0x14)       // timestamp of injector on time in ticks
 #define   LOGID_ECU_R_INJ_ON_DLEN                   2
 
 #define   LOGID_ECU_R_INJ_DUR_TYPE_U16              ((LOGID_ECU_BASE) + 0x16)       // duration of injector pulse in ticks
 #define   LOGID_ECU_R_INJ_DUR_DLEN                  2
 
 // Ignition coil events, front and rear
-#define   LOGID_ECU_F_COIL_ON_TYPE_TS               ((LOGID_ECU_BASE) + 0x20)
+#define   LOGID_ECU_F_COIL_ON_TYPE_PTS              ((LOGID_ECU_BASE) + 0x20)
 #define   LOGID_ECU_F_COIL_ON_DLEN                  2
 
-#define   LOGID_ECU_F_COIL_OFF_TYPE_TS              ((LOGID_ECU_BASE) + 0x22)
+#define   LOGID_ECU_F_COIL_OFF_TYPE_PTS             ((LOGID_ECU_BASE) + 0x22)
 #define   LOGID_ECU_F_COIL_OFF_DLEN                 2
 
-#define   LOGID_ECU_R_COIL_ON_TYPE_TS               ((LOGID_ECU_BASE) + 0x24)
+#define   LOGID_ECU_R_COIL_ON_TYPE_PTS              ((LOGID_ECU_BASE) + 0x24)
 #define   LOGID_ECU_R_COIL_ON_DLEN                  2
 
-#define   LOGID_ECU_R_COIL_OFF_TYPE_TS              ((LOGID_ECU_BASE) + 0x26)
+#define   LOGID_ECU_R_COIL_OFF_TYPE_PTS             ((LOGID_ECU_BASE) + 0x26)
 #define   LOGID_ECU_R_COIL_OFF_DLEN                 2
 
-#define   LOGID_ECU_F_COIL_MAN_ON_TYPE_TS           ((LOGID_ECU_BASE) + 0x28)
+#define   LOGID_ECU_F_COIL_MAN_ON_TYPE_PTS          ((LOGID_ECU_BASE) + 0x28)
 #define   LOGID_ECU_F_COIL_MAN_ON_DLEN              2
 
-#define   LOGID_ECU_F_COIL_MAN_OFF_TYPE_TS          ((LOGID_ECU_BASE) + 0x2A)
+#define   LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS         ((LOGID_ECU_BASE) + 0x2A)
 #define   LOGID_ECU_F_COIL_MAN_OFF_DLEN             2
 
-#define   LOGID_ECU_R_COIL_MAN_ON_TYPE_TS           ((LOGID_ECU_BASE) + 0x2C)
+#define   LOGID_ECU_R_COIL_MAN_ON_TYPE_PTS          ((LOGID_ECU_BASE) + 0x2C)
 #define   LOGID_ECU_R_COIL_MAN_ON_DLEN              2
 
-#define   LOGID_ECU_R_COIL_MAN_OFF_TYPE_TS          ((LOGID_ECU_BASE) + 0x2E)
+#define   LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS         ((LOGID_ECU_BASE) + 0x2E)
 #define   LOGID_ECU_R_COIL_MAN_OFF_DLEN             2
 
 #define   LOGID_ECU_F_IGN_DLY_TYPE_0P8              ((LOGID_ECU_BASE) + 0x30)           // 0.8 fraction of 90 degrees (the value of L00DC during CR3)

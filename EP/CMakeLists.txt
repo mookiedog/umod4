@@ -53,7 +53,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 # For some reason, if you compile with -Og, the linker aligns each generated BSON doc within
 # the BSON partition to start on a word boundary. If you compile with -Os, the linker
 # does NOT align the docs to start on a word boundary.
-if(1)
+if(0)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Os")
   set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -Os")
   set(BSON_PARTITION_IS_PADDED 0)

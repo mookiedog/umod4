@@ -331,6 +331,7 @@ class HDF5Writer:
         # Unified time tracking
         self.time_ns = 0
         self.prev_timestamp = -1
+        self.in_upper_half = False  # Track which half of timer cycle we're in
 
         # Metadata tracking
         self.log_version_ecu = None
@@ -360,6 +361,9 @@ class HDF5Writer:
         ds_opts_1d = {'maxshape': (None,), 'chunks': chunk_1d, 'compression': 'gzip', 'compression_opts': 4}
         ds_opts_3d = {'maxshape': (None, 3), 'chunks': chunk_3d, 'compression': 'gzip', 'compression_opts': 4}
 
+        # ECU timing
+        self.datasets['ecu_t1_oflo_timestamp'] = self.h5file.create_dataset('ecu_t1_oflo_timestamp', (0, 2), dtype='uint64', **ds_opts)
+        
         # Engine timing
         self.datasets['ecu_crankref_timestamp'] = self.h5file.create_dataset('ecu_crankref_timestamp', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_crankref_id'] = self.h5file.create_dataset('ecu_crankref_id', (0, 2), dtype='uint64', **ds_opts)
@@ -427,20 +431,52 @@ class HDF5Writer:
         self.datasets['wp_fs_write_time_ms'] = self.h5file.create_dataset('wp_fs_write_time_ms', (0, 2), dtype='uint16', **ds_opts)
         self.datasets['wp_fs_sync_time_ms'] = self.h5file.create_dataset('wp_fs_sync_time_ms', (0, 2), dtype='uint16', **ds_opts)
 
-    def update_time(self, has_timestamp=False, raw_timestamp=None):
-        """Update unified nanosecond counter."""
+    def update_time(self, has_timestamp=False, raw_timestamp=None, is_overflow=False, is_marker=False):
+        """Update unified nanosecond counter.
+
+        Args:
+            has_timestamp: True if this event has a timestamp
+            raw_timestamp: The raw 16-bit timestamp value
+            is_overflow: True if this is a T1_OFLO event (timer wrapped 65535→0, b15: 1→0)
+            is_marker: True if this is a TIME_MARKER event (b15 went 0→1, timestamp ~32768)
+        """
         if has_timestamp and raw_timestamp is not None:
             if self.prev_timestamp >= 0:
                 delta_ticks = raw_timestamp - self.prev_timestamp
-                # Only treat as wraparound if it's a very large backward jump (counter rolled over from ~65535 to ~0)
-                # A true wraparound should have delta around -65536 + new_value (so delta < -60000)
-                # Smaller backward jumps are likely out-of-order events, treat as 0 delta
-                if delta_ticks < -60000:
-                    delta_ticks += 65536  # Handle 16-bit wraparound
-                elif delta_ticks < 0:
-                    delta_ticks = 0  # Out-of-order event, don't go backward in time
-                self.time_ns += delta_ticks * 2000  # 2μs per tick = 2000ns
-            self.prev_timestamp = raw_timestamp
+
+                # OFLO and MARKER events are the authoritative anchors for the 64-bit timeline
+                if is_overflow:
+                    # OFLO: timer wrapped from ~65535 to ~0 (b15: 1→0)
+                    # Advance time by one full timer period
+                    self.time_ns += 65536 * 2000  # 131.072ms
+                    self.prev_timestamp = raw_timestamp
+                    self.in_upper_half = False  # Now in lower half (timestamps 0-32767)
+                elif is_marker:
+                    # MARKER: b15 went from 0→1 (timestamp ~32768)
+                    # Advance time by one full timer period
+                    self.time_ns += 65536 * 2000  # 131.072ms
+                    self.prev_timestamp = raw_timestamp
+                    self.in_upper_half = True  # Now in upper half (timestamps 32768-65535)
+                # Non-anchor timestamps: calculate delta normally
+                else:
+                    # Check if timestamp is in expected half of timer cycle
+                    ts_in_upper_half = (raw_timestamp >= 32768)
+                    if ts_in_upper_half != self.in_upper_half:
+                        # Timestamp from wrong half - it's out-of-order
+                        # Don't advance time, don't update prev_timestamp
+                        pass
+                    elif delta_ticks < 0:
+                        # Negative delta within same half = out-of-order event
+                        # Don't advance time, don't update prev_timestamp
+                        pass
+                    else:
+                        # Normal forward progress
+                        self.time_ns += delta_ticks * 2000
+                        self.prev_timestamp = raw_timestamp
+            else:
+                # First timestamp - initialize tracking
+                self.prev_timestamp = raw_timestamp
+                self.in_upper_half = (raw_timestamp >= 32768)
         else:
             self.time_ns += 1  # Untimestamped event
 
@@ -508,15 +544,6 @@ headingsPrinted = False
 msb = 0
 msb_id = -1
 
-# Number of bytes to skip at the start before decoding the rest of the file
-skipBytes = 0
-
-def parse_skip_bytes(value):
-    try:
-        return int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"skipBytes must be an integer, got '{value}'")
-
 cr_ts = -1
 fc_off = 0
 rc_off = 0
@@ -551,33 +578,72 @@ rpm_hist = arr.array('d', [])
 # Global time tracking for human-readable output
 global_time_ns = 0
 global_prev_timestamp = -1
+global_in_upper_half = False  # Track which half of timer cycle we're in
 gps_last_sec_time_ns = -1  # Track when we last saw a GPS SEC change
+gps_first_sec_time_ns = -1  # Track when we saw the FIRST GPS SEC (for drift calculation)
+gps_sec_count = 0  # Count of GPS SEC events seen
 
 f=""
 
-def update_global_time(has_timestamp=False, raw_timestamp=None):
+def update_global_time(has_timestamp=False, raw_timestamp=None, is_overflow=False, is_marker=False):
     """Update the global nanosecond counter for human-readable output.
 
     Args:
         has_timestamp: True if this event has a raw timestamp
         raw_timestamp: The raw 16-bit timestamp value (if has_timestamp=True)
+        is_overflow: True if this is a T1_OFLO event (timer wrapped 65535→0, b15: 1→0)
+        is_marker: True if this is a TIME_MARKER event (b15 went 0→1, timestamp ~32768)
     """
-    global global_time_ns, global_prev_timestamp
+    global global_time_ns, global_prev_timestamp, global_in_upper_half
 
     if has_timestamp and raw_timestamp is not None:
         if global_prev_timestamp >= 0:
             delta_ticks = raw_timestamp - global_prev_timestamp
-            # Only treat as wraparound if it's a very large backward jump (counter rolled over from ~65535 to ~0)
-            # A true wraparound should have delta around -65536 + new_value (so delta < -60000)
-            # Smaller backward jumps are likely out-of-order events, treat as 0 delta
-            if delta_ticks < -60000:
-                delta_ticks += 65536  # Handle 16-bit wraparound
-            elif delta_ticks < 0:
-                delta_ticks = 0  # Out-of-order event, don't go backward in time
-            global_time_ns += delta_ticks * 2000  # 2μs per tick = 2000ns
-        global_prev_timestamp = raw_timestamp
+
+            # OFLO and MARKER events are the authoritative anchors for the 64-bit timeline
+            if is_overflow:
+                # OFLO: timer wrapped from ~65535 to ~0 (b15: 1→0)
+                # Advance time by one full timer period
+                global_time_ns += 65536 * 2000  # 131.072ms
+                global_prev_timestamp = raw_timestamp
+                global_in_upper_half = False  # Now in lower half (timestamps 0-32767)
+            elif is_marker:
+                # MARKER: b15 went from 0→1 (timestamp ~32768)
+                # Advance time by one full timer period
+                global_time_ns += 65536 * 2000  # 131.072ms
+                global_prev_timestamp = raw_timestamp
+                global_in_upper_half = True  # Now in upper half (timestamps 32768-65535)
+            # Non-anchor timestamps: calculate delta normally
+            else:
+                # Check if timestamp is in expected half of timer cycle
+                ts_in_upper_half = (raw_timestamp >= 32768)
+                if ts_in_upper_half != global_in_upper_half:
+                    # Timestamp from wrong half - it's out-of-order
+                    # Don't advance time, don't update prev_timestamp
+                    pass
+                elif delta_ticks < 0:
+                    # Negative delta within same half = out-of-order event
+                    # Don't advance time, don't update prev_timestamp
+                    pass
+                else:
+                    # Normal forward progress
+                    global_time_ns += delta_ticks * 2000
+                    global_prev_timestamp = raw_timestamp
+        else:
+            # First timestamp - initialize tracking
+            global_prev_timestamp = raw_timestamp
+            global_in_upper_half = (raw_timestamp >= 32768)
     else:
         global_time_ns += 1  # Untimestamped event
+
+def fmt_record(recordCnt):
+    """Format record number with elapsed time for human-readable output.
+
+    Returns string like: "[  123 @    45.6781s]"
+    This matches the time shown in HDF5/visualization tools.
+    """
+    elapsed_sec = global_time_ns / 1e9
+    return f"[{recordCnt:6} @ {elapsed_sec:10.4f}s]"
 
 def decodeL000C(byte):
     if (byte & 0x80):
@@ -691,7 +757,6 @@ def read(f, readCount, showAddress=False, newLine=True):
     return bytes
 
 def main():
-    global headingsPrinted
     global cr_ts
     global fc_off
     global rc_off
@@ -699,7 +764,6 @@ def main():
     global map
     global vm_V
     global vta
-    global skipBytes
     global cr_ts_prev
     global elapsed
     global cridPrev
@@ -716,7 +780,6 @@ def main():
     # Create argument parser
     parser = argparse.ArgumentParser(description='Decode logs generated by the umod4 system.')
     parser.add_argument('logfile', help='Input log file to decode')
-    parser.add_argument('--skip', type=parse_skip_bytes, default=0, help='Number of bytes to skip at start of file (default: 0)')
     parser.add_argument('-L', '--Logsyms', help='Path to directory containing a specific version of the Logsyms package (optional)')
     parser.add_argument('--format', choices=['human-readable', 'hdf5'], default='human-readable',
                         help='Output format: human-readable (default) or hdf5')
@@ -790,20 +853,9 @@ def main():
     try:
         logfilename = args.logfile
 
-        skipBytes = args.skip
-
         recordCnt = 0
 
         with open(logfilename, "rb") as f:
-
-            if (skipBytes > 0) :
-                print(f"Skipping {skipBytes} at the start of the log")
-
-                while (skipBytes > 0):
-                    b = read(f, 1, False);
-                    skipBytes -= 1
-
-                print(f"Decoding rest of log:")
 
             while (True):
                 b = read(f, 1, True)
@@ -816,21 +868,21 @@ def main():
                 # Python does not have a useful equivalent of a C 'switch' statement, so we get a giant if-tree:
                 if byte == L.LOGID_GEN_ECU_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_ECU_LOG_VER_DLEN)
-                    print(f"{recordCnt:10}: ECU_VR: {rd[0]}")
+                    print(f"{fmt_record(recordCnt)}: ECU_VR: {rd[0]}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.log_version_ecu = rd[0]
 
                 elif byte == L.LOGID_GEN_EP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_EP_LOG_VER_DLEN)
-                    print(f"{recordCnt:10}: EP_VR:  {rd[0]}")
+                    print(f"{fmt_record(recordCnt)}: EP_VR:  {rd[0]}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.log_version_ep = rd[0]
 
                 elif byte == L.LOGID_GEN_WP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_WP_LOG_VER_DLEN)
-                    print(f"{recordCnt:10}: WP_VR:  {rd[0]}")
+                    print(f"{fmt_record(recordCnt)}: WP_VR:  {rd[0]}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.log_version_wp = rd[0]
@@ -838,108 +890,139 @@ def main():
                 # Handle ECU events
                 elif byte == L.LOGID_ECU_CPU_EVENT_TYPE_U8:
                     event = read(f, L.LOGID_ECU_CPU_EVENT_DLEN)[0]
-                    print(f"{recordCnt:10}: CPU:    {event}")
+                    print(f"{fmt_record(recordCnt)}: CPU:    {event}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_cpu_event', [h5_writer.time_ns, event])
 
+                elif byte == L.LOGID_ECU_T1_OFLO_TYPE_TS:
+                    oflo_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_OFLO_DLEN), byteorder='little', signed=False)
+                    # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
+                    # This is a timer overflow event, so mark it specially for wraparound handling
+                    update_global_time(has_timestamp=True, raw_timestamp=oflo_ts, is_overflow=True)
+                    print(f"{fmt_record(recordCnt)}: OFLO_TS: {oflo_ts}")
+                    if h5_writer:
+                        h5_writer.update_time(has_timestamp=True, raw_timestamp=oflo_ts, is_overflow=True)
+                        h5_writer.append_data('ecu_t1_oflo_timestamp', [h5_writer.time_ns, oflo_ts])
+
                 elif byte == L.LOGID_ECU_L4000_EVENT_TYPE_U8:
                     rd = read(f, L.LOGID_ECU_L4000_EVENT_DLEN)
-                    print(f"{recordCnt:10}: L4000:  {rd[0]}")
+                    print(f"{fmt_record(recordCnt)}: L4000:  {rd[0]}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_l4000_event', [h5_writer.time_ns, rd[0]])
-                
-                elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_TS:
-                    fi_on = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_ON_DLEN), byteorder='little', signed=False)
-                    update_global_time(has_timestamp=True, raw_timestamp=fi_on)
-                    print(f"{recordCnt:10}: FI_ON:  {fi_on}")
+
+                elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_TS:
+                    marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_TYPE_DLEN), byteorder='little', signed=False)
+                    # RETROSPECTIVE timestamp - event HAS occurred (b15 went 0→1)
+                    # This is a time anchor event, marks 65536 ticks from previous anchor
+                    update_global_time(has_timestamp=True, raw_timestamp=marker_ts, is_marker=True)
+                    print(f"{fmt_record(recordCnt)}: MARKER: {marker_ts}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=fi_on)
+                        h5_writer.update_time(has_timestamp=True, raw_timestamp=marker_ts, is_marker=True)
+                        h5_writer.append_data('ecu_time_marker', [h5_writer.time_ns, marker_ts])
+
+                elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_PTS:
+                    fi_on = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_ON_DLEN), byteorder='little', signed=False)
+                    # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
+                    # Do not advance time_ns based on this value
+                    update_global_time(has_timestamp=False)
+                    print(f"{fmt_record(recordCnt)}: FI_ON:  {fi_on}")
+                    if h5_writer:
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_front_inj_on', [h5_writer.time_ns, fi_on])
 
                 elif byte == L.LOGID_ECU_F_INJ_DUR_TYPE_U16:
                     fi_dur = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_DUR_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: FI_DUR: {fi_dur}")
+                    print(f"{fmt_record(recordCnt)}: FI_DUR: {fi_dur}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_front_inj_duration', [h5_writer.time_ns, fi_dur])
 
-                elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_TS:
+                elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_PTS:
                     ri_on = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_ON_DLEN), byteorder='little', signed=False)
-                    update_global_time(has_timestamp=True, raw_timestamp=ri_on)
-                    print(f"{recordCnt:10}: RI_ON:  {ri_on}")
+                    # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
+                    update_global_time(has_timestamp=False)
+                    print(f"{fmt_record(recordCnt)}: RI_ON:  {ri_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=ri_on)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_rear_inj_on', [h5_writer.time_ns, ri_on])
 
                 elif byte == L.LOGID_ECU_R_INJ_DUR_TYPE_U16:
                     ri_dur = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_DUR_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: RI_DUR: {ri_dur}")
+                    print(f"{fmt_record(recordCnt)}: RI_DUR: {ri_dur}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_rear_inj_duration', [h5_writer.time_ns, ri_dur])
 
-                elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_TS:
+                elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_PTS:
                     fc_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_ON_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: FC_ON:  {fc_on}")
+                    # PROSPECTIVE timestamp - scheduled future event
+                    print(f"{fmt_record(recordCnt)}: FC_ON:  {fc_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=fc_on)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_front_coil_on', [h5_writer.time_ns, fc_on])
 
-                elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_TS:
+                elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_PTS:
                     fc_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_OFF_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: FC_OFF: {fc_off}")
+                    # PROSPECTIVE timestamp - scheduled future event
+                    print(f"{fmt_record(recordCnt)}: FC_OFF: {fc_off}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=fc_off)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_front_coil_off', [h5_writer.time_ns, fc_off])
 
-                elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_TS:
+                elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_PTS:
                     rc_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_ON_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: RC_ON:  {rc_on}")
+                    # PROSPECTIVE timestamp - scheduled future event
+                    print(f"{fmt_record(recordCnt)}: RC_ON:  {rc_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=rc_on)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_rear_coil_on', [h5_writer.time_ns, rc_on])
 
-                elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_TS:
+                elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_PTS:
                     rc_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_OFF_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: RC_OFF: {rc_off}")
+                    # PROSPECTIVE timestamp - scheduled future event
+                    print(f"{fmt_record(recordCnt)}: RC_OFF: {rc_off}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=rc_off)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_rear_coil_off', [h5_writer.time_ns, rc_off])
 
-                elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_TS:
+                elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_PTS:
                     fcm_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: FC_MON: {fcm_on}")
+                    # PROSPECTIVE timestamp - scheduled future event
+                    print(f"{fmt_record(recordCnt)}: FC_MON: {fcm_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=fcm_on)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_front_coil_manual_on', [h5_writer.time_ns, fcm_on])
 
-                elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_TS:
+                elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS:
                     fcm_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: FC_MOF: {fcm_off}")
+                    # PROSPECTIVE timestamp - scheduled future event
+                    print(f"{fmt_record(recordCnt)}: FC_MOF: {fcm_off}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=fcm_off)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_front_coil_manual_off', [h5_writer.time_ns, fcm_off])
 
-                elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_TS:
+                elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_PTS:
                     rcm_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: RC_MON: {rcm_on}")
+                    # PROSPECTIVE timestamp - scheduled future event
+                    print(f"{fmt_record(recordCnt)}: RC_MON: {rcm_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=rcm_on)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_rear_coil_manual_on', [h5_writer.time_ns, rcm_on])
 
-                elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_TS:
+                elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS:
                     rcm_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: RC_MOF: {rcm_off}")
+                    # PROSPECTIVE timestamp - scheduled future event
+                    print(f"{fmt_record(recordCnt)}: RC_MOF: {rcm_off}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=rcm_off)
+                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_rear_coil_manual_off', [h5_writer.time_ns, rcm_off])
 
                 elif byte == L.LOGID_ECU_F_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_F_IGN_DLY_DLEN)[0]
                     dly= (b/256)*90.0
-                    print(f"{recordCnt:10}: FID:    {dly:.1f}")
+                    print(f"{fmt_record(recordCnt)}: FID:    {dly:.1f}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_front_ign_delay', [h5_writer.time_ns, dly])
@@ -947,35 +1030,35 @@ def main():
                 elif byte == L.LOGID_ECU_R_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_R_IGN_DLY_DLEN)[0]
                     dly= (b/256)*90.0
-                    print(f"{recordCnt:10}: RID:    {dly:.1f}")
+                    print(f"{fmt_record(recordCnt)}: RID:    {dly:.1f}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_rear_ign_delay', [h5_writer.time_ns, dly])
 
                 elif byte == L.LOGID_ECU_5MILLISEC_EVENT_TYPE_V:
                     ignore = read(f, L.LOGID_ECU_5MILLISEC_EVENT_DLEN)
-                    print(f"{recordCnt:10}: 5MS:")
+                    print(f"{fmt_record(recordCnt)}: 5MS:")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_marker_5ms', h5_writer.time_ns)
 
                 elif byte == L.LOGID_ECU_CRANK_P6_MAX_TYPE_V:
                     ignore = read(f, L.LOGID_ECU_CRANK_P6_MAX_DLEN)
-                    print(f"{recordCnt:10}: CMX:    Crank Max")
+                    print(f"{fmt_record(recordCnt)}: CMX:    Crank Max")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_marker_p6_max', h5_writer.time_ns)
 
                 elif byte == L.LOGID_ECU_FUEL_PUMP_TYPE_B:
                     pumpstate = read(f, L.LOGID_ECU_FUEL_PUMP_DLEN)[0]
-                    print(f"{recordCnt:10}: FP:     {pumpstate}")
+                    print(f"{fmt_record(recordCnt)}: FP:     {pumpstate}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_fuel_pump', [h5_writer.time_ns, pumpstate])
 
                 elif byte == L.LOGID_ECU_ECU_ERROR_L000C_TYPE_U8:
                     L000C = read(f, L.LOGID_ECU_ECU_ERROR_L000C_DLEN)[0]
-                    print(f"{recordCnt:10}: ELC:    " + "{:08b} ".format(L000C), end="")
+                    print(f"{fmt_record(recordCnt)}: ELC:    " + "{:08b} ".format(L000C), end="")
                     decodeL000C(L000C)
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
@@ -983,7 +1066,7 @@ def main():
 
                 elif byte == L.LOGID_ECU_ECU_ERROR_L000D_TYPE_U8:
                     L000D = read(f, L.LOGID_ECU_ECU_ERROR_L000D_DLEN)[0]
-                    print(f"{recordCnt:10}: ELD:    " + "{:08b} ".format(L000D), end="")
+                    print(f"{fmt_record(recordCnt)}: ELD:    " + "{:08b} ".format(L000D), end="")
                     decodeL000D(L000D)
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
@@ -991,7 +1074,7 @@ def main():
 
                 elif byte == L.LOGID_ECU_ECU_ERROR_L000E_TYPE_U8:
                     L000E = read(f, L.LOGID_ECU_ECU_ERROR_L000E_DLEN)[0]
-                    print(f"{recordCnt:10}: ELE:    " + "{:08b} ".format(L000E), end="")
+                    print(f"{fmt_record(recordCnt)}: ELE:    " + "{:08b} ".format(L000E), end="")
                     decodeL000C(L000E)
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
@@ -999,7 +1082,7 @@ def main():
 
                 elif byte == L.LOGID_ECU_ECU_ERROR_L000F_TYPE_U8:
                     L000F = read(f, L.LOGID_ECU_ECU_ERROR_L000F_DLEN)[0]
-                    print(f"{recordCnt:10}: ELF:    " + "{:08b} ".format(L000F), end="")
+                    print(f"{fmt_record(recordCnt)}: ELF:    " + "{:08b} ".format(L000F), end="")
                     decodeL000D(L000F)
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
@@ -1012,39 +1095,39 @@ def main():
                         # Trouble: the VTA is only a 10-bit value. This reading is out of range!
                         print(f"ERR: At byte {(f.tell()-L.LOGID_ECU_RAW_VTA_DLEN):08X}: LOGID_ECU_RAW_VTA_TYPE_U16 is out of range 0x000..0x3FF: 0x{vta:04X}, ignoring!", file=sys.stderr)
                     else:
-                        print(f"{recordCnt:10}: VTA:    {vta}")
+                        print(f"{fmt_record(recordCnt)}: VTA:    {vta}")
                         if h5_writer:
                             h5_writer.update_time(has_timestamp=False)
                             h5_writer.append_data('ecu_throttle_adc', [h5_writer.time_ns, vta])
 
                 elif byte == L.LOGID_ECU_RAW_MAP_TYPE_U8:
-                    map = read(f, 1)[0]
-                    print(f"{recordCnt:10}: MAP:    {map}")
+                    map = read(f, L.LOGID_ECU_RAW_MAP_DLEN)[0]
+                    print(f"{fmt_record(recordCnt)}: MAP:    {map}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_map_adc', [h5_writer.time_ns, map])
 
                 elif byte == L.LOGID_ECU_RAW_AAP_TYPE_U8:
-                    aap = read(f, 1)[0]
-                    print(f"{recordCnt:10}: AAP:    {aap}")
+                    aap = read(f, L.LOGID_ECU_RAW_AAP_DLEN)[0]
+                    print(f"{fmt_record(recordCnt)}: AAP:    {aap}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_aap_adc', [h5_writer.time_ns, aap])
 
                 elif byte == L.LOGID_ECU_RAW_THW_TYPE_U8:
-                    thw_adc = read(f, 1)[0]
+                    thw_adc = read(f, L.LOGID_ECU_RAW_THW_DLEN)[0]
 
                     thw_C = convertApriliaTempSensorAdcToDegC(thw_adc)
-                    print(f"{recordCnt:10}: THW:    {thw_C:.1f}C")
+                    print(f"{fmt_record(recordCnt)}: THW:    {thw_C:.1f}C")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_coolant_temp_c', [h5_writer.time_ns, thw_C])
 
                 elif byte == L.LOGID_ECU_RAW_THA_TYPE_U8:
-                    tha_adc = read(f, 1)[0]
+                    tha_adc = read(f, L.LOGID_ECU_RAW_THA_DLEN)[0]
 
                     tha_C = convertApriliaTempSensorAdcToDegC(tha_adc)
-                    print(f"{recordCnt:10}: THA:    {tha_C:.1f}C")
+                    print(f"{fmt_record(recordCnt)}: THA:    {tha_C:.1f}C")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_air_temp_c', [h5_writer.time_ns, tha_C])
@@ -1052,24 +1135,25 @@ def main():
                 elif byte == L.LOGID_ECU_RAW_VM_TYPE_U8:
                     # The VM input divides the input voltage by 4 via resistor divider
                     # then feeds it to an ADC where 5V represents the max ADC value 0xFF.
-                    adc = read(f, 1)[0]
+                    adc = read(f, L.LOGID_ECU_RAW_VM_DLEN)[0]
                     vm_V = (adc/256) * 5 * 4
-                    print(f"{recordCnt:10}: VM:     {vm_V:.2f}")
+                    print(f"{fmt_record(recordCnt)}: VM:     {vm_V:.2f}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_battery_voltage_v', [h5_writer.time_ns, vm_V])
 
                 elif byte == L.LOGID_ECU_PORTG_DB_TYPE_U8:
-                    portg = read(f, 1)[0]
-                    print(f"{recordCnt:10}: PTG:    " + "{:08b}".format(portg))
+                    portg = read(f, L.LOGID_ECU_PORTG_DB_DLEN)[0]
+                    print(f"{fmt_record(recordCnt)}: PTG:    " + "{:08b}".format(portg))
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_portg_debug', [h5_writer.time_ns, portg])
 
                 elif byte == L.LOGID_ECU_CRANKREF_START_TYPE_TS:
                     cr_ts = int.from_bytes(read(f, L.LOGID_ECU_CRANKREF_START_DLEN), byteorder='little', signed=False)
+                    # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
                     update_global_time(has_timestamp=True, raw_timestamp=cr_ts)
-                    print(f"{recordCnt:10}: CRK_TS: {cr_ts}")
+                    print(f"{fmt_record(recordCnt)}: CRK_TS: {cr_ts}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=True, raw_timestamp=cr_ts)
                         h5_writer.append_data('ecu_crankref_timestamp', [h5_writer.time_ns, cr_ts])
@@ -1088,29 +1172,24 @@ def main():
                             rpm_hist.pop(0)
                         rpm_avg = sum(rpm_hist) / len(rpm_hist)
 
-                        print(f"{recordCnt:10}: cr_ts: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
+                        print(f"{fmt_record(recordCnt)}: cr_ts: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
 
                         if h5_writer:
                             h5_writer.append_data('ecu_rpm_instantaneous', [h5_writer.time_ns, rpm])
                             h5_writer.append_data('ecu_rpm_smoothed', [h5_writer.time_ns, rpm_avg])
 
                 elif byte == L.LOGID_ECU_CRANKREF_ID_TYPE_U8:
-                    crid = read(f, 1)[0]
-                    print(f"{recordCnt:10}: CR:  {crid}")
+                    crid = read(f, L.LOGID_ECU_CRANKREF_ID_DLEN)[0]
+                    print(f"{fmt_record(recordCnt)}: CR:  {crid}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_crankref_id', [h5_writer.time_ns, crid])
                     if (elapsed > 0):
-                        if not headingsPrinted:
-                            headingsPrinted = True
-                            print(f"XL, secs, crid, cr_ts, elapsed, tha_C, thw_C, vm_V, map, aap, vta, rpm_avg, fi_dur, ri_dur, fc_off, rc_off")
-                        
                         fco = rco = 0
                         if crid == 5:
                             fco = fc_off
                         elif crid == 10:
                             rco = rc_off
-                        print(f"XL, {secs:2}, {crid:2}, {cr_ts:5}, {elapsed:5}, {tha_C:.1f}, {thw_C:.1f}, {vm_V:.1f}, {map}, {aap}, {vta:3}, {rpm_avg:5.0f}, {fi_dur}, {ri_dur}, {fco}, {rco}")
                         if (fi_dur != 0):
                             fi_dur = 0
                         if (ri_dur != 0):
@@ -1121,59 +1200,63 @@ def main():
                         if (expectedId>11):
                             expectedId = 0
                         if (crid != expectedId):
-                            print(f"{recordCnt:10}: ERROR: expected CRID {expectedId}, saw {crid}")
+                            print(f"{fmt_record(recordCnt)}: ERROR: expected CRID {expectedId}, saw {crid}")
 
-                elif byte == L.LOGID_ECU_TIME_MARKER_TYPE_TS:
-                    time_marker_ts = int.from_bytes(read(f, L.LOGID_ECU_TIME_MARKER_TYPE_DLEN), byteorder='little', signed=False)
+                elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_TS:
+                    time_marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_TYPE_DLEN), byteorder='little', signed=False)
+                    # RETROSPECTIVE timestamp - tracks time when engine not rotating
                     update_global_time(has_timestamp=True, raw_timestamp=time_marker_ts)
-                    print(f"{recordCnt:10}: TIME_MKR: {time_marker_ts}")
+                    print(f"{fmt_record(recordCnt)}: TIME_MKR: {time_marker_ts}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=True, raw_timestamp=time_marker_ts)
                         h5_writer.append_data('ecu_time_marker', [h5_writer.time_ns, time_marker_ts])
 
                 elif byte == L.LOGID_ECU_CAMSHAFT_TYPE_TS:
                     cam_ts = int.from_bytes(read(f, L.LOGID_ECU_CAMSHAFT_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: CAM_TS:  {cam_ts}")
+                    # RETROSPECTIVE timestamp - camshaft event HAS occurred
+                    print(f"{fmt_record(recordCnt)}: CAM_TS:  {cam_ts}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=True, raw_timestamp=cam_ts)
                         h5_writer.append_data('ecu_camshaft_timestamp', [h5_writer.time_ns, cam_ts])
 
                 elif byte == L.LOGID_ECU_CAM_ERR_TYPE_U8:
-                    camErr = read(f, 1)[0]
-                    print(f"{recordCnt:10}: CAM ERR: {camErr:02X}")
+                    camErr = read(f, L.LOGID_ECU_CAM_ERR_DLEN)[0]
+                    print(f"{fmt_record(recordCnt)}: CAM ERR: {camErr:02X}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_cam_error', [h5_writer.time_ns, camErr])
 
                 elif byte == L.LOGID_ECU_SPRK_X1_TYPE_TS:
                     spx1_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: SP1_TS: {spx1_ts}")
+                    # RETROSPECTIVE timestamp - spark HAS fired
+                    print(f"{fmt_record(recordCnt)}: SP1_TS: {spx1_ts}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=True, raw_timestamp=spx1_ts)
                         h5_writer.append_data('ecu_spark_x1', [h5_writer.time_ns, spx1_ts])
 
                 elif byte == L.LOGID_ECU_SPRK_X2_TYPE_TS:
                     spx2_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: SP2_TS: {spx2_ts}")
+                    # RETROSPECTIVE timestamp - spark HAS fired
+                    print(f"{fmt_record(recordCnt)}: SP2_TS: {spx2_ts}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=True, raw_timestamp=spx2_ts)
                         h5_writer.append_data('ecu_spark_x2', [h5_writer.time_ns, spx2_ts])
 
                 elif byte == L.LOGID_ECU_NOSPARK_TYPE_U8:
-                    sparkErr = read(f, 1)[0]
-                    print(f"{recordCnt:10}: NOSPRK: {sparkErr:02X}")
+                    sparkErr = read(f, L.LOGID_ECU_NOSPARK_DLEN)[0]
+                    print(f"{fmt_record(recordCnt)}: NOSPRK: {sparkErr:02X}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('ecu_nospark', [h5_writer.time_ns, sparkErr])
 
                 # EP-specific events
                 elif byte == L.LOGID_GEN_EP_LOG_VER_TYPE_U8:
-                    rd = read(f, 1)
-                    print(f"{recordCnt:10}: EPV:    {rd[0]}")
+                    rd = read(f, L.LOGID_GEN_EP_LOG_VER_DLEN)
+                    print(f"{fmt_record(recordCnt)}: EPV:    {rd[0]}")
 
                 elif byte == L.LOGID_EP_LOAD_NAME_TYPE_U8:
                     # Each write to this address appends the next byte as a char to the EPROM_ID_STR
-                    c = read(f, 1)[0]
+                    c = read(f, L.LOGID_EP_LOAD_NAME_DLEN)[0]
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                     if (c != 0):
@@ -1183,18 +1266,18 @@ def main():
                     else:
                         currentEpromId = epromIdString
                         epromIdString = ""
-                        print(f"{recordCnt:10}: LOAD:   {currentEpromId}")
+                        print(f"{fmt_record(recordCnt)}: LOAD:   {currentEpromId}")
 
                 elif byte == L.LOGID_EP_LOAD_ADDR_TYPE_U16:
                     epromStartAddr = int.from_bytes(read(f, L.LOGID_EP_LOAD_ADDR_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: ADDR:   0x{epromStartAddr:04X}")
+                    print(f"{fmt_record(recordCnt)}: ADDR:   0x{epromStartAddr:04X}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.current_eprom_addr = epromStartAddr
 
                 elif byte == L.LOGID_EP_LOAD_LEN_TYPE_U16:
                     epromLen = int.from_bytes(read(f, L.LOGID_EP_LOAD_LEN_DLEN), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: LEN:    0x{epromLen:04X}")
+                    print(f"{fmt_record(recordCnt)}: LEN:    0x{epromLen:04X}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.current_eprom_len = epromLen
@@ -1202,43 +1285,43 @@ def main():
                 elif byte == L.LOGID_EP_LOAD_ERR_TYPE_U8:
                     loadErr = read(f, L.LOGID_EP_LOAD_ERR_DLEN)[0]
                     if loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOERR:
-                        print(f"{recordCnt:10}: STAT:   ERR_NOERR")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NOERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOTFOUND:
-                        print(f"{recordCnt:10}: STAT:   ERR_NOTFOUND")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NOTFOUND")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NONAME:
-                        print(f"{recordCnt:10}: STAT:   ERR_NONAME")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NONAME")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_CKSUMERR:
-                        print(f"{recordCnt:10}: STAT:   ERR_CKSUMERR")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_CKSUMERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_VERIFYERR:
-                        print(f"{recordCnt:10}: STAT:   ERR_VERIFYERR")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_VERIFYERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADOFFSET:
-                        print(f"{recordCnt:10}: STAT:   ERR_BADOFFSET")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BADOFFSET")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADLENGTH:
-                        print(f"{recordCnt:10}: STAT:   ERR_BADLENGTH")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BADLENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NODAUGHTERBOARDKEY:
-                        print(f"{recordCnt:10}: STAT:   ERR_NODAUGHTERBOARDKEY")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NODAUGHTERBOARDKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOMEMKEY:
-                        print(f"{recordCnt:10}: STAT:   ERR_NOMEMKEY")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NOMEMKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_M3FAIL:
-                        print(f"{recordCnt:10}: STAT:   ERR_M3FAIL")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_M3FAIL")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYSTART:
-                        print(f"{recordCnt:10}: STAT:   ERR_MISSING_KEY_START")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_MISSING_KEY_START")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYLENGTH:
-                        print(f"{recordCnt:10}: STAT:   ERR_MISSING_KEY_LENGTH")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_MISSING_KEY_LENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYM3:
-                        print(f"{recordCnt:10}: STAT:   ERR_KEY_M3")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_KEY_M3")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADM3BSONTYPE:
-                        print(f"{recordCnt:10}: STAT:   ERR_BAD_M3_BSON_TYPE")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BAD_M3_BSON_TYPE")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADM3VALUE:
-                        print(f"{recordCnt:10}: STAT:   ERR_BAD_M3_VALUE")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BAD_M3_VALUE")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOBINKEY:
-                        print(f"{recordCnt:10}: STAT:   ERR_NOBINKEY")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NOBINKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADBINLENGTH:
-                        print(f"{recordCnt:10}: STAT:   ERR_BADBINLENGTH")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BADBINLENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADBINSUBTYPE:
-                        print(f"{recordCnt:10}: STAT:   ERR_BADBINSUBTYPE")
+                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BADBINSUBTYPE")
                     else:
-                        print(f"{recordCnt:10}: STAT:   *** Unknown error: 0x{loadErr:02X}")
+                        print(f"{fmt_record(recordCnt)}: STAT:   *** Unknown error: 0x{loadErr:02X}")
 
                     # Finalize EPROM load record for HDF5
                     if h5_writer:
@@ -1259,28 +1342,55 @@ def main():
                 # WP-specific events
                 elif byte == L.LOGID_GEN_WP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_WP_LOG_VER_DLEN)
-                    print(f"{recordCnt:10}: WPV:    {rd[0]}")
+                    print(f"{fmt_record(recordCnt)}: WPV:    {rd[0]}")
 
                 elif byte == L.LOGID_WP_CSECS_TYPE_U8:
                     csecs = read(f, L.LOGID_WP_CSECS_DLEN)[0]
-                    print(f"{recordCnt:10}: CS:     {csecs:02}")
+                    print(f"{fmt_record(recordCnt)}: CS:     {csecs:02}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_csecs = csecs
 
                 elif byte == L.LOGID_WP_SECS_TYPE_U8:
-                    global gps_last_sec_time_ns
+                    global gps_last_sec_time_ns, gps_first_sec_time_ns, gps_sec_count
                     secs = read(f, L.LOGID_WP_SECS_DLEN)[0]
 
                     # Update global time tracking
                     update_global_time(has_timestamp=False)
 
-                    # Calculate elapsed nanoseconds since last SEC change
-                    if gps_last_sec_time_ns >= 0:
-                        elapsed_ns = global_time_ns - gps_last_sec_time_ns
-                        print(f"{recordCnt:10}: SEC:    {secs:02}  (elapsed: {elapsed_ns:,} ns = {elapsed_ns/1e9:.6f} sec)")
+                    # Track GPS SEC events for drift calculation
+                    if gps_last_sec_time_ns < 0:
+                        # First GPS SEC - just record it
+                        print(f"{fmt_record(recordCnt)}: SEC:    {secs:02}  (first GPS SEC)")
+                    elif gps_first_sec_time_ns < 0:
+                        # Second GPS SEC - use this as the reference point for drift calculation
+                        gps_first_sec_time_ns = global_time_ns
+                        elapsed_since_last_ns = global_time_ns - gps_last_sec_time_ns
+                        print(f"{fmt_record(recordCnt)}: SEC:    {secs:02}  " +
+                              f"(Δlast: {elapsed_since_last_ns/1e9:.6f}s, reference point for drift tracking)")
                     else:
-                        print(f"{recordCnt:10}: SEC:    {secs:02}  (first SEC)")
+                        # Third and subsequent GPS SEC events - calculate drift
+                        gps_sec_count += 1
+
+                        # Calculate elapsed time since last SEC
+                        elapsed_since_last_ns = global_time_ns - gps_last_sec_time_ns
+
+                        # Calculate total elapsed retrospective time since second GPS SEC
+                        total_elapsed_ns = global_time_ns - gps_first_sec_time_ns
+                        total_elapsed_sec = total_elapsed_ns / 1e9
+
+                        # Calculate expected elapsed time based on GPS SEC count
+                        # (each SEC event should be ~1 second apart)
+                        expected_elapsed_sec = float(gps_sec_count)
+
+                        # Calculate drift: positive means clock is running fast, negative means slow
+                        drift_sec = total_elapsed_sec - expected_elapsed_sec
+                        drift_ppm = (drift_sec / expected_elapsed_sec) * 1e6 if expected_elapsed_sec > 0 else 0
+
+                        print(f"{fmt_record(recordCnt)}: SEC:    {secs:02}  " +
+                              f"(Δlast: {elapsed_since_last_ns/1e9:.6f}s, " +
+                              f"Σretro: {total_elapsed_sec:.3f}s, " +
+                              f"drift: {drift_sec:+.3f}s = {drift_ppm:+.1f}ppm)")
 
                     gps_last_sec_time_ns = global_time_ns
 
@@ -1290,35 +1400,35 @@ def main():
 
                 elif byte == L.LOGID_WP_MINS_TYPE_U8:
                     mins = read(f, L.LOGID_WP_MINS_DLEN)[0]
-                    print(f"{recordCnt:10}: MIN:    {mins:02}")
+                    print(f"{fmt_record(recordCnt)}: MIN:    {mins:02}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_mins = mins
 
                 elif byte == L.LOGID_WP_HOURS_TYPE_U8:
                     hours = read(f, L.LOGID_WP_HOURS_DLEN)[0]
-                    print(f"{recordCnt:10}: HRS:    {hours:02}")
+                    print(f"{fmt_record(recordCnt)}: HRS:    {hours:02}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_hours = hours
 
                 elif byte == L.LOGID_WP_DATE_TYPE_U8:
                     date = read(f, L.LOGID_WP_DATE_DLEN)[0]
-                    print(f"{recordCnt:10}: DT:     {date:02}")
+                    print(f"{fmt_record(recordCnt)}: DT:     {date:02}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_date = date
 
                 elif byte == L.LOGID_WP_MONTH_TYPE_U8:
                     month = read(f, L.LOGID_WP_MONTH_DLEN)[0]
-                    print(f"{recordCnt:10}: MON:    {month:02}")
+                    print(f"{fmt_record(recordCnt)}: MON:    {month:02}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_month = month
 
                 elif byte == L.LOGID_WP_YEAR_TYPE_U8:
                     year = read(f, L.LOGID_WP_YEAR_DLEN)[0]
-                    print(f"{recordCnt:10}: YR:     {year:02}")
+                    print(f"{fmt_record(recordCnt)}: YR:     {year:02}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_year = year
@@ -1337,7 +1447,7 @@ def main():
 
                 elif byte == L.LOGID_WP_FIXTYPE_TYPE_U8:
                     fix = read(f, L.LOGID_WP_FIXTYPE_DLEN)[0]
-                    print(f"{recordCnt:10}: FIX:    {fix}")
+                    print(f"{fmt_record(recordCnt)}: FIX:    {fix}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('gps_fix_type', [h5_writer.time_ns, fix])
@@ -1348,7 +1458,7 @@ def main():
                     alen = L.LOGID_WP_GPS_POSN_DLEN // 2
                     lat =  int.from_bytes(read(f, alen, newLine=False), byteorder='little', signed=True) / 10000000.0
                     long = int.from_bytes(read(f, alen), byteorder='little', signed=True) / 10000000.0
-                    print(f"{recordCnt:10}: GPS_POSN: {lat:.8f} {long:.8f}")
+                    print(f"{fmt_record(recordCnt)}: GPS_POSN: {lat:.8f} {long:.8f}")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('gps_position', [h5_writer.time_ns, lat, long])
@@ -1360,7 +1470,7 @@ def main():
                         # Trouble: This reading is way too fast!
                         print(f"ERR: At byte {(f.tell()-L.LOGID_WP_GPS_VELO_DLEN):08X}: L.LOGID_WP_GPS_VELO_TYPE_U16 is beyond 200 MPH: {vel/10.0}, ignoring!", file=sys.stderr)
                     else:
-                        print(f"{recordCnt:10}: GPS_VEL: {vel:.1f}")
+                        print(f"{fmt_record(recordCnt)}: GPS_VEL: {vel:.1f}")
                         if h5_writer:
                             h5_writer.update_time(has_timestamp=False)
                             h5_writer.append_data('gps_velocity_mph', [h5_writer.time_ns, vel])
@@ -1368,7 +1478,7 @@ def main():
                 elif byte == L.LOGID_WP_WR_TIME_TYPE_U16:
                     # Time follows as 2 bytes, LSB first
                     wrTime = int.from_bytes(read(f, 2), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: WRT:    {wrTime} msec")
+                    print(f"{fmt_record(recordCnt)}: WRT:    {wrTime} msec")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('wp_fs_write_time_ms', [h5_writer.time_ns, wrTime])
@@ -1376,13 +1486,13 @@ def main():
                 elif byte == L.LOGID_WP_SYNC_TIME_TYPE_U16:
                     # Log filesystem sync() time follows as 2 bytes, LSB first
                     syncTime = int.from_bytes(read(f, 2), byteorder='little', signed=False)
-                    print(f"{recordCnt:10}: SYT:    {syncTime} msec")
+                    print(f"{fmt_record(recordCnt)}: SYT:    {syncTime} msec")
                     if h5_writer:
                         h5_writer.update_time(has_timestamp=False)
                         h5_writer.append_data('wp_fs_sync_time_ms', [h5_writer.time_ns, syncTime])
 
                 else:
-                    print(f"{recordCnt:10}: ERR:    Unknown LOGID 0x{byte:02X}")
+                    print(f"{fmt_record(recordCnt)}: ERR:    Unknown LOGID 0x{byte:02X}")
                     #read(f, 1)
 
     except FileNotFoundError:

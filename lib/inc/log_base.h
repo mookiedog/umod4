@@ -37,14 +37,15 @@
 // The system may optionally define literal constants to help decode raw data associated with a specific LOGID.
 // If present, the naming convention is chosen to make sure that literals are to be associated with specific LOGID values:
 //    LOGID_<subsystem>_<name>_VAL_<constant_name>
-
+//
 // Data Types
 //
 // The data associated with each LOGID is typed. The type information will be encoded in the TYPE name
 // by appending the various type ID strings 'XX' shown below using the general form LOGID_<subsystem>_<name>_TYPE_XX:
 //    _I16  int16
 //    _U16  uint16
-//    _TS   uint16 based on an HC11 free-running timer, zeroed at boot time. The time stamp has 2 microsecond resolution.
+//    _TS   uint16  Timestamp
+//    _T    uint16  A 'time' indicates a time associated with the event. 
 //    _I8   int8
 //    _U8   uint8
 //    _B    boolean (0 means false, and non-zero means true)

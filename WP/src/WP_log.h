@@ -38,6 +38,10 @@
 #define LOGID_WP_GPS_VELO_TYPE_U16                  ((LOGID_WP_BASE) + 0x0A)
 #define LOGID_WP_GPS_VELO_DLEN                      2
 
+// Mark the fact that we saw a PPS event
+#define LOGID_WP_GPS_PPS_TYPE_V                     ((LOGID_WP_BASE) + 0x0B)
+#define LOGID_WP_GPS_PPS_DLEN                       0
+
 // Log filesystem IO operations.
 // Time will be stored as 2 bytes representing milliseconds.
 // Times >= 65535 mSec will be clamped to 65535 mSec, or just over a minute.

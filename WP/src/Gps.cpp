@@ -74,6 +74,15 @@ void start_gps_rxTask(void *pvParameters)
     panic(LOCATION("Should never return"));
 }
 
+// ----------------------------------------------------------------------------------
+extern "C" void pps_isr(uint gpio, uint32_t events);
+
+void pps_isr(uint gpio, uint32_t events)
+{
+    if (gpio == GPS_PPS_PIN) {
+        if (logger) logger->logData(LOGID_WP_GPS_PPS_TYPE_V, LOGID_WP_GPS_PPS_DLEN, 0);
+    }
+}
 
 // ----------------------------------------------------------------------------------
 Gps::Gps(Uart* _uart) /*: UartCallback()*/
@@ -105,6 +114,10 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
     nanos = 0;
     
     moving = false;
+
+    // We will log GPS PPS events just to help sync GPS to ECU log events.
+    // The GPS PPS/Timepulse signal is synchronized to the rising edge, forming a 100 mSec duration high pulse.
+    gpio_set_irq_enabled_with_callback(GPS_PPS_PIN, GPIO_IRQ_EDGE_RISE, true, &pps_isr);
 }
 
 

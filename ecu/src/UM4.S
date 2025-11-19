@@ -776,12 +776,7 @@ ECU_ERROR_L000C_U8_prev       = 0x017F
 ECU_ERROR_L000D_U8_prev       = 0x0180
 RAW_AAP_U8_prev               = 0x0181
 FUEL_PUMP_B_prev              = 0x0182
-
-; The crank event ISR always sets CRANK_TIMEOUT to MAX.
-; The ADC conversion result processing routine decrements CRANK_TIMEOUT every ADC conversion.
-CRANK_TIMEOUT                 = 0x0183
-CRANK_TIMEOUT_MAX             = (7-1)
-
+half_overflow                 = 0x0183
 
 ;*****************************************************************
 ;68HC11G IO Register Map
@@ -803,17 +798,18 @@ OC1D    =       0x100D
 TCNT    =       0x100E
 TIC1    =       0x1010                          ; will be used to capture CAM events
 TIC2    =       0x1012                          ; will be used to capture CRANK events
-TIC3    =       0x1014
-TOC1    =       0x1016
-TOC2    =       0x1018
-TOC3    =       0x101A
-TOC4    =       0x101C
-TO5I4    =      0x101E                          ; was TOC5
+TIC3    =       0x1014                          ; captures when coil X1 fired
+TOC1    =       0x1016                          ; drives front coils
+TOC2    =       0x1018                          ; drives rear coils
+TOC3    =       0x101A                          ; drives front injector
+TOC4    =       0x101C                          ; drives rear injector
+TO5I4   =       0x101E                          ; capture when coil x2 fired (was TOC5)
 TCTL1   =       0x1020
 TCTL2   =       0x1021
 TMSK1   =       0x1022
 TFLG1   =       0x1023
 TMSK2   =       0x1024
+TFLG2   =       0x1025
 
 PACTL   =       0x1026
 
@@ -1995,7 +1991,7 @@ LC05C:  ldaA    #0x90                   ;Disable interrupts, disable STOP mode
         ldaA    #0x0F                   ;IC5/IC6 disabled, OC6/OC7 are set to 1 on timer compare match
         staA    TCTL3
 
-        ldaA    #0x00                   ;TMSK2=0
+        ldaA    #0x80                   ;TMSK2=0x80: Timer Overflow 1 enabled, everything else disabled
         staA    TMSK2
 
         ldaA    #0x00                   ;TCNT1 & TCNT2 are free running,
@@ -2708,18 +2704,20 @@ LC46F:  ldaA    ADCTL
 
 ;A/D Conversion is complete.
 1:      
-        ldaA    CRANK_TIMEOUT           ;This will trigger the very first time since RAM is zeroed
-        tstA
-        bne     99f
 
-; We haven't seen a crank event for ((CRANK_TIMEOUT_MAX+1) * ADC conversion attempts)
-; We emit a timestamp just so that a log decoder will not miss any overflow events
-        ldD     TCNT
-        stD     LW+LOGID_ECU_TIME_MARKER_TYPE_TS
-        ldaA    CRANK_TIMEOUT_MAX+1
-99:     decA
-        staA    CRANK_TIMEOUT
-        
+; The OFLO ISR will set 'half_overflow' non-zero when we need to look for TCNT being >0x8000
+        ldaA    half_overflow           ; should we check if we need to send a time marker?
+        beq     99f                     ; no
+        sei
+        ldD     TCNT                    ; Yes: read the current time
+        bpl     98f                     ; if B15 of current time is 0, its too soon
+
+; B15 has finally transitioned to 1 meaning we are at least half-way through this timer period.
+        stD     LW+LOGID_ECU_T1_HOFLO_TYPE_TS
+        clrA
+        staA    half_overflow
+98:     cli
+99:
         clr     *L001A                  ;reset the conversion timeout counter for the next conversion
 
         ldaB    ADCTL                   ;which channel did we just convert?
@@ -7943,7 +7941,7 @@ IC2F_ISR_2:
         addD    #0x0010                 ;which will fire the Front coil
         stD     TOC1
 
-        stD     LW+LOGID_ECU_F_COIL_MAN_OFF_TYPE_TS
+        stD     LW+LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS
 
         ldaA    #0x80                   ;writing B7 clears the OC1I interrupt request bit
         staA    TFLG1
@@ -7976,7 +7974,7 @@ IC2F_ISR_3:
         addD    #0x0010
         stD     TOC2
 
-        stD     LW+LOGID_ECU_R_COIL_MAN_OFF_TYPE_TS
+        stD     LW+LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS
 
         ldaA    #0x40                   ;setting B6 clears the OC2 interrupt request flag
         staA    TFLG1
@@ -8221,9 +8219,6 @@ IC2F_ISR_24:
         ldD     L015E                   ;get the current_IC2_count
         stD     *L0059                  ;  - save it as start time for the current crank ref
         stD     LW+LOGID_ECU_CRANKREF_START_TYPE_TS
-
-        ldaA    #CRANK_TIMEOUT_MAX      ;reset the crank timeout to its max value every time we see a crank event
-        staA    CRANK_TIMEOUT
 
         ldaA    *L0055                  ;get the current crank ID and log it
         staA    LW+LOGID_ECU_CRANKREF_ID_TYPE_U8
@@ -10136,7 +10131,7 @@ OC1F_ISR:
 ;some time during this crankref period.
 
         ldD     *L00FF                  ;get the precalculated time from start of CR4 event to spark fire
-        stD     LW+LOGID_ECU_F_COIL_OFF_TYPE_TS
+        stD     LW+LOGID_ECU_F_COIL_OFF_TYPE_PTS
 
 4:
         stD     TOC1                    ;use that time to fire the spark
@@ -10191,7 +10186,7 @@ OC2F_ISR:
 3:
         brset   *L000B #0b00000100 2b   ;branch if a spark is NOT armed?
         ldD     L0101
-        stD     LW+LOGID_ECU_R_COIL_OFF_TYPE_TS
+        stD     LW+LOGID_ECU_R_COIL_OFF_TYPE_PTS
 
 4:
         stD     TOC2
@@ -10682,7 +10677,7 @@ LF48C:  ldaA    TCTL1
         addD    #0x0005
         stD     TOC3
 
-        stD     LW+LOGID_ECU_F_INJ_ON_TYPE_TS ; 5E [14]  +7.0 uSec: log the injector ON timestamp
+        stD     LW+LOGID_ECU_F_INJ_ON_TYPE_PTS ; 5E [14]  +7.0 uSec: log the injector ON timestamp
         addD    TOC3                    ;6E [20] +10.0 uSec: pointless, except as a NOP
 #else
         ldD     TCNT
@@ -10732,7 +10727,7 @@ LF4D1:  ldaA    TCTL1
         stD     TOC4                    ; 5E [ 9]  +4.5 uSec: ...that that enables the REAR fuel injector
 
 ; D contains the injector ON timestamp:
-        stD     LW+LOGID_ECU_R_INJ_ON_TYPE_TS ; 5E [14]  +7.0 uSec: log it
+        stD     LW+LOGID_ECU_R_INJ_ON_TYPE_PTS ; 5E [14]  +7.0 uSec: log it
         addD    TOC4                    ; 6E [20] +10.0 uSec: a NOP, since D is not used
 #else
         ldD     TCNT                    ; mark time T0
@@ -11340,10 +11335,21 @@ _por:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_RESET
 ; Intentional fall through!
 
 _log:   ldaB    #LOGID_GEN_ECU_LOG_VER_VAL_V0
-        staB    LW+LOGID_GEN_ECU_LOG_VER_TYPE_U8             ; #1: log version information before anything else
+        staB    LW+LOGID_GEN_ECU_LOG_VER_TYPE_U8        ; #1: log version information before anything else
 
-        staA    LW+LOGID_ECU_CPU_EVENT_TYPE_U8               ; #2: log the specific CPU event that got us here
+        staA    LW+LOGID_ECU_CPU_EVENT_TYPE_U8          ; #2: log the specific CPU event that got us here
         jmp     reset                                   ; Boot the ECU
+
+
+; To help with tracking of elapsed time in the log, we log all timer1 overflow events
+T1_OFLO_ISR:
+        ldD     TCNT
+        stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; log the overflow event
+
+        ldaA    #0x80                                   ; ACK the overflow interrupt 
+        staA    TFLG2
+        staA    half_overflow                           ; just needs to be non-zero
+        rti
 
 ;----------------------------------------------------------------
 lastInstr:
@@ -11375,7 +11381,7 @@ LFFC0:      .word   reset               ;reserved FFC0/FFC1
             .word   reset               ;SPI serial transfer complete
             .word   reset               ;Pulse Accumulator Input Edge
             .word   reset               ;Pulse Accumulator Overflow
-            .word   reset               ;Timer Overflow 1
+            .word   T1_OFLO_ISR         ;Timer Overflow 1
 OC5F:       .word   _oc5f               ;Timer Output Compare 5 / Input Capture 4
 OC4F:       .word   _oc4f               ;Timer Output Compare 4
 OC3F:       .word   _oc3f               ;Timer Output Compare 3

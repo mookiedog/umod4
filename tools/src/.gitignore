@@ -2,3 +2,5 @@
 __*/
 # Ignore any filename starting with double underscore:
 __*
+
+viz.py.*

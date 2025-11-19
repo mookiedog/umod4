@@ -764,6 +764,9 @@ def min_max_decimate(time_array, value_array, target_points):
     This ensures that when zoomed out, you still see all the peaks and valleys
     in the data, unlike simple decimation which might miss spikes.
 
+    For each bin, we keep: first point, min, max, and last point to ensure
+    continuity and preserve all features.
+
     Args:
         time_array: numpy array of time values
         value_array: numpy array of data values
@@ -778,9 +781,9 @@ def min_max_decimate(time_array, value_array, target_points):
     if n <= target_points:
         return time_array, value_array
 
-    # Each bin contributes 2 points (min and max)
-    # So we need target_points/2 bins
-    num_bins = max(1, target_points // 2)
+    # Each bin contributes up to 4 points (first, min, max, last)
+    # So we need target_points/4 bins
+    num_bins = max(1, target_points // 4)
     bin_size = max(1, n // num_bins)
 
     result_time = []
@@ -793,17 +796,21 @@ def min_max_decimate(time_array, value_array, target_points):
         if len(bin_values) == 0:
             continue
 
+        # Always keep first and last points of each bin for continuity
+        first_idx = 0
+        last_idx = len(bin_values) - 1
+
         # Find min and max indices within this bin
         min_idx = bin_values.argmin()
         max_idx = bin_values.argmax()
 
-        # Add both points in time order to maintain monotonic time axis
-        if min_idx < max_idx:
-            result_time.extend([bin_time[min_idx], bin_time[max_idx]])
-            result_values.extend([bin_values[min_idx], bin_values[max_idx]])
-        else:
-            result_time.extend([bin_time[max_idx], bin_time[min_idx]])
-            result_values.extend([bin_values[max_idx], bin_values[min_idx]])
+        # Collect unique indices in time order
+        indices = sorted(set([first_idx, min_idx, max_idx, last_idx]))
+
+        # Add all unique points in time order
+        for idx in indices:
+            result_time.append(bin_time[idx])
+            result_values.append(bin_values[idx])
 
     return np.array(result_time), np.array(result_values)
 
