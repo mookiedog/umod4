@@ -2705,19 +2705,30 @@ LC46F:  ldaA    ADCTL
 ;A/D Conversion is complete.
 1:      
 
-; The OFLO ISR will set 'half_overflow' non-zero when we need to look for TCNT being >0x8000
-        ldaA    half_overflow           ; should we check if we need to send a time marker?
+; The OFLO ISR will have set 'half_overflow' non-zero to indicate we should check for TCNT being >0x8000
+        ldaA    half_overflow           ; Are we allowed to check yet?
         beq     99f                     ; no
-        sei
-        ldD     TCNT                    ; Yes: read the current time
-        bpl     98f                     ; if B15 of current time is 0, its too soon
 
-; B15 has finally transitioned to 1 meaning we are at least half-way through this timer period.
-        stD     LW+LOGID_ECU_T1_HOFLO_TYPE_TS
+; Check and see if the MS bit of the timer has become set,
+; indicating we have transitioned into the upper half of the timer count:
+        sei                             ; begin critical section:
+        ldX     TCNT                            ; Read the current time
+        bpl     98f                             ; if B15 of current time is 0, its too soon
+
+; Before logging TCNT, check to see if either IC1 (cam) or IC2 (crank) has become pending
+; since entering this critical section:
+        ldaA    TFLG1
+        andA    #0x06
+        bne     98f                             ; Yes: abort logging our marker and let the IC ISR run first
+                                                ; Next time through, we will try again.
+
+; All is clear: no pending IC ISR, so we are free to log our half-overflow event
+        stX     LW+LOGID_ECU_T1_HOFLO_TYPE_TS
         clrA
         staA    half_overflow
-98:     cli
+98:     cli                             ; end critical section
 99:
+
         clr     *L001A                  ;reset the conversion timeout counter for the next conversion
 
         ldaB    ADCTL                   ;which channel did we just convert?
@@ -8358,8 +8369,8 @@ IC2F_ISR_34:
         jmp     IC2F_ISR_50
 
 ;-----------------------------------------------------------------
-;This is crankRef CR6 (midway through power stroke): Verify that both
-;FRONT coils generated sparks during CR4 or CR5.
+; This is crankRef CR6 (midway through front cyl power stroke)
+; Verify that both FRONT coils generated sparks prior to CR6, i.e. during CR4 or CR5.
 ;
 ; As per the circuit diagrams, a spark event on either the front or rear #1 coil
 ; will trigger IC3, and a spark event on either the front or rear #2 coil
@@ -8384,7 +8395,7 @@ IC2F_ISR_35:
 
          cmpA   #0x01
          bne    1f
-         ldaB   #11                     ; we didn't see coil #11 fire
+         ldaB   #11                     ; we didn't see front coil #1 fire
          staB   LW+LOGID_ECU_NOSPARK_TYPE_U8
 1:
         cmpA    #0x02
@@ -8395,10 +8406,10 @@ IC2F_ISR_35:
         bset    *L000F #0b00010000      ;sets the 'sticky' error bit, too
         bra     IC2F_ISR_38
 
-;We did see a spark:
+; If we get here, we saw a spark on the front cyl plug #1 prior to this active period CR6:
 IC2F_ISR_36:
          ldD    TIC3                    ; log the timestamp when coil #1 fired
-         stD    LW+LOGID_ECU_SPRK_X1_TYPE_TS
+         stD    LW+LOGID_ECU_SPRK_X1_TYPE_T
         ldaA    L0147                   ;had we seen an error previously?
         bne     IC2F_ISR_37             ;if so, then don't clear the error indicator just yet
 
@@ -8422,7 +8433,7 @@ IC2F_ISR_38:
         
          cmpA   #0x01
          bne    1f
-         ldaB   #12                     ; we didn't see coil #12 fire
+         ldaB   #12                     ; we didn't see front coil #2 fire
          staB   LW+LOGID_ECU_NOSPARK_TYPE_U8
 1:
         cmpA    #0x02
@@ -8433,10 +8444,10 @@ IC2F_ISR_38:
         bset    *L000F #0b00001000      ;sets the 'sticky' error bit, too
         jmp     IC2F_ISR_48             ; was 'bra' but out of range after adding spark logging
 
-;We get here if we did see a spark:
+; If we get here, we saw a spark on the front cyl plug #2 prior to this active period CR6:
 IC2F_ISR_39:
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
-         stD    LW+LOGID_ECU_SPRK_X2_TYPE_TS
+         stD    LW+LOGID_ECU_SPRK_X2_TYPE_T
         ldaA    L0148                   ;had we seen an error previously?
         bne     IC2F_ISR_40             ;if so, then don't clear the error indicator just yet
 
@@ -8450,8 +8461,8 @@ IC2F_ISR_41:
         bra     IC2F_ISR_48
 
 ;-----------------------------------------------------------------
-;This is crankRef CR11 (midway through power stroke): Verify that both REAR coils generated sparks
-;during CR9 or CR10, but only if they had a charge event registered.
+; This is crankRef CR11 (midway through rear cyl power stroke)
+; Verify that both FRONT coils generated sparks prior to CR6, i.e. during CR4 or CR5.
 
 IC2F_ISR_42:
         brclr   *L0006 #0b00000100 IC2F_ISR_49  ;br if the REAR coil did NOT have a charge event registered
@@ -8470,7 +8481,7 @@ IC2F_ISR_42:
 
          cmpA   #0x01
          bne    1f
-         ldaB   #21                     ; we didn't see coil #21 fire
+         ldaB   #21                     ; we didn't see rear coil #1 fire
          staB   LW+LOGID_ECU_NOSPARK_TYPE_U8
 1:
         cmpA    #0x02
@@ -8481,10 +8492,10 @@ IC2F_ISR_42:
         bset    *L000F #0b00000100      ;sets the 'sticky' error bit, too
         bra     IC2F_ISR_45
 
-;If we get here, we did see a spark:
+; If we get here, we saw a spark on the rear cyl plug #1 prior to this active period CR11:
 IC2F_ISR_43:
          ldD    TIC3                    ; log the timestamp when coil #1 fired
-         stD    LW+LOGID_ECU_SPRK_X1_TYPE_TS
+         stD    LW+LOGID_ECU_SPRK_X1_TYPE_T
         ldaA    L0149                   ;had we seen an error previously?
         bne     IC2F_ISR_44             ;if so, then don't clear the error indicator just yet
 
@@ -8507,7 +8518,7 @@ IC2F_ISR_45:
 
          cmpA   #0x01
          bne    1f
-         ldaB   #0x22                   ; we didn't see coil #22 fire
+         ldaB   #0x22                   ; we didn't see rear coil #2 fire
          staB   LW+LOGID_ECU_NOSPARK_TYPE_U8
 1:
         cmpA    #0x02
@@ -8517,10 +8528,10 @@ IC2F_ISR_45:
         bset    *L000F #0b00000010      ;sets the 'sticky' error bit, too
         bra     IC2F_ISR_48
 
-;If we get here, we did see a spark:
+; If we get here, we saw a spark on the rear cyl plug #2 prior to this active period CR11:
 IC2F_ISR_46:
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
-         stD    LW+LOGID_ECU_SPRK_X2_TYPE_TS
+         stD    LW+LOGID_ECU_SPRK_X2_TYPE_T
         ldaA    L014A                   ;had we seen an error previously?
         bne     IC2F_ISR_47             ;if so, then don't clear the error indicator just yet
 
@@ -11342,7 +11353,36 @@ _log:   ldaB    #LOGID_GEN_ECU_LOG_VER_VAL_V0
 
 
 ; To help with tracking of elapsed time in the log, we log all timer1 overflow events
+; Notes: there is no possibility of a tie as to servicing OFLO versus input capture.
+; If the timer overflowed and we had an input capture on the same timer value (0x0000),
+; both of the input capture ISRs have higher priority than this overflow ISR.
 T1_OFLO_ISR:
+#if 1
+        ldaA    #0x80                                   ; ACK this overflow interrupt 
+        staA    TFLG2
+        staA    half_overflow                           ; this value just needs to be non-zero
+        
+        clrA
+        clrB
+        stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; The overflow event occurred at timer count 0x0000
+        rti
+#elif 0
+; If we see a pending capture ISR in this routine, it MUST have happened after the overflow.
+; That means we don't even have to log this rollover event.
+
+        ldaA    #0x80                                   ; ACK the overflow interrupt 
+        staA    TFLG2
+        staA    half_overflow                           ; this value just needs to be non-zero
+        
+        ldaA    TFLG1                                   ; check if either IC1 (cam) or IC2 (crank) has become pending
+        andA    #0x06                                   ; between the time that the counter rolled over and the time we got here
+        bne     99f                                     ; yes: there is no need to even emit this marker
+
+        clrA
+        clrB
+        stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; log the overflow event as having occurred at timer count 0x0000
+        rti
+#else
         ldD     TCNT
         stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; log the overflow event
 
@@ -11350,6 +11390,7 @@ T1_OFLO_ISR:
         staA    TFLG2
         staA    half_overflow                           ; just needs to be non-zero
         rti
+#endif
 
 ;----------------------------------------------------------------
 lastInstr:

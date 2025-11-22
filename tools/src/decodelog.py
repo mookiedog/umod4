@@ -311,27 +311,32 @@ class OutputHandler(ABC):
 # ================================================================================================
 
 class HDF5Writer:
-    """Writes decoded log data to HDF5 format with chunking and compression."""
+    """Writes decoded log data to HDF5 format with chunking and compression.
 
-    def __init__(self, filename, L):
+    NOTE: Time tracking is now handled by external TimeKeeper instance.
+    This class is responsible only for writing data to HDF5 datasets.
+    """
+
+    def __init__(self, filename, L, timekeeper):
         """Initialize HDF5 writer.
 
         Args:
             filename: Output HDF5 filename
             L: Logsyms class reference
+            timekeeper: TimeKeeper instance for time tracking
         """
         if not HDF5_AVAILABLE:
             raise ImportError("h5py and numpy are required for HDF5 output. Please install them.")
 
         self.filename = filename
         self.L = L
+        self.timekeeper = timekeeper  # Use external TimeKeeper
         self.h5file = None
         self.datasets = {}
 
-        # Unified time tracking
-        self.time_ns = 0
-        self.prev_timestamp = -1
-        self.in_upper_half = False  # Track which half of timer cycle we're in
+        # Buffering for performance (write in batches instead of one row at a time)
+        self.buffers = {}  # dataset_name -> list of data rows
+        self.buffer_size = 10000  # Flush buffer every N rows
 
         # Metadata tracking
         self.log_version_ecu = None
@@ -345,6 +350,9 @@ class HDF5Writer:
         # GPS back-calculation
         self.gps_sync_time_ns = None
         self.gps_first_time = None  # (csecs, secs, mins, hours, date, month, year)
+
+        # Prospective timestamp warnings (deprecated - will be removed)
+        self.prospective_past_warning_count = 0  # Prospective timestamps in the past
 
     def open(self):
         """Open HDF5 file and create resizable datasets with chunking."""
@@ -361,35 +369,43 @@ class HDF5Writer:
         ds_opts_1d = {'maxshape': (None,), 'chunks': chunk_1d, 'compression': 'gzip', 'compression_opts': 4}
         ds_opts_3d = {'maxshape': (None, 3), 'chunks': chunk_3d, 'compression': 'gzip', 'compression_opts': 4}
 
-        # ECU timing
-        self.datasets['ecu_t1_oflo_timestamp'] = self.h5file.create_dataset('ecu_t1_oflo_timestamp', (0, 2), dtype='uint64', **ds_opts)
-        
-        # Engine timing
+        # Engine timing (OFLO/HOFLO removed - used only for time tracking, not data logging)
         self.datasets['ecu_crankref_timestamp'] = self.h5file.create_dataset('ecu_crankref_timestamp', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_crankref_id'] = self.h5file.create_dataset('ecu_crankref_id', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_camshaft_timestamp'] = self.h5file.create_dataset('ecu_camshaft_timestamp', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_cam_error'] = self.h5file.create_dataset('ecu_cam_error', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_rpm_instantaneous'] = self.h5file.create_dataset('ecu_rpm_instantaneous', (0, 2), dtype='float64', **ds_opts)
         self.datasets['ecu_rpm_smoothed'] = self.h5file.create_dataset('ecu_rpm_smoothed', (0, 2), dtype='float64', **ds_opts)
-        self.datasets['ecu_time_marker'] = self.h5file.create_dataset('ecu_time_marker', (0, 2), dtype='uint64', **ds_opts)
 
-        # Fuel injection
-        self.datasets['ecu_front_inj_on'] = self.h5file.create_dataset('ecu_front_inj_on', (0, 2), dtype='uint64', **ds_opts)
+        # Fuel injection - dual events for prospective timestamps
+        # _calc: when ECU calculated the schedule (sequenced time)
+        # _actual: when injector actually turns on (prospective timestamp converted to absolute)
+        self.datasets['ecu_front_inj_on_calc'] = self.h5file.create_dataset('ecu_front_inj_on_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_front_inj_on_actual'] = self.h5file.create_dataset('ecu_front_inj_on_actual', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_front_inj_duration'] = self.h5file.create_dataset('ecu_front_inj_duration', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_rear_inj_on'] = self.h5file.create_dataset('ecu_rear_inj_on', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_inj_on_calc'] = self.h5file.create_dataset('ecu_rear_inj_on_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_inj_on_actual'] = self.h5file.create_dataset('ecu_rear_inj_on_actual', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_rear_inj_duration'] = self.h5file.create_dataset('ecu_rear_inj_duration', (0, 2), dtype='uint64', **ds_opts)
 
-        # Ignition
-        self.datasets['ecu_front_coil_on'] = self.h5file.create_dataset('ecu_front_coil_on', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_front_coil_off'] = self.h5file.create_dataset('ecu_front_coil_off', (0, 2), dtype='uint64', **ds_opts)
+        # Ignition - dual events for prospective timestamps
+        self.datasets['ecu_front_coil_on_calc'] = self.h5file.create_dataset('ecu_front_coil_on_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_front_coil_on_actual'] = self.h5file.create_dataset('ecu_front_coil_on_actual', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_front_coil_off_calc'] = self.h5file.create_dataset('ecu_front_coil_off_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_front_coil_off_actual'] = self.h5file.create_dataset('ecu_front_coil_off_actual', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_front_ign_delay'] = self.h5file.create_dataset('ecu_front_ign_delay', (0, 2), dtype='float32', **ds_opts)
-        self.datasets['ecu_front_coil_manual_on'] = self.h5file.create_dataset('ecu_front_coil_manual_on', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_front_coil_manual_off'] = self.h5file.create_dataset('ecu_front_coil_manual_off', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_rear_coil_on'] = self.h5file.create_dataset('ecu_rear_coil_on', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_rear_coil_off'] = self.h5file.create_dataset('ecu_rear_coil_off', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_front_coil_manual_on_calc'] = self.h5file.create_dataset('ecu_front_coil_manual_on_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_front_coil_manual_on_actual'] = self.h5file.create_dataset('ecu_front_coil_manual_on_actual', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_front_coil_manual_off_calc'] = self.h5file.create_dataset('ecu_front_coil_manual_off_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_front_coil_manual_off_actual'] = self.h5file.create_dataset('ecu_front_coil_manual_off_actual', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_coil_on_calc'] = self.h5file.create_dataset('ecu_rear_coil_on_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_coil_on_actual'] = self.h5file.create_dataset('ecu_rear_coil_on_actual', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_coil_off_calc'] = self.h5file.create_dataset('ecu_rear_coil_off_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_coil_off_actual'] = self.h5file.create_dataset('ecu_rear_coil_off_actual', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_rear_ign_delay'] = self.h5file.create_dataset('ecu_rear_ign_delay', (0, 2), dtype='float32', **ds_opts)
-        self.datasets['ecu_rear_coil_manual_on'] = self.h5file.create_dataset('ecu_rear_coil_manual_on', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_rear_coil_manual_off'] = self.h5file.create_dataset('ecu_rear_coil_manual_off', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_coil_manual_on_calc'] = self.h5file.create_dataset('ecu_rear_coil_manual_on_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_coil_manual_on_actual'] = self.h5file.create_dataset('ecu_rear_coil_manual_on_actual', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_coil_manual_off_calc'] = self.h5file.create_dataset('ecu_rear_coil_manual_off_calc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_rear_coil_manual_off_actual'] = self.h5file.create_dataset('ecu_rear_coil_manual_off_actual', (0, 2), dtype='uint64', **ds_opts)
 
         # Spark events
         self.datasets['ecu_spark_x1'] = self.h5file.create_dataset('ecu_spark_x1', (0, 2), dtype='uint64', **ds_opts)
@@ -431,77 +447,57 @@ class HDF5Writer:
         self.datasets['wp_fs_write_time_ms'] = self.h5file.create_dataset('wp_fs_write_time_ms', (0, 2), dtype='uint16', **ds_opts)
         self.datasets['wp_fs_sync_time_ms'] = self.h5file.create_dataset('wp_fs_sync_time_ms', (0, 2), dtype='uint16', **ds_opts)
 
-    def update_time(self, has_timestamp=False, raw_timestamp=None, is_overflow=False, is_marker=False):
-        """Update unified nanosecond counter.
-
-        Args:
-            has_timestamp: True if this event has a timestamp
-            raw_timestamp: The raw 16-bit timestamp value
-            is_overflow: True if this is a T1_OFLO event (timer wrapped 65535→0, b15: 1→0)
-            is_marker: True if this is a TIME_MARKER event (b15 went 0→1, timestamp ~32768)
-        """
-        if has_timestamp and raw_timestamp is not None:
-            if self.prev_timestamp >= 0:
-                delta_ticks = raw_timestamp - self.prev_timestamp
-
-                # OFLO and MARKER events are the authoritative anchors for the 64-bit timeline
-                if is_overflow:
-                    # OFLO: timer wrapped from ~65535 to ~0 (b15: 1→0)
-                    # Advance time by one full timer period
-                    self.time_ns += 65536 * 2000  # 131.072ms
-                    self.prev_timestamp = raw_timestamp
-                    self.in_upper_half = False  # Now in lower half (timestamps 0-32767)
-                elif is_marker:
-                    # MARKER: b15 went from 0→1 (timestamp ~32768)
-                    # Advance time by one full timer period
-                    self.time_ns += 65536 * 2000  # 131.072ms
-                    self.prev_timestamp = raw_timestamp
-                    self.in_upper_half = True  # Now in upper half (timestamps 32768-65535)
-                # Non-anchor timestamps: calculate delta normally
-                else:
-                    # Check if timestamp is in expected half of timer cycle
-                    ts_in_upper_half = (raw_timestamp >= 32768)
-                    if ts_in_upper_half != self.in_upper_half:
-                        # Timestamp from wrong half - it's out-of-order
-                        # Don't advance time, don't update prev_timestamp
-                        pass
-                    elif delta_ticks < 0:
-                        # Negative delta within same half = out-of-order event
-                        # Don't advance time, don't update prev_timestamp
-                        pass
-                    else:
-                        # Normal forward progress
-                        self.time_ns += delta_ticks * 2000
-                        self.prev_timestamp = raw_timestamp
-            else:
-                # First timestamp - initialize tracking
-                self.prev_timestamp = raw_timestamp
-                self.in_upper_half = (raw_timestamp >= 32768)
-        else:
-            self.time_ns += 1  # Untimestamped event
-
     def append_data(self, dataset_name, data):
-        """Append data to a resizable dataset.
+        """Append data to a resizable dataset (buffered for performance).
 
         Args:
             dataset_name: Name of the dataset
-            data: Numpy array or list to append
+            data: Numpy array or list to append (should be [time_ns, value] pair)
         """
         if dataset_name not in self.datasets:
             return
 
-        ds = self.datasets[dataset_name]
-        data_array = np.array([data]) if not isinstance(data, np.ndarray) else data
+        # Add to buffer
+        if dataset_name not in self.buffers:
+            self.buffers[dataset_name] = []
 
-        # Resize and append
+        self.buffers[dataset_name].append(data)
+
+        # Flush buffer if it reaches the threshold
+        if len(self.buffers[dataset_name]) >= self.buffer_size:
+            self._flush_buffer(dataset_name)
+
+    def _flush_buffer(self, dataset_name):
+        """Flush buffered data for a specific dataset to HDF5 file.
+
+        Args:
+            dataset_name: Name of the dataset to flush
+        """
+        if dataset_name not in self.buffers or not self.buffers[dataset_name]:
+            return
+
+        ds = self.datasets[dataset_name]
+        buffer_data = np.array(self.buffers[dataset_name])
+
+        # Resize once for entire buffer
         old_size = ds.shape[0]
-        ds.resize(old_size + 1, axis=0)
-        ds[old_size] = data_array
+        new_size = old_size + len(buffer_data)
+        ds.resize(new_size, axis=0)
+
+        # Write all buffered data at once
+        ds[old_size:new_size] = buffer_data
+
+        # Clear buffer
+        self.buffers[dataset_name] = []
 
     def close(self):
         """Write metadata and close HDF5 file."""
         if self.h5file is None:
             return
+
+        # Flush all remaining buffered data before closing
+        for dataset_name in list(self.buffers.keys()):
+            self._flush_buffer(dataset_name)
 
         # Write metadata as root attributes
         if self.log_version_ecu is not None:
@@ -575,7 +571,180 @@ maxDiff = 0.0
 import array as arr
 rpm_hist = arr.array('d', [])
 
-# Global time tracking for human-readable output
+# ================================================================================================
+# TimeKeeper Class - Simplified time tracking system
+# ================================================================================================
+
+class TimeKeeper:
+    """Manages 64-bit nanosecond time tracking with wraparound detection.
+
+    SIMPLIFIED: ECU firmware guarantees _TS events are in non-decreasing time order.
+    No reordering or lookahead needed - just handle wraparound correctly.
+
+    Implements the time tracking requirements:
+    - 64-bit nanosecond counter starting at 0
+    - 16-bit timer (2µs per tick) wraparound detection
+    - Retrospective spark timestamp calculation
+    - CRANKREF_ID state tracking
+    """
+
+    # Constants
+    TICKS_TO_NS = 2000              # 2µs per tick
+    TIMER_MAX = 65536               # 16-bit wraparound point
+
+    def __init__(self, verbose=False):
+        """Initialize time tracking.
+
+        Args:
+            verbose: Enable verbose logging for errors
+        """
+        # Time tracking - start at 0 as if first _TS was 0x0000
+        self.time_ns = 0
+        self.prev_ts = 0
+
+        # State tracking
+        self.crankref_id = None  # Current CRANKREF_ID value
+
+        # GPS PPS tracking for timer accuracy verification
+        self.first_pps_time_ns = None    # Time of first PPS event
+        self.last_pps_time_ns = None     # Time of most recent PPS event
+        self.pps_count = 0               # Number of PPS events seen
+
+        # Configuration
+        self.verbose = verbose
+
+    def process_ts_event(self, raw_ts, is_oflo=False, is_hoflo=False):
+        """Process a _TS (retrospective timestamp) event and advance time.
+
+        SIMPLIFIED: ECU guarantees _TS events are in non-decreasing order.
+        Negative delta always means wraparound (not out-of-order).
+
+        Args:
+            raw_ts: Raw 16-bit timestamp value
+            is_oflo: True if this is LOGID_ECU_T1_OFLO_TYPE_TS (optional hint)
+            is_hoflo: True if this is LOGID_ECU_T1_HOFLO_TYPE_TS (optional hint)
+
+        Returns:
+            Current absolute time in nanoseconds
+        """
+        # Calculate delta from previous timestamp
+        delta_ticks = raw_ts - self.prev_ts
+
+        # Handle wraparound: if delta is negative, timer must have wrapped
+        # (since ECU guarantees non-decreasing time order)
+        if delta_ticks < 0:
+            delta_ticks += self.TIMER_MAX
+
+        # Advance time
+        self.time_ns += delta_ticks * self.TICKS_TO_NS
+        self.prev_ts = raw_ts
+
+        return self.time_ns
+
+    def process_retrospective_t_event(self, raw_ts):
+        """Process a _TYPE_T event (spark timestamp from the past).
+
+        Spark events report timestamps of sparks that already occurred.
+        They are guaranteed to be in the past, within the previous timer cycle.
+
+        Args:
+            raw_ts: Raw 16-bit timestamp value
+
+        Returns:
+            Absolute time in nanoseconds when the spark actually occurred
+        """
+        # Calculate signed delta from current timestamp
+        delta_ticks = raw_ts - self.prev_ts
+
+        # If delta appears positive and large (>32768), it's actually from the past
+        # (wrapped around the timer)
+        if delta_ticks > 32768:
+            delta_ticks -= self.TIMER_MAX
+
+        # Calculate absolute time when spark occurred
+        spark_time_ns = self.time_ns + (delta_ticks * self.TICKS_TO_NS)
+
+        return spark_time_ns
+
+    def advance_time_by_ns(self, ns):
+        """Advance time by a fixed number of nanoseconds (for non-timestamped events).
+
+        Args:
+            ns: Nanoseconds to advance (typically 1)
+
+        Returns:
+            Current absolute time in nanoseconds
+        """
+        self.time_ns += ns
+        return self.time_ns
+
+    def get_time_ns(self):
+        """Get current absolute time in nanoseconds."""
+        return self.time_ns
+
+    def get_time_sec(self):
+        """Get current absolute time in seconds."""
+        return self.time_ns / 1e9
+
+    def set_crankref_id(self, crid):
+        """Update CRANKREF_ID state."""
+        self.crankref_id = crid
+
+    def process_pps_event(self):
+        """Process GPS PPS (Pulse Per Second) event.
+
+        Tracks PPS events and verifies ECU timer accuracy against GPS time.
+        GPS PPS marks the start of a new UTC second and is highly accurate.
+
+        Returns:
+            String with statistics to print, or None for first PPS
+        """
+        current_time_ns = self.time_ns
+        self.pps_count += 1
+
+        if self.first_pps_time_ns is None:
+            # First PPS - establish baseline
+            self.first_pps_time_ns = current_time_ns
+            self.last_pps_time_ns = current_time_ns
+            return None  # No stats for first PPS
+
+        # Calculate elapsed time since last PPS and since first PPS
+        ns_since_last_pps = current_time_ns - self.last_pps_time_ns
+        ns_since_first_pps = current_time_ns - self.first_pps_time_ns
+
+        # Convert to seconds
+        sec_since_last_pps = ns_since_last_pps / 1e9
+        sec_since_first_pps = ns_since_first_pps / 1e9
+
+        # Expected seconds (integer values since PPS marks whole seconds)
+        expected_sec_since_last = round(sec_since_last_pps)
+        expected_sec_since_first = self.pps_count - 1  # First PPS is at index 0
+
+        # Calculate errors
+        error_since_last_ns = ns_since_last_pps - (expected_sec_since_last * 1e9)
+        error_since_first_ns = ns_since_first_pps - (expected_sec_since_first * 1e9)
+
+        # Calculate PPM (parts per million) errors
+        ppm_since_last = (error_since_last_ns / (expected_sec_since_last * 1e9)) * 1e6 if expected_sec_since_last > 0 else 0
+        ppm_since_first = (error_since_first_ns / (expected_sec_since_first * 1e9)) * 1e6 if expected_sec_since_first > 0 else 0
+
+        # Update last PPS time
+        self.last_pps_time_ns = current_time_ns
+
+        # Format statistics
+        stats = (f"GPS_PPS: Δlast: {sec_since_last_pps:.6f}s "
+                f"(expect {expected_sec_since_last}s, err: {error_since_last_ns:+.0f}ns, {ppm_since_last:+.1f}ppm) | "
+                f"Δfirst: {sec_since_first_pps:.6f}s "
+                f"(expect {expected_sec_since_first}s, err: {error_since_first_ns:+.0f}ns, {ppm_since_first:+.1f}ppm)")
+
+        return stats
+
+    def get_crankref_id(self):
+        """Get current CRANKREF_ID value."""
+        return self.crankref_id
+
+
+# Global time tracking for human-readable output (OLD - to be replaced)
 global_time_ns = 0
 global_prev_timestamp = -1
 global_in_upper_half = False  # Track which half of timer cycle we're in
@@ -600,35 +769,38 @@ def update_global_time(has_timestamp=False, raw_timestamp=None, is_overflow=Fals
         if global_prev_timestamp >= 0:
             delta_ticks = raw_timestamp - global_prev_timestamp
 
-            # OFLO and MARKER events are the authoritative anchors for the 64-bit timeline
             if is_overflow:
-                # OFLO: timer wrapped from ~65535 to ~0 (b15: 1→0)
-                # Advance time by one full timer period
-                global_time_ns += 65536 * 2000  # 131.072ms
+                # OFLO: Timer wrapped. Timestamp is the counter value shortly after wrap.
+                # Delta = (65536 - prev_timestamp) + raw_timestamp
+                delta_ticks = (65536 - global_prev_timestamp) + raw_timestamp
+                global_time_ns += delta_ticks * 2000
                 global_prev_timestamp = raw_timestamp
                 global_in_upper_half = False  # Now in lower half (timestamps 0-32767)
-            elif is_marker:
-                # MARKER: b15 went from 0→1 (timestamp ~32768)
-                # Advance time by one full timer period
-                global_time_ns += 65536 * 2000  # 131.072ms
-                global_prev_timestamp = raw_timestamp
-                global_in_upper_half = True  # Now in upper half (timestamps 32768-65535)
-            # Non-anchor timestamps: calculate delta normally
+            # MARKER and all other timestamped events: calculate delta normally
             else:
                 # Check if timestamp is in expected half of timer cycle
                 ts_in_upper_half = (raw_timestamp >= 32768)
-                if ts_in_upper_half != global_in_upper_half:
-                    # Timestamp from wrong half - it's out-of-order
-                    # Don't advance time, don't update prev_timestamp
-                    pass
-                elif delta_ticks < 0:
-                    # Negative delta within same half = out-of-order event
-                    # Don't advance time, don't update prev_timestamp
-                    pass
-                else:
-                    # Normal forward progress
+
+                # Handle negative delta (wraparound or out-of-order)
+                if delta_ticks < 0:
+                    # Could be wraparound or out-of-order
+                    if ts_in_upper_half != global_in_upper_half:
+                        # Crossing half boundary - add wraparound
+                        delta_ticks += 65536
+                    else:
+                        # Same half, negative delta = out-of-order
+                        # Don't advance time, don't update prev_timestamp
+                        pass
+
+                # Only advance time if we have positive delta
+                if delta_ticks >= 0:
                     global_time_ns += delta_ticks * 2000
                     global_prev_timestamp = raw_timestamp
+                    # Update half tracking
+                    if is_marker:
+                        global_in_upper_half = True  # MARKER indicates entry to upper half
+                    else:
+                        global_in_upper_half = ts_in_upper_half
         else:
             # First timestamp - initialize tracking
             global_prev_timestamp = raw_timestamp
@@ -636,13 +808,17 @@ def update_global_time(has_timestamp=False, raw_timestamp=None, is_overflow=Fals
     else:
         global_time_ns += 1  # Untimestamped event
 
-def fmt_record(recordCnt):
+def fmt_record(recordCnt, timekeeper):
     """Format record number with elapsed time for human-readable output.
+
+    Args:
+        recordCnt: Record number
+        timekeeper: TimeKeeper instance for time tracking
 
     Returns string like: "[  123 @    45.6781s]"
     This matches the time shown in HDF5/visualization tools.
     """
-    elapsed_sec = global_time_ns / 1e9
+    elapsed_sec = timekeeper.get_time_sec()
     return f"[{recordCnt:6} @ {elapsed_sec:10.4f}s]"
 
 def decodeL000C(byte):
@@ -781,17 +957,24 @@ def main():
     parser = argparse.ArgumentParser(description='Decode logs generated by the umod4 system.')
     parser.add_argument('logfile', help='Input log file to decode')
     parser.add_argument('-L', '--Logsyms', help='Path to directory containing a specific version of the Logsyms package (optional)')
-    parser.add_argument('--format', choices=['human-readable', 'hdf5'], default='human-readable',
-                        help='Output format: human-readable (default) or hdf5')
-    parser.add_argument('-o', '--output', help='Output file (default: stdout for human-readable, required for hdf5)')
-    
+    parser.add_argument('--format', choices=['hr', 'h5'], default='hr',
+                        help='Output format: hr (human-readable, default) or h5 (hdf5)')
+    parser.add_argument('-o', '--output', help='Output file (default: auto-generated from input filename)')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Enable verbose logging for time tracking and reordering events')
+
     # Parse arguments
     args = parser.parse_args()
 
+    # Auto-generate output filename if not specified
+    if not args.output:
+        if args.format == 'hr':
+            args.output = args.logfile + '.hr'
+        else:  # h5
+            args.output = args.logfile + '.h5'
+
     # Validate arguments
-    if args.format == 'hdf5':
-        if not args.output:
-            parser.error("--output is required when using --format hdf5")
+    if args.format == 'h5':
         if not HDF5_AVAILABLE:
             parser.error("HDF5 format requires h5py and numpy. Please install them.")
         if not args.output.endswith('.h5') and not args.output.endswith('.hdf5'):
@@ -799,12 +982,12 @@ def main():
 
     # Initialize HDF5 writer if needed
     h5_writer = None
-    if args.format == 'hdf5':
+    if args.format == 'h5':
         # HDF5 format - we'll initialize the writer after loading Logsyms
         pass
 
     # Open output file or use stdout (for human-readable format)
-    if args.format == 'human-readable' and args.output:
+    if args.format == 'hr' and args.output:
         try:
             output_file = open(args.output, 'w')
             old_stdout = sys.stdout
@@ -812,7 +995,7 @@ def main():
         except Exception as e:
             print(f"Error opening output file: {e}")
             return 1
-    elif args.format == 'hdf5':
+    elif args.format == 'h5':
         # For HDF5 output, suppress all stdout output
         output_file = open(os.devnull, 'w')
         old_stdout = sys.stdout
@@ -844,9 +1027,12 @@ def main():
     import Logsyms as ls
     L = ls.Logsyms
 
+    # Create TimeKeeper for time tracking (used by both human-readable and HDF5 output)
+    timekeeper = TimeKeeper(verbose=args.verbose)
+
     # Initialize HDF5 writer now that we have Logsyms loaded
-    if args.format == 'hdf5':
-        h5_writer = HDF5Writer(args.output, L)
+    if args.format == 'h5':
+        h5_writer = HDF5Writer(args.output, L, timekeeper)
         h5_writer.open()
         print(f"# Writing HDF5 output to {args.output}")
 
@@ -868,295 +1054,301 @@ def main():
                 # Python does not have a useful equivalent of a C 'switch' statement, so we get a giant if-tree:
                 if byte == L.LOGID_GEN_ECU_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_ECU_LOG_VER_DLEN)
-                    print(f"{fmt_record(recordCnt)}: ECU_VR: {rd[0]}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: ECU_VR: {rd[0]}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.log_version_ecu = rd[0]
 
                 elif byte == L.LOGID_GEN_EP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_EP_LOG_VER_DLEN)
-                    print(f"{fmt_record(recordCnt)}: EP_VR:  {rd[0]}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: EP_VR:  {rd[0]}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.log_version_ep = rd[0]
 
                 elif byte == L.LOGID_GEN_WP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_WP_LOG_VER_DLEN)
-                    print(f"{fmt_record(recordCnt)}: WP_VR:  {rd[0]}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: WP_VR:  {rd[0]}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.log_version_wp = rd[0]
 
                 # Handle ECU events
                 elif byte == L.LOGID_ECU_CPU_EVENT_TYPE_U8:
                     event = read(f, L.LOGID_ECU_CPU_EVENT_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: CPU:    {event}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: CPU:    {event}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_cpu_event', [h5_writer.time_ns, event])
+                        h5_writer.append_data('ecu_cpu_event', [timekeeper.get_time_ns(), event])
 
                 elif byte == L.LOGID_ECU_T1_OFLO_TYPE_TS:
                     oflo_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_OFLO_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
                     # This is a timer overflow event, so mark it specially for wraparound handling
-                    update_global_time(has_timestamp=True, raw_timestamp=oflo_ts, is_overflow=True)
-                    print(f"{fmt_record(recordCnt)}: OFLO_TS: {oflo_ts}")
-                    if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=oflo_ts, is_overflow=True)
-                        h5_writer.append_data('ecu_t1_oflo_timestamp', [h5_writer.time_ns, oflo_ts])
+                    timekeeper.process_ts_event(oflo_ts, is_oflo=True)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: OFLO_TS: {oflo_ts}")
+                    # OFLO not written to HDF5 - used only for time tracking
 
                 elif byte == L.LOGID_ECU_L4000_EVENT_TYPE_U8:
                     rd = read(f, L.LOGID_ECU_L4000_EVENT_DLEN)
-                    print(f"{fmt_record(recordCnt)}: L4000:  {rd[0]}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: L4000:  {rd[0]}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_l4000_event', [h5_writer.time_ns, rd[0]])
+                        h5_writer.append_data('ecu_l4000_event', [timekeeper.get_time_ns(), rd[0]])
 
                 elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_TS:
                     marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_TYPE_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - event HAS occurred (b15 went 0→1)
-                    # This is a time anchor event, marks 65536 ticks from previous anchor
-                    update_global_time(has_timestamp=True, raw_timestamp=marker_ts, is_marker=True)
-                    print(f"{fmt_record(recordCnt)}: MARKER: {marker_ts}")
-                    if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=marker_ts, is_marker=True)
-                        h5_writer.append_data('ecu_time_marker', [h5_writer.time_ns, marker_ts])
+                    # This is a time anchor event, marks ~65536 ticks from previous anchor
+                    timekeeper.process_ts_event(marker_ts, is_hoflo=True)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: H_OFLO_TS: {marker_ts}")
+                    # HOFLO not written to HDF5 - used only for time tracking
 
                 elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_PTS:
                     fi_on = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
                     # Do not advance time_ns based on this value
-                    update_global_time(has_timestamp=False)
-                    print(f"{fmt_record(recordCnt)}: FI_ON:  {fi_on}")
+                    timekeeper.advance_time_by_ns(1)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FI_ON:  {fi_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_front_inj_on', [h5_writer.time_ns, fi_on])
+                        # Create dual events: calc time (sequenced) and actual time (prospective)
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_front_inj_on_calc', [calc_time_ns, fi_on])
+                        # Convert prospective timestamp to absolute time
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_front_inj_on_actual', [actual_time_ns, fi_on])
 
                 elif byte == L.LOGID_ECU_F_INJ_DUR_TYPE_U16:
                     fi_dur = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_DUR_DLEN), byteorder='little', signed=False)
-                    print(f"{fmt_record(recordCnt)}: FI_DUR: {fi_dur}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FI_DUR: {fi_dur}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_front_inj_duration', [h5_writer.time_ns, fi_dur])
+                        h5_writer.append_data('ecu_front_inj_duration', [timekeeper.get_time_ns(), fi_dur])
 
                 elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_PTS:
                     ri_on = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
-                    update_global_time(has_timestamp=False)
-                    print(f"{fmt_record(recordCnt)}: RI_ON:  {ri_on}")
+                    timekeeper.advance_time_by_ns(1)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: RI_ON:  {ri_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_rear_inj_on', [h5_writer.time_ns, ri_on])
+                        # Create dual events: calc time (sequenced) and actual time (prospective)
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_rear_inj_on_calc', [calc_time_ns, ri_on])
+                        # Convert prospective timestamp to absolute time
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_rear_inj_on_actual', [actual_time_ns, ri_on])
 
                 elif byte == L.LOGID_ECU_R_INJ_DUR_TYPE_U16:
                     ri_dur = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_DUR_DLEN), byteorder='little', signed=False)
-                    print(f"{fmt_record(recordCnt)}: RI_DUR: {ri_dur}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: RI_DUR: {ri_dur}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_rear_inj_duration', [h5_writer.time_ns, ri_dur])
+                        h5_writer.append_data('ecu_rear_inj_duration', [timekeeper.get_time_ns(), ri_dur])
 
                 elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_PTS:
                     fc_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt)}: FC_ON:  {fc_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FC_ON:  {fc_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_front_coil_on', [h5_writer.time_ns, fc_on])
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_front_coil_on_calc', [calc_time_ns, fc_on])
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_front_coil_on_actual', [actual_time_ns, fc_on])
 
                 elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_PTS:
                     fc_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt)}: FC_OFF: {fc_off}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FC_OFF: {fc_off}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_front_coil_off', [h5_writer.time_ns, fc_off])
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_front_coil_off_calc', [calc_time_ns, fc_off])
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_front_coil_off_actual', [actual_time_ns, fc_off])
 
                 elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_PTS:
                     rc_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt)}: RC_ON:  {rc_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: RC_ON:  {rc_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_rear_coil_on', [h5_writer.time_ns, rc_on])
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_rear_coil_on_calc', [calc_time_ns, rc_on])
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_rear_coil_on_actual', [actual_time_ns, rc_on])
 
                 elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_PTS:
                     rc_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt)}: RC_OFF: {rc_off}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: RC_OFF: {rc_off}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_rear_coil_off', [h5_writer.time_ns, rc_off])
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_rear_coil_off_calc', [calc_time_ns, rc_off])
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_rear_coil_off_actual', [actual_time_ns, rc_off])
 
                 elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_PTS:
                     fcm_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt)}: FC_MON: {fcm_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FC_MON: {fcm_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_front_coil_manual_on', [h5_writer.time_ns, fcm_on])
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_front_coil_manual_on_calc', [calc_time_ns, fcm_on])
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_front_coil_manual_on_actual', [actual_time_ns, fcm_on])
 
                 elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS:
                     fcm_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt)}: FC_MOF: {fcm_off}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FC_MOF: {fcm_off}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_front_coil_manual_off', [h5_writer.time_ns, fcm_off])
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_front_coil_manual_off_calc', [calc_time_ns, fcm_off])
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_front_coil_manual_off_actual', [actual_time_ns, fcm_off])
 
                 elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_PTS:
                     rcm_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt)}: RC_MON: {rcm_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: RC_MON: {rcm_on}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_rear_coil_manual_on', [h5_writer.time_ns, rcm_on])
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_rear_coil_manual_on_calc', [calc_time_ns, rcm_on])
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_rear_coil_manual_on_actual', [actual_time_ns, rcm_on])
 
                 elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS:
                     rcm_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt)}: RC_MOF: {rcm_off}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: RC_MOF: {rcm_off}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_rear_coil_manual_off', [h5_writer.time_ns, rcm_off])
+                        calc_time_ns = timekeeper.get_time_ns()
+                        h5_writer.append_data('ecu_rear_coil_manual_off_calc', [calc_time_ns, rcm_off])
+                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        if actual_time_ns is not None:
+                            h5_writer.append_data('ecu_rear_coil_manual_off_actual', [actual_time_ns, rcm_off])
 
                 elif byte == L.LOGID_ECU_F_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_F_IGN_DLY_DLEN)[0]
                     dly= (b/256)*90.0
-                    print(f"{fmt_record(recordCnt)}: FID:    {dly:.1f}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FID:    {dly:.1f}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_front_ign_delay', [h5_writer.time_ns, dly])
+                        h5_writer.append_data('ecu_front_ign_delay', [timekeeper.get_time_ns(), dly])
 
                 elif byte == L.LOGID_ECU_R_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_R_IGN_DLY_DLEN)[0]
                     dly= (b/256)*90.0
-                    print(f"{fmt_record(recordCnt)}: RID:    {dly:.1f}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: RID:    {dly:.1f}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_rear_ign_delay', [h5_writer.time_ns, dly])
+                        h5_writer.append_data('ecu_rear_ign_delay', [timekeeper.get_time_ns(), dly])
 
                 elif byte == L.LOGID_ECU_5MILLISEC_EVENT_TYPE_V:
                     ignore = read(f, L.LOGID_ECU_5MILLISEC_EVENT_DLEN)
-                    print(f"{fmt_record(recordCnt)}: 5MS:")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: 5MS:")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_marker_5ms', h5_writer.time_ns)
+                        h5_writer.append_data('ecu_marker_5ms', timekeeper.get_time_ns())
 
                 elif byte == L.LOGID_ECU_CRANK_P6_MAX_TYPE_V:
                     ignore = read(f, L.LOGID_ECU_CRANK_P6_MAX_DLEN)
-                    print(f"{fmt_record(recordCnt)}: CMX:    Crank Max")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: CMX:    Crank Max")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_marker_p6_max', h5_writer.time_ns)
+                        h5_writer.append_data('ecu_marker_p6_max', timekeeper.get_time_ns())
 
                 elif byte == L.LOGID_ECU_FUEL_PUMP_TYPE_B:
                     pumpstate = read(f, L.LOGID_ECU_FUEL_PUMP_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: FP:     {pumpstate}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FP:     {pumpstate}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_fuel_pump', [h5_writer.time_ns, pumpstate])
+                        h5_writer.append_data('ecu_fuel_pump', [timekeeper.get_time_ns(), pumpstate])
 
                 elif byte == L.LOGID_ECU_ECU_ERROR_L000C_TYPE_U8:
                     L000C = read(f, L.LOGID_ECU_ECU_ERROR_L000C_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: ELC:    " + "{:08b} ".format(L000C), end="")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: ELC:    " + "{:08b} ".format(L000C), end="")
                     decodeL000C(L000C)
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_error_L000C', [h5_writer.time_ns, L000C])
+                        h5_writer.append_data('ecu_error_L000C', [timekeeper.get_time_ns(), L000C])
 
                 elif byte == L.LOGID_ECU_ECU_ERROR_L000D_TYPE_U8:
                     L000D = read(f, L.LOGID_ECU_ECU_ERROR_L000D_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: ELD:    " + "{:08b} ".format(L000D), end="")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: ELD:    " + "{:08b} ".format(L000D), end="")
                     decodeL000D(L000D)
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_error_L000D', [h5_writer.time_ns, L000D])
+                        h5_writer.append_data('ecu_error_L000D', [timekeeper.get_time_ns(), L000D])
 
                 elif byte == L.LOGID_ECU_ECU_ERROR_L000E_TYPE_U8:
                     L000E = read(f, L.LOGID_ECU_ECU_ERROR_L000E_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: ELE:    " + "{:08b} ".format(L000E), end="")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: ELE:    " + "{:08b} ".format(L000E), end="")
                     decodeL000C(L000E)
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_error_L000E', [h5_writer.time_ns, L000E])
+                        h5_writer.append_data('ecu_error_L000E', [timekeeper.get_time_ns(), L000E])
 
                 elif byte == L.LOGID_ECU_ECU_ERROR_L000F_TYPE_U8:
                     L000F = read(f, L.LOGID_ECU_ECU_ERROR_L000F_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: ELF:    " + "{:08b} ".format(L000F), end="")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: ELF:    " + "{:08b} ".format(L000F), end="")
                     decodeL000D(L000F)
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_error_L000F', [h5_writer.time_ns, L000F])
+                        h5_writer.append_data('ecu_error_L000F', [timekeeper.get_time_ns(), L000F])
 
                 elif byte == L.LOGID_ECU_RAW_VTA_TYPE_U16:
                     vta = int.from_bytes(read(f, L.LOGID_ECU_RAW_VTA_DLEN), byteorder='little', signed=False)
-                    update_global_time(has_timestamp=False)
+                    timekeeper.advance_time_by_ns(1)
                     if (vta >= 1024):
                         # Trouble: the VTA is only a 10-bit value. This reading is out of range!
                         print(f"ERR: At byte {(f.tell()-L.LOGID_ECU_RAW_VTA_DLEN):08X}: LOGID_ECU_RAW_VTA_TYPE_U16 is out of range 0x000..0x3FF: 0x{vta:04X}, ignoring!", file=sys.stderr)
                     else:
-                        print(f"{fmt_record(recordCnt)}: VTA:    {vta}")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: VTA:    {vta}")
                         if h5_writer:
-                            h5_writer.update_time(has_timestamp=False)
-                            h5_writer.append_data('ecu_throttle_adc', [h5_writer.time_ns, vta])
+                            h5_writer.append_data('ecu_throttle_adc', [timekeeper.get_time_ns(), vta])
 
                 elif byte == L.LOGID_ECU_RAW_MAP_TYPE_U8:
                     map = read(f, L.LOGID_ECU_RAW_MAP_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: MAP:    {map}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: MAP:    {map}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_map_adc', [h5_writer.time_ns, map])
+                        h5_writer.append_data('ecu_map_adc', [timekeeper.get_time_ns(), map])
 
                 elif byte == L.LOGID_ECU_RAW_AAP_TYPE_U8:
                     aap = read(f, L.LOGID_ECU_RAW_AAP_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: AAP:    {aap}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: AAP:    {aap}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_aap_adc', [h5_writer.time_ns, aap])
+                        h5_writer.append_data('ecu_aap_adc', [timekeeper.get_time_ns(), aap])
 
                 elif byte == L.LOGID_ECU_RAW_THW_TYPE_U8:
                     thw_adc = read(f, L.LOGID_ECU_RAW_THW_DLEN)[0]
 
                     thw_C = convertApriliaTempSensorAdcToDegC(thw_adc)
-                    print(f"{fmt_record(recordCnt)}: THW:    {thw_C:.1f}C")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: THW:    {thw_C:.1f}C")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_coolant_temp_c', [h5_writer.time_ns, thw_C])
+                        h5_writer.append_data('ecu_coolant_temp_c', [timekeeper.get_time_ns(), thw_C])
 
                 elif byte == L.LOGID_ECU_RAW_THA_TYPE_U8:
                     tha_adc = read(f, L.LOGID_ECU_RAW_THA_DLEN)[0]
 
                     tha_C = convertApriliaTempSensorAdcToDegC(tha_adc)
-                    print(f"{fmt_record(recordCnt)}: THA:    {tha_C:.1f}C")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: THA:    {tha_C:.1f}C")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_air_temp_c', [h5_writer.time_ns, tha_C])
+                        h5_writer.append_data('ecu_air_temp_c', [timekeeper.get_time_ns(), tha_C])
 
                 elif byte == L.LOGID_ECU_RAW_VM_TYPE_U8:
                     # The VM input divides the input voltage by 4 via resistor divider
                     # then feeds it to an ADC where 5V represents the max ADC value 0xFF.
                     adc = read(f, L.LOGID_ECU_RAW_VM_DLEN)[0]
                     vm_V = (adc/256) * 5 * 4
-                    print(f"{fmt_record(recordCnt)}: VM:     {vm_V:.2f}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: VM:     {vm_V:.2f}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_battery_voltage_v', [h5_writer.time_ns, vm_V])
+                        h5_writer.append_data('ecu_battery_voltage_v', [timekeeper.get_time_ns(), vm_V])
 
                 elif byte == L.LOGID_ECU_PORTG_DB_TYPE_U8:
                     portg = read(f, L.LOGID_ECU_PORTG_DB_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: PTG:    " + "{:08b}".format(portg))
+                    print(f"{fmt_record(recordCnt, timekeeper)}: PTG:    " + "{:08b}".format(portg))
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_portg_debug', [h5_writer.time_ns, portg])
+                        h5_writer.append_data('ecu_portg_debug', [timekeeper.get_time_ns(), portg])
 
                 elif byte == L.LOGID_ECU_CRANKREF_START_TYPE_TS:
                     cr_ts = int.from_bytes(read(f, L.LOGID_ECU_CRANKREF_START_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
-                    update_global_time(has_timestamp=True, raw_timestamp=cr_ts)
-                    print(f"{fmt_record(recordCnt)}: CRK_TS: {cr_ts}")
+                    timekeeper.process_ts_event(cr_ts)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: CRK_TS: {cr_ts}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=cr_ts)
-                        h5_writer.append_data('ecu_crankref_timestamp', [h5_writer.time_ns, cr_ts])
+                        h5_writer.append_data('ecu_crankref_timestamp', [timekeeper.get_time_ns(), cr_ts])
 
                     if (cr_ts_prev > -1):
                         elapsed = cr_ts - cr_ts_prev
@@ -1172,18 +1364,17 @@ def main():
                             rpm_hist.pop(0)
                         rpm_avg = sum(rpm_hist) / len(rpm_hist)
 
-                        print(f"{fmt_record(recordCnt)}: cr_ts: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: cr_ts: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
 
                         if h5_writer:
-                            h5_writer.append_data('ecu_rpm_instantaneous', [h5_writer.time_ns, rpm])
-                            h5_writer.append_data('ecu_rpm_smoothed', [h5_writer.time_ns, rpm_avg])
+                            h5_writer.append_data('ecu_rpm_instantaneous', [timekeeper.get_time_ns(), rpm])
+                            h5_writer.append_data('ecu_rpm_smoothed', [timekeeper.get_time_ns(), rpm_avg])
 
                 elif byte == L.LOGID_ECU_CRANKREF_ID_TYPE_U8:
                     crid = read(f, L.LOGID_ECU_CRANKREF_ID_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: CR:  {crid}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: CRID:  {crid}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_crankref_id', [h5_writer.time_ns, crid])
+                        h5_writer.append_data('ecu_crankref_id', [timekeeper.get_time_ns(), crid])
                     if (elapsed > 0):
                         fco = rco = 0
                         if crid == 5:
@@ -1200,65 +1391,54 @@ def main():
                         if (expectedId>11):
                             expectedId = 0
                         if (crid != expectedId):
-                            print(f"{fmt_record(recordCnt)}: ERROR: expected CRID {expectedId}, saw {crid}")
+                            print(f"{fmt_record(recordCnt, timekeeper)}: ERROR: expected CRID {expectedId}, saw {crid}")
 
                 elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_TS:
                     time_marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_TYPE_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - tracks time when engine not rotating
-                    update_global_time(has_timestamp=True, raw_timestamp=time_marker_ts)
-                    print(f"{fmt_record(recordCnt)}: TIME_MKR: {time_marker_ts}")
-                    if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=time_marker_ts)
-                        h5_writer.append_data('ecu_time_marker', [h5_writer.time_ns, time_marker_ts])
+                    timekeeper.process_ts_event(time_marker_ts, is_hoflo=True)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: TIME_MKR: {time_marker_ts}")
+                    # HOFLO not written to HDF5 - used only for time tracking
 
                 elif byte == L.LOGID_ECU_CAMSHAFT_TYPE_TS:
                     cam_ts = int.from_bytes(read(f, L.LOGID_ECU_CAMSHAFT_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - camshaft event HAS occurred
-                    print(f"{fmt_record(recordCnt)}: CAM_TS:  {cam_ts}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: CAM_TS:  {cam_ts}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=cam_ts)
-                        h5_writer.append_data('ecu_camshaft_timestamp', [h5_writer.time_ns, cam_ts])
+                        h5_writer.append_data('ecu_camshaft_timestamp', [timekeeper.get_time_ns(), cam_ts])
 
                 elif byte == L.LOGID_ECU_CAM_ERR_TYPE_U8:
                     camErr = read(f, L.LOGID_ECU_CAM_ERR_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: CAM ERR: {camErr:02X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: CAM ERR: {camErr:02X}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_cam_error', [h5_writer.time_ns, camErr])
+                        h5_writer.append_data('ecu_cam_error', [timekeeper.get_time_ns(), camErr])
 
-                elif byte == L.LOGID_ECU_SPRK_X1_TYPE_TS:
+                elif byte == L.LOGID_ECU_SPRK_X1_TYPE_T:
                     spx1_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - spark HAS fired
-                    print(f"{fmt_record(recordCnt)}: SP1_TS: {spx1_ts}")
-                    if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=spx1_ts)
-                        h5_writer.append_data('ecu_spark_x1', [h5_writer.time_ns, spx1_ts])
+                    print(f"{fmt_record(recordCnt, timekeeper)}: SP1_TS: {spx1_ts}")
+                    if h5_writer:                        h5_writer.append_data('ecu_spark_x1', [timekeeper.get_time_ns(), spx1_ts])
 
-                elif byte == L.LOGID_ECU_SPRK_X2_TYPE_TS:
+                elif byte == L.LOGID_ECU_SPRK_X2_TYPE_T:
                     spx2_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - spark HAS fired
-                    print(f"{fmt_record(recordCnt)}: SP2_TS: {spx2_ts}")
-                    if h5_writer:
-                        h5_writer.update_time(has_timestamp=True, raw_timestamp=spx2_ts)
-                        h5_writer.append_data('ecu_spark_x2', [h5_writer.time_ns, spx2_ts])
+                    print(f"{fmt_record(recordCnt, timekeeper)}: SP2_TS: {spx2_ts}")
+                    if h5_writer:                        h5_writer.append_data('ecu_spark_x2', [timekeeper.get_time_ns(), spx2_ts])
 
                 elif byte == L.LOGID_ECU_NOSPARK_TYPE_U8:
                     sparkErr = read(f, L.LOGID_ECU_NOSPARK_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: NOSPRK: {sparkErr:02X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: NOSPRK: {sparkErr:02X}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('ecu_nospark', [h5_writer.time_ns, sparkErr])
+                        h5_writer.append_data('ecu_nospark', [timekeeper.get_time_ns(), sparkErr])
 
                 # EP-specific events
                 elif byte == L.LOGID_GEN_EP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_EP_LOG_VER_DLEN)
-                    print(f"{fmt_record(recordCnt)}: EPV:    {rd[0]}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: EPV:    {rd[0]}")
 
                 elif byte == L.LOGID_EP_LOAD_NAME_TYPE_U8:
                     # Each write to this address appends the next byte as a char to the EPROM_ID_STR
                     c = read(f, L.LOGID_EP_LOAD_NAME_DLEN)[0]
-                    if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                     if (c != 0):
                         epromIdString = "".join([epromIdString, chr(c)])
                         if h5_writer:
@@ -1266,66 +1446,63 @@ def main():
                     else:
                         currentEpromId = epromIdString
                         epromIdString = ""
-                        print(f"{fmt_record(recordCnt)}: LOAD:   {currentEpromId}")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: LOAD:   {currentEpromId}")
 
                 elif byte == L.LOGID_EP_LOAD_ADDR_TYPE_U16:
                     epromStartAddr = int.from_bytes(read(f, L.LOGID_EP_LOAD_ADDR_DLEN), byteorder='little', signed=False)
-                    print(f"{fmt_record(recordCnt)}: ADDR:   0x{epromStartAddr:04X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: ADDR:   0x{epromStartAddr:04X}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.current_eprom_addr = epromStartAddr
 
                 elif byte == L.LOGID_EP_LOAD_LEN_TYPE_U16:
                     epromLen = int.from_bytes(read(f, L.LOGID_EP_LOAD_LEN_DLEN), byteorder='little', signed=False)
-                    print(f"{fmt_record(recordCnt)}: LEN:    0x{epromLen:04X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: LEN:    0x{epromLen:04X}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.current_eprom_len = epromLen
 
                 elif byte == L.LOGID_EP_LOAD_ERR_TYPE_U8:
                     loadErr = read(f, L.LOGID_EP_LOAD_ERR_DLEN)[0]
                     if loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOERR:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NOERR")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_NOERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOTFOUND:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NOTFOUND")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_NOTFOUND")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NONAME:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NONAME")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_NONAME")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_CKSUMERR:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_CKSUMERR")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_CKSUMERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_VERIFYERR:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_VERIFYERR")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_VERIFYERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADOFFSET:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BADOFFSET")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_BADOFFSET")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADLENGTH:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BADLENGTH")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_BADLENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NODAUGHTERBOARDKEY:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NODAUGHTERBOARDKEY")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_NODAUGHTERBOARDKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOMEMKEY:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NOMEMKEY")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_NOMEMKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_M3FAIL:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_M3FAIL")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_M3FAIL")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYSTART:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_MISSING_KEY_START")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_MISSING_KEY_START")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYLENGTH:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_MISSING_KEY_LENGTH")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_MISSING_KEY_LENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYM3:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_KEY_M3")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_KEY_M3")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADM3BSONTYPE:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BAD_M3_BSON_TYPE")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_BAD_M3_BSON_TYPE")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADM3VALUE:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BAD_M3_VALUE")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_BAD_M3_VALUE")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOBINKEY:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_NOBINKEY")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_NOBINKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADBINLENGTH:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BADBINLENGTH")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_BADBINLENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADBINSUBTYPE:
-                        print(f"{fmt_record(recordCnt)}: STAT:   ERR_BADBINSUBTYPE")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   ERR_BADBINSUBTYPE")
                     else:
-                        print(f"{fmt_record(recordCnt)}: STAT:   *** Unknown error: 0x{loadErr:02X}")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: STAT:   *** Unknown error: 0x{loadErr:02X}")
 
                     # Finalize EPROM load record for HDF5
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         # Add complete EPROM load record to metadata list
                         if h5_writer.current_eprom_name and h5_writer.current_eprom_addr is not None and h5_writer.current_eprom_len is not None:
                             h5_writer.eprom_loads.append((
@@ -1342,13 +1519,12 @@ def main():
                 # WP-specific events
                 elif byte == L.LOGID_GEN_WP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_WP_LOG_VER_DLEN)
-                    print(f"{fmt_record(recordCnt)}: WPV:    {rd[0]}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: WPV:    {rd[0]}")
 
                 elif byte == L.LOGID_WP_CSECS_TYPE_U8:
                     csecs = read(f, L.LOGID_WP_CSECS_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: CS:     {csecs:02}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: CS:     {csecs:02}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_csecs = csecs
 
                 elif byte == L.LOGID_WP_SECS_TYPE_U8:
@@ -1356,17 +1532,17 @@ def main():
                     secs = read(f, L.LOGID_WP_SECS_DLEN)[0]
 
                     # Update global time tracking
-                    update_global_time(has_timestamp=False)
+                    timekeeper.advance_time_by_ns(1)
 
                     # Track GPS SEC events for drift calculation
                     if gps_last_sec_time_ns < 0:
                         # First GPS SEC - just record it
-                        print(f"{fmt_record(recordCnt)}: SEC:    {secs:02}  (first GPS SEC)")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: SEC:    {secs:02}  (first GPS SEC)")
                     elif gps_first_sec_time_ns < 0:
                         # Second GPS SEC - use this as the reference point for drift calculation
                         gps_first_sec_time_ns = global_time_ns
                         elapsed_since_last_ns = global_time_ns - gps_last_sec_time_ns
-                        print(f"{fmt_record(recordCnt)}: SEC:    {secs:02}  " +
+                        print(f"{fmt_record(recordCnt, timekeeper)}: SEC:    {secs:02}  " +
                               f"(Δlast: {elapsed_since_last_ns/1e9:.6f}s, reference point for drift tracking)")
                     else:
                         # Third and subsequent GPS SEC events - calculate drift
@@ -1387,7 +1563,7 @@ def main():
                         drift_sec = total_elapsed_sec - expected_elapsed_sec
                         drift_ppm = (drift_sec / expected_elapsed_sec) * 1e6 if expected_elapsed_sec > 0 else 0
 
-                        print(f"{fmt_record(recordCnt)}: SEC:    {secs:02}  " +
+                        print(f"{fmt_record(recordCnt, timekeeper)}: SEC:    {secs:02}  " +
                               f"(Δlast: {elapsed_since_last_ns/1e9:.6f}s, " +
                               f"Σretro: {total_elapsed_sec:.3f}s, " +
                               f"drift: {drift_sec:+.3f}s = {drift_ppm:+.1f}ppm)")
@@ -1395,42 +1571,36 @@ def main():
                     gps_last_sec_time_ns = global_time_ns
 
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_secs = secs
 
                 elif byte == L.LOGID_WP_MINS_TYPE_U8:
                     mins = read(f, L.LOGID_WP_MINS_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: MIN:    {mins:02}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: MIN:    {mins:02}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_mins = mins
 
                 elif byte == L.LOGID_WP_HOURS_TYPE_U8:
                     hours = read(f, L.LOGID_WP_HOURS_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: HRS:    {hours:02}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: HRS:    {hours:02}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_hours = hours
 
                 elif byte == L.LOGID_WP_DATE_TYPE_U8:
                     date = read(f, L.LOGID_WP_DATE_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: DT:     {date:02}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: DT:     {date:02}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_date = date
 
                 elif byte == L.LOGID_WP_MONTH_TYPE_U8:
                     month = read(f, L.LOGID_WP_MONTH_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: MON:    {month:02}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: MON:    {month:02}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_month = month
 
                 elif byte == L.LOGID_WP_YEAR_TYPE_U8:
                     year = read(f, L.LOGID_WP_YEAR_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: YR:     {year:02}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: YR:     {year:02}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
                         h5_writer.temp_gps_year = year
                         # Year is the last GPS time field - record this for back-calculation if first time
                         if h5_writer.gps_first_time is None and hasattr(h5_writer, 'temp_gps_csecs'):
@@ -1443,14 +1613,13 @@ def main():
                                 h5_writer.temp_gps_month,
                                 h5_writer.temp_gps_year
                             )
-                            h5_writer.gps_sync_time_ns = h5_writer.time_ns
+                            h5_writer.gps_sync_time_ns = timekeeper.get_time_ns()
 
                 elif byte == L.LOGID_WP_FIXTYPE_TYPE_U8:
                     fix = read(f, L.LOGID_WP_FIXTYPE_DLEN)[0]
-                    print(f"{fmt_record(recordCnt)}: FIX:    {fix}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: FIX:    {fix}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('gps_fix_type', [h5_writer.time_ns, fix])
+                        h5_writer.append_data('gps_fix_type', [timekeeper.get_time_ns(), fix])
 
                 elif byte == L.LOGID_WP_GPS_POSN_TYPE_8B:
                     # Position & Velocity data: 2 args in the 8 bytes that follow.
@@ -1458,10 +1627,9 @@ def main():
                     alen = L.LOGID_WP_GPS_POSN_DLEN // 2
                     lat =  int.from_bytes(read(f, alen, newLine=False), byteorder='little', signed=True) / 10000000.0
                     long = int.from_bytes(read(f, alen), byteorder='little', signed=True) / 10000000.0
-                    print(f"{fmt_record(recordCnt)}: GPS_POSN: {lat:.8f} {long:.8f}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: GPS_POSN: {lat:.8f} {long:.8f}")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('gps_position', [h5_writer.time_ns, lat, long])
+                        h5_writer.append_data('gps_position', [timekeeper.get_time_ns(), lat, long])
 
                 elif byte == L.LOGID_WP_GPS_VELO_TYPE_U16:
                     # Velocity is encoded in a uint16_t as (velocity*10) MPH
@@ -1470,29 +1638,39 @@ def main():
                         # Trouble: This reading is way too fast!
                         print(f"ERR: At byte {(f.tell()-L.LOGID_WP_GPS_VELO_DLEN):08X}: L.LOGID_WP_GPS_VELO_TYPE_U16 is beyond 200 MPH: {vel/10.0}, ignoring!", file=sys.stderr)
                     else:
-                        print(f"{fmt_record(recordCnt)}: GPS_VEL: {vel:.1f}")
+                        print(f"{fmt_record(recordCnt, timekeeper)}: GPS_VEL: {vel:.1f}")
                         if h5_writer:
-                            h5_writer.update_time(has_timestamp=False)
-                            h5_writer.append_data('gps_velocity_mph', [h5_writer.time_ns, vel])
+                            h5_writer.append_data('gps_velocity_mph', [timekeeper.get_time_ns(), vel])
+
+                elif byte == L.LOGID_WP_GPS_PPS_TYPE_V:
+                    # A GPS PPS event has no data, just the fact that it occurred marks the start of a new UTC second
+                    # Print newline after the event ID byte that was already printed
+                    if showBinData:
+                        print("")
+                    stats = timekeeper.process_pps_event()
+                    if stats:
+                        print(f"{fmt_record(recordCnt, timekeeper)}: {stats}")
+                    else:
+                        print(f"{fmt_record(recordCnt, timekeeper)}: GPS_PPS (first, baseline established)")
+                    if h5_writer:
+                        h5_writer.append_data('gps_pps', [timekeeper.get_time_ns()])
 
                 elif byte == L.LOGID_WP_WR_TIME_TYPE_U16:
                     # Time follows as 2 bytes, LSB first
                     wrTime = int.from_bytes(read(f, 2), byteorder='little', signed=False)
-                    print(f"{fmt_record(recordCnt)}: WRT:    {wrTime} msec")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: WRT:    {wrTime} msec")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('wp_fs_write_time_ms', [h5_writer.time_ns, wrTime])
+                        h5_writer.append_data('wp_fs_write_time_ms', [timekeeper.get_time_ns(), wrTime])
 
                 elif byte == L.LOGID_WP_SYNC_TIME_TYPE_U16:
                     # Log filesystem sync() time follows as 2 bytes, LSB first
                     syncTime = int.from_bytes(read(f, 2), byteorder='little', signed=False)
-                    print(f"{fmt_record(recordCnt)}: SYT:    {syncTime} msec")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: SYT:    {syncTime} msec")
                     if h5_writer:
-                        h5_writer.update_time(has_timestamp=False)
-                        h5_writer.append_data('wp_fs_sync_time_ms', [h5_writer.time_ns, syncTime])
+                        h5_writer.append_data('wp_fs_sync_time_ms', [timekeeper.get_time_ns(), syncTime])
 
                 else:
-                    print(f"{fmt_record(recordCnt)}: ERR:    Unknown LOGID 0x{byte:02X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)}: ERR:    Unknown LOGID 0x{byte:02X}")
                     #read(f, 1)
 
     except FileNotFoundError:
