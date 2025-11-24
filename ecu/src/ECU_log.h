@@ -147,10 +147,10 @@
 #define   LOGID_ECU_CAMSHAFT_TYPE_TS                ((LOGID_ECU_BASE) + 0x64)           // Timestamp of most recent camshaft sensor falling-edge event
 #define   LOGID_ECU_CAMSHAFT_DLEN                   2
 
-#define   LOGID_ECU_SPRK_X1_TYPE_T                  ((LOGID_ECU_BASE) + 0x70)           // The time when front OR rear coil #1 fired
+#define   LOGID_ECU_SPRK_X1_TYPE_PTS                ((LOGID_ECU_BASE) + 0x70)           // The time when front OR rear coil #1 fired
 #define   LOGID_ECU_SPRK_X1_DLEN                    2                                   // By design, this is reported during the CR period AFTER it occurred
 
-#define   LOGID_ECU_SPRK_X2_TYPE_T                  ((LOGID_ECU_BASE) + 0x72)           // The time when front OR rear coil #2 fired
+#define   LOGID_ECU_SPRK_X2_TYPE_PTS                ((LOGID_ECU_BASE) + 0x72)           // The time when front OR rear coil #2 fired
 #define   LOGID_ECU_SPRK_X2_DLEN                    2                                   // By design, this is reported during the CR period AFTER it occurred
 
 #define   LOGID_ECU_NOSPARK_TYPE_U8                 ((LOGID_ECU_BASE) + 0x74)           // U8 value indicates the coil that did not spark: 0x11, 0x12, 0x21, 0x22

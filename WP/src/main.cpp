@@ -386,17 +386,20 @@ void vApplicationIdleHook( void )
 // ----------------------------------------------------------------------------------
 // The ISR for the 32-bit UART receiving ECU logging data from the EP.
 // The EP always sends over log events as a full word of data:
-//      bits 0..8:      length (either 2 or 3, tells WP how many bytes to log NOT INCLUDING THIS ONE)
+//      bits 0..8:      length, which can only be 1, 2, or 3:
+//                          - 1 means LogID only
+//                          - 2 means LogID and LSB
+//                          - 3 means LogID and LSB and MSB
 //      bits 8..15:     8-bit LogID
 //      bits 16..23:    LSB of the log data
-//      bits 24..31:    MSB of the log data (if any)
+//      bits 24..31:    MSB of the log data
 //
 // This ISR moves ECU events from the receive FIFO to the merged log buffer.
 void isr_rx32()
 {
     while(!pio_sm_is_rx_fifo_empty(PIO_UART, PIO_UART_SM)) {
         uint32_t rxWord = uart_rx32_program_get(PIO_UART, PIO_UART_SM);
-        logger->logEcuData(rxWord);
+        logger->logData_fromISR(rxWord);
     }
 
     // The fifo-not-empty interrupt is cleared automatically when we empty out the FIFO
@@ -417,6 +420,7 @@ void initEpUart() {
     // Assign an interrupt handler
     irq_set_exclusive_handler(PIO_UART_RX_IRQ, isr_rx32);
     
+    printf("%s: EP RX32 UART ISR will be serviced by core %d\n", __FUNCTION__, get_core_num());
     // Leave interrupts off until we enable the flowcontrol signal  
 }
 
@@ -618,6 +622,12 @@ int main()
     gpio_set_pulls(EPLOG_FLOWCTRL_PIN, true, false);
     gpio_set_dir(EPLOG_FLOWCTRL_PIN, GPIO_IN);
     #endif
+    
+    // Init PPS pin to have a pulldown so that it can't cause rising-edge interrupts
+    // if no module is present
+    gpio_init(GPS_PPS_PIN);
+    gpio_set_dir(GPS_PPS_PIN, GPIO_IN);
+    gpio_set_pulls(GPS_PPS_PIN, false, true);
     
     #warning " ********** EXTREMELY TEMP - RESETTING THE EP **************"
     // Check if the debugger is attached by examining

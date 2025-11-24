@@ -642,7 +642,7 @@ class TimeKeeper:
         return self.time_ns
 
     def process_retrospective_t_event(self, raw_ts):
-        """Process a _TYPE_T event (spark timestamp from the past).
+        """Process a _TYPE_PTS event (prescriptive timestamp - spark timestamp from the past).
 
         Spark events report timestamps of sparks that already occurred.
         They are guaranteed to be in the past, within the previous timer cycle.
@@ -1413,13 +1413,13 @@ def main():
                     if h5_writer:
                         h5_writer.append_data('ecu_cam_error', [timekeeper.get_time_ns(), camErr])
 
-                elif byte == L.LOGID_ECU_SPRK_X1_TYPE_T:
+                elif byte == L.LOGID_ECU_SPRK_X1_TYPE_PTS:
                     spx1_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - spark HAS fired
                     print(f"{fmt_record(recordCnt, timekeeper)}: SP1_TS: {spx1_ts}")
                     if h5_writer:                        h5_writer.append_data('ecu_spark_x1', [timekeeper.get_time_ns(), spx1_ts])
 
-                elif byte == L.LOGID_ECU_SPRK_X2_TYPE_T:
+                elif byte == L.LOGID_ECU_SPRK_X2_TYPE_PTS:
                     spx2_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - spark HAS fired
                     print(f"{fmt_record(recordCnt, timekeeper)}: SP2_TS: {spx2_ts}")

@@ -30,11 +30,16 @@ Logger::Logger(int32_t _size)
         panic("Unable to malloc log buffer!");
     }
     memset(buffer, 0, _size);
-    
+
     bufferLen = _size;
     lastBufferP = buffer + _size - 1;
     headP = tailP = buffer;
-    
+
+    // Claim a hardware spinlock for protecting buffer access
+    // This works from both ISR and task context, and across cores
+    int spinlock_num = spin_lock_claim_unused(true);
+    bufferLock = spin_lock_init(spinlock_num);
+
     xTaskCreate(start_logger_task, "Log", 2048 /* words */, this, TASK_NORMAL_PRIORITY, &log_taskHandle);
 }
 
@@ -221,62 +226,62 @@ bool Logger::openNewLog()
 #endif
 
 // ----------------------------------------------------------------------------------
-// This routine is strictly for the use of the ECU RX event ISR!
-// It will only run at ISR level!
+// This routine is strictly for the use of ISRs!
+// It is expected to run at ISR level!
 //
-//bool __time_critical_func(Logger::logEcuData)(uint32_t ecuData)
-bool Logger::logEcuData(uint32_t ecuData)
+// The routine uses a spinlock to synchronize access to the log between:
+//  - the ECU RX32 data stream interrupt
+//  - the GPS PPS interrupt (could be running on a different core)
+//  - the GPS non-interrupt data logging task
+//
+// A spinlock is required in case there is an ISR calling this same routine on the other core.
+//
+// The uint32_t dataWord paramater packs between 1 and 3 bytes to insert into the log.
+// It has a very specific format:
+//  - bits 0:7 contain the number of bytes to log from the remainder of this word. The only valid values are 1, 2, 3.
+//  - bits 8:15 this byte will always get logged (since length must be >=1)
+//  - bits 16..23 this byte will logged if length >= 2
+//  - bits 24..31 this byte will be logged if length == 3
+
+// temp
+uint32_t pps_isr_count, ecu_isr_count, isr1_err_cnt, isr2_err_cnt;
+
+//bool __time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
+bool Logger::logData_fromISR(uint32_t dataWord)
 {
-    bool rVal = true;
-    UBaseType_t interruptStatus;
+    // Don't use spin_lock_blocking() in ISR - it would save/restore interrupt state unnecessarily
+    // In ISR context, the CPU already manages interrupt masking appropriately
+    spin_lock_unsafe_blocking(bufferLock);
+
+    // Update the new headP exactly once after doing the copy
+    //uint8_t* hP = headP;
     
-    // Even though this is an ISR, we need to lock the critical section
-    // since the WP logging calls could be running on a different core.
-    interruptStatus = taskENTER_CRITICAL_FROM_ISR();
-    
-    uint8_t len   = ecuData >> 0;
-    uint8_t logId = ecuData >> 8;
-    uint8_t lsb   = ecuData >> 16;
-    uint8_t msb   = ecuData >> 24;
-    
-    // Check if there is enough room left in the log buffer
+    uint32_t len = dataWord & 0xFF;
     int32_t spaceRemaining = bufferLen - inUse();
-    if (spaceRemaining < len) {
+    if ((len < 1) || (len > 3) || (spaceRemaining < len)) {
+        isr1_err_cnt++;
+        spin_unlock_unsafe(bufferLock);
         return false;
     }
-    
-    // A small optimization for writing the bytes.
-    // Check if we can write 'len' bytes without wrapping the buffer pointer headP
-    if (headP+len <= lastBufferP) {
-        // Yes: Skip the wrap checks!
-        *headP++ = logId;
-        *headP++ = lsb;
-        if (len == 3) {
-            *headP++ = msb;
+
+    for (uint32_t i=0; i<len; i++) {
+        dataWord >>= 8;
+        *headP++ = dataWord;
+        if (headP > lastBufferP) {
+            headP = buffer;
         }
+    }
+
+    if (len==1) {
+        // PPS
+        pps_isr_count++;
     }
     else {
-        // No: We are going to wrap at some point during this operation.
-        // Check for wrapping of headP on each byte:
-        *headP++ = logId;
-        if (headP > lastBufferP) {
-            headP = buffer;
-        }
-        *headP++ = lsb;
-        if (headP > lastBufferP) {
-            headP = buffer;
-        }
-        
-        // MSB is not valid unless len=3
-        if (len == 3) {
-            *headP++ = msb;
-            if (headP > lastBufferP) {
-                headP = buffer;
-            }
-        }
+        // ECU
+        ecu_isr_count++;
     }
-    
-    taskEXIT_CRITICAL_FROM_ISR(interruptStatus);
+    //headP = hP;
+    spin_unlock_unsafe(bufferLock);
     return true;
 }
 
@@ -286,9 +291,15 @@ bool Logger::logEcuData(uint32_t ecuData)
 bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* data)
 {
     bool rVal = true;
-    
+
+    // Enter critical section first to prevent FreeRTOS from preempting this task
+    // This ensures we hold the spinlock for only a brief, atomic period
     taskENTER_CRITICAL();
-    
+
+    // Now take the spinlock to synchronize with ISR on potentially different core
+    // ISR will only wait microseconds because we can't be preempted while in critical section
+    spin_lock_unsafe_blocking(bufferLock);
+
     //check if there is enough room left in the log buffer
     int32_t spaceRemaining = bufferLen - inUse();
     if ((len+1) <= spaceRemaining) {
@@ -297,7 +308,7 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* 
         if (headP > lastBufferP) {
             headP = buffer;
         }
-        
+
         // Now copy the buffer
         while(len-- > 0) {
             *headP++ = *data++;
@@ -307,10 +318,14 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* 
         }
     }
     else {
+        isr2_err_cnt++;
         rVal = false;
     }
-    
+
+    // Release spinlock first, then exit critical section
+    spin_unlock_unsafe(bufferLock);
     taskEXIT_CRITICAL();
+
     return rVal;
 }
 
@@ -439,7 +454,7 @@ void Logger::logTask()
         }
         
         switch (state) {
-            case UNMOUNTED:
+        case UNMOUNTED:
             // Our lfs pointer will become non-NULL if an SD card is detected, and a filesystem gets mounted
             if (lfs) {
                 // The filesystem just got mounted
@@ -451,7 +466,7 @@ void Logger::logTask()
             }
             break;
             
-            case OPEN_LOG:
+        case OPEN_LOG:
             // Create a new logfile, either with a tmp-name or a timestamp-name
             {
                 bool success = openNewLog();
@@ -469,27 +484,27 @@ void Logger::logTask()
             
             break;
             
-            case CALC_WR_SIZE:
+        case CALC_WR_SIZE:
             // Do the calculation that tells us how many bytes we should write before sync'ing
             bytesToWriteBeforeSyncing = lfs_bytes_until_fsync(&lfs_cfg, &logf);
             //printf("%s: bytes to write before next sync: %d\n", __FUNCTION__, bytesToWriteBeforeSyncing);
             state = WAIT_FOR_DATA;
             break;
             
-            case WAIT_FOR_DATA:
+        case WAIT_FOR_DATA:
             logLength = inUse();
-            #if 0
-            printf("%s: %d bytes in buffer\n", __FUNCTION__, logLength);
+            #if 1
+            printf("%d/%d P%d E%d E1:%d E2:%d\n", logLength, bytesToWriteBeforeSyncing, pps_isr_count, ecu_isr_count, isr1_err_cnt, isr2_err_cnt);
             #endif
             if (logLength >= bytesToWriteBeforeSyncing) {
                 state = WRITE_DATA;
             }
             else {
-                vTaskDelay(pdMS_TO_TICKS(1000));
+                vTaskDelay(pdMS_TO_TICKS(250));
             }
             break;
             
-            case WRITE_DATA: {
+        case WRITE_DATA: {
                 // If the block to be written extends past the end of the circular buffer
                 // we will need to write it in two pieces
                 
@@ -550,7 +565,7 @@ void Logger::logTask()
                 break;
             }
             
-            case WRITE_FAILURE:
+        case WRITE_FAILURE:
             // ignore all errors
             lfs_file_close(lfs, &logf);
             state = OPEN_LOG;

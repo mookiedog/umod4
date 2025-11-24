@@ -545,8 +545,8 @@ void __time_critical_func(processOutgoing)(void)
                     tx32data = 0;
                 }
                 else {
-                    #warning "Remove this at some point because it should never occur"
-                    panic("Bad value in tx_encoder array!");
+                    //#warning "Remove this at some point because it should never occur"
+                    //panic("Bad value in tx_encoder array!");
                 }
 
                 inUse--;

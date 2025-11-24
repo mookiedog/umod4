@@ -3,11 +3,11 @@ cmake_minimum_required(VERSION 3.13)
 include(FetchContent)
 
 if(NOT DEFINED LFS_SRC_DIR)
-  message(FATAL_ERROR "LFS_SRC_DIR is undefined: Can't find LittleFS")
+    message(FATAL_ERROR "LFS_SRC_DIR is undefined: Can't find LittleFS")
 endif()
 
 if(NOT DEFINED PICO_SDK_PATH)
-  message(FATAL_ERROR "PICO_SDK_PATH is undefined: Can't find PicoSDK")
+    message(FATAL_ERROR "PICO_SDK_PATH is undefined: Can't find PicoSDK")
 endif()
 
 # --------------------------------------------------------------------------------------------------
@@ -22,13 +22,13 @@ set(PICO_BOARD pico2_w)
 
 # Based on the board definition, define the appropriate platform and cpu:
 if (${PICO_BOARD} STREQUAL "pico_w")
-  set(PICO_PLATFORM rp2040)
-  set(CPU cortex-m0)
+    set(PICO_PLATFORM rp2040)
+    set(CPU cortex-m0)
 elseif (${PICO_BOARD} STREQUAL "pico2_w")
-  set(PICO_PLATFORM rp2350)
-  set(CPU cortex-m33)
+    set(PICO_PLATFORM rp2350)
+    set(CPU cortex-m33)
 else()
-  message(FATAL_ERROR "Unknown board type!")
+    message(FATAL_ERROR "Unknown board type!")
 endif()
 
 # As per SDK doc, this include needs to happen before project()
@@ -117,24 +117,24 @@ endif()
 
 
 include_directories(
-  ${LIB_DIR}/inc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${LIB_DIR}/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 add_executable(${PROJECT_NAME}
-  src/Clock.cpp
-  src/Crc.cpp
-  src/Gps.cpp
-  src/Heap.cpp
-  src/Logger.cpp
-  src/main.cpp
-  src/NeoPixelConnect.cpp
-  src/Psm.cpp
-  src/SdCard.cpp
-  src/Shell.cpp
-  src/Spi.cpp
-  src/TimeUtils.cpp
-  src/Uart.cpp
+    src/Clock.cpp
+    src/Crc.cpp
+    src/Gps.cpp
+    src/Heap.cpp
+    src/Logger.cpp
+    src/main.cpp
+    src/NeoPixelConnect.cpp
+    src/Psm.cpp
+    src/SdCard.cpp
+    src/Shell.cpp
+    src/Spi.cpp
+    src/TimeUtils.cpp
+    src/Uart.cpp
 )
 
 # Include the PIO program header files:
@@ -144,7 +144,7 @@ pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/ws2812/ws281
 # Override the standard Segger definitions for these symbols:
 #add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
 # This is the size of the buffer to use for sending data from the device to the host debug terminal app
-add_compile_definitions(BUFFER_SIZE_UP=2048)
+add_compile_definitions(BUFFER_SIZE_UP=16384)
 # This is the size of the buffer that the host debug terminal app can send down as a single cmdline
 add_compile_definitions(BUFFER_SIZE_DOWN=1024)
 
@@ -164,14 +164,14 @@ pico_enable_stdio_rtt(${PROJECT_NAME} 1)
 # To use it, add 'littlefs' to the appropriate project's target_link_libraries() list.
 add_library(littlefs INTERFACE)
 target_sources(littlefs INTERFACE
-  "${LFS_SRC_DIR}/lfs.c"
-  "${LFS_SRC_DIR}/lfs_util.c"
+    "${LFS_SRC_DIR}/lfs.c"
+    "${LFS_SRC_DIR}/lfs_util.c"
 )
 target_include_directories(littlefs INTERFACE "${LFS_SRC_DIR}")
 
 add_library(tiny_regex_c INTERFACE)
 target_sources(tiny_regex_c INTERFACE
-  "${TINY_REGEX_C_SRC_DIR}/re.c"
+    "${TINY_REGEX_C_SRC_DIR}/re.c"
 )
 target_include_directories(tiny_regex_c INTERFACE "${TINY_REGEX_C_SRC_DIR}")
 
@@ -180,37 +180,37 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/.
 
 # This next section defines a number of options as described in Appendix B of the C/C++ Pico SDK manual.
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-  # Define these next two here where they are easier to find:
-  ##PICO_HEAP_SIZE=2048
-  #PICO_STACK_SIZE=4096   I'm still not sure the best way to define this. Right now, it's in the memmap_eprom.ld file.
+    # Define these next two here where they are easier to find:
+    ##PICO_HEAP_SIZE=2048
+    #PICO_STACK_SIZE=4096   I'm still not sure the best way to define this. Right now, it's in the memmap_eprom.ld file.
 
 )
 
 # Print some basic information regarding the build size
 add_custom_command(
-  TARGET ${PROJECT_NAME} POST_BUILD
-  VERBATIM
-  COMMAND ${CROSSCOMPILE_TOOL_PATH}/arm-none-eabi-size ${CMAKE_BINARY_DIR}/${PROJECT_NAME}
+    TARGET ${PROJECT_NAME} POST_BUILD
+    VERBATIM
+    COMMAND ${CROSSCOMPILE_TOOL_PATH}/arm-none-eabi-size ${CMAKE_BINARY_DIR}/${PROJECT_NAME}
 )
 
 # pull in common dependencies
 target_link_libraries(${PROJECT_NAME}
-  pico_runtime
-  pico_stdlib
-  pico_multicore
-  pico_sync
-  hardware_flash
-  hardware_timer
-  cmsis_core
-  hardware_pio
-  hardware_dma
-  hardware_uart
-  hardware_spi
-  FreeRTOS-Kernel
-  littlefs
-  tiny_regex_c
-  pico_cyw43_arch_none
-  #pico_cyw43_arch_lwip_sys_freertos
+    pico_runtime
+    pico_stdlib
+    pico_multicore
+    pico_sync
+    hardware_flash
+    hardware_timer
+    cmsis_core
+    hardware_pio
+    hardware_dma
+    hardware_uart
+    hardware_spi
+    FreeRTOS-Kernel
+    littlefs
+    tiny_regex_c
+    pico_cyw43_arch_none
+    #pico_cyw43_arch_lwip_sys_freertos
 )
 
 # Create some useful output files
@@ -220,7 +220,7 @@ pico_add_hex_output(${PROJECT_NAME})
 
 # This is annoying, but I can't figure out how to get picotool to do the right thing otherwise:
 add_custom_command(
-  TARGET ${PROJECT_NAME} POST_BUILD
-  VERBATIM
-  COMMAND picotool uf2 convert --quiet ${CMAKE_BINARY_DIR}/${PROJECT_NAME} -t elf ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.uf2 --family ${PICO_PLATFORM}
+    TARGET ${PROJECT_NAME} POST_BUILD
+    VERBATIM
+    COMMAND picotool uf2 convert --quiet ${CMAKE_BINARY_DIR}/${PROJECT_NAME} -t elf ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.uf2 --family ${PICO_PLATFORM}
 )

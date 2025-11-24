@@ -27,9 +27,7 @@ class Logger {
         // GPS uses this one
         bool logData(uint8_t logId, uint8_t len, uint8_t* buffer);
         
-        // This one is exclusively for the RX32 UART that the ECU uses.
-        // It will be called by the RX ISR!
-        bool logEcuData(uint32_t rxWord);
+        bool logData_fromISR(uint32_t rxWord);
     
     private:
         lfs_t* lfs;
@@ -55,6 +53,10 @@ class Logger {
         uint8_t* lastBufferP;           // always points to the last byte in the circular buffer
         volatile uint8_t* headP;        // needs to be volatile since RX32 ISR updates it
         uint8_t* tailP;
+
+        // Hardware spinlock for protecting buffer access from both cores and ISR context
+        spin_lock_t* bufferLock;
+
         int32_t inUse();
         int32_t writeChunk(uint8_t* buffer, int32_t len);
         int32_t syncLog();

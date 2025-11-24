@@ -8409,7 +8409,7 @@ IC2F_ISR_35:
 ; If we get here, we saw a spark on the front cyl plug #1 prior to this active period CR6:
 IC2F_ISR_36:
          ldD    TIC3                    ; log the timestamp when coil #1 fired
-         stD    LW+LOGID_ECU_SPRK_X1_TYPE_T
+         stD    LW+LOGID_ECU_SPRK_X1_TYPE_PTS
         ldaA    L0147                   ;had we seen an error previously?
         bne     IC2F_ISR_37             ;if so, then don't clear the error indicator just yet
 
@@ -8447,7 +8447,7 @@ IC2F_ISR_38:
 ; If we get here, we saw a spark on the front cyl plug #2 prior to this active period CR6:
 IC2F_ISR_39:
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
-         stD    LW+LOGID_ECU_SPRK_X2_TYPE_T
+         stD    LW+LOGID_ECU_SPRK_X2_TYPE_PTS
         ldaA    L0148                   ;had we seen an error previously?
         bne     IC2F_ISR_40             ;if so, then don't clear the error indicator just yet
 
@@ -8495,7 +8495,7 @@ IC2F_ISR_42:
 ; If we get here, we saw a spark on the rear cyl plug #1 prior to this active period CR11:
 IC2F_ISR_43:
          ldD    TIC3                    ; log the timestamp when coil #1 fired
-         stD    LW+LOGID_ECU_SPRK_X1_TYPE_T
+         stD    LW+LOGID_ECU_SPRK_X1_TYPE_PTS
         ldaA    L0149                   ;had we seen an error previously?
         bne     IC2F_ISR_44             ;if so, then don't clear the error indicator just yet
 
@@ -8531,7 +8531,7 @@ IC2F_ISR_45:
 ; If we get here, we saw a spark on the rear cyl plug #2 prior to this active period CR11:
 IC2F_ISR_46:
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
-         stD    LW+LOGID_ECU_SPRK_X2_TYPE_T
+         stD    LW+LOGID_ECU_SPRK_X2_TYPE_PTS
         ldaA    L014A                   ;had we seen an error previously?
         bne     IC2F_ISR_47             ;if so, then don't clear the error indicator just yet
 
