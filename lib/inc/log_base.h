@@ -42,25 +42,39 @@
 //
 // The data associated with each LOGID is typed. The type information will be encoded in the TYPE name
 // by appending the various type ID strings 'XX' shown below using the general form LOGID_<subsystem>_<name>_TYPE_XX:
-//    _I16  int16
-//    _U16  uint16
-//    _TS   uint16  Timestamp
-//    _T    uint16  A 'time' indicates a time associated with the event. 
-//    _I8   int8
-//    _U8   uint8
-//    _B    boolean (0 means false, and non-zero means true)
-//    _xPy  A general fixed point form where x digits in front of an assumed decimal point with y digits after it.
-//          Examples:
-//              LOGID_ECU_FOO_TYPE_0P8  would represent an 8-bit 0.8 fixed point value
-//              LOGID_ECU_FOO_TYPE_4P12 would represent a 16-bit 4.12 fixed point value
-//    _V    V indicates that the log entry carries no useful data; if _DLEN > 0, those bytes exist in the stream but must be discarded by the decoder.
-//    _C    Next character of a string. The string can be considered complete when this character has the value NULL (0x00).
-//          Turning _C characters into a string implies stateful processing by a decoder.
-//          The first _C LOGID observed will initialize a string buffer and store the first character in it.
-//          Subsequent _C LOGIDs will append the new character to the existing string buffer.
-//          When a _C LOGID is observed with a NULL character, the string is complete for decoding purposes. 
-
-// A complete example of the naming convention.
+//
+// *** WARNING:
+// *** If you make changes to the naming convention, you MUST update the generate_encoder.py utility
+// *** to properly generate the logEncoder data structure!!!
+// ***
+//
+//    _I16  int16   Signed 16-bit int
+//    _U16  uint16  Unsigned 16-bit int
+//    _TS   uint16  A Timestamp marker.
+//                  Timestamps are derived from a free-running 16-bit counter in the ECU with a precision of 2 uSec per tick.
+//                  All untimestamped events in the log before this _TS event must have occurred before this time.
+//                  All untimestamped events in the log after this _TS event must have occurred after this time
+//                  It is the responsibility of a log decoder to properly track 16-bit rollover events
+//    _PTS  uint16  A 'prescriptive' timestamp associated with an event.
+//                  Prescriptive timestamps can describe events that will occur in the future (like when an injector pulse is scheduled to begin)
+//                  or things in the past (like reporting the time at which a spark detect event was actually observed)
+//    _I8   int8    Signed 8-bit int
+//    _U8   uint8   Unsigned 8-bit int
+//    _B    bool    (0 means false, and non-zero means true)
+//    _xPy  fixPt   A general fixed point form where x digits in front of an assumed decimal point with y digits after it.
+//                  Examples:
+//                      LOGID_ECU_FOO_TYPE_0P8  would represent an 8-bit 0.8 fixed point value
+//                      LOGID_ECU_FOO_TYPE_4P12 would represent a 16-bit 4.12 fixed point value
+//    _V    void    Indicates that the log entry carries no useful data
+//                  NOTE: if _DLEN > 0, DLEN bytes will exist in the log data but must be discarded by the decoder
+//    _C    char    Next character of a string
+//                  The string can be considered complete when this character has the value NULL (0x00).
+//                  Note: Turning _C characters into a string implies stateful processing by a decoder:
+//                      The first _C LOGID observed will initialize a string buffer and store the first character in it.
+//                      Subsequent _C LOGIDs will append the new character to the existing string buffer.
+//                      When a _C LOGID is observed with a NULL character, the string is complete for decoding purposes. 
+//
+// A complete example of the naming convention follows.
 //
 // Definition of symbols:
 //     Assume that the ECU wants to log that it is performing an unexpected CPU event, specifically, an RTI event.

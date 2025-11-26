@@ -143,6 +143,9 @@ set(LIB_DIR ${CMAKE_SOURCE_DIR}/lib)
 set(TOOLS_INSTALL_DIR $ENV{HOME}/.local/bin)
 set(TOOLS_SOURCE_DIR ${CMAKE_SOURCE_DIR}/tools/src)
 
+# Create the log viewer javascript app as a bundled HTML file
+add_subdirectory(logView)
+
 # ---------------------------------------------------------------------------------------------
 message(STATUS "Adding the 'tools' project")
 

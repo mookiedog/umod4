@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 Log Viewer - v2.0 Modular</title>
+    <!-- Version 2.0 - Refactored to ES6 modules -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .header {
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .controls {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #495057;
+            user-select: none;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        .search-container {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+        }
+
+        .search-input {
+            border: none;
+            outline: none;
+            padding: 5px;
+            font-size: 14px;
+            width: 200px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+
+        .search-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 5px 8px;
+            color: #495057;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .search-btn:hover:not(:disabled) {
+            background: #f8f9fa;
+        }
+
+        .search-btn:disabled {
+            color: #dee2e6;
+            cursor: not-allowed;
+        }
+
+        .search-count {
+            font-size: 12px;
+            color: #6c757d;
+            white-space: nowrap;
+        }
+
+        .search-highlight {
+            background-color: #fff3cd;
+            color: #856404;
+            padding: 2px 0;
+        }
+
+        .search-highlight-current {
+            background-color: #ffc107;
+            color: #000;
+            font-weight: bold;
+            padding: 2px 0;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .btn-secondary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .drop-zone {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 3px dashed #495057;
+            border-radius: 10px;
+            margin: 40px;
+            background: #2d2d2d;
+            transition: all 0.3s;
+        }
+
+        .drop-zone:hover {
+            border-color: #667eea;
+            background: #3d3d3d;
+        }
+
+        .drop-zone-content {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .drop-zone-content h2 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #667eea;
+        }
+
+        .tabs-container {
+            display: none;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .tabs {
+            display: flex;
+            background: #2d2d2d;
+            border-bottom: 2px solid #495057;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            background: #2d2d2d;
+            color: #aaa;
+            border: none;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            background: #3d3d3d;
+            color: #fff;
+        }
+
+        .tab.active {
+            background: #1e1e1e;
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .tab-content {
+            display: none;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        #textOutput {
+            padding: 20px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            background: #1e1e1e;
+            overflow-y: auto;
+            height: 100%;
+        }
+
+        .record {
+            margin-bottom: 2px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .event {
+            color: #4ec9b0;
+            font-weight: bold;
+        }
+
+        .value {
+            color: #ce9178;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 20px;
+            background: #2d2d2d;
+        }
+
+        .stat-card {
+            background: #3d3d3d;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .graph-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #aaa;
+            text-align: center;
+        }
+
+        .error {
+            color: #f48771;
+            padding: 20px;
+            background: #f8d7da;
+        }
+
+        .progress-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .progress-box {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            min-width: 300px;
+            text-align: center;
+        }
+
+        .progress-text {
+            color: #fff;
+            font-size: 16px;
+            margin-bottom: 15px;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 8px;
+            background: #1e1e1e;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-status {
+            color: #aaa;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Progress overlay -->
+    <div id="progressOverlay" class="progress-overlay">
+        <div class="progress-box">
+            <div class="progress-text" id="progressText">Loading file...</div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <div class="progress-status" id="progressStatus">0%</div>
+        </div>
+    </div>
+    <div class="container">
+        <div class="header">
+            <h1>🏍️ umod4 Log Viewer</h1>
+            <p>Motorcycle Data Logger Visualization Tool - v2.0 Modular</p>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                📁 Open Log File
+            </button>
+            <input type="file" id="fileInput" class="file-input">
+
+            <button class="btn btn-secondary" id="recentBtn" onclick="toggleRecentFiles()">
+                🕒 Recent Files
+            </button>
+
+            <button class="btn btn-secondary" id="clearBtn" onclick="clearLog()" disabled>
+                🗑️ Clear
+            </button>
+
+            <label class="checkbox-label">
+                <input type="checkbox" id="showBinaryCheckbox" onchange="handleBinaryDisplayToggle()" checked>
+                Show Binary Data
+            </label>
+
+            <div class="search-container">
+                <span style="color: #6c757d;">🔍</span>
+                <input type="text" id="searchInput" class="search-input" placeholder="Search..." onkeyup="handleSearchKeyup(event)">
+                <button class="search-btn" id="searchPrevBtn" onclick="handleSearchPrevious()" title="Previous (Shift+Enter)" disabled>▲</button>
+                <button class="search-btn" id="searchNextBtn" onclick="handleSearchNext()" title="Next (Enter)" disabled>▼</button>
+                <span id="searchCount" class="search-count"></span>
+                <button class="search-btn" id="searchClearBtn" onclick="handleClearSearch()" title="Clear search" style="display: none;">✕</button>
+            </div>
+
+            <span id="fileInfo" style="margin-left: auto; color: #6c757d;"></span>
+        </div>
+
+        <div id="recentFilesPanel" style="display: none; padding: 20px; background: #f8f9fa; border-bottom: 1px solid #dee2e6;">
+            <h3 style="margin-bottom: 15px; font-size: 16px;">Recent Files</h3>
+            <div id="recentFilesList"></div>
+        </div>
+
+        <div id="dropZone" class="drop-zone">
+            <div class="drop-zone-content">
+                <h2>Drop log file here</h2>
+                <p style="color: #aaa;">or click "Open Log File" button above</p>
+                <p style="color: #666; margin-top: 20px; font-size: 12px;">Supports binary .log files from umod4 logger</p>
+            </div>
+        </div>
+
+        <div id="tabsContainer" class="tabs-container">
+            <div class="tabs">
+                <button class="tab active" data-tab="text" onclick="switchTab('text')">📄 Text View</button>
+                <button class="tab" data-tab="graph" onclick="switchTab('graph')">📊 Graph View</button>
+            </div>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-label">File Size</div>
+                    <div class="stat-value" id="statFileSize">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Events</div>
+                    <div class="stat-value" id="statEvents">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Duration</div>
+                    <div class="stat-value" id="statDuration">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Processing Time</div>
+                    <div class="stat-value" id="statProcessTime">-</div>
+                </div>
+            </div>
+
+            <div class="tab-content active" id="textTab" data-tab="text">
+                <div id="textOutput"></div>
+            </div>
+
+            <div class="tab-content" id="graphTab" data-tab="graph">
+                <div class="graph-placeholder">
+                    <div>
+                        <h3>Graph View - Coming Soon</h3>
+                        <p>Interactive time-series visualization will be added in the next version</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import modules
+        import { parseLog } from './js/parser.js';
+        import { renderRecords } from './js/textRenderer.js';
+        import { performSearch, searchNext, searchPrevious, clearSearch, getLastSearchTerm } from './js/search.js';
+        import { readFileAsUint8Array, formatBytes, getRecentFiles, saveRecentFile, clearRecentFiles } from './js/fileManager.js';
+
+        // Global state
+        let showBinaryData = true;
+        let currentParsedData = null;
+
+        // Make functions globally accessible for onclick handlers
+        window.handleFile = handleFile;
+        window.toggleRecentFiles = toggleRecentFiles;
+        window.clearLog = clearLog;
+        window.switchTab = switchTab;
+        window.handleBinaryDisplayToggle = handleBinaryDisplayToggle;
+        window.handleSearchKeyup = handleSearchKeyup;
+        window.handleSearchNext = () => searchNext();
+        window.handleSearchPrevious = () => searchPrevious();
+        window.handleClearSearch = () => clearSearch();
+
+        // File handling
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        async function handleFile(file) {
+            console.log('handleFile called with:', file.name, file.size);
+            const startTime = performance.now();
+
+            // Show progress overlay
+            const overlay = document.getElementById('progressOverlay');
+            const progressText = document.getElementById('progressText');
+            const progressBar = document.getElementById('progressBar');
+            const progressStatus = document.getElementById('progressStatus');
+
+            overlay.style.display = 'flex';
+            progressText.textContent = 'Reading file...';
+            progressBar.style.width = '10%';
+            progressStatus.textContent = '10%';
+
+            try {
+                console.log('Reading file as Uint8Array...');
+                const data = await readFileAsUint8Array(file);
+                console.log('File read complete:', data.length, 'bytes');
+
+                progressText.textContent = 'Parsing log data...';
+                progressBar.style.width = '30%';
+                progressStatus.textContent = '30%';
+
+                // Allow UI to update
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                console.log('Parsing log...');
+                const result = parseLog(data);
+                console.log('Parse complete:', result.recordCount, 'events');
+                const processingTime = (performance.now() - startTime) / 1000;
+
+                progressText.textContent = 'Rendering output...';
+                progressBar.style.width = '60%';
+                progressStatus.textContent = '60%';
+
+                // Store parsed data
+                currentParsedData = result;
+
+                // Save to recent files
+                saveRecentFile({
+                    name: file.name,
+                    size: data.length,
+                    timestamp: Date.now()
+                });
+
+                // Update stats
+                document.getElementById('statFileSize').textContent = formatBytes(data.length);
+                document.getElementById('statEvents').textContent = result.recordCount.toLocaleString();
+                document.getElementById('statDuration').textContent = result.duration.toFixed(2) + 's';
+                document.getElementById('statProcessTime').textContent = processingTime.toFixed(2) + 's';
+
+                progressBar.style.width = '80%';
+                progressStatus.textContent = '80%';
+
+                // Render output
+                console.log('Rendering records...');
+                let html = renderRecords(result, showBinaryData);
+                if (result.truncated) {
+                    html += `<div style="color: #ffa500; margin-top: 20px; text-align: center;">⚠️ Output limited to ${result.recordCount.toLocaleString()} events for performance</div>`;
+                }
+                document.getElementById('textOutput').innerHTML = html;
+                console.log('Rendering complete');
+
+                progressBar.style.width = '100%';
+                progressStatus.textContent = '100%';
+
+                // Update UI
+                document.getElementById('dropZone').style.display = 'none';
+                document.getElementById('tabsContainer').style.display = 'flex';
+                document.getElementById('clearBtn').disabled = false;
+                document.getElementById('fileInfo').textContent = `${file.name} (${formatBytes(data.length)})`;
+
+                console.log('All done!');
+
+                // Hide progress after a short delay
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                    progressBar.style.width = '0%';
+                }, 500);
+
+            } catch (err) {
+                console.error('Error parsing log:', err);
+                console.error('Stack trace:', err.stack);
+                overlay.style.display = 'none';
+                document.getElementById('textOutput').innerHTML = `<div class="error">Error parsing log: ${err.message}<br><br>Check browser console for details.</div>`;
+                document.getElementById('dropZone').style.display = 'none';
+                document.getElementById('tabsContainer').style.display = 'flex';
+            }
+        }
+
+        function handleBinaryDisplayToggle() {
+            showBinaryData = document.getElementById('showBinaryCheckbox').checked;
+
+            if (currentParsedData) {
+                let html = renderRecords(currentParsedData, showBinaryData);
+
+                if (currentParsedData.truncated) {
+                    html += `<div style="color: #ffa500; margin-top: 20px; text-align: center;">⚠️ Output limited to ${currentParsedData.recordCount.toLocaleString()} events for performance</div>`;
+                }
+
+                document.getElementById('textOutput').innerHTML = html;
+
+                // Re-apply search if active
+                const lastTerm = getLastSearchTerm();
+                if (lastTerm) {
+                    performSearch(lastTerm);
+                }
+            }
+        }
+
+        function handleSearchKeyup(event) {
+            if (event.key === 'Enter') {
+                if (event.shiftKey) {
+                    searchPrevious();
+                } else {
+                    searchNext();
+                }
+            } else {
+                const searchTerm = document.getElementById('searchInput').value;
+                performSearch(searchTerm);
+            }
+        }
+
+        function toggleRecentFiles() {
+            const panel = document.getElementById('recentFilesPanel');
+            const isVisible = panel.style.display !== 'none';
+
+            if (isVisible) {
+                panel.style.display = 'none';
+            } else {
+                panel.style.display = 'block';
+                renderRecentFiles();
+            }
+        }
+
+        function renderRecentFiles() {
+            const recent = getRecentFiles();
+            const listDiv = document.getElementById('recentFilesList');
+
+            if (recent.length === 0) {
+                listDiv.innerHTML = '<p style="color: #666;">No recent files</p>';
+                return;
+            }
+
+            listDiv.innerHTML = recent.map(f => `
+                <div style="padding: 10px; margin-bottom: 10px; background: white; border-radius: 5px; cursor: pointer;"
+                     onclick="alert('Recent file selection not yet implemented')">
+                    <strong>${f.name}</strong>
+                    <div style="font-size: 12px; color: #666;">
+                        ${formatBytes(f.size)} • ${new Date(f.timestamp).toLocaleString()}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function clearLog() {
+            document.getElementById('dropZone').style.display = 'block';
+            document.getElementById('tabsContainer').style.display = 'none';
+            document.getElementById('fileInfo').textContent = '';
+            document.getElementById('textOutput').innerHTML = '<div style="color: #6c757d; text-align: center; padding: 40px;">No log file loaded</div>';
+            document.getElementById('clearBtn').disabled = true;
+            document.getElementById('fileInput').value = '';
+            currentParsedData = null;
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.tab === tabName);
+            });
+
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.toggle('active', content.dataset.tab === tabName);
+            });
+        }
+
+        // Drag and drop
+        document.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+
+        document.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+    </script>
+</body>
+</html>

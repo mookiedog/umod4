@@ -1,85 +1,17 @@
 # To Do
 
-## Tracking Time
+## Bugs and Features
 
-* Get rid of time marks. THey have been replaced by overflow interrupt events.
+1) HC11: VTA A/D Results Should Only Report Changes
 
-The log decoder should start time at 0.
+### Viewer_Bundle
 
-The following events are allowed to advance the decoder time:
+1) Progress Bar does not update often enough
+1) decode error bits for L00C..L00F
 
-* OFLO_TS
-* CRANK_TS
-* CAM_TS
-* SPRK_X1_TS, SPRK_X2_TS
+### PCB
 
-We define time 0 at reset.
-Time will not start advancing until the timer gets programmed and the first overflow is observed.
-
-As CRANK, CAM, SPRK events arrive, for the most part, they will arrive in the middle of a complete timer period. However, it is possible that a rollover event could be observed by a CRANK/CAM/SPRK event before the OFLO event is observed.
-
-Consider the simplest case:
-  16-bit timer      reconstructed 32-bit time
-  0x0004 OFLO       0x0001_0004
-  0x4000 CRANK      0x0001_4000
-  0x8000 CRANK      0x0001_8000
-  0xC000 CRANK      0x0001_C000
-  0x0006 OFLO       0x0002_0004
-  0x0010 CRANK      0x0002_0010
-
-Consider another simple case:
-  0x0004 OFLO       0x0001_0004
-  0x4000 CRANK      0x0001_4000
-  0x8000 CRANK      0x0001_8000
-  0xC000 CRANK      0x0001_C000
-  0x0006 OFLO       0x0002_0004 This item and the next must be out of order
-  0xFFFF CRANK      0x0001_FFFF
-
-Consider a case that cannot be determined:
-  0x0004 OFLO       0x0001_0004
-  0x0001 CRANK      0x000?_0001 could be interpreted as 0x0001_0001 (out of order with the previous event) OR 0x0001_0001 (after rollover, but before rollover got reported)
-  0x0006 OFLO       0x0001_0006
-
-
-The previous case would be solved if we could guarantee that at least one more TS event occurred somewhere between the two OFLO events:
-
-caseA:
-  0x0004 OFLO       0x0000_0004
-  0x2000 CRANK      0x0000_2000
-  0x0001 CRANK      0x0001_0001 (must indicate rollover, to be proven true by the next event)
-  0x0006 OFLO       0x0001_0006
-
-caseB:
-  0x0004 OFLO       0x0000_0004
-  0x0002 CRANK      0x0000_0002 (out-of-order: must have occurred before the OFLO)
-  0x2000 CRANK      0x0001_0001 (must have occurred after the rollover)
-  0x0006 OFLO       0x0001_0006
-
-Data shows me that even when the engine is running, I can get two overflows in a row without any AAP events:
-
-[ 56523 @    52.0297s]: OFLO_TS: 6
-[ 56549 @    52.0509s]: AAP:    187
-[ 56595 @    52.0899s]: AAP:    186
-[ 56615 @    52.1059s]: AAP:    187
-[ 56639 @    52.1226s]: AAP:    185
-[ 56664 @    52.1447s]: AAP:    186
-[ 56685 @    52.1608s]: OFLO_TS: 6
-[ 56850 @    52.2919s]: OFLO_TS: 8
-[ 56979 @    52.4002s]: AAP:    187
-[ 57006 @    52.4231s]: OFLO_TS: 76
-
-With the engine running or not, I was getting around 57 VTA events per overflow.
-
-
-
-## Modify UM4.S To Track Time When Engine Not Rotating
-
-* The mechanism to detect crank-not-rotating and emit time markers is not working
-* The 'find eprom' mechanism in the EP should either document that it is finding an eprom, or not bother emitting the EPROM name. If the 'load range' operation correctly documents that it could not find an EPROM, then the find operation does not need to do anything.
-
-## Bugs To Fix
-
-* Hardware.h only defines PCB 4V0
+1) Hardware.h only defines PCB 4V0
 
 ## Data Path From ECU to WP
 
@@ -98,7 +30,8 @@ The build subsystem doesn't really care though.
 
 ## PCB Support
 
-1) See if I can make 4-bit SD Card operations work
+1) See if I can make 4-bit SD Card operations work.
+I know that they should because the RP2350 Rabbit SCSI adaptor I bought for the logic analyzer uses 4-bit PIO SD.
 
 1) Supercap operation
     1) charging

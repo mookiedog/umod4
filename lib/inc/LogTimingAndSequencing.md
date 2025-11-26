@@ -1,4 +1,20 @@
-# Log Timestamps and Event Sequencing
+# Logfile Format
+
+The logfile format is primarily designed for space-efficiency since they can be potentially huge (hundreds of megabytes).
+
+A log file will contain data from a number of different data streams.
+Data is written in chunks called events.
+Events will comprise different amounts of data, depending on the event's log identifier, or LOGID.
+Each LOGID is a unique numeric value allowing software to determine how many bytes following the LOGID in the log data belong to that LOGID's event, and how to interpret that data (bool, float, a byte of raw sensor units, etc).
+
+### Time Ordering of Streams
+
+The logfile generation process guarantees that events sharing a LOGID will always appear in the log in increasing time order.
+However, it is _not_ guaranteed that the log's interleaved events from different data streams will appear in the log in increasing time order.
+Specifically, a log event N of stream type S1 at time T may be followed by a log event N+1 of stream type S2 at time T-X, which is before time T of the event that preceeded it.
+This will be rare, but it will happen.
+
+## Log Timestamps and Event Sequencing
 
 To save log space, the only events to get timestamped are those that need know precisely when they occured.
 For example, tracking the precise time that the crankshaft passed through its 60 degree subrotations

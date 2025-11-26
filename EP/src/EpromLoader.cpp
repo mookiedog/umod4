@@ -29,7 +29,20 @@ if (hash != 0x2FA826CD) {
 extern void enqueue(uint8_t id, uint8_t data);
 
 // --------------------------------------------------------------------------------------------
-void logEpromName(const char* nameP)
+void logEpromName_find(const char* nameP)
+{
+    char c;
+    
+    if (nameP) {
+        do {
+            c = *nameP++;
+            enqueue(LOGID_EP_FIND_NAME_TYPE_U8, c);
+        } while (c != '\0');
+    }
+}
+
+// --------------------------------------------------------------------------------------------
+void logEpromName_load(const char* nameP)
 {
     char c;
     
@@ -43,6 +56,7 @@ void logEpromName(const char* nameP)
 
 
 
+
 // --------------------------------------------------------------------------------------------
 // Check every BSON document in the BSON partition to see if it defines a
 // key called "eprom" where the key value has a type of "BSON_TYPE_EMBEDDED_DOC".
@@ -53,7 +67,7 @@ uint8_t* EpromLoader::findEprom(const char* epromName)
     uint8_t* docP = (uint8_t*)&__BSON_IMAGE_PARTITION_START_ADDR;
     
     printf("%s: Locating EPROM \"%s\"\n", __FUNCTION__, epromName);
-    logEpromName(epromName);
+    logEpromName_find(epromName);
     while (1) {
         #if !defined BSON_PARTITION_IS_PADDED
         #error "Need to define if the BSON partition is padded or not!"
@@ -87,6 +101,7 @@ uint8_t* EpromLoader::findEprom(const char* epromName)
                         const char* nameP = (const char*)name_e.data+4;
                         if (0==strcmp(epromName, nameP)) {
                             // Found it!
+                            enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOERR);
                             return epromDoc;
                         }
                     }
@@ -99,6 +114,7 @@ uint8_t* EpromLoader::findEprom(const char* epromName)
         docP += docLength;
     }
     
+    enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
     return nullptr;
 }
 
@@ -191,7 +207,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
         #warning "Fix me!"
         name = (const char*)name_element.data+4;
     }
-    logEpromName(name);
+    logEpromName_load(name);
     
     // Addr & length are sent out big-endian like the rest of the 16-bit ECU data
     enqueue(LOGID_EP_LOAD_ADDR_TYPE_U16, (startOffset >> 8) & 0xFF);

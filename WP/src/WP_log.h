@@ -47,9 +47,9 @@
 // Times >= 65535 mSec will be clamped to 65535 mSec, or just over a minute.
 //
 // It is not required to log every filesystem operation, but it might be useful to track the max times.
-#define LOGID_WP_WR_TIME_TYPE_U16                   ((LOGID_WP_BASE) + 0x0B)
+#define LOGID_WP_WR_TIME_TYPE_U16                   ((LOGID_WP_BASE) + 0x0C)
 #define LOGID_WP_WR_TIME_DLEN                       2
-#define LOGID_WP_SYNC_TIME_TYPE_U16                 ((LOGID_WP_BASE) + 0x0C)
+#define LOGID_WP_SYNC_TIME_TYPE_U16                 ((LOGID_WP_BASE) + 0x0D)
 #define LOGID_WP_SYNC_TIME_DLEN                     2
 
 #endif

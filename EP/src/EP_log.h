@@ -25,6 +25,9 @@
 #define LOGID_EP_LOAD_NAME_TYPE_U8                      ((LOGID_EP_BASE) + 0x00)        // The name of the EPROM to be loaded, written as sequence of UTF-8 chars, NULL terminated
 #define LOGID_EP_LOAD_NAME_DLEN                         1
 
+#define LOGID_EP_FIND_NAME_TYPE_U8                      ((LOGID_EP_BASE) + 0x01)        // The name of the EPROM to be found in the BSON library doc, written as sequence of UTF-8 chars, NULL terminated
+#define LOGID_EP_FIND_NAME_DLEN                         1
+
 #define LOGID_EP_LOAD_ADDR_TYPE_U16                     ((LOGID_EP_BASE) + 0x02)        // 2 bytes, LSB first
 #define LOGID_EP_LOAD_ADDR_DLEN                         2
 
