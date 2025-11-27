@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>umod4 Log Viewer - v2.0 Modular</title>
-    <!-- Version 2.0 - Refactored to ES6 modules -->
+    <title>🏍️ umod4 Log Viewer - v2.1 Virtual Scrolling</title>
+    <!-- Version 2.1 - Virtual scrolling with timestamp fix -->
     <style>
         * {
             margin: 0;
@@ -13,140 +13,70 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #1e1e1e;
-            color: #d4d4d4;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             height: 100vh;
+            display: flex;
+            flex-direction: column;
             overflow: hidden;
         }
 
         .container {
+            flex: 1;
             display: flex;
             flex-direction: column;
-            height: 100vh;
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+            overflow: hidden;
+            min-height: 0;
         }
 
         .header {
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
             text-align: center;
+            color: white;
+            margin-bottom: 30px;
         }
 
         .header h1 {
-            font-size: 28px;
-            margin-bottom: 5px;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
         }
 
         .header p {
-            font-size: 14px;
+            font-size: 1.1rem;
             opacity: 0.9;
         }
 
         .controls {
-            padding: 15px 20px;
-            background: #f8f9fa;
-            border-bottom: 1px solid #dee2e6;
             display: flex;
             gap: 15px;
+            margin-bottom: 20px;
             flex-wrap: wrap;
             align-items: center;
         }
 
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            color: #495057;
-            user-select: none;
-        }
-
-        .checkbox-label input[type="checkbox"] {
-            cursor: pointer;
-        }
-
-        .search-container {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 10px;
-            background: white;
-            border: 1px solid #dee2e6;
-            border-radius: 5px;
-        }
-
-        .search-input {
-            border: none;
-            outline: none;
-            padding: 5px;
-            font-size: 14px;
-            width: 200px;
-            font-family: 'Consolas', 'Monaco', monospace;
-        }
-
-        .search-btn {
-            background: none;
-            border: none;
-            cursor: pointer;
-            padding: 5px 8px;
-            color: #495057;
-            font-size: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 3px;
-            transition: background 0.2s;
-        }
-
-        .search-btn:hover:not(:disabled) {
-            background: #f8f9fa;
-        }
-
-        .search-btn:disabled {
-            color: #dee2e6;
-            cursor: not-allowed;
-        }
-
-        .search-count {
-            font-size: 12px;
-            color: #6c757d;
-            white-space: nowrap;
-        }
-
-        .search-highlight {
-            background-color: #fff3cd;
-            color: #856404;
-            padding: 2px 0;
-        }
-
-        .search-highlight-current {
-            background-color: #ffc107;
-            color: #000;
-            font-weight: bold;
-            padding: 2px 0;
-        }
-
         .btn {
-            padding: 10px 20px;
+            padding: 12px 24px;
+            font-size: 16px;
             border: none;
-            border-radius: 5px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 14px;
             font-weight: 600;
-            transition: all 0.2s;
+            transition: all 0.3s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
 
         .btn-primary {
-            background: #667eea;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
 
         .btn-primary:hover {
-            background: #5568d3;
-            transform: translateY(-1px);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.2);
         }
 
         .btn-secondary {
@@ -156,50 +86,127 @@
 
         .btn-secondary:hover {
             background: #5a6268;
+            transform: translateY(-2px);
         }
 
-        .btn-secondary:disabled {
+        .btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            transform: none !important;
         }
 
         .file-input {
             display: none;
         }
 
-        .drop-zone {
-            flex: 1;
+        .search-container {
             display: flex;
             align-items: center;
-            justify-content: center;
-            border: 3px dashed #495057;
-            border-radius: 10px;
-            margin: 40px;
-            background: #2d2d2d;
+            background: white;
+            border-radius: 8px;
+            padding: 8px 12px;
+            gap: 8px;
+            flex: 1;
+            max-width: 400px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .search-input {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 14px;
+            padding: 4px;
+        }
+
+        .search-btn {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .search-btn:hover:not(:disabled) {
+            background: #e9ecef;
+        }
+
+        .search-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .search-count {
+            color: #6c757d;
+            font-size: 12px;
+            min-width: 60px;
+            text-align: center;
+        }
+
+        .drop-zone {
+            background: white;
+            border: 3px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 60px 40px;
+            text-align: center;
             transition: all 0.3s;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 300px;
         }
 
         .drop-zone:hover {
             border-color: #667eea;
-            background: #3d3d3d;
-        }
-
-        .drop-zone-content {
-            text-align: center;
-            padding: 40px;
+            background: #f8f9fa;
         }
 
         .drop-zone-content h2 {
+            color: #2d3748;
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
             font-size: 24px;
-            margin-bottom: 10px;
-            color: #667eea;
+            font-weight: 700;
+            color: #2d3748;
         }
 
         .tabs-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            flex: 1;
             display: none;
             flex-direction: column;
-            flex: 1;
             overflow: hidden;
+            min-height: 0;
         }
 
         .tabs {
@@ -233,11 +240,13 @@
         .tab-content {
             display: none;
             flex: 1;
-            overflow-y: auto;
+            overflow: hidden;
+            position: relative;
         }
 
         .tab-content.active {
-            display: block;
+            display: flex;
+            flex-direction: column;
         }
 
         #textOutput {
@@ -246,6 +255,7 @@
             font-size: 13px;
             line-height: 1.6;
             background: #1e1e1e;
+            color: #d4d4d4;
             overflow-y: auto;
             height: 100%;
         }
@@ -254,42 +264,15 @@
             margin-bottom: 2px;
             white-space: pre-wrap;
             word-break: break-all;
+            color: #d4d4d4;
         }
 
         .event {
             color: #4ec9b0;
-            font-weight: bold;
         }
 
         .value {
             color: #ce9178;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            padding: 20px;
-            background: #2d2d2d;
-        }
-
-        .stat-card {
-            background: #3d3d3d;
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-        }
-
-        .stat-label {
-            font-size: 12px;
-            color: #aaa;
-            margin-bottom: 5px;
-        }
-
-        .stat-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #fff;
         }
 
         .graph-placeholder {
@@ -297,7 +280,7 @@
             align-items: center;
             justify-content: center;
             height: 100%;
-            color: #aaa;
+            color: #6c757d;
             text-align: center;
         }
 
@@ -355,6 +338,16 @@
             font-size: 12px;
             margin-top: 10px;
         }
+
+        mark.search-highlight {
+            background: #ffd700;
+            color: #000;
+        }
+
+        mark.search-highlight-current {
+            background: #ff6b35;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -371,7 +364,7 @@
     <div class="container">
         <div class="header">
             <h1>🏍️ umod4 Log Viewer</h1>
-            <p>Motorcycle Data Logger Visualization Tool - v2.0 Modular</p>
+            <p>Motorcycle Data Logger Visualization Tool - v2.1 Virtual Scrolling</p>
         </div>
 
         <div class="controls">
@@ -387,11 +380,6 @@
             <button class="btn btn-secondary" id="clearBtn" onclick="clearLog()" disabled>
                 🗑️ Clear
             </button>
-
-            <label class="checkbox-label">
-                <input type="checkbox" id="showBinaryCheckbox" onchange="handleBinaryDisplayToggle()" checked>
-                Show Binary Data
-            </label>
 
             <div class="search-container">
                 <span style="color: #6c757d;">🔍</span>
@@ -461,20 +449,19 @@
     <script type="module">
         // Import modules
         import { parseLog } from './js/parser.js';
-        import { renderRecords } from './js/textRenderer.js';
-        import { performSearch, searchNext, searchPrevious, clearSearch, getLastSearchTerm } from './js/search.js';
+        import { VirtualRenderer } from './js/virtualRenderer.js';
+        import { performSearch, searchNext, searchPrevious, clearSearch, getLastSearchTerm, setVirtualRenderer } from './js/search.js';
         import { readFileAsUint8Array, formatBytes, getRecentFiles, saveRecentFile, clearRecentFiles } from './js/fileManager.js';
 
         // Global state
-        let showBinaryData = true;
         let currentParsedData = null;
+        let virtualRenderer = null;
 
         // Make functions globally accessible for onclick handlers
         window.handleFile = handleFile;
         window.toggleRecentFiles = toggleRecentFiles;
         window.clearLog = clearLog;
         window.switchTab = switchTab;
-        window.handleBinaryDisplayToggle = handleBinaryDisplayToggle;
         window.handleSearchKeyup = handleSearchKeyup;
         window.handleSearchNext = () => searchNext();
         window.handleSearchPrevious = () => searchPrevious();
@@ -542,14 +529,12 @@
                 progressBar.style.width = '80%';
                 progressStatus.textContent = '80%';
 
-                // Render output
-                console.log('Rendering records...');
-                let html = renderRecords(result, showBinaryData);
-                if (result.truncated) {
-                    html += `<div style="color: #ffa500; margin-top: 20px; text-align: center;">⚠️ Output limited to ${result.recordCount.toLocaleString()} events for performance</div>`;
+                // Initialize virtual renderer
+                if (!virtualRenderer) {
+                    virtualRenderer = new VirtualRenderer('textOutput');
+                    setVirtualRenderer(virtualRenderer);
                 }
-                document.getElementById('textOutput').innerHTML = html;
-                console.log('Rendering complete');
+                virtualRenderer.initialize(result);
 
                 progressBar.style.width = '100%';
                 progressStatus.textContent = '100%';
@@ -578,26 +563,6 @@
             }
         }
 
-        function handleBinaryDisplayToggle() {
-            showBinaryData = document.getElementById('showBinaryCheckbox').checked;
-
-            if (currentParsedData) {
-                let html = renderRecords(currentParsedData, showBinaryData);
-
-                if (currentParsedData.truncated) {
-                    html += `<div style="color: #ffa500; margin-top: 20px; text-align: center;">⚠️ Output limited to ${currentParsedData.recordCount.toLocaleString()} events for performance</div>`;
-                }
-
-                document.getElementById('textOutput').innerHTML = html;
-
-                // Re-apply search if active
-                const lastTerm = getLastSearchTerm();
-                if (lastTerm) {
-                    performSearch(lastTerm);
-                }
-            }
-        }
-
         function handleSearchKeyup(event) {
             if (event.key === 'Enter') {
                 if (event.shiftKey) {
@@ -618,21 +583,21 @@
             if (isVisible) {
                 panel.style.display = 'none';
             } else {
+                updateRecentFilesList();
                 panel.style.display = 'block';
-                renderRecentFiles();
             }
         }
 
-        function renderRecentFiles() {
-            const recent = getRecentFiles();
+        function updateRecentFilesList() {
+            const files = getRecentFiles();
             const listDiv = document.getElementById('recentFilesList');
 
-            if (recent.length === 0) {
-                listDiv.innerHTML = '<p style="color: #666;">No recent files</p>';
+            if (files.length === 0) {
+                listDiv.innerHTML = '<p style="color: #6c757d;">No recent files</p>';
                 return;
             }
 
-            listDiv.innerHTML = recent.map(f => `
+            listDiv.innerHTML = files.map(f => `
                 <div style="padding: 10px; margin-bottom: 10px; background: white; border-radius: 5px; cursor: pointer;"
                      onclick="alert('Recent file selection not yet implemented')">
                     <strong>${f.name}</strong>
@@ -644,13 +609,17 @@
         }
 
         function clearLog() {
-            document.getElementById('dropZone').style.display = 'block';
+            if (virtualRenderer) {
+                virtualRenderer.clear();
+            }
+            document.getElementById('dropZone').style.display = 'flex';
             document.getElementById('tabsContainer').style.display = 'none';
             document.getElementById('fileInfo').textContent = '';
-            document.getElementById('textOutput').innerHTML = '<div style="color: #6c757d; text-align: center; padding: 40px;">No log file loaded</div>';
             document.getElementById('clearBtn').disabled = true;
             document.getElementById('fileInput').value = '';
+            document.getElementById('searchInput').value = '';
             currentParsedData = null;
+            clearSearch();
         }
 
         function switchTab(tabName) {
@@ -664,15 +633,31 @@
         }
 
         // Drag and drop
-        document.addEventListener('dragover', (e) => {
+        const dropZone = document.getElementById('dropZone');
+
+        dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
+            dropZone.style.borderColor = '#667eea';
+            dropZone.style.background = '#f8f9fa';
         });
 
-        document.addEventListener('drop', (e) => {
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = '#cbd5e0';
+            dropZone.style.background = 'white';
+        });
+
+        dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
+            dropZone.style.borderColor = '#cbd5e0';
+            dropZone.style.background = 'white';
+
             if (e.dataTransfer.files.length > 0) {
                 handleFile(e.dataTransfer.files[0]);
             }
+        });
+
+        dropZone.addEventListener('click', () => {
+            document.getElementById('fileInput').click();
         });
     </script>
 </body>

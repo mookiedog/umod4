@@ -102,12 +102,12 @@ def bundle_viewer():
 
     # Update title to indicate bundled version
     bundled_html = bundled_html.replace(
-        'v2.0 Modular',
-        'v2.0 Bundled (for phones/tablets)'
+        'v2.1 Virtual Scrolling',
+        'v2.1 Bundled (for phones/tablets)'
     )
     bundled_html = bundled_html.replace(
-        '<!-- Version 2.0 - Refactored to ES6 modules -->',
-        '<!-- Version 2.0 - Bundled from ES6 modules -->'
+        '<!-- Version 2.1 - Virtual scrolling with timestamp fix -->',
+        '<!-- Version 2.1 - Bundled with virtual scrolling -->'
     )
 
     # Write output

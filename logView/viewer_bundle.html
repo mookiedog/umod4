@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>umod4 Log Viewer - v2.0 Bundled (for phones/tablets)</title>
-    <!-- Version 2.0 - Bundled from ES6 modules -->
+    <title>🏍️ umod4 Log Viewer - v2.1 Bundled (for phones/tablets)</title>
+    <!-- Version 2.1 - Bundled with virtual scrolling -->
     <style>
         * {
             margin: 0;
@@ -13,140 +13,70 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #1e1e1e;
-            color: #d4d4d4;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             height: 100vh;
+            display: flex;
+            flex-direction: column;
             overflow: hidden;
         }
 
         .container {
+            flex: 1;
             display: flex;
             flex-direction: column;
-            height: 100vh;
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+            overflow: hidden;
+            min-height: 0;
         }
 
         .header {
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
             text-align: center;
+            color: white;
+            margin-bottom: 30px;
         }
 
         .header h1 {
-            font-size: 28px;
-            margin-bottom: 5px;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
         }
 
         .header p {
-            font-size: 14px;
+            font-size: 1.1rem;
             opacity: 0.9;
         }
 
         .controls {
-            padding: 15px 20px;
-            background: #f8f9fa;
-            border-bottom: 1px solid #dee2e6;
             display: flex;
             gap: 15px;
+            margin-bottom: 20px;
             flex-wrap: wrap;
             align-items: center;
         }
 
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            color: #495057;
-            user-select: none;
-        }
-
-        .checkbox-label input[type="checkbox"] {
-            cursor: pointer;
-        }
-
-        .search-container {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 10px;
-            background: white;
-            border: 1px solid #dee2e6;
-            border-radius: 5px;
-        }
-
-        .search-input {
-            border: none;
-            outline: none;
-            padding: 5px;
-            font-size: 14px;
-            width: 200px;
-            font-family: 'Consolas', 'Monaco', monospace;
-        }
-
-        .search-btn {
-            background: none;
-            border: none;
-            cursor: pointer;
-            padding: 5px 8px;
-            color: #495057;
-            font-size: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 3px;
-            transition: background 0.2s;
-        }
-
-        .search-btn:hover:not(:disabled) {
-            background: #f8f9fa;
-        }
-
-        .search-btn:disabled {
-            color: #dee2e6;
-            cursor: not-allowed;
-        }
-
-        .search-count {
-            font-size: 12px;
-            color: #6c757d;
-            white-space: nowrap;
-        }
-
-        .search-highlight {
-            background-color: #fff3cd;
-            color: #856404;
-            padding: 2px 0;
-        }
-
-        .search-highlight-current {
-            background-color: #ffc107;
-            color: #000;
-            font-weight: bold;
-            padding: 2px 0;
-        }
-
         .btn {
-            padding: 10px 20px;
+            padding: 12px 24px;
+            font-size: 16px;
             border: none;
-            border-radius: 5px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 14px;
             font-weight: 600;
-            transition: all 0.2s;
+            transition: all 0.3s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
 
         .btn-primary {
-            background: #667eea;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
 
         .btn-primary:hover {
-            background: #5568d3;
-            transform: translateY(-1px);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.2);
         }
 
         .btn-secondary {
@@ -156,50 +86,127 @@
 
         .btn-secondary:hover {
             background: #5a6268;
+            transform: translateY(-2px);
         }
 
-        .btn-secondary:disabled {
+        .btn:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            transform: none !important;
         }
 
         .file-input {
             display: none;
         }
 
-        .drop-zone {
-            flex: 1;
+        .search-container {
             display: flex;
             align-items: center;
-            justify-content: center;
-            border: 3px dashed #495057;
-            border-radius: 10px;
-            margin: 40px;
-            background: #2d2d2d;
+            background: white;
+            border-radius: 8px;
+            padding: 8px 12px;
+            gap: 8px;
+            flex: 1;
+            max-width: 400px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .search-input {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 14px;
+            padding: 4px;
+        }
+
+        .search-btn {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .search-btn:hover:not(:disabled) {
+            background: #e9ecef;
+        }
+
+        .search-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .search-count {
+            color: #6c757d;
+            font-size: 12px;
+            min-width: 60px;
+            text-align: center;
+        }
+
+        .drop-zone {
+            background: white;
+            border: 3px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 60px 40px;
+            text-align: center;
             transition: all 0.3s;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 300px;
         }
 
         .drop-zone:hover {
             border-color: #667eea;
-            background: #3d3d3d;
-        }
-
-        .drop-zone-content {
-            text-align: center;
-            padding: 40px;
+            background: #f8f9fa;
         }
 
         .drop-zone-content h2 {
+            color: #2d3748;
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
             font-size: 24px;
-            margin-bottom: 10px;
-            color: #667eea;
+            font-weight: 700;
+            color: #2d3748;
         }
 
         .tabs-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            flex: 1;
             display: none;
             flex-direction: column;
-            flex: 1;
             overflow: hidden;
+            min-height: 0;
         }
 
         .tabs {
@@ -233,11 +240,13 @@
         .tab-content {
             display: none;
             flex: 1;
-            overflow-y: auto;
+            overflow: hidden;
+            position: relative;
         }
 
         .tab-content.active {
-            display: block;
+            display: flex;
+            flex-direction: column;
         }
 
         #textOutput {
@@ -246,6 +255,7 @@
             font-size: 13px;
             line-height: 1.6;
             background: #1e1e1e;
+            color: #d4d4d4;
             overflow-y: auto;
             height: 100%;
         }
@@ -254,42 +264,15 @@
             margin-bottom: 2px;
             white-space: pre-wrap;
             word-break: break-all;
+            color: #d4d4d4;
         }
 
         .event {
             color: #4ec9b0;
-            font-weight: bold;
         }
 
         .value {
             color: #ce9178;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            padding: 20px;
-            background: #2d2d2d;
-        }
-
-        .stat-card {
-            background: #3d3d3d;
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-        }
-
-        .stat-label {
-            font-size: 12px;
-            color: #aaa;
-            margin-bottom: 5px;
-        }
-
-        .stat-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #fff;
         }
 
         .graph-placeholder {
@@ -297,7 +280,7 @@
             align-items: center;
             justify-content: center;
             height: 100%;
-            color: #aaa;
+            color: #6c757d;
             text-align: center;
         }
 
@@ -355,6 +338,16 @@
             font-size: 12px;
             margin-top: 10px;
         }
+
+        mark.search-highlight {
+            background: #ffd700;
+            color: #000;
+        }
+
+        mark.search-highlight-current {
+            background: #ff6b35;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -371,7 +364,7 @@
     <div class="container">
         <div class="header">
             <h1>🏍️ umod4 Log Viewer</h1>
-            <p>Motorcycle Data Logger Visualization Tool - v2.0 Bundled (for phones/tablets)</p>
+            <p>Motorcycle Data Logger Visualization Tool - v2.1 Bundled (for phones/tablets)</p>
         </div>
 
         <div class="controls">
@@ -387,11 +380,6 @@
             <button class="btn btn-secondary" id="clearBtn" onclick="clearLog()" disabled>
                 🗑️ Clear
             </button>
-
-            <label class="checkbox-label">
-                <input type="checkbox" id="showBinaryCheckbox" onchange="handleBinaryDisplayToggle()" checked>
-                Show Binary Data
-            </label>
 
             <div class="search-container">
                 <span style="color: #6c757d;">🔍</span>
@@ -1206,7 +1194,10 @@ function parseLog(data) {
 
 // ===== End: js/parser.js =====
 
-// ===== Bundled: js/textRenderer.js =====
+// ===== Bundled: js/virtualRenderer.js =====
+// virtualRenderer.js - Virtual scrolling renderer for large log files
+
+// ===== Bundled: textRenderer.js =====
 // textRenderer.js - Text rendering with binary display support
 
 
@@ -1264,78 +1255,452 @@ function formatBinaryDataForRecord(startOffset, bytes) {
     return chunks.join('\n');
 }
 
-// ===== End: js/textRenderer.js =====
+// ===== End: textRenderer.js =====
+
+
+/**
+ * VirtualRenderer - Efficiently renders only visible records
+ *
+ * Only renders records in viewport + overscan buffer, dramatically improving
+ * performance for large log files (100K+ events).
+ */
+class VirtualRenderer {
+    constructor(containerId) {
+        this.container = document.getElementById(containerId);
+        this.records = [];
+        this.visibleStart = 0;
+        this.visibleEnd = 0;
+        this.overscan = 100;  // Extra records above/below viewport
+
+        // Height estimation (will be calibrated after first render)
+        this.estimatedRowHeight = 20;  // Base height per record
+        this.actualHeights = new Map();  // Track actual heights
+
+        // DOM elements
+        this.topSpacer = null;
+        this.viewport = null;
+        this.bottomSpacer = null;
+
+        // Scroll state
+        this.isUpdating = false;
+        this.isProgrammaticScroll = false;
+        this._scrollHandler = null;
+
+        // Search state
+        this.searchTerm = '';
+        this.searchMatches = [];
+        this.currentMatchIndex = -1;
+    }
+
+    /**
+     * Initialize renderer with parsed log data
+     */
+    initialize(parsedData) {
+        this.records = parsedData.records || [];
+        this.setupContainer();
+
+        // Calculate initial visible range
+        this.updateVisibleRange();
+
+        // If still no visible range (container not laid out yet), show first screen
+        if (this.visibleEnd === 0) {
+            this.visibleStart = 0;
+            this.visibleEnd = Math.min(this.records.length, this.overscan * 2);
+        }
+
+        this.render();
+    }
+
+    /**
+     * Setup container structure
+     */
+    setupContainer() {
+        // Clear existing content
+        this.container.innerHTML = '';
+
+        // Create three-part structure: top spacer, viewport, bottom spacer
+        this.topSpacer = document.createElement('div');
+        this.topSpacer.style.height = '0px';
+
+        this.viewport = document.createElement('div');
+        this.viewport.className = 'virtual-viewport';
+
+        this.bottomSpacer = document.createElement('div');
+        this.bottomSpacer.style.height = '0px';
+
+        this.container.appendChild(this.topSpacer);
+        this.container.appendChild(this.viewport);
+        this.container.appendChild(this.bottomSpacer);
+
+        // Attach scroll listener to the container itself
+        // Store bound handler for later removal if needed
+        this._scrollHandler = this.onScroll.bind(this);
+        this.container.addEventListener('scroll', this._scrollHandler);
+    }
+
+    /**
+     * Handle scroll events with throttling
+     */
+    onScroll() {
+        // Don't update if we're programmatically scrolling or already updating
+        if (this.isProgrammaticScroll || this.isUpdating) return;
+
+        this.isUpdating = true;
+
+        // Use requestAnimationFrame for smooth updates
+        requestAnimationFrame(() => {
+            this.updateVisibleRange();
+            this.isUpdating = false;
+        });
+    }
+
+    /**
+     * Calculate which records should be visible
+     */
+    updateVisibleRange() {
+        if (!this.container) return;
+
+        const scrollTop = this.container.scrollTop;
+        const viewportHeight = this.container.clientHeight;
+
+        // Estimate position based on average row height
+        const estimatedStart = Math.floor(scrollTop / this.estimatedRowHeight);
+        const estimatedEnd = Math.ceil((scrollTop + viewportHeight) / this.estimatedRowHeight);
+
+        // Add overscan buffer
+        const newStart = Math.max(0, estimatedStart - this.overscan);
+        const newEnd = Math.min(this.records.length, estimatedEnd + this.overscan);
+
+        // Only re-render if range changed significantly
+        if (Math.abs(newStart - this.visibleStart) > 50 ||
+            Math.abs(newEnd - this.visibleEnd) > 50) {
+            this.visibleStart = newStart;
+            this.visibleEnd = newEnd;
+            this.render();
+        }
+    }
+
+    /**
+     * Render visible records
+     */
+    render() {
+        if (this.records.length === 0) {
+            this.viewport.innerHTML = '<div class="record">No records to display</div>';
+            return;
+        }
+
+        // Render visible slice
+        const html = [];
+        for (let i = this.visibleStart; i < this.visibleEnd; i++) {
+            const record = this.records[i];
+            if (!record) {
+                console.error('VirtualRenderer.render: Missing record at index', i);
+                continue;
+            }
+            html.push(this.renderRecord(record, i));
+        }
+
+        this.viewport.innerHTML = html.join('');
+
+        // Update spacer heights
+        const topHeight = this.visibleStart * this.estimatedRowHeight;
+        const bottomHeight = (this.records.length - this.visibleEnd) * this.estimatedRowHeight;
+
+        this.topSpacer.style.height = `${topHeight}px`;
+        this.bottomSpacer.style.height = `${bottomHeight}px`;
+
+        // Apply search highlighting if active
+        if (this.searchTerm) {
+            this.highlightVisibleMatches();
+        }
+    }
+
+    /**
+     * Render a single record with binary data (always shown)
+     */
+    renderRecord(record, index) {
+        if (record.binData && record.binData.length > 0) {
+            const binLines = formatBinaryDataForRecord(record.binOffset, record.binData);
+            const binLineArray = binLines.split('\n');
+
+            // First line gets the record html appended
+            let html = `<div class="record" data-index="${index}">${binLineArray[0]} ${record.html}</div>`;
+
+            // Additional lines (for multi-byte events) are standalone
+            for (let i = 1; i < binLineArray.length; i++) {
+                html += `<div class="record" data-index="${index}">${binLineArray[i]}</div>`;
+            }
+
+            return html;
+        } else {
+            return `<div class="record" data-index="${index}">${record.html}</div>`;
+        }
+    }
+
+    /**
+     * Search through all records (in-memory, not DOM)
+     */
+    performSearch(searchTerm) {
+        this.searchTerm = searchTerm;
+        this.searchMatches = [];
+        this.currentMatchIndex = -1;
+
+        if (!searchTerm || searchTerm.length === 0) {
+            this.render();  // Clear highlights
+            return { matches: 0, current: -1 };
+        }
+
+        // Search through all records in memory
+        const lowerSearch = searchTerm.toLowerCase();
+
+        for (let i = 0; i < this.records.length; i++) {
+            const record = this.records[i];
+            // Strip HTML tags for text-only search
+            const text = this.stripHtml(record.html).toLowerCase();
+            if (text.includes(lowerSearch)) {
+                this.searchMatches.push(i);
+            }
+        }
+
+        if (this.searchMatches.length > 0) {
+            this.currentMatchIndex = 0;
+            // Scroll to first match and update viewport
+            setTimeout(() => this.scrollToMatch(0), 50);
+        } else {
+            this.render();  // Re-render to clear any highlights
+        }
+
+        return {
+            matches: this.searchMatches.length,
+            current: this.currentMatchIndex
+        };
+    }
+
+    /**
+     * Navigate to next search match
+     */
+    searchNext() {
+        if (this.searchMatches.length === 0) return { matches: 0, current: -1 };
+
+        this.currentMatchIndex = (this.currentMatchIndex + 1) % this.searchMatches.length;
+
+        // Scroll to match with small delay
+        setTimeout(() => this.scrollToMatch(this.currentMatchIndex), 50);
+
+        return {
+            matches: this.searchMatches.length,
+            current: this.currentMatchIndex
+        };
+    }
+
+    /**
+     * Navigate to previous search match
+     */
+    searchPrevious() {
+        if (this.searchMatches.length === 0) return { matches: 0, current: -1 };
+
+        this.currentMatchIndex = (this.currentMatchIndex - 1 + this.searchMatches.length) % this.searchMatches.length;
+
+        // Scroll to match with small delay
+        setTimeout(() => this.scrollToMatch(this.currentMatchIndex), 50);
+
+        return {
+            matches: this.searchMatches.length,
+            current: this.currentMatchIndex
+        };
+    }
+
+    /**
+     * Scroll to a specific match
+     */
+    scrollToMatch(matchIndex) {
+        if (matchIndex < 0 || matchIndex >= this.searchMatches.length) return;
+
+        const recordIndex = this.searchMatches[matchIndex];
+        if (!this.container) return;
+
+        // Calculate scroll position
+        const targetPosition = recordIndex * this.estimatedRowHeight;
+        const viewportHeight = this.container.clientHeight;
+
+        // Center the match in viewport
+        const scrollTo = targetPosition - (viewportHeight / 2);
+
+        // Set flag to prevent scroll handler from interfering
+        this.isProgrammaticScroll = true;
+
+        this.container.scrollTo({
+            top: Math.max(0, scrollTo),
+            behavior: 'smooth'
+        });
+
+        // Clear flag and force update after scroll animation
+        setTimeout(() => {
+            this.isProgrammaticScroll = false;
+            this.updateVisibleRange();
+            // Force re-render to apply highlights
+            this.render();
+        }, 300);
+    }
+
+    /**
+     * Highlight search matches in visible records
+     */
+    highlightVisibleMatches() {
+        if (!this.searchTerm) return;
+
+        const records = this.viewport.querySelectorAll('.record');
+
+        records.forEach(element => {
+            const index = parseInt(element.dataset.index, 10);
+            if (isNaN(index)) return;
+
+            if (this.searchMatches.includes(index)) {
+                const isCurrent = (index === this.searchMatches[this.currentMatchIndex]);
+                this.highlightTextNodes(element, this.searchTerm, isCurrent);
+            }
+        });
+    }
+
+    /**
+     * Highlight text nodes within an element
+     */
+    highlightTextNodes(element, searchTerm, isCurrent) {
+        const highlightClass = isCurrent ? 'search-highlight-current' : 'search-highlight';
+        const searchRegex = new RegExp(`(${this.escapeRegExp(searchTerm)})`, 'gi');
+
+        const walker = document.createTreeWalker(
+            element,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+
+        const nodesToReplace = [];
+        let node;
+
+        while (node = walker.nextNode()) {
+            if (searchRegex.test(node.textContent)) {
+                nodesToReplace.push(node);
+            }
+        }
+
+        nodesToReplace.forEach(textNode => {
+            const text = textNode.textContent;
+            const fragment = document.createDocumentFragment();
+            let lastIndex = 0;
+            const regex = new RegExp(this.escapeRegExp(searchTerm), 'gi');
+            let match;
+
+            while ((match = regex.exec(text)) !== null) {
+                if (match.index > lastIndex) {
+                    fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
+                }
+
+                const mark = document.createElement('mark');
+                mark.className = highlightClass;
+                mark.textContent = match[0];
+                fragment.appendChild(mark);
+
+                lastIndex = regex.lastIndex;
+            }
+
+            if (lastIndex < text.length) {
+                fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+            }
+
+            textNode.parentNode.replaceChild(fragment, textNode);
+        });
+    }
+
+    /**
+     * Strip HTML tags from string
+     */
+    stripHtml(html) {
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        return div.textContent || div.innerText || '';
+    }
+
+    /**
+     * Escape special regex characters
+     */
+    escapeRegExp(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    /**
+     * Get total record count
+     */
+    getRecordCount() {
+        return this.records.length;
+    }
+
+    /**
+     * Clear all data
+     */
+    clear() {
+        this.records = [];
+        this.visibleStart = 0;
+        this.visibleEnd = 0;
+        this.searchTerm = '';
+        this.searchMatches = [];
+        this.currentMatchIndex = -1;
+
+        if (this.container) {
+            this.container.innerHTML = '';
+        }
+    }
+}
+
+// ===== End: js/virtualRenderer.js =====
 
 // ===== Bundled: js/search.js =====
 // search.js - Text search with highlighting
+// NOTE: This module is now a thin wrapper around VirtualRenderer's search functionality
 
-// Search state
-let searchMatches = [];
-let currentMatchIndex = -1;
-let lastSearchTerm = '';
+// Global reference to virtual renderer (set by index.html)
+let _virtualRenderer = null;
+
+/**
+ * Set the virtual renderer instance
+ */
+function setVirtualRenderer(renderer) {
+    _virtualRenderer = renderer;
+}
 
 /**
  * Perform search through log records
  * @param {string} searchTerm - Search query
  */
 function performSearch(searchTerm) {
-    lastSearchTerm = searchTerm;
-    searchMatches = [];
-    currentMatchIndex = -1;
-
-    const outputDiv = document.getElementById('textOutput');
-    const records = outputDiv.querySelectorAll('.record');
-
-    if (!searchTerm || searchTerm.length === 0) {
-        // Clear all highlights
-        records.forEach(record => {
-            record.innerHTML = record.innerHTML
-                .replace(/<mark class="search-highlight-current">(.+?)<\/mark>/g, '$1')
-                .replace(/<mark class="search-highlight">(.+?)<\/mark>/g, '$1');
-        });
-        updateSearchUI();
+    if (!_virtualRenderer) {
+        console.error('Virtual renderer not initialized');
         return;
     }
 
-    // Search through all records (case-insensitive)
-    const searchRegex = new RegExp(escapeRegExp(searchTerm), 'gi');
-
-    records.forEach((record, index) => {
-        const textContent = record.textContent || record.innerText;
-        if (searchRegex.test(textContent)) {
-            searchMatches.push(index);
-        }
-    });
-
-    if (searchMatches.length > 0) {
-        currentMatchIndex = 0;
-        highlightMatches(searchTerm);
-        scrollToCurrentMatch();
-    }
-
-    updateSearchUI();
+    const result = _virtualRenderer.performSearch(searchTerm);
+    updateSearchUI(result);
 }
 
 /**
  * Navigate to next search match
  */
 function searchNext() {
-    if (searchMatches.length === 0) return;
-    currentMatchIndex = (currentMatchIndex + 1) % searchMatches.length;
-    highlightMatches(lastSearchTerm);
-    scrollToCurrentMatch();
-    updateSearchUI();
+    if (!_virtualRenderer) return;
+
+    const result = _virtualRenderer.searchNext();
+    updateSearchUI(result);
 }
 
 /**
  * Navigate to previous search match
  */
 function searchPrevious() {
-    if (searchMatches.length === 0) return;
-    currentMatchIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
-    highlightMatches(lastSearchTerm);
-    scrollToCurrentMatch();
-    updateSearchUI();
+    if (!_virtualRenderer) return;
+
+    const result = _virtualRenderer.searchPrevious();
+    updateSearchUI(result);
 }
 
 /**
@@ -1350,98 +1715,17 @@ function clearSearch() {
  * Get last search term (for re-applying after re-render)
  */
 function getLastSearchTerm() {
-    return lastSearchTerm;
+    return _virtualRenderer ? _virtualRenderer.searchTerm : '';
 }
 
-// Private helper functions
-function highlightMatches(searchTerm) {
-    const outputDiv = document.getElementById('textOutput');
-    const records = outputDiv.querySelectorAll('.record');
-
-    records.forEach((record, index) => {
-        // Remove existing highlights
-        let html = record.innerHTML
-            .replace(/<mark class="search-highlight-current">(.+?)<\/mark>/g, '$1')
-            .replace(/<mark class="search-highlight">(.+?)<\/mark>/g, '$1');
-
-        record.innerHTML = html;
-
-        // Check if this record contains a match
-        if (searchMatches.includes(index)) {
-            const isCurrent = (index === searchMatches[currentMatchIndex]);
-            highlightTextNodes(record, searchTerm, isCurrent);
-        }
-    });
-}
-
-function highlightTextNodes(element, searchTerm, isCurrent) {
-    const highlightClass = isCurrent ? 'search-highlight-current' : 'search-highlight';
-    const searchRegex = new RegExp(`(${escapeRegExp(searchTerm)})`, 'gi');
-
-    const walker = document.createTreeWalker(
-        element,
-        NodeFilter.SHOW_TEXT,
-        null,
-        false
-    );
-
-    const nodesToReplace = [];
-    let node;
-
-    // Collect all text nodes that contain matches
-    while (node = walker.nextNode()) {
-        if (searchRegex.test(node.textContent)) {
-            nodesToReplace.push(node);
-        }
+// Private helper function
+function updateSearchUI(result) {
+    if (!result) {
+        result = { matches: 0, current: -1 };
     }
 
-    // Replace text nodes with highlighted versions
-    nodesToReplace.forEach(textNode => {
-        const text = textNode.textContent;
-        const fragment = document.createDocumentFragment();
-        let lastIndex = 0;
-        const regex = new RegExp(escapeRegExp(searchTerm), 'gi');
-        let match;
-
-        while ((match = regex.exec(text)) !== null) {
-            // Add text before match
-            if (match.index > lastIndex) {
-                fragment.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
-            }
-
-            // Add highlighted match
-            const mark = document.createElement('mark');
-            mark.className = highlightClass;
-            mark.textContent = match[0];
-            fragment.appendChild(mark);
-
-            lastIndex = regex.lastIndex;
-        }
-
-        // Add remaining text
-        if (lastIndex < text.length) {
-            fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
-        }
-
-        textNode.parentNode.replaceChild(fragment, textNode);
-    });
-}
-
-function scrollToCurrentMatch() {
-    if (currentMatchIndex >= 0 && currentMatchIndex < searchMatches.length) {
-        const outputDiv = document.getElementById('textOutput');
-        const records = outputDiv.querySelectorAll('.record');
-        const currentRecord = records[searchMatches[currentMatchIndex]];
-
-        if (currentRecord) {
-            currentRecord.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-    }
-}
-
-function updateSearchUI() {
-    const hasResults = searchMatches.length > 0;
-    const hasSearch = lastSearchTerm.length > 0;
+    const hasResults = result.matches > 0;
+    const hasSearch = _virtualRenderer && _virtualRenderer.searchTerm.length > 0;
 
     document.getElementById('searchPrevBtn').disabled = !hasResults;
     document.getElementById('searchNextBtn').disabled = !hasResults;
@@ -1449,16 +1733,12 @@ function updateSearchUI() {
 
     const countSpan = document.getElementById('searchCount');
     if (hasResults) {
-        countSpan.textContent = `${currentMatchIndex + 1}/${searchMatches.length}`;
+        countSpan.textContent = `${result.current + 1}/${result.matches}`;
     } else if (hasSearch) {
         countSpan.textContent = 'No matches';
     } else {
         countSpan.textContent = '';
     }
-}
-
-function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ===== End: js/search.js =====
@@ -1543,15 +1823,14 @@ function formatBytes(bytes) {
 
 
         // Global state
-        let showBinaryData = true;
         let currentParsedData = null;
+        let virtualRenderer = null;
 
         // Make functions globally accessible for onclick handlers
         window.handleFile = handleFile;
         window.toggleRecentFiles = toggleRecentFiles;
         window.clearLog = clearLog;
         window.switchTab = switchTab;
-        window.handleBinaryDisplayToggle = handleBinaryDisplayToggle;
         window.handleSearchKeyup = handleSearchKeyup;
         window.handleSearchNext = () => searchNext();
         window.handleSearchPrevious = () => searchPrevious();
@@ -1619,14 +1898,12 @@ function formatBytes(bytes) {
                 progressBar.style.width = '80%';
                 progressStatus.textContent = '80%';
 
-                // Render output
-                console.log('Rendering records...');
-                let html = renderRecords(result, showBinaryData);
-                if (result.truncated) {
-                    html += `<div style="color: #ffa500; margin-top: 20px; text-align: center;">⚠️ Output limited to ${result.recordCount.toLocaleString()} events for performance</div>`;
+                // Initialize virtual renderer
+                if (!virtualRenderer) {
+                    virtualRenderer = new VirtualRenderer('textOutput');
+                    setVirtualRenderer(virtualRenderer);
                 }
-                document.getElementById('textOutput').innerHTML = html;
-                console.log('Rendering complete');
+                virtualRenderer.initialize(result);
 
                 progressBar.style.width = '100%';
                 progressStatus.textContent = '100%';
@@ -1655,26 +1932,6 @@ function formatBytes(bytes) {
             }
         }
 
-        function handleBinaryDisplayToggle() {
-            showBinaryData = document.getElementById('showBinaryCheckbox').checked;
-
-            if (currentParsedData) {
-                let html = renderRecords(currentParsedData, showBinaryData);
-
-                if (currentParsedData.truncated) {
-                    html += `<div style="color: #ffa500; margin-top: 20px; text-align: center;">⚠️ Output limited to ${currentParsedData.recordCount.toLocaleString()} events for performance</div>`;
-                }
-
-                document.getElementById('textOutput').innerHTML = html;
-
-                // Re-apply search if active
-                const lastTerm = getLastSearchTerm();
-                if (lastTerm) {
-                    performSearch(lastTerm);
-                }
-            }
-        }
-
         function handleSearchKeyup(event) {
             if (event.key === 'Enter') {
                 if (event.shiftKey) {
@@ -1695,21 +1952,21 @@ function formatBytes(bytes) {
             if (isVisible) {
                 panel.style.display = 'none';
             } else {
+                updateRecentFilesList();
                 panel.style.display = 'block';
-                renderRecentFiles();
             }
         }
 
-        function renderRecentFiles() {
-            const recent = getRecentFiles();
+        function updateRecentFilesList() {
+            const files = getRecentFiles();
             const listDiv = document.getElementById('recentFilesList');
 
-            if (recent.length === 0) {
-                listDiv.innerHTML = '<p style="color: #666;">No recent files</p>';
+            if (files.length === 0) {
+                listDiv.innerHTML = '<p style="color: #6c757d;">No recent files</p>';
                 return;
             }
 
-            listDiv.innerHTML = recent.map(f => `
+            listDiv.innerHTML = files.map(f => `
                 <div style="padding: 10px; margin-bottom: 10px; background: white; border-radius: 5px; cursor: pointer;"
                      onclick="alert('Recent file selection not yet implemented')">
                     <strong>${f.name}</strong>
@@ -1721,13 +1978,17 @@ function formatBytes(bytes) {
         }
 
         function clearLog() {
-            document.getElementById('dropZone').style.display = 'block';
+            if (virtualRenderer) {
+                virtualRenderer.clear();
+            }
+            document.getElementById('dropZone').style.display = 'flex';
             document.getElementById('tabsContainer').style.display = 'none';
             document.getElementById('fileInfo').textContent = '';
-            document.getElementById('textOutput').innerHTML = '<div style="color: #6c757d; text-align: center; padding: 40px;">No log file loaded</div>';
             document.getElementById('clearBtn').disabled = true;
             document.getElementById('fileInput').value = '';
+            document.getElementById('searchInput').value = '';
             currentParsedData = null;
+            clearSearch();
         }
 
         function switchTab(tabName) {
@@ -1741,15 +2002,31 @@ function formatBytes(bytes) {
         }
 
         // Drag and drop
-        document.addEventListener('dragover', (e) => {
+        const dropZone = document.getElementById('dropZone');
+
+        dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
+            dropZone.style.borderColor = '#667eea';
+            dropZone.style.background = '#f8f9fa';
         });
 
-        document.addEventListener('drop', (e) => {
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = '#cbd5e0';
+            dropZone.style.background = 'white';
+        });
+
+        dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
+            dropZone.style.borderColor = '#cbd5e0';
+            dropZone.style.background = 'white';
+
             if (e.dataTransfer.files.length > 0) {
                 handleFile(e.dataTransfer.files[0]);
             }
+        });
+
+        dropZone.addEventListener('click', () => {
+            document.getElementById('fileInput').click();
         });
     
     </script>
