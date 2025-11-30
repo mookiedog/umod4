@@ -96,42 +96,52 @@ And that is how it will be able to do things like dump ride logs over a wifi con
 
 ## Status
 
-At the moment, things are in a state of flux. On the plus side:
+As always, things are in a state of flux. On the plus side:
 
-* The entire project got rewritten and put into a Github repository
+* The entire project is in a Github repository
 * The fake EPROM code works great:
   * The Tuono runs fine!
-  * I can mix and match maps from EPROMs with my data-logging codebase.
-    Currently, this happens at build time.
-  * The system works with both normal and protected EPROMs
-* Data logging works again: ECU data and GPS data are written to a single logfile, currently using LittleFS as the file system.
+  * I can mix and match maps from EPROMs with my data-logging codebase (at build time)
+  * The EPROM image loader works with both normal and protected EPROMs
+* Data logging works: ECU data and GPS data are written to a single, time-correlated logfile, currently using LittleFS as the file system.
 * The WP module is now using a Pico2W. The extra speed and RAM space is much appreciated.
+* A log [Visualizer](./tools/README_Visualizer.md) is taking form!
+* A new [4V2 revision](https://github.com/mookiedog/umod4-PCB) of the PCB is being planned
 
-Since the Bluetooth interface is not yet developed, the existing code serves a single EPROM image.
-But the interesting part is that I can get the system to "mix and match" my special data-logging firmware with the maps out of any Aprilia EPROM that is compatible with the RP58 codebase.
+Since the Bluetooth interface is not yet developed, the choice of what EPROM or combination of EPROMs to run is a built-time option.
+The loader can "mix and match" my special data-logging firmware with the maps out of any Aprilia EPROM that is compatible with the RP58 codebase.
 In short, that means that basically any Aprilia EPROM codebase except the early small valve engines can be converted to have data-logging capabilities.
 
 ### Next Steps
 
-The next steps mostly revolve around two things:
-
+The next steps mostly revolve around getting the Visualizer features fleshed out.
+After that, I really want to make some progress on:
 * getting the log file unloaded after a ride via wireless
-* getting wireless OTA firmware updates working so I don't have to carry a laptop out to the garage
-* getting some kind of UI working, either using a bluetooth phone app or perhaps a captive web portal so that I can select an EPROM image before a ride
+* getting wireless OTA firmware updates working so I don't have to carry a laptop out to the garage to reflash all the processors
 
 ## Further Reading
 
-At the moment, this repository contains 3 large pieces to the project:
+At the moment, this repository contains a number of pieces that make up the project:
 
 * The [EP](EP/README.md) (EPROM Processor): the 'fake' ERPOM used by the ECU
 * The [WP](WP/README.md) (Wireless Processor): the system that provides the user interface control over the Umod4
 * The [ECU](ecu/README.md): this is the special data-logging firmware
-* the [eprom_lib](eprom_lib/README.md): contains JSON descriptions of a number of stock Aprilia EPROMs. These get converted into BSON documents containing the original description, plus the binary data for the EPROM, should you have a .bin file for an EPROM.
+* The [eprom_lib](eprom_lib/README.md): contains JSON descriptions of a number of stock Aprilia EPROMs. These get converted into BSON documents containing the original description, plus the binary data for the EPROM, should you have a .bin file for an EPROM.
+* The log [decoder](tools/README_LogDecoder.md) and [visualizer](tools/README_Visualizer.md) tools
 
-Check out the README.md files in each of the repository subdirectories: [EP](EP/README.md), [WP](WP/README.md), and [ECU/Ultramod](ecu/README.md).
+Check out the README.md files in each of the repository subdirectories.
 
 For a real challenge, try [building the software system](BUILDING.md) yourself.
 It's not much use without a circuit board, but if you are a software person, you might give it a shot just for fun.
+
+## Clarity
+
+Just to set expectations, **this is all just for fun**.
+I am not trying to build a product.
+I do not want to build a product.
+Any decent product needs support, support takes time, and I am jealous of my time.
+Time is best spent on fun things.
+Which is not support.
 
 ## ...As Always
 
