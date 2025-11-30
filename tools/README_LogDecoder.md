@@ -97,7 +97,7 @@ That is precisely what a visualizer needs in order to quickly scan the large log
 
 To decode a log into HDF5 format, type:
 
-    decodelog.py --format hr <path-to-log-file>
+    decodelog.py --format h5 <path-to-log-file>
 
 ## Visualization
 
