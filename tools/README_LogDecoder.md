@@ -74,13 +74,13 @@ That could be for two reasons:
 * the two thermistors (and and water) may have slightly different manufacturing tolerances
 
 Next up is AAP, or Ambient Air Pressure.
-This reading comes from the ambient air pressure, which is built directly onto the ECU circuit board itself.
+This reading comes from the ambient air pressure sensor, which is built directly onto the ECU circuit board itself.
 In contrast, the MAP, or Manifold Air Pressure, measures the pressure inside the intake manifold.
-It is reported in ADC units in this version of the log decoder.
+Both air pressure sensors report in raw ADC units in this version of the log decoder.
 
-Finally, you can see FP:1.
-That means "Fuel Pump ON" which is responsible for that whir you hear every time you switch the ignition key ON.
-If you were to look in the log 3-ish seconds later, you would see FP:0, which is that little noise when the fuel pump turns off again because the engine is not running.
+Finally, you can see "FP: 1".
+That means "Fuel Pump: ON" which is responsible for that whir you hear every time you switch the ignition key ON.
+If you were to look in the log 3-ish seconds later, you would see "FP: 0", which would correspond to that little 'tink' noise you will hear when the ECU turns off the fuel pump because the engine is not running yet.
 
 Again, the 'human readable' version of the log is mainly for debugging issues with the log itself.
 It rarely needs to be generated.
@@ -95,8 +95,11 @@ This can be made clear when you see that a umod4 log file of 8 megabytes becomes
 The payoff for the expansion in log size is HDF5's capability for efficient retrieval.
 That is precisely what a visualizer needs in order to quickly scan the large logs to display them graphically.
 
+To decode a log into HDF5 format, type:
+
+    decodelog.py --format hr <path-to-log-file>
+
 ## Visualization
 
-Now that an h5 version of the log file can be created, it is time to use the visualizer.
+Now that an h5 version of the log file can be created, it is time to use the log visualizer tool.
 See the visualizer [README](./README_Visualizer.md) for more info.
-
