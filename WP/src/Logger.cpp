@@ -93,11 +93,12 @@ int32_t Logger::getDiskInfo(lfs_t* _lfs)
 }
 
 
-#if 1
 // ----------------------------------------------------------------------------------
+// The log files we create will have the form:
+//   "run_xx.um4"
+// where xx is up to a 5 digit decimal integer in the range 0 to 99999 (no leading zeroes)
 bool Logger::openNewLog()
 {
-    const char* fname = "next_logId";
     uint16_t id;
     lfs_file_t fp;
     lfs_dir_t dir;
@@ -105,9 +106,11 @@ bool Logger::openNewLog()
     int32_t lfs_err;
     int32_t len;
     const char* path="/";
-    const char* prefix = "log.";
+    const char* prefix = "log_";
     uint32_t prefixLen = strlen(prefix);
-    
+    const char* suffix = ".um4";
+    uint32_t suffixLen = strlen(suffix);
+
     lfs_err = lfs_dir_open(lfs, &dir, path);
     if (lfs_err < 0) {
         printf("unable to open directory %s\n", path);
@@ -122,8 +125,10 @@ bool Logger::openNewLog()
             if (lfs_err > 0) {
                 if (info.type == LFS_TYPE_REG) {
                     uint32_t value;
+
+                    // Check if this name starts with the right prefix
                     if (strncmp(prefix, info.name, prefixLen) == 0) {
-                        // The prefix matched, now make sure that all remaining chars in the filename are decimal digits
+                        // Yes! Now make sure that we only see decimal digits up to a '.' character
                         char* p = &info.name[prefixLen];
                         uint32_t digitCount = 0;
                         uint32_t value = 0;
@@ -132,8 +137,14 @@ bool Logger::openNewLog()
                             value = (value*10) + (*p-'0');
                             p++;
                         }
-                        if ((digitCount >= 1) && (digitCount<=5) && (*p==0)) {
-                            // We found a valid logfile: a prefix followed by a numeric specifier between 1 and 5 digits long
+                        
+                        // Pointer p is now pointing at the first non-digit char of the file name
+                        // We are expecting that it should point at the suffix
+                        if ((digitCount >= 1) && (digitCount<=5) && (strncmp(p, suffix, suffixLen)==0)) {
+                            // We found a valid logfile:
+                            //      - the expected prefix,
+                            //      - followed by a numeric specifier between 1 and 5 digits long,
+                            //      - followed by the proper suffix
                             found = true;
                             if (value > maxValue) {
                                 maxValue = value;
@@ -149,7 +160,7 @@ bool Logger::openNewLog()
             maxValue = 0;
         }
         
-        snprintf(logName, sizeof(logName), "log.%d", maxValue+1);
+        snprintf(logName, sizeof(logName), "%s%d%s", prefix, maxValue+1, suffix);
         printf("%s: Creating logfile with temporary name \"%s\"\n", __FUNCTION__, logName);
         lfs_err = lfs_file_open(lfs, &logf, logName, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR);
         if (lfs_err != LFS_ERR_OK) {
@@ -159,71 +170,7 @@ bool Logger::openNewLog()
     
     return (lfs_err == LFS_ERR_OK);
 }
-#else
-// ----------------------------------------------------------------------------------
-bool Logger::openNewLog()
-{
-    const char* fname = "next_logId";
-    uint16_t id;
-    lfs_file_t fp;
-    int32_t err;
-    
-    // Open the file containing the next id as RW, creating it if it does not exist, and erasing it if it already exists
-    err = lfs_file_open(lfs, &fp, fname, LFS_O_CREAT | LFS_O_RDWR);
-    if (err != LFS_ERR_OK) {
-        printf("%s: opening \"%s\" returned err %d\n", __FUNCTION__, fname, err);
-        return err;
-    }
-    
-    // Read the short int contained in the file. It's value will be used to create a temp filename.
-    int32_t bytesRead = lfs_file_read(lfs, &fp, &id, sizeof(id));
-    if (dbg>1) printf("%s: Attempting to read %d bytes from \"%s\" actually read %d\n", __FUNCTION__, sizeof(id), fname, bytesRead);
-    if (bytesRead<sizeof(id)) {
-        printf("%s: ID file is missing or corrupted: Creating a new one\n", __FUNCTION__);
-        err = lfs_file_rewind(lfs, &fp);
-        if (err != LFS_ERR_OK) {
-            printf("%s: Failure rewinding \"%s\" to recreate id file, returned %d\n", __FUNCTION__, fname, err);
-            return err;
-        }
-        
-        id = 0;
-    }
-    
-    // Increment the ID for the next time we create a log
-    
-    #if 1
-    id++;
-    #else
-    #warning "Logfile name incrementing is disabled!!"
-    #endif
-    err = lfs_file_rewind(lfs, &fp);
-    if (err != LFS_ERR_OK) {
-        printf("%s: unable to rewind ID file \"%s\": err=%d", __FUNCTION__, fname, err);
-        return err;
-    }
-    
-    int32_t bytesWritten = lfs_file_write(lfs, &fp, &id, sizeof(id));
-    err = lfs_file_close(lfs, &fp);
-    
-    if (bytesWritten != sizeof(id)) {
-        printf("%s: Unable to write new id data %d to file \"%s\": err=%d", __FUNCTION__, id, fname, bytesWritten);
-        return bytesWritten;
-    }
-    
-    // If we get here, id contains the numeric value we will use in our temp filename.
-    // We create the file if needed, and erase its contents if it already existed.
-    tempName = true;
-    snprintf(logName, sizeof(logName), "T%05hu", id);
-    printf("%s: Creating logfile with temporary name \"%s\"\n", __FUNCTION__, logName);
-    err = lfs_file_open(lfs, &logf, logName, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR);
-    if (err != LFS_ERR_OK) {
-        printf("%sw: Unable to open new logfile\"%s\": err=%d\n", __FUNCTION__, logName, err);
-        return err;
-    }
-    
-    return (err == LFS_ERR_OK);
-}
-#endif
+
 
 // ----------------------------------------------------------------------------------
 // This routine is strictly for the use of ISRs!
