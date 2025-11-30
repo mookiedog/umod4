@@ -48,7 +48,7 @@ And at the very end, RPMs are back to idle as I get the bike parked in the garag
 The navigation window always shows the entire ride, but there will be plenty of times when detail is even more fun.
 
 To get detail in a ride, look for that narrow blue box in the navigation window.
-The data inside that bloe box corresponds to what you see in the big graphic window.
+The data inside that blue box corresponds to what you see in the big graphic window.
 
 You can drag the edges of the blue box to zoom in or out, or click and drag the blue box to look at different parts of the log.
 That's why it is called the navigation window.
@@ -121,15 +121,17 @@ A few things are obvious:
 
 1) The duration of both CR4 and CR5 are a lot wider than CR3. That is NOT how the previous cycle CR4/5 looked where CR3/4/5 were essentially the same duration.
 1) There is visible proof that engine did __not__ misfire: it clearly speeds up during CR6. Had it been a genuine misfire, CR7 would have shown an even lower RPM.
-1) That CR5 took an extra long time is a surprise. This is the very initial part of the power stroke. Normally, you can see the crank slow during CR5 because it was just completing the compresssion stroke, and althought the spark has fired, it has no mechanical advantage yet for the rod to turn the crank.
+1) That CR5 took an extra long time is a surprise. This is the very initial part of the power stroke. Normally, you can see the crank slow during CR5 because it was just completing the compression stroke, and althought the spark has fired, it has no mechanical advantage yet for the rod to turn the crank.
 
 So why was CR5 _so_ much slower?
 Well, there is more data to look at.
 
 The ECU has circuitry that detects when the coils fire.
-It detects the high voltage kickback from the ignition coil when it fires and latches the time that the kickback occurred.
+It detects the high voltage kickback from each of the two ignition coils per cylinder when they fire and latches the time that the high voltage was observed occurred.
+_Note: This is not to say that we can guarantee that a spark occurred: all we know is that the coil fired.
+That said, it is pretty strong evidence that a spark occurred!_
 The UM4 firmware in the ECU logs the time of every spark event.
-Displaying that yeilds interesting results:
+Displaying that yields interesting results:
 ![operation](./images/viz-detail-3.jpg)
 
 The tags marked 'S2' indicate when plug #2 fired.
@@ -175,7 +177,7 @@ The level of detail is reasonably significant since the GPS reports 10 times per
 Each of those blue dots is a position and velocity  report.
 
 And now that I have GPS, even more debugging becomes possible.
-I went for another ride a day later.
+Case in point: I went for another ride a day later.
 I nearly froze my hands off.
 But, as I was turning left by the Safeway store, the engine missed.
 I made a mental note of that.
@@ -189,16 +191,17 @@ I used Google Maps to zoom in and find that left turn by the Safeway:
 Clicking on any of the blue dots gave me the time associated with that event (approx. 1889 seconds into the ride), and I could use value that to find the general area in the navigation view:
 ![ride-2-safeways](images/ride-2-safeways-detail.jpg)
 
+From there, it was not hard to scan through the instantaneous RPM data and find the engine miss I had felt.
 Above, you can see me sitting at the corner, throttle closed (green graph line).
-Then you can see me feed in a bit of throttle, and accelerating through the corner.
-The interesting part is that the engine clearly misbehaves, pretty much exactly where the green throttle line intersects with the red RPM trace at 1888.4 seconds.
+Then you can see me feed in a bit of throttle, and accelerate through the corner.
+The engine clearly misbehaves pretty much exactly where the green throttle line intersects with the red RPM trace at 1888.4 seconds.
 Zooming in on that event makes things clear:
 ![ride-2-safeways](images/ride-2-safeways-detail-3.jpg)
 
 Check out CR6 in the circled area: that is where the engine should speed up during the power stroke.
 Instead the engine keeps slowing down.
 You can see that the spark occured just before CR5, and the width of CR5 generally matches CR2/3/4, so this is not the same problem as the misses after starting in the ride the day before.
-This event was an engine miss, pure and simple: the spark happened, but no bang!
+This event was an engine miss, pure and simple: the spark happened, but there was no bang!
 
 Maybe it's time to check my plugs.
 Honestly, I can't remember replacing them.
@@ -213,9 +216,10 @@ After 20-some years of off and on development, I finally have my log visualizer.
 I have had a lot of dreams for this project over the years, and I can say it is really nice to get to this point.
 
 I had always dreamed of getting this system out for a track day.
-Truthfully, I think my track days are over.
+Truthfully, it's taken so long to get all this working that I think my track days are over.
 It's a bit of a bummer because I would have loved to have a log of me going around Laguna Seca, immortalized as a couple hundred megabytes of data.
 
+Oh well.
 I would have been going slowly, of course.
 I always rode in the 'B' group with the rest of the slow guys.
 Before I got the Tuono, I took my Yamaha V-Max to a class at Laguna Seca.
@@ -227,7 +231,7 @@ Passing some dude riding his Aprilia Mille in turn 3!
 Proof that a 1985 V-Max can turn.
 But honestly, they don't really like turning.
 
-## Notes
+## Acknowledgements
 
 As mentioned earlier, I have wanted a visualizer for years.
 What held me back was the prospect of spending months or years figuring out how to learn to work with all the graphics systems.
