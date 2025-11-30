@@ -31,6 +31,11 @@ except ImportError:
     HDF5_AVAILABLE = False
     h5py = None
 
+# Event visualization constants
+SPARK_LABEL_OFFSET = 0.05  # Vertical offset from RPM line for spark labels (5% of normalized range)
+CRANKREF_LINE_HEIGHT = 0.08  # Height of vertical line for crankref markers (8% of normalized range)
+CAMSHAFT_LINE_HEIGHT = 0.08  # Height of vertical line for camshaft markers (8% of normalized range)
+
 
 class AppConfig:
     """
@@ -836,7 +841,8 @@ class DataVisualizationTool(QMainWindow):
         self.stream_metadata = {}  # Store unit information per stream
         self.stream_ranges = {}  # Store min/max range for each stream
         self.enabled_streams = []
-        self.axis_owner = None
+        self.axis_owner = None  # Stream that owns the left Y-axis
+        self.right_axis_owner = None  # Stream that owns the right Y-axis
         self.current_file = None  # Track currently loaded file
 
         # View state
@@ -888,11 +894,13 @@ class DataVisualizationTool(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(2, 2, 2, 2)
         main_layout.setSpacing(0)
-        
-        # Create ribbon
-        self.create_ribbon()
-        main_layout.addWidget(self.ribbon)
-        
+
+        # Create menu bar
+        self.create_menu_bar()
+
+        # Apply initial window border based on theme
+        self.apply_window_border()
+
         # Create horizontal splitter for main content
         self.h_splitter = ResizableSplitter(Qt.Orientation.Horizontal)
 
@@ -924,93 +932,152 @@ class DataVisualizationTool(QMainWindow):
         self.config.restore_splitter_state("horizontal", self.h_splitter)
         self.config.restore_splitter_state("vertical", self.v_splitter)
         
-    def create_ribbon(self):
-        """Create the ribbon with controls"""
-        self.ribbon = QWidget()
-        self.ribbon.setFixedHeight(40)
-        self.ribbon.setStyleSheet("QWidget { background-color: #f0f0f0; }")
+    def create_menu_bar(self):
+        """Create the menu bar to replace the ribbon"""
+        menu_bar = self.menuBar()
 
-        ribbon_layout = QHBoxLayout(self.ribbon)
-        ribbon_layout.setContentsMargins(5, 5, 5, 5)
+        # FILE MENU
+        file_menu = menu_bar.addMenu("&File")
 
-        # Data menu
-        data_menu_btn = QPushButton("Data ▼")
-        data_menu = QMenu()
-
-        load_action = QAction("Load HDF5 Log File", self)
+        # Load action
+        load_action = QAction("&Load HDF5 Log File...", self)
+        load_action.setShortcut("Ctrl+O")
         load_action.triggered.connect(self.load_hdf5_file)
         load_action.setEnabled(HDF5_AVAILABLE)
         if not HDF5_AVAILABLE:
-            load_action.setText("Load HDF5 Log File (h5py not installed)")
-        data_menu.addAction(load_action)
+            load_action.setText("&Load HDF5 Log File... (h5py not installed)")
+        file_menu.addAction(load_action)
 
-        # Add recent files submenu
-        self.recent_files_menu = QMenu("Recent Files")
+        # Recent files submenu
+        self.recent_files_menu = file_menu.addMenu("Recent Files")
         self.update_recent_files_menu()
-        data_menu.addMenu(self.recent_files_menu)
 
-        # Add metadata viewer
-        data_menu.addSeparator()
-        metadata_action = QAction("View HDF5 Metadata", self)
+        file_menu.addSeparator()
+
+        # Exit action
+        exit_action = QAction("E&xit", self)
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        # VIEW MENU
+        view_menu = menu_bar.addMenu("&View")
+
+        # Undo action
+        self.undo_action = QAction("&Undo", self)
+        self.undo_action.setShortcut("Ctrl+Z")
+        self.undo_action.triggered.connect(self.undo)
+        self.undo_action.setEnabled(False)
+        view_menu.addAction(self.undo_action)
+
+        # Redo action
+        self.redo_action = QAction("&Redo", self)
+        self.redo_action.setShortcut("Ctrl+Y")
+        self.redo_action.triggered.connect(self.redo)
+        self.redo_action.setEnabled(False)
+        view_menu.addAction(self.redo_action)
+
+        view_menu.addSeparator()
+
+        # Reset View
+        reset_action = QAction("&Reset View", self)
+        reset_action.setShortcut("Ctrl+R")
+        reset_action.triggered.connect(self.reset_view)
+        view_menu.addAction(reset_action)
+
+        # Fit
+        fit_action = QAction("&Fit", self)
+        fit_action.setShortcut("Ctrl+F")
+        fit_action.triggered.connect(self.fit_axis_owner)
+        view_menu.addAction(fit_action)
+
+        # Fit All
+        fit_all_action = QAction("Fit &All", self)
+        fit_all_action.setShortcut("Ctrl+Shift+F")
+        fit_all_action.triggered.connect(self.fit_all)
+        view_menu.addAction(fit_all_action)
+
+        view_menu.addSeparator()
+
+        # Zoom Out 2x
+        zoom_out_action = QAction("Zoom &Out 2x", self)
+        zoom_out_action.setShortcut("Ctrl+O")
+        zoom_out_action.triggered.connect(self.zoom_out_2x)
+        view_menu.addAction(zoom_out_action)
+
+        # Pan Left 50%
+        pan_left_action = QAction("Pan &Left 50%", self)
+        pan_left_action.setShortcut("Ctrl+Left")
+        pan_left_action.triggered.connect(self.pan_left_50)
+        view_menu.addAction(pan_left_action)
+
+        # Pan Right 50%
+        pan_right_action = QAction("Pan Right 50%", self)
+        pan_right_action.setShortcut("Ctrl+Right")
+        pan_right_action.triggered.connect(self.pan_right_50)
+        view_menu.addAction(pan_right_action)
+
+        view_menu.addSeparator()
+
+        # Show Ride on Maps
+        show_map_action = QAction("Show Ride on &Maps", self)
+        show_map_action.setShortcut("Ctrl+M")
+        show_map_action.triggered.connect(self.show_ride_on_maps)
+        view_menu.addAction(show_map_action)
+
+        # Metadata viewer
+        metadata_action = QAction("View HDF5 Meta&data", self)
         metadata_action.triggered.connect(self.show_metadata_dialog)
         metadata_action.setEnabled(HDF5_AVAILABLE)
-        data_menu.addAction(metadata_action)
+        view_menu.addAction(metadata_action)
 
-        data_menu_btn.setMenu(data_menu)
-        ribbon_layout.addWidget(data_menu_btn)
-        
-        # Undo/Redo buttons
-        self.undo_btn = QPushButton("Undo")
-        self.undo_btn.clicked.connect(self.undo)
-        self.undo_btn.setEnabled(False)
-        ribbon_layout.addWidget(self.undo_btn)
-        
-        self.redo_btn = QPushButton("Redo")
-        self.redo_btn.clicked.connect(self.redo)
-        self.redo_btn.setEnabled(False)
-        ribbon_layout.addWidget(self.redo_btn)
-        
-        # Reset button
-        reset_btn = QPushButton("Reset View")
-        reset_btn.clicked.connect(self.reset_view)
-        ribbon_layout.addWidget(reset_btn)
-        
-        # Fit button
-        fit_btn = QPushButton("Fit")
-        fit_btn.clicked.connect(self.fit_axis_owner)
-        ribbon_layout.addWidget(fit_btn)
-        
-        # Fit All button
-        fit_all_btn = QPushButton("Fit All")
-        fit_all_btn.clicked.connect(self.fit_all)
-        ribbon_layout.addWidget(fit_all_btn)
-        
-        # Theme toggle button
-        self.theme_btn = QPushButton("Dark Theme" if not self.dark_theme else "Light Theme")
-        self.theme_btn.clicked.connect(self.toggle_theme)
-        ribbon_layout.addWidget(self.theme_btn)
-        
-        # Font size control (optional)
-        font_size_label = QLabel("Font Size:")
-        ribbon_layout.addWidget(font_size_label)
-        
-        self.font_size_spinbox = QSpinBox()
-        self.font_size_spinbox.setRange(8, 24)
-        self.font_size_spinbox.setValue(self.axis_font_size)
-        self.font_size_spinbox.valueChanged.connect(self.change_font_size)
-        ribbon_layout.addWidget(self.font_size_spinbox)
-        
-        ribbon_layout.addStretch()
-        
-        # Version label (right-aligned)
-        version_label = QLabel("Data Visualization Tool v1.1")
-        version_label.setStyleSheet("font-weight: bold;")
-        ribbon_layout.addWidget(version_label)
+        # SETTINGS MENU
+        settings_menu = menu_bar.addMenu("&Settings")
+
+        # Theme submenu
+        theme_menu = settings_menu.addMenu("&Theme")
+
+        # Light theme action
+        self.light_theme_action = QAction("&Light", self)
+        self.light_theme_action.setCheckable(True)
+        self.light_theme_action.triggered.connect(lambda: self.set_theme(False))
+        theme_menu.addAction(self.light_theme_action)
+
+        # Dark theme action
+        self.dark_theme_action = QAction("&Dark", self)
+        self.dark_theme_action.setCheckable(True)
+        self.dark_theme_action.triggered.connect(lambda: self.set_theme(True))
+        theme_menu.addAction(self.dark_theme_action)
+
+        # Set initial theme checkmark
+        if self.dark_theme:
+            self.dark_theme_action.setChecked(True)
+        else:
+            self.light_theme_action.setChecked(True)
+
+        # Font size submenu
+        font_menu = settings_menu.addMenu("&Font Size")
+
+        font_sizes = [8, 10, 12, 14, 16, 18, 20, 24]
+        self.font_size_actions = {}  # Store references to update checkmarks
+        for size in font_sizes:
+            font_action = QAction(f"{size} pt", self)
+            font_action.setCheckable(True)
+            font_action.triggered.connect(lambda checked, s=size: self.change_font_size(s))
+            font_menu.addAction(font_action)
+            self.font_size_actions[size] = font_action
+            # Set initial checkmark
+            if size == self.axis_font_size:
+                font_action.setChecked(True)
 
     def change_font_size(self, size):
         """Change the axis font size and stream label font size"""
         self.axis_font_size = size
         self.config.set("axis_font_size", size)
+
+        # Update checkmarks in font size menu
+        for font_size, action in self.font_size_actions.items():
+            action.setChecked(font_size == size)
 
         # Update all stream widgets with new font size
         for widget in self.stream_list_widget.stream_widgets:
@@ -1057,12 +1124,36 @@ class DataVisualizationTool(QMainWindow):
         self.graph_plot.getPlotItem().setMouseEnabled(x=False, y=False)
         self.graph_plot.zoom_callback = self.handle_graph_zoom
         self.graph_plot.setYRange(0, 100)
-    
+
+        # Enable and show the right Y-axis
+        self.graph_plot.showAxis('right')
+        self.graph_plot.setLabel('right', 'Value')
+
         # Ensure font sizes are set properly for initial state
         label_font = QFont()
         label_font.setPointSize(self.axis_font_size)
         self.graph_plot.getAxis('bottom').setTickFont(label_font)
         self.graph_plot.getAxis('left').setTickFont(label_font)
+        self.graph_plot.getAxis('right').setTickFont(label_font)
+
+        # Create GPS position marker scatter plot (triangles above time axis)
+        # These will be persistent and updated when data loads or view changes
+        self.gps_markers = pg.ScatterPlotItem(
+            symbol='t',  # 't' = triangle pointing up
+            size=12,
+            pen=pg.mkPen(color='blue', width=2),
+            brush=pg.mkBrush(color='blue'),
+            hoverable=True,  # Enable hover detection
+            hoverPen=pg.mkPen(color='red', width=3),  # Red when hovering
+            hoverBrush=pg.mkBrush(pg.mkColor(255, 100, 100)),  # Light red fill when hovering
+            tip=None  # No tooltip for now
+        )
+
+        # Connect to sigClicked signal
+        # Note: This requires double-click by design in pyqtgraph
+        self.gps_markers.sigClicked.connect(self.on_gps_marker_clicked)
+
+        self.graph_plot.addItem(self.gps_markers)
         
     def create_navigation_window(self):
         """Create the navigation window"""
@@ -1136,9 +1227,15 @@ class DataVisualizationTool(QMainWindow):
             saved_mode = self.config.get(f"stream_display_mode_{stream}", "line")
             stream_widget.display_mode = saved_mode
 
+            # Connect signal before setting default state so it fires
             stream_widget.checkbox.stateChanged.connect(
                 lambda state, s=stream: self.toggle_stream(s, state)
             )
+
+            # Enable ecu_rpm_instantaneous by default (signal will fire)
+            if stream == "ecu_rpm_instantaneous":
+                stream_widget.checkbox.setChecked(True)
+
             stream_widget.label.mousePressEvent = lambda ev, s=stream: self.on_stream_name_clicked(s, ev)
 
             self.stream_list_widget.add_stream_widget(stream_widget)
@@ -1311,17 +1408,15 @@ class DataVisualizationTool(QMainWindow):
                         if ds.shape[0] > 0:
                             print(f"  Loading {key}: {ds.shape[0]} samples (3D)")
                             time_ns = ds[:, 0] / 1e9
-                            # Split into separate streams
+                            # Keep GPS position as a single entity (lat/lon cannot be separated)
                             if key == 'gps_position':
-                                raw_data['gps_latitude'] = {
+                                raw_data['gps_position'] = {
                                     'time': time_ns,
-                                    'values': ds[:, 1]
+                                    'lat': ds[:, 1],
+                                    'lon': ds[:, 2]
                                 }
-                                raw_data['gps_longitude'] = {
-                                    'time': time_ns,
-                                    'values': ds[:, 2]
-                                }
-                                stream_names.extend(['gps_latitude', 'gps_longitude'])
+                                # Note: gps_position is NOT added to stream_names
+                                # It will be displayed as markers, not as a plottable stream
 
                     elif len(ds.shape) == 1:
                         # 1D timestamp arrays (markers) - skip for now
@@ -1425,6 +1520,35 @@ class DataVisualizationTool(QMainWindow):
                         metadata_text.append(f"  {key}: {value}\n")
                     metadata_text.append("\n")
 
+                # EPROM Loads section
+                if 'eprom_loads' in f:
+                    metadata_text.append("\n")
+                    metadata_text.append("EPROM LOADS:\n")
+                    metadata_text.append("-" * 70 + "\n")
+
+                    eprom_loads = f['eprom_loads'][:]
+
+                    if len(eprom_loads) == 0:
+                        metadata_text.append("  No EPROM loads recorded\n")
+                    else:
+                        for i, load in enumerate(eprom_loads):
+                            # Decode name from bytes to string
+                            name = load['name'].decode('utf-8').rstrip('\x00')
+                            address = load['address']
+                            length = load['length']
+                            error_status = load['error_status']
+
+                            metadata_text.append(f"\nEPROM Load #{i+1}:\n")
+                            metadata_text.append(f"  Name:    {name}\n")
+                            metadata_text.append(f"  Address: 0x{address:04X}\n")
+                            metadata_text.append(f"  Length:  {length} bytes (0x{length:04X})\n")
+
+                            if error_status == 0:
+                                metadata_text.append(f"  Status:  Success\n")
+                            else:
+                                metadata_text.append(f"  Status:  Error (0x{error_status:02X})\n")
+                    metadata_text.append("\n")
+                
                 # List all groups and datasets
                 metadata_text.append("STRUCTURE:\n")
                 metadata_text.append("-" * 70 + "\n")
@@ -1526,11 +1650,20 @@ class DataVisualizationTool(QMainWindow):
         if state == Qt.CheckState.Checked.value:
             # Enable stream
             self.enabled_streams.append(stream)
-            
+
+            # Event streams don't own axes - they're just visual markers
+            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']:
+                self.update_graph_plot()
             # Assign ownership - but don't change the axis owner yet
-            if self.axis_owner is None:
+            elif self.axis_owner is None:
+                # No axis owner yet, this becomes the left axis
                 self.axis_owner = stream
                 # Don't call fit_axis_owner here!
+                self.update_graph_plot()
+            else:
+                # Already have a left axis owner, move it to right and make new stream left
+                self.right_axis_owner = self.axis_owner
+                self.axis_owner = stream
                 self.update_graph_plot()
             
         else:
@@ -1540,41 +1673,58 @@ class DataVisualizationTool(QMainWindow):
             
             # Handle ownership reassignment
             if stream == self.axis_owner:
-                if len(self.enabled_streams) > 0:
-                    # Find next enabled stream
+                # Disabling left axis owner
+                if self.right_axis_owner and self.right_axis_owner in self.enabled_streams:
+                    # Promote right axis owner to left
+                    self.axis_owner = self.right_axis_owner
+                    self.right_axis_owner = None
+                    self.update_graph_plot()
+                elif len(self.enabled_streams) > 0:
+                    # Find next enabled stream for left axis (skip event marker streams)
                     stream_idx = self.data_streams.index(stream)
                     next_owner = None
-                    
+                    event_streams = ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']
+
                     # Search below
                     for i in range(stream_idx + 1, len(self.data_streams)):
-                        if self.data_streams[i] in self.enabled_streams:
-                            next_owner = self.data_streams[i]
+                        candidate = self.data_streams[i]
+                        if candidate in self.enabled_streams and candidate not in event_streams:
+                            next_owner = candidate
                             break
-                    
+
                     # Wrap around if needed
                     if next_owner is None:
                         for i in range(0, stream_idx):
-                            if self.data_streams[i] in self.enabled_streams:
-                                next_owner = self.data_streams[i]
+                            candidate = self.data_streams[i]
+                            if candidate in self.enabled_streams and candidate not in event_streams:
+                                next_owner = candidate
                                 break
-                    
+
                     self.axis_owner = next_owner
                     if self.axis_owner:
-                        # Don't call fit_axis_owner here!
                         self.update_graph_plot()
                 else:
                     self.axis_owner = None
                     self.view_y_min = 0
                     self.view_y_max = 100
+            elif stream == self.right_axis_owner:
+                # Disabling right axis owner, just clear it
+                self.right_axis_owner = None
             
         self.request_update()
 
     def on_stream_name_clicked(self, stream, event):
         """Handle clicking on stream name to change axis ownership"""
+        # Event marker streams can't own axes
+        if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']:
+            return
+
         if stream in self.enabled_streams:
-            # Set new axis owner (this will only affect axis labeling)
+            # Move current left axis owner to right, make clicked stream left owner
+            if self.axis_owner and self.axis_owner != stream:
+                self.right_axis_owner = self.axis_owner
             self.axis_owner = stream
-            
+
             # Update the graph plot - no view range changes needed
             self.update_graph_plot()
 
@@ -1598,6 +1748,9 @@ class DataVisualizationTool(QMainWindow):
         """Update the main graph plot with dynamic level-of-detail"""
         self.graph_plot.clear()
 
+        # Re-add GPS markers after clear (they get removed by clear())
+        self.graph_plot.addItem(self.gps_markers)
+
         if not self.raw_data or len(self.enabled_streams) == 0:
             # Reset to default axis formatting when no streams are enabled
             left_axis = self.graph_plot.getAxis('left')
@@ -1614,6 +1767,10 @@ class DataVisualizationTool(QMainWindow):
         # Plot each enabled stream with dynamic decimation
         for stream in self.enabled_streams:
             if stream not in self.raw_data:
+                continue
+
+            # Skip event marker streams - they have custom visualization
+            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']:
                 continue
 
             color = self.stream_colors[stream]
@@ -1707,7 +1864,43 @@ class DataVisualizationTool(QMainWindow):
             label_font.setPointSize(self.axis_font_size)
             self.graph_plot.setLabel('left', 'Value')
             self.graph_plot.getAxis('left').label.setFont(label_font)
-        
+
+        # Set up right axis properties based on right axis owner
+        if self.right_axis_owner and self.right_axis_owner in self.enabled_streams:
+            color = self.stream_colors[self.right_axis_owner]
+            self.graph_plot.getAxis('right').setPen(pg.mkPen(color=color, width=2))
+            self.graph_plot.getAxis('right').setTextPen(pg.mkPen(color=color))
+
+            # Set the right y-axis label to the axis owner's name with larger font
+            display_units = self.stream_metadata.get(self.right_axis_owner, {}).get('display_units', 'value')
+            display_name = UnitConverter.get_display_name(self.right_axis_owner,
+                                                        self.stream_metadata.get(self.right_axis_owner, {}).get('native_units', 'value'),
+                                                        display_units)
+
+            # Create font with configured size
+            label_font = QFont()
+            label_font.setPointSize(self.axis_font_size)
+
+            # For pyqtgraph labels, we need to use the setLabel method properly
+            self.graph_plot.setLabel('right', display_name)
+
+            # Apply font to the axis label text
+            self.graph_plot.getAxis('right').label.setFont(label_font)
+
+            # Set larger font for tick labels as well
+            tick_font = QFont()
+            tick_font.setPointSize(self.axis_font_size)
+            self.graph_plot.getAxis('right').setTickFont(tick_font)
+
+        else:
+            self.graph_plot.getAxis('right').setPen(pg.mkPen('k', width=2))
+            self.graph_plot.getAxis('right').setTextPen(pg.mkPen('k'))
+            # Clear the right axis label when no owner
+            label_font = QFont()
+            label_font.setPointSize(self.axis_font_size)
+            self.graph_plot.setLabel('right', '')
+            self.graph_plot.getAxis('right').label.setFont(label_font)
+
         # Set x-axis label with configured font size
         x_label_font = QFont()
         x_label_font.setPointSize(self.axis_font_size)
@@ -1721,8 +1914,9 @@ class DataVisualizationTool(QMainWindow):
 
         # Set the actual Y range for display
         # Since all streams are now normalized to 0-1, always use 0-1 range
+        # Extend slightly below 0 to show GPS markers at y=-0.05
         self.graph_plot.setXRange(self.view_start, self.view_end, padding=0)
-        self.graph_plot.setYRange(0, 1, padding=0)
+        self.graph_plot.setYRange(-0.08, 1, padding=0)
 
         # Set up custom tick formatter to show axis owner's real values with round numbers
         if self.axis_owner and self.axis_owner in self.enabled_streams:
@@ -1740,18 +1934,20 @@ class DataVisualizationTool(QMainWindow):
                 magnitude = 10 ** exponent
                 # Normalize to 1-10 range
                 normalized = data_range / magnitude
-                # Choose nice spacing (1, 2, 5, or 10)
-                if normalized <= 1.5:
+                # Choose nice spacing: 0.1, 0.2, 0.5, 1, 2, 5, 10, etc.
+                if normalized <= 1.0:
+                    nice_spacing = 0.1 * magnitude
+                elif normalized <= 2.0:
                     nice_spacing = 0.2 * magnitude
-                elif normalized <= 3:
+                elif normalized <= 5.0:
                     nice_spacing = 0.5 * magnitude
-                elif normalized <= 7:
+                elif normalized <= 10.0:
                     nice_spacing = 1.0 * magnitude
                 else:
                     nice_spacing = 2.0 * magnitude
                 return nice_spacing
 
-            tick_spacing_real = get_nice_tick_spacing(axis_range / 5)  # Aim for ~5 ticks
+            tick_spacing_real = get_nice_tick_spacing(axis_range)  # Calculate spacing based on full range
 
             # Round axis_min DOWN to nearest tick spacing multiple
             # This ensures ticks start at nice round numbers (0, 500, 1000, etc)
@@ -1803,6 +1999,16 @@ class DataVisualizationTool(QMainWindow):
             # Override tickStrings to show real values
             tick_mapping = {pos: val for pos, val in visible_ticks}
 
+            # Determine decimal precision based on tick spacing
+            if tick_spacing_real >= 1:
+                precision = 0  # No decimal places for spacing >= 1
+            elif tick_spacing_real >= 0.1:
+                precision = 1  # One decimal place for spacing like 0.1, 0.2, 0.5
+            elif tick_spacing_real >= 0.01:
+                precision = 2  # Two decimal places for spacing like 0.01, 0.02, 0.05
+            else:
+                precision = 3  # Three decimal places for very small spacing
+
             def custom_tick_strings(values, scale, spacing):
                 print(f"  tickStrings called with {len(values)} positions: {values[:5]}")
                 strings = []
@@ -1810,11 +2016,11 @@ class DataVisualizationTool(QMainWindow):
                     # Find closest tick in our mapping
                     closest = min(tick_mapping.keys(), key=lambda x: abs(x - v), default=None)
                     if closest is not None and abs(closest - v) < 0.001:
-                        strings.append(f"{tick_mapping[closest]:.0f}")
+                        strings.append(f"{tick_mapping[closest]:.{precision}f}")
                     else:
                         # Shouldn't happen, but fallback
                         real_val = axis_min + v * axis_range
-                        strings.append(f"{real_val:.0f}")
+                        strings.append(f"{real_val:.{precision}f}")
                 return strings
 
             self._custom_tick_strings = custom_tick_strings
@@ -1825,25 +2031,396 @@ class DataVisualizationTool(QMainWindow):
             # Remove custom tick value generator if it exists
             if hasattr(self, '_custom_tick_values'):
                 left_axis.tickValues = left_axis.__class__.tickValues.__get__(left_axis, type(left_axis))
+                delattr(self, '_custom_tick_values')
             # Remove custom tick string formatter if it exists
-            if hasattr(left_axis, 'tickStrings') and hasattr(self, '_custom_tick_strings'):
-                del left_axis.tickStrings
-        
+            if hasattr(self, '_custom_tick_strings'):
+                # Reset tickStrings to the default method from the class
+                left_axis.tickStrings = left_axis.__class__.tickStrings.__get__(left_axis, type(left_axis))
+                delattr(self, '_custom_tick_strings')
+
+        # Set up custom tick formatter for RIGHT axis to show axis owner's real values with round numbers
+        if self.right_axis_owner and self.right_axis_owner in self.enabled_streams:
+            axis_min, axis_max = self.stream_ranges.get(self.right_axis_owner, (0, 1))
+            axis_range = axis_max - axis_min
+
+            # Calculate nice round tick spacing
+            import math
+            def get_nice_tick_spacing(data_range):
+                """Calculate a nice round number for tick spacing"""
+                if data_range == 0:
+                    return 1
+                # Get order of magnitude
+                exponent = math.floor(math.log10(data_range))
+                magnitude = 10 ** exponent
+                # Normalize to 1-10 range
+                normalized = data_range / magnitude
+                # Choose nice spacing: 0.1, 0.2, 0.5, 1, 2, 5, 10, etc.
+                if normalized <= 1.0:
+                    nice_spacing = 0.1 * magnitude
+                elif normalized <= 2.0:
+                    nice_spacing = 0.2 * magnitude
+                elif normalized <= 5.0:
+                    nice_spacing = 0.5 * magnitude
+                elif normalized <= 10.0:
+                    nice_spacing = 1.0 * magnitude
+                else:
+                    nice_spacing = 2.0 * magnitude
+                return nice_spacing
+
+            tick_spacing_real = get_nice_tick_spacing(axis_range)  # Calculate spacing based on full range
+
+            # Round axis_min DOWN to nearest tick spacing multiple
+            # This ensures ticks start at nice round numbers (0, 500, 1000, etc)
+            axis_min_rounded = math.floor(axis_min / tick_spacing_real) * tick_spacing_real
+
+            # Round axis_max UP to nearest tick spacing multiple
+            axis_max_rounded = math.ceil(axis_max / tick_spacing_real) * tick_spacing_real
+
+            # Generate nice round tick values in real units
+            real_ticks = []
+            tick_value = axis_min_rounded
+            while tick_value <= axis_max_rounded:
+                real_ticks.append(tick_value)
+                tick_value += tick_spacing_real
+
+            # DEBUG
+            print(f"Right Axis Stream: {self.right_axis_owner}")
+            print(f"  Data range: {axis_min:.1f} to {axis_max:.1f}")
+            print(f"  Rounded range: {axis_min_rounded:.1f} to {axis_max_rounded:.1f}")
+            print(f"  Tick spacing: {tick_spacing_real:.1f}")
+            print(f"  Real ticks: {real_ticks}")
+
+            # Convert tick positions to DATA's normalized 0-1 space (where 0=axis_min, 1=axis_max)
+            # This is where the ticks will actually be drawn since data is normalized to this range
+            data_normalized_ticks = [(t - axis_min) / axis_range for t in real_ticks]
+            print(f"  Normalized tick positions: {data_normalized_ticks}")
+
+            right_axis = self.graph_plot.getAxis('right')
+
+            # Filter ticks to only those within the 0-1 range (visible area)
+            visible_ticks_right = [(norm_pos, real_val) for norm_pos, real_val in zip(data_normalized_ticks, real_ticks)
+                           if 0 <= norm_pos <= 1]
+
+            print(f"  Visible ticks: {visible_ticks_right}")
+
+            # Override tickValues to specify exact tick positions
+            def custom_tick_values_right(minVal, maxVal, size):
+                # Return list of [(spacing, [tick_positions])] for major and minor ticks
+                # We return our pre-calculated positions
+                major_ticks = [pos for pos, _ in visible_ticks_right]
+                minor_ticks = []  # No minor ticks
+
+                print(f"  Right tickValues returning {len(major_ticks)} positions")
+                return [(1.0, major_ticks), (0.0, minor_ticks)]
+
+            self._custom_right_tick_values = custom_tick_values_right
+            right_axis.tickValues = lambda minVal, maxVal, size: self._custom_right_tick_values(minVal, maxVal, size)
+
+            # Override tickStrings to show real values
+            tick_mapping_right = {pos: val for pos, val in visible_ticks_right}
+
+            # Determine decimal precision based on tick spacing
+            if tick_spacing_real >= 1:
+                precision_right = 0  # No decimal places for spacing >= 1
+            elif tick_spacing_real >= 0.1:
+                precision_right = 1  # One decimal place for spacing like 0.1, 0.2, 0.5
+            elif tick_spacing_real >= 0.01:
+                precision_right = 2  # Two decimal places for spacing like 0.01, 0.02, 0.05
+            else:
+                precision_right = 3  # Three decimal places for very small spacing
+
+            def custom_tick_strings_right(values, scale, spacing):
+                print(f"  Right tickStrings called with {len(values)} positions: {values[:5]}")
+                strings = []
+                for v in values:
+                    # Find closest tick in our mapping
+                    closest = min(tick_mapping_right.keys(), key=lambda x: abs(x - v), default=None)
+                    if closest is not None and abs(closest - v) < 0.001:
+                        strings.append(f"{tick_mapping_right[closest]:.{precision_right}f}")
+                    else:
+                        # Shouldn't happen, but fallback
+                        real_val = axis_min + v * axis_range
+                        strings.append(f"{real_val:.{precision_right}f}")
+                return strings
+
+            self._custom_right_tick_strings = custom_tick_strings_right
+            right_axis.tickStrings = lambda values, scale, spacing: self._custom_right_tick_strings(values, scale, spacing)
+        else:
+            # Reset to default tick formatting
+            right_axis = self.graph_plot.getAxis('right')
+            # Remove custom tick value generator if it exists
+            if hasattr(self, '_custom_right_tick_values'):
+                right_axis.tickValues = right_axis.__class__.tickValues.__get__(right_axis, type(right_axis))
+                delattr(self, '_custom_right_tick_values')
+            # Remove custom tick string formatter if it exists
+            if hasattr(self, '_custom_right_tick_strings'):
+                # Reset tickStrings to the default method from the class
+                right_axis.tickStrings = right_axis.__class__.tickStrings.__get__(right_axis, type(right_axis))
+                delattr(self, '_custom_right_tick_strings')
+
+        # Update GPS position markers (triangles above time axis)
+        if 'gps_position' in self.raw_data:
+            gps_data = self.raw_data['gps_position']
+            all_time = gps_data['time']
+
+            # Filter to visible time window
+            mask = (all_time >= self.view_start) & (all_time <= self.view_end)
+            visible_indices = np.where(mask)[0]
+            visible_time = all_time[mask]
+
+            if len(visible_time) > 0:
+                # Position markers just below y=0 (at -0.05 in normalized space)
+                # This puts them just above the time axis
+                y_positions = np.full(len(visible_time), -0.05)
+
+                # Store the original indices in the data field (1D array of integers)
+                # We'll use these to look up lat/lon when clicked
+                # Clear existing points first
+                self.gps_markers.clear()
+
+                # Add points with clickable flag
+                self.gps_markers.addPoints(
+                    x=visible_time,
+                    y=y_positions,
+                    data=visible_indices  # Store indices for click events
+                )
+            else:
+                # No GPS data in visible window, clear markers
+                self.gps_markers.setData(x=[], y=[])
+        else:
+            # No GPS data loaded, clear markers
+            self.gps_markers.setData(x=[], y=[])
+
         # Apply theme
         if self.dark_theme:
             self.graph_plot.setBackground('#2b2b2b')
             self.graph_plot.getAxis('bottom').setPen('w')
-            self.graph_plot.getAxis('left').setPen('w')
             self.graph_plot.getAxis('bottom').setTextPen('w')
-            self.graph_plot.getAxis('left').setTextPen('w')
+            # Only apply theme to left axis if there's no left axis owner
+            # (if there is an owner, the owner's color was already set above)
+            if not (self.axis_owner and self.axis_owner in self.enabled_streams):
+                self.graph_plot.getAxis('left').setPen('w')
+                self.graph_plot.getAxis('left').setTextPen('w')
+            # Only apply theme to right axis if there's no right axis owner
+            # (if there is an owner, the owner's color was already set above)
+            if not (self.right_axis_owner and self.right_axis_owner in self.enabled_streams):
+                self.graph_plot.getAxis('right').setPen('w')
+                self.graph_plot.getAxis('right').setTextPen('w')
+            # Show grid only for X axis and left Y axis to avoid duplicate horizontal grid lines
             self.graph_plot.showGrid(x=True, y=True, alpha=0.5)
+            # Disable grid for right axis to prevent duplicate horizontal lines
+            self.graph_plot.getAxis('right').setGrid(False)
         else:
             self.graph_plot.setBackground('w')
             self.graph_plot.getAxis('bottom').setPen('k')
-            self.graph_plot.getAxis('left').setPen('k')
             self.graph_plot.getAxis('bottom').setTextPen('k')
-            self.graph_plot.getAxis('left').setTextPen('k')
+            # Only apply theme to left axis if there's no left axis owner
+            # (if there is an owner, the owner's color was already set above)
+            if not (self.axis_owner and self.axis_owner in self.enabled_streams):
+                self.graph_plot.getAxis('left').setPen('k')
+                self.graph_plot.getAxis('left').setTextPen('k')
+            # Only apply theme to right axis if there's no right axis owner
+            # (if there is an owner, the owner's color was already set above)
+            if not (self.right_axis_owner and self.right_axis_owner in self.enabled_streams):
+                self.graph_plot.getAxis('right').setPen('k')
+                self.graph_plot.getAxis('right').setTextPen('k')
+            # Show grid only for X axis and left Y axis to avoid duplicate horizontal grid lines
             self.graph_plot.showGrid(x=True, y=True, alpha=0.3)
+            # Disable grid for right axis to prevent duplicate horizontal lines
+            self.graph_plot.getAxis('right').setGrid(False)
+
+        # Draw event markers if ecu_rpm_instantaneous is available
+        self.draw_spark_events()
+        self.draw_crankref_events()
+        self.draw_camshaft_events()
+
+    def draw_spark_events(self):
+        """Draw spark event markers (x1/x2) on the graph, positioned relative to RPM"""
+        # Only draw if we have instantaneous RPM data
+        if 'ecu_rpm_instantaneous' not in self.raw_data:
+            print("DEBUG: No ecu_rpm_instantaneous data for spark events")
+            return
+
+        rpm_data = self.raw_data['ecu_rpm_instantaneous']
+        rpm_time = rpm_data['time']
+        rpm_values = rpm_data['values']
+
+        # Get RPM normalization range
+        rpm_min, rpm_max = self.stream_ranges.get('ecu_rpm_instantaneous', (0, 1))
+        print(f"DEBUG draw_spark_events: RPM range {rpm_min:.1f} to {rpm_max:.1f}")
+
+        # Process each spark type
+        spark_streams = [
+            ('ecu_spark_x1', 'S1', SPARK_LABEL_OFFSET),   # x1 above
+            ('ecu_spark_x2', 'S2', -SPARK_LABEL_OFFSET)  # x2 below
+        ]
+
+        for spark_name, label_text, offset in spark_streams:
+            # Only draw if this spark stream is enabled
+            if spark_name not in self.enabled_streams:
+                print(f"DEBUG: {spark_name} not in enabled_streams")
+                continue
+
+            if spark_name not in self.raw_data:
+                print(f"DEBUG: {spark_name} not in raw_data")
+                continue
+
+            spark_data = self.raw_data[spark_name]
+            spark_times = spark_data['time']
+            print(f"DEBUG: {spark_name} has {len(spark_times)} events, time range {spark_times[0]:.2f} to {spark_times[-1]:.2f}")
+
+            # Get color from stream colors if available
+            color = self.stream_colors.get(spark_name, '#FF0000')  # Default to red
+
+            # Filter to visible time window
+            mask = (spark_times >= self.view_start) & (spark_times <= self.view_end)
+            visible_spark_times = spark_times[mask]
+            print(f"DEBUG: {spark_name} has {len(visible_spark_times)} visible events in window {self.view_start:.2f} to {self.view_end:.2f}")
+
+            for spark_time in visible_spark_times:
+                # Interpolate RPM value at spark time
+                if spark_time < rpm_time[0] or spark_time > rpm_time[-1]:
+                    continue  # Skip if spark is outside RPM data range
+
+                # Linear interpolation of RPM at spark time
+                rpm_at_spark = np.interp(spark_time, rpm_time, rpm_values)
+
+                # Normalize RPM value to 0-1 range (same as plot data)
+                normalized_rpm = (rpm_at_spark - rpm_min) / (rpm_max - rpm_min)
+
+                # Calculate label position (above or below RPM line)
+                label_y = normalized_rpm + offset
+
+                # Draw vertical line from label to RPM point
+                line_item = pg.PlotDataItem(
+                    [spark_time, spark_time],
+                    [label_y, normalized_rpm],
+                    pen=pg.mkPen(color=color, width=2.0, style=Qt.PenStyle.SolidLine)
+                )
+                self.graph_plot.addItem(line_item)
+
+                # Add text label at offset position
+                text_item = pg.TextItem(text=label_text, color=color, anchor=(0.5, 0.5))
+                text_item.setPos(spark_time, label_y)
+                self.graph_plot.addItem(text_item)
+
+    def draw_crankref_events(self):
+        """Draw crankref event markers on the graph, positioned relative to RPM"""
+        # Only draw if we have instantaneous RPM data
+        if 'ecu_rpm_instantaneous' not in self.raw_data:
+            return
+
+        # Only draw if crankref stream is enabled
+        if 'ecu_crankref_id' not in self.enabled_streams:
+            return
+
+        if 'ecu_crankref_id' not in self.raw_data:
+            return
+
+        rpm_data = self.raw_data['ecu_rpm_instantaneous']
+        rpm_time = rpm_data['time']
+        rpm_values = rpm_data['values']
+
+        # Get RPM normalization range
+        rpm_min, rpm_max = self.stream_ranges.get('ecu_rpm_instantaneous', (0, 1))
+
+        crankref_data = self.raw_data['ecu_crankref_id']
+        crankref_times = crankref_data['time']
+        crankref_ids = crankref_data['values']
+
+        # Get color for crankref stream
+        color = self.stream_colors.get('ecu_crankref_id', '#00FF00')  # Default to green
+
+        # Filter to visible time window
+        mask = (crankref_times >= self.view_start) & (crankref_times <= self.view_end)
+        visible_crankref_times = crankref_times[mask]
+        visible_crankref_ids = crankref_ids[mask]
+
+        for crankref_time, crankref_id in zip(visible_crankref_times, visible_crankref_ids):
+            # Interpolate RPM value at crankref time
+            if crankref_time < rpm_time[0] or crankref_time > rpm_time[-1]:
+                continue  # Skip if crankref is outside RPM data range
+
+            # Linear interpolation of RPM at crankref time
+            rpm_at_crankref = np.interp(crankref_time, rpm_time, rpm_values)
+
+            # Normalize RPM value to 0-1 range (same as plot data)
+            normalized_rpm = (rpm_at_crankref - rpm_min) / (rpm_max - rpm_min)
+
+            # Calculate label position (above the RPM line)
+            label_y = normalized_rpm + CRANKREF_LINE_HEIGHT
+
+            # Draw vertical line upward from RPM point
+            line_item = pg.PlotDataItem(
+                [crankref_time, crankref_time],
+                [normalized_rpm, label_y],
+                pen=pg.mkPen(color=color, width=2.0, style=Qt.PenStyle.SolidLine)
+            )
+            self.graph_plot.addItem(line_item)
+
+            # Add text label above the line
+            label_text = f"CR{int(crankref_id)}"
+            text_item = pg.TextItem(text=label_text, color=color, anchor=(0.5, 1.0))  # anchor bottom center
+            text_item.setPos(crankref_time, label_y)
+            self.graph_plot.addItem(text_item)
+
+    def draw_camshaft_events(self):
+        """Draw camshaft event markers on the graph, positioned relative to RPM"""
+        # Only draw if we have instantaneous RPM data
+        if 'ecu_rpm_instantaneous' not in self.raw_data:
+            return
+
+        # Only draw if camshaft stream is enabled
+        if 'ecu_camshaft_timestamp' not in self.enabled_streams:
+            return
+
+        if 'ecu_camshaft_timestamp' not in self.raw_data:
+            return
+
+        rpm_data = self.raw_data['ecu_rpm_instantaneous']
+        rpm_time = rpm_data['time']
+        rpm_values = rpm_data['values']
+
+        # Get RPM normalization range
+        rpm_min, rpm_max = self.stream_ranges.get('ecu_rpm_instantaneous', (0, 1))
+
+        camshaft_data = self.raw_data['ecu_camshaft_timestamp']
+        camshaft_times = camshaft_data['time']
+
+        # Get color for camshaft stream
+        color = self.stream_colors.get('ecu_camshaft_timestamp', '#FF00FF')  # Default to magenta
+
+        # Filter to visible time window
+        mask = (camshaft_times >= self.view_start) & (camshaft_times <= self.view_end)
+        visible_camshaft_times = camshaft_times[mask]
+
+        for camshaft_time in visible_camshaft_times:
+            # Interpolate RPM value at camshaft time
+            if camshaft_time < rpm_time[0] or camshaft_time > rpm_time[-1]:
+                continue  # Skip if camshaft is outside RPM data range
+
+            # Linear interpolation of RPM at camshaft time
+            rpm_at_camshaft = np.interp(camshaft_time, rpm_time, rpm_values)
+
+            # Normalize RPM value to 0-1 range (same as plot data)
+            normalized_rpm = (rpm_at_camshaft - rpm_min) / (rpm_max - rpm_min)
+
+            # Calculate label position (below the RPM line - downward direction)
+            label_y = normalized_rpm - CAMSHAFT_LINE_HEIGHT
+
+            # Draw vertical line downward from RPM point
+            line_item = pg.PlotDataItem(
+                [camshaft_time, camshaft_time],
+                [normalized_rpm, label_y],
+                pen=pg.mkPen(color=color, width=2.0, style=Qt.PenStyle.SolidLine)
+            )
+            self.graph_plot.addItem(line_item)
+
+            # Add text label below the line
+            label_text = "CAM"
+            text_item = pg.TextItem(text=label_text, color=color, anchor=(0.5, 0.0))  # anchor top center
+            text_item.setPos(camshaft_time, label_y)
+            self.graph_plot.addItem(text_item)
 
     def update_navigation_plot(self):
         """Update the navigation plot with decimated overview"""
@@ -1854,11 +2431,17 @@ class DataVisualizationTool(QMainWindow):
             return
 
         self.nav_plot.setXRange(0, self.total_time_span, padding=0)
+        # Set Y range to 0-1 since all streams are normalized
+        self.nav_plot.setYRange(0, 1, padding=0)
 
         # Plot enabled streams with heavy decimation for overview
         max_nav_points = 1000
         for stream in self.enabled_streams:
             if stream not in self.raw_data:
+                continue
+
+            # Skip event marker streams - they're not plotted in navigation view
+            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']:
                 continue
 
             stream_data = self.raw_data[stream]
@@ -1872,9 +2455,13 @@ class DataVisualizationTool(QMainWindow):
                 nav_time = all_time
                 nav_values = all_values
 
+            # Normalize to 0-1 range like main graph
+            stream_min, stream_max = self.stream_ranges.get(stream, (0, 1))
+            normalized_values = (nav_values - stream_min) / (stream_max - stream_min)
+
             color = self.stream_colors[stream]
             pen = pg.mkPen(color=color, width=1)
-            self.nav_plot.plot(nav_time, nav_values, pen=pen)
+            self.nav_plot.plot(nav_time, normalized_values, pen=pen)
         
         # Apply theme
         if self.dark_theme:
@@ -1963,7 +2550,99 @@ class DataVisualizationTool(QMainWindow):
         self.history = []
         self.history_index = -1
         self.update_history_buttons()
-        
+
+        self.update_graph_plot()
+
+    def zoom_out_2x(self):
+        """Zoom out by 2x (double the time shown), centered on current view"""
+        # Add current view to history
+        self.add_to_history(self.view_start, self.view_end, 0, 1)
+
+        # Calculate current view duration and center
+        current_duration = self.view_end - self.view_start
+        center = (self.view_start + self.view_end) / 2
+
+        # Double the duration
+        new_duration = current_duration * 2
+
+        # Calculate new start/end centered on the same point
+        new_start = center - new_duration / 2
+        new_end = center + new_duration / 2
+
+        # Clamp to valid range
+        new_start = max(0, new_start)
+        new_end = min(self.total_time_span, new_end)
+
+        # If we hit a boundary, adjust the other side to maintain 2x zoom if possible
+        if new_start == 0:
+            new_end = min(new_duration, self.total_time_span)
+        elif new_end == self.total_time_span:
+            new_start = max(0, self.total_time_span - new_duration)
+
+        self.view_start = new_start
+        self.view_end = new_end
+
+        # Update navigation region
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+
+        self.update_graph_plot()
+
+    def pan_left_50(self):
+        """Pan left by 50% of current view duration"""
+        # Add current view to history
+        self.add_to_history(self.view_start, self.view_end, 0, 1)
+
+        # Calculate 50% of current duration
+        current_duration = self.view_end - self.view_start
+        shift = current_duration * 0.5
+
+        # Shift left (decrease both start and end)
+        new_start = self.view_start - shift
+        new_end = self.view_end - shift
+
+        # Clamp to valid range
+        if new_start < 0:
+            new_start = 0
+            new_end = current_duration
+
+        self.view_start = new_start
+        self.view_end = new_end
+
+        # Update navigation region
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+
+        self.update_graph_plot()
+
+    def pan_right_50(self):
+        """Pan right by 50% of current view duration"""
+        # Add current view to history
+        self.add_to_history(self.view_start, self.view_end, 0, 1)
+
+        # Calculate 50% of current duration
+        current_duration = self.view_end - self.view_start
+        shift = current_duration * 0.5
+
+        # Shift right (increase both start and end)
+        new_start = self.view_start + shift
+        new_end = self.view_end + shift
+
+        # Clamp to valid range
+        if new_end > self.total_time_span:
+            new_end = self.total_time_span
+            new_start = self.total_time_span - current_duration
+
+        self.view_start = new_start
+        self.view_end = new_end
+
+        # Update navigation region
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+
         self.update_graph_plot()
 
     
@@ -2015,29 +2694,45 @@ class DataVisualizationTool(QMainWindow):
             self.update_history_buttons()
     
     def update_history_buttons(self):
-        """Update undo/redo button states"""
-        self.undo_btn.setEnabled(self.history_index > 0)
-        self.redo_btn.setEnabled(self.history_index < len(self.history) - 1)
-    
-    def toggle_theme(self):
-        """Toggle between light and dark themes"""
-        self.dark_theme = not self.dark_theme
+        """Update undo/redo action states"""
+        self.undo_action.setEnabled(self.history_index > 0)
+        self.redo_action.setEnabled(self.history_index < len(self.history) - 1)
+
+    def apply_window_border(self):
+        """Apply window border based on theme"""
+        if self.dark_theme:
+            # Light border for dark theme
+            self.setStyleSheet("QMainWindow { border: 2px solid #666666; }")
+        else:
+            # Dark border for light theme
+            self.setStyleSheet("QMainWindow { border: 2px solid #333333; }")
+
+    def set_theme(self, dark):
+        """Set theme (True for dark, False for light)"""
+        if self.dark_theme == dark:
+            return  # No change
+
+        self.dark_theme = dark
+
+        # Update checkmarks
+        self.light_theme_action.setChecked(not dark)
+        self.dark_theme_action.setChecked(dark)
 
         # Save theme preference
-        self.config.set("theme", "dark" if self.dark_theme else "light")
+        self.config.set("theme", "dark" if dark else "light")
 
+        # Apply window border
+        self.apply_window_border()
+
+        # Update panel backgrounds
         if self.dark_theme:
-            # Apply dark theme
-            self.ribbon.setStyleSheet("QWidget { background-color: #3b3b3b; }")
+            # Dark theme backgrounds
             self.stream_selection.setStyleSheet("QWidget { background-color: #3b3b3b; }")
             self.nav_widget.setStyleSheet("QWidget { background-color: #3b3b3b; }")
-            self.theme_btn.setText("Light Theme")
         else:
-            # Apply light theme
-            self.ribbon.setStyleSheet("QWidget { background-color: #f0f0f0; }")
+            # Light theme backgrounds
             self.stream_selection.setStyleSheet("QWidget { background-color: white; }")
             self.nav_widget.setStyleSheet("QWidget { background-color: white; }")
-            self.theme_btn.setText("Dark Theme")
 
         # Update all stream widgets with new theme
         for widget in self.stream_list_widget.stream_widgets:
@@ -2046,6 +2741,186 @@ class DataVisualizationTool(QMainWindow):
         # Update all plots
         self.update_graph_plot()
         self.update_navigation_plot()
+
+    def toggle_theme(self):
+        """Toggle between light and dark themes (kept for backward compatibility)"""
+        self.set_theme(not self.dark_theme)
+
+    def show_ride_on_maps(self):
+        """Show the entire GPS track on a map (triggered from menu)"""
+        # Call the GPS marker handler with no specific clicked point
+        # We'll use the first GPS point as the "clicked" point for centering
+        if 'gps_position' not in self.raw_data:
+            print("No GPS data available")
+            return
+
+        gps_data = self.raw_data['gps_position']
+        if len(gps_data['time']) == 0:
+            print("No GPS data available")
+            return
+
+        # Create a fake clicked point using the middle of the track
+        middle_index = len(gps_data['time']) // 2
+
+        # Create a mock points object with the middle point
+        class MockPoint:
+            def __init__(self, index):
+                self._data = index
+            def data(self):
+                return self._data
+
+        mock_points = [MockPoint(middle_index)]
+
+        # Call the existing handler
+        self.on_gps_marker_clicked(None, mock_points)
+
+    def on_gps_marker_clicked(self, scatter_plot_item, points):
+        """Handle GPS marker click events - show all GPS points on one map
+
+        Note: Due to pyqtgraph design, this requires double-click"""
+        import subprocess
+        import shutil
+        import tempfile
+        import os
+        import json
+
+        if 'gps_position' not in self.raw_data:
+            print("No GPS data available")
+            return
+
+        gps_data = self.raw_data['gps_position']
+
+        # Get the clicked point info
+        clicked_index = int(points[0].data())
+        clicked_time = gps_data['time'][clicked_index]
+        clicked_lat = gps_data['lat'][clicked_index]
+        clicked_lon = gps_data['lon'][clicked_index]
+
+        print(f"GPS marker clicked at time={clicked_time:.3f}s, lat={clicked_lat:.6f}, lon={clicked_lon:.6f}")
+        print(f"Generating map with all {len(gps_data['time'])} GPS positions...")
+
+        # Create a list of all GPS positions for the map
+        positions = []
+        for i in range(len(gps_data['time'])):
+            positions.append({
+                'lat': float(gps_data['lat'][i]),
+                'lon': float(gps_data['lon'][i]),
+                'time': float(gps_data['time'][i]),
+                'clicked': i == clicked_index
+            })
+
+        # Create HTML with Leaflet.js (open source map library)
+        temp_dir = tempfile.gettempdir()
+        html_file = os.path.join(temp_dir, 'umod4_gps_track.html')
+
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>UMOD4 GPS Track</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body {{ margin: 0; padding: 0; }}
+        #map {{ width: 100%; height: 100vh; }}
+        .info {{
+            padding: 6px 8px;
+            background: white;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+        }}
+        .info h4 {{ margin: 0 0 5px; color: #777; }}
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script>
+        // GPS positions data
+        const positions = {json.dumps(positions)};
+
+        // Find clicked position
+        const clickedPos = positions.find(p => p.clicked);
+
+        // Create map centered on clicked position
+        const map = L.map('map').setView([clickedPos.lat, clickedPos.lon], 15);
+
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+            attribution: '&copy; OpenStreetMap contributors',
+            maxZoom: 19
+        }}).addTo(map);
+
+        // Create polyline for the track
+        const trackPoints = positions.map(p => [p.lat, p.lon]);
+        L.polyline(trackPoints, {{
+            color: 'blue',
+            weight: 3,
+            opacity: 0.7
+        }}).addTo(map);
+
+        // Add markers for each position
+        positions.forEach((pos, idx) => {{
+            const marker = L.circleMarker([pos.lat, pos.lon], {{
+                radius: pos.clicked ? 8 : 4,
+                fillColor: pos.clicked ? '#ff0000' : '#0066ff',
+                color: pos.clicked ? '#cc0000' : '#0044cc',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: pos.clicked ? 1 : 0.6
+            }}).addTo(map);
+
+            marker.bindPopup(
+                `<b>Point ${{idx + 1}}</b><br>` +
+                `Time: ${{pos.time.toFixed(3)}}s<br>` +
+                `Lat: ${{pos.lat.toFixed(6)}}<br>` +
+                `Lon: ${{pos.lon.toFixed(6)}}`
+            );
+
+            if (pos.clicked) {{
+                marker.openPopup();
+            }}
+        }});
+
+        // Add info box
+        const info = L.control({{position: 'topright'}});
+        info.onAdd = function(map) {{
+            this._div = L.DomUtil.create('div', 'info');
+            this._div.innerHTML =
+                '<h4>UMOD4 GPS Track</h4>' +
+                `<b>${{positions.length}}</b> GPS positions<br>` +
+                `Clicked: Time ${{clickedPos.time.toFixed(3)}}s`;
+            return this._div;
+        }};
+        info.addTo(map);
+
+        // Fit map to show all points
+        const bounds = L.latLngBounds(trackPoints);
+        map.fitBounds(bounds, {{padding: [50, 50]}});
+    </script>
+</body>
+</html>"""
+
+        with open(html_file, 'w') as f:
+            f.write(html_content)
+
+        # Open the map in browser
+        try:
+            if shutil.which('wslview'):
+                subprocess.Popen(['wslview', html_file])
+            elif shutil.which('powershell.exe'):
+                result = subprocess.run(['wslpath', '-w', html_file],
+                                      capture_output=True, text=True)
+                windows_path = result.stdout.strip()
+                print(f"Opening GPS track map at: {windows_path}")
+                subprocess.Popen(['powershell.exe', '-Command', 'Start-Process', f'"{windows_path}"'])
+            else:
+                import webbrowser
+                file_url = f'file:///{html_file.replace(os.sep, "/")}'
+                webbrowser.open(file_url, new=2)
+        except Exception as e:
+            print(f"Error opening browser: {e}")
+            print(f"Map file: {html_file}")
 
     def closeEvent(self, event):
         """Handle window close event - save configuration."""

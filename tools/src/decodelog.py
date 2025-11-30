@@ -1346,6 +1346,9 @@ def main():
                     cr_ts = int.from_bytes(read(f, L.LOGID_ECU_CRANKREF_START_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
                     timekeeper.process_ts_event(cr_ts)
+                    # Save timestamp AFTER advancing - this is when the current CR event occurred
+                    # This marks the END of the previous period, which is what the RPM calculation represents
+                    rpm_timestamp_ns = timekeeper.get_time_ns()
                     print(f"{fmt_record(recordCnt, timekeeper)}: CRK_TS: {cr_ts}")
                     if h5_writer:
                         h5_writer.append_data('ecu_crankref_timestamp', [timekeeper.get_time_ns(), cr_ts])
@@ -1367,8 +1370,9 @@ def main():
                         print(f"{fmt_record(recordCnt, timekeeper)}: cr_ts: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
 
                         if h5_writer:
-                            h5_writer.append_data('ecu_rpm_instantaneous', [timekeeper.get_time_ns(), rpm])
-                            h5_writer.append_data('ecu_rpm_smoothed', [timekeeper.get_time_ns(), rpm_avg])
+                            # Use rpm_timestamp_ns which captures the END of the period being measured
+                            h5_writer.append_data('ecu_rpm_instantaneous', [rpm_timestamp_ns, rpm])
+                            h5_writer.append_data('ecu_rpm_smoothed', [rpm_timestamp_ns, rpm_avg])
 
                 elif byte == L.LOGID_ECU_CRANKREF_ID_TYPE_U8:
                     crid = read(f, L.LOGID_ECU_CRANKREF_ID_DLEN)[0]
@@ -1403,9 +1407,11 @@ def main():
                 elif byte == L.LOGID_ECU_CAMSHAFT_TYPE_TS:
                     cam_ts = int.from_bytes(read(f, L.LOGID_ECU_CAMSHAFT_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - camshaft event HAS occurred
-                    print(f"{fmt_record(recordCnt, timekeeper)}: CAM_TS:  {cam_ts}")
+                    # Convert raw timestamp to actual time when camshaft event occurred
+                    actual_cam_time_ns = timekeeper.process_retrospective_t_event(cam_ts)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: CAM_TS:  {cam_ts} (actual: {actual_cam_time_ns})")
                     if h5_writer:
-                        h5_writer.append_data('ecu_camshaft_timestamp', [timekeeper.get_time_ns(), cam_ts])
+                        h5_writer.append_data('ecu_camshaft_timestamp', [actual_cam_time_ns, cam_ts])
 
                 elif byte == L.LOGID_ECU_CAM_ERR_TYPE_U8:
                     camErr = read(f, L.LOGID_ECU_CAM_ERR_DLEN)[0]
@@ -1416,14 +1422,20 @@ def main():
                 elif byte == L.LOGID_ECU_SPRK_X1_TYPE_PTS:
                     spx1_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - spark HAS fired
-                    print(f"{fmt_record(recordCnt, timekeeper)}: SP1_TS: {spx1_ts}")
-                    if h5_writer:                        h5_writer.append_data('ecu_spark_x1', [timekeeper.get_time_ns(), spx1_ts])
+                    # Convert raw timestamp to actual time when spark occurred
+                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx1_ts)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: SP1_TS: {spx1_ts} (actual: {actual_spark_time_ns})")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_ts])
 
                 elif byte == L.LOGID_ECU_SPRK_X2_TYPE_PTS:
                     spx2_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - spark HAS fired
-                    print(f"{fmt_record(recordCnt, timekeeper)}: SP2_TS: {spx2_ts}")
-                    if h5_writer:                        h5_writer.append_data('ecu_spark_x2', [timekeeper.get_time_ns(), spx2_ts])
+                    # Convert raw timestamp to actual time when spark occurred
+                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx2_ts)
+                    print(f"{fmt_record(recordCnt, timekeeper)}: SP2_TS: {spx2_ts} (actual: {actual_spark_time_ns})")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_spark_x2', [actual_spark_time_ns, spx2_ts])
 
                 elif byte == L.LOGID_ECU_NOSPARK_TYPE_U8:
                     sparkErr = read(f, L.LOGID_ECU_NOSPARK_DLEN)[0]
@@ -1435,6 +1447,18 @@ def main():
                 elif byte == L.LOGID_GEN_EP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_EP_LOG_VER_DLEN)
                     print(f"{fmt_record(recordCnt, timekeeper)}: EPV:    {rd[0]}")
+
+                elif byte == L.LOGID_EP_FIND_NAME_TYPE_U8:
+                    # Each write to this address appends the next byte as a char to the EPROM_ID_STR
+                    c = read(f, L.LOGID_EP_FIND_NAME_DLEN)[0]
+                    if (c != 0):
+                        epromIdString = "".join([epromIdString, chr(c)])
+                        #if h5_writer:
+                        #    h5_writer.current_eprom_name += chr(c)
+                    else:
+                        currentEpromId = epromIdString
+                        epromIdString = ""
+                        print(f"{fmt_record(recordCnt, timekeeper)}: FIND:   {currentEpromId}")
 
                 elif byte == L.LOGID_EP_LOAD_NAME_TYPE_U8:
                     # Each write to this address appends the next byte as a char to the EPROM_ID_STR
