@@ -776,7 +776,8 @@ ECU_ERROR_L000C_U8_prev       = 0x017F
 ECU_ERROR_L000D_U8_prev       = 0x0180
 RAW_AAP_U8_prev               = 0x0181
 FUEL_PUMP_B_prev              = 0x0182
-half_overflow                 = 0x0183
+RAW_VTA_prev                  = 0x0183          ; 16-bits: 0x0183 & 0x0184
+half_overflow                 = 0x0185
 
 ;*****************************************************************
 ;68HC11G IO Register Map
@@ -3006,14 +3007,18 @@ tbl1__00:
 
         ldD     *L001B_tmp              ;Restore the original A/D reading (remember: low 6 bits of HC11 A/D result are always 0)
         stD     *L0022                  ;L0022 gets the raw left-aligned VTA A/D reading
-        lsrD                            ;shift left by 6 to right-align the 10-bit reading
+        lsrD                            ;Move the 10-bit A/D reading into the 10 LS bits
         lsrD
         lsrD
         lsrD
         lsrD
         lsrD
         stD     *L0024                  ;save the right-aligned, unfiltered version of VTA in L0024
+        
+        cmpD    RAW_VTA_prev            ;only log good sensor readings that differ from the previous reading
+        beq     3f
         stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
+        stD     RAW_VTA_prev
         bra     3f
 
 1:      brclr   *L0010 #0b00100000 2f   ;if the sensor is not currently suspect, make it so
