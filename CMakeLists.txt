@@ -118,6 +118,12 @@ execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pyqtgraph)
 message(STATUS "   ---> Installing python lib: pandas")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pandas)
 
+message(STATUS "   ---> Installing python lib: flask")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask)
+
+message(STATUS "   ---> Installing python lib: flask-cors")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask-cors)
+
 project(umod4)
 
 # Littlefs is a small enough project that we just pull it into our superbuild's build tree
