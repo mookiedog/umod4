@@ -70,8 +70,8 @@ THW is the same as THA, but it measures the Water (coolant) temperature instead.
 In this case, you can see that the water is 0.4C colder than the air.
 That could be for two reasons:
 
-* the garage was warming up after cooling off overnight, and the air in the garage will warm faster than the larger thermal mass of the engine
-* the two thermistors (and and water) may have slightly different manufacturing tolerances
+* The garage was warming up after cooling off overnight, and the air in the garage will warm faster than the larger thermal mass of the engine
+* The two thermistors (and and water) may have slightly different manufacturing tolerances
 
 Next up is AAP, or Ambient Air Pressure.
 This reading comes from the ambient air pressure sensor, which is built directly onto the ECU circuit board itself.

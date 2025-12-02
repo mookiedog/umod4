@@ -18,12 +18,14 @@ Here is a log of me starting up on a fairly cold November day, letting the bike 
 The pane on the left shows all the data streams that can be visualized.
 In this example, we are looking at instantaneous RPM (red) and coolant temperature (blue).
 
-As an engine rotates, the crank speeds up and slows down.
-That's one of the reasons you feel vibration when the engine runs.
-The tachometer on the dashboard is heavily filtered so that you do not see the RPMs rising and falling during a single rotation.
-When trying to see details of engine operation though, we want to see how the speed varies during a rotation: the instantaneous RPM.
-The definition of 'instantaneous' RPM is based on the fact that the Aprilia ECU tracks the position of the crankshaft 6 times per rotation (event 60 degrees).
-The time period for each 60 degree subrotation can be converted into its 'instantaneous' rotational speed over that time.
+As an engine rotates, the crankshaft speeds up and slows down.
+In the most general terms, if a crankshaft is not speeding up during its power stroke, then it is slowing down.
+This constant change in rotation speed is one of the reasons you feel vibration when an engine runs.
+The rotational speed reported by the tachometer on the dashboard is heavily filtered so that you are seeing a nice, smooth RPM report.
+When trying to observe the minute details of engine operation though, we want to see how the speed varies during a single rotation.
+In the case of the Rotax 1000cc twin, the ECU tracks the position of the crankshaft 6 times per rotation, meaning that every 60 degrees, the ECU knows precisely where the crankshaft is.
+By measuring the time between subsequent crankshaft position events, the ECU can calculate what the rotation speed was during that fraction of a crank rotation.
+For the purposes of viewing logs, this is defined to be the crankshaft's 'instantaneous' RPM.
 
 ## Navigation Window
 
@@ -31,33 +33,35 @@ The narrow strip at the bottom is called the Navigation View.
 The navigation view shows the entire log (timewise).
 In this case you can see that I warmed the bike up for nearly 600 seconds (10 minutes) before heading out.
 The bike is clearly warming up as evidenced by the slowly rising blue line in the navigation window.
-You can see the temp rise until it hits about 75C, which is where the thermostat opens.
-As the thermostat opens, the temp holds at 75C until the coolant in the radiator warms up, and the temp starts climbing again.
+The navigation window shows the coolant temp slowly rise as the bike warms up until it hits about 75C, which is where the thermostat opens.
+As the thermostat opens, it is clear to see the thermstat do its job.
+The coolant temperature hold at 75C while the coolant in the radiator gradually warms up.
+Once the entire cooling system is up to the thermostat's 75C temperature setting, the coolant begins getting hotter again.
 
 You can see the revs rise twice as I left my driveway, then three more times as I drove down the road away from my house towards the main road.
 
 I had to wait for at idle for nearly 90 seconds before traffic opened up and I could turn left onto the main road.
 After that, revs rise and fall as I drive around.
-As the bike gets some velocity under it and some cold air through its radiator, you can see the water temps drop right back to 75C again.
-The thermostat does its job, and never lets the bike go below 75C though.
+As the bike gets some velocity under it and some cold air through its radiator, you can see the coolant temperature drop right back to 75C again.
+The thermostat does its job though, and never lets the coolant temperature go below 75C.
 
-And at the very end, RPMs are back to idle as I get the bike parked in the garage.
+And at the very end, RPMs are back to idle as I get the bike parked in the garage again.
 
 ## Details
 
 The navigation window always shows the entire ride, but there will be plenty of times when detail is even more fun.
 
-To get detail in a ride, look for that narrow blue box in the navigation window.
+To see the detail in a ride log, look for that narrow blue box in the navigation window.
 The data inside that blue box corresponds to what you see in the big graphic window.
 
-You can drag the edges of the blue box to zoom in or out, or click and drag the blue box to look at different parts of the log.
-That's why it is called the navigation window.
+You can quickly drag the blue box anywhere in the navigation window to see different parts of the log.
+Once the blue box is on top of an area you want to look at, you can zoom in on the details by either resizing the blue box by grabbing its borders in the navigation window, or you can click and drag in the main graphic window to zoom in on the area selected by the click&drag.
 
 Let's look at that first graph in more detail:
 ![overview](images/viz-1a-annotated.jpg)
 
 The blue arrow shows the engine turning slowly as the starter cranks it over.
-Note: the blue and green arrows were added manually for the purposes of annotating the graph on this webpage - the visualizer did not put them in by itself.
+Note: the blue and green arrows were added manually to aid in the descriptions below - the visualizer did not put them in by itself.
 
 After only a bit of cranking, you can see the engine fire up.
 In about 2 rotations of the crankshaft, the RPMs jump from below 500 RPM to nearly 2000 RPM.
@@ -91,17 +95,19 @@ I'm proud of this next bit: one of the graphical ECU streams I can display is th
 Those markers indicate the start of each CR event, as per the Aprilia doc.
 
 So what does it tell us?
-Firstly: the power stroke may not be entirely intuitive.
+Firstly: the power stroke may not be entirely intuitive, at least at idle speeds.
 Starting from the left side of that graph, you can see CR10,11, and 0 which represent the power stroke of the rear cylinder.
 You can see that the crank barely speeds up at all during CR10, even though it represents the first 60 degrees of the power stroke.
-Essentially all of the increase in speed of the crank occurs during CR11, the middle 60 degrees of the power stroke.
+At low engine speeds, essentially all of the increase in speed of the crank occurs during CR11, the middle 60 degrees of the power stroke.
 It actually makes sense: if you think about it.
 When the piston is at the top of its stroke, the pressure in the cylinder might be really high, but the ability to turn that pressure into mechanical rotation is almost nothing because the rod itself is vertical.
 The piston gains the most mechanical advantage to turn the crank after the crank has rotated 60 more degrees to begin CR11.
 The final 60 degrees of the power stroke in CR0 is not just wimpy, the crank is actually slowing down!
-That's because the rod is becoming vertical again so there is little mechanical advantage to twist the crank, and temperature and pressure in the cylinder has dropped dramatically because the increase in volume in the cylinder as the piston sweeps downwards.
+That's partly because the rod is becoming vertical again so there is little mechanical advantage to twist the crank.
+It's also due to the fact that the temperature and pressure in the cylinder has dropped dramatically because the increase in volume in the cylinder as the piston sweeps downwards.
+Finally, it's because at idle speeds, the engine has hardly any mixture to burn, so its over and done with pretty quick.
 
-The takeaway is that when things are running properly, the crankshaft will clearly increase its rotational velocity during:
+The takeaway is that when things are running properly at idle speeds, the crankshaft will clearly increase its rotational velocity during:
 
 * CR6: when the front cylinder fires
 * CR11: when the rear cylinder fires.
@@ -219,6 +225,23 @@ Maybe it's time to check my plugs.
 Honestly, I can't remember replacing them.
 
 Ever.
+
+## Higher Engine Speeds
+
+At one point in the ride below, I pinned the throttle for a few seconds to get a log that would let me see what the engine was doing under those conditions.
+
+![WOT-6K](./images/viz-wot-1.jpg)
+
+There are some interesting things to see there.
+
+First off, the spark advance at appoximately 6000 RPM is clearly visible.
+Instead of firing the sparks roughly coincidental with CR5 and CR10 like they do at idle, the ECU is firing them earlier.
+This allows time for the flamefront to propagate through the mixture, so that peak pressures will occur when the piston is where the ECU wants it.
+
+Secondly, unlike the idle situation where the crankshaft only showed an increase in rotational speed during one CR period, the crankshaft clearly speeds up during two of them now: CR6 & CR7, CR10 & CR11.
+
+What is confusing to me at the minute is that front and rear cylinders don't seem to be acting the same. CR6 and CR7 are the 2nd and 3rd portions of the front cylinder power stroke, while CR10 and CR11 are the 1st and second portions of the rear cylinder power stroke.
+Obviously, I don't have answers for everything yet.
 
 ## Wrap
 
