@@ -1803,8 +1803,8 @@ class DataVisualizationTool(QMainWindow):
             # Get the stream's full data range for normalization
             stream_min, stream_max = self.stream_ranges.get(stream, (0, 1))
 
-            # Normalize the data to 0-1 range
-            normalized_data = (plot_values - stream_min) / (stream_max - stream_min)
+            # Normalize the data to 0-0.95 range (95% of window height)
+            normalized_data = ((plot_values - stream_min) / (stream_max - stream_min)) * 0.95
 
             # Get display mode for this stream
             stream_widget = None
@@ -2285,8 +2285,8 @@ class DataVisualizationTool(QMainWindow):
                 # Linear interpolation of RPM at spark time
                 rpm_at_spark = np.interp(spark_time, rpm_time, rpm_values)
 
-                # Normalize RPM value to 0-1 range (same as plot data)
-                normalized_rpm = (rpm_at_spark - rpm_min) / (rpm_max - rpm_min)
+                # Normalize RPM value to 0-0.95 range (same as plot data)
+                normalized_rpm = ((rpm_at_spark - rpm_min) / (rpm_max - rpm_min)) * 0.95
 
                 # Calculate label position (above or below RPM line)
                 label_y = normalized_rpm + offset
@@ -2344,8 +2344,8 @@ class DataVisualizationTool(QMainWindow):
             # Linear interpolation of RPM at crankref time
             rpm_at_crankref = np.interp(crankref_time, rpm_time, rpm_values)
 
-            # Normalize RPM value to 0-1 range (same as plot data)
-            normalized_rpm = (rpm_at_crankref - rpm_min) / (rpm_max - rpm_min)
+            # Normalize RPM value to 0-0.95 range (same as plot data)
+            normalized_rpm = ((rpm_at_crankref - rpm_min) / (rpm_max - rpm_min)) * 0.95
 
             # Calculate label position (above the RPM line)
             label_y = normalized_rpm + CRANKREF_LINE_HEIGHT
@@ -2402,8 +2402,8 @@ class DataVisualizationTool(QMainWindow):
             # Linear interpolation of RPM at camshaft time
             rpm_at_camshaft = np.interp(camshaft_time, rpm_time, rpm_values)
 
-            # Normalize RPM value to 0-1 range (same as plot data)
-            normalized_rpm = (rpm_at_camshaft - rpm_min) / (rpm_max - rpm_min)
+            # Normalize RPM value to 0-0.95 range (same as plot data)
+            normalized_rpm = ((rpm_at_camshaft - rpm_min) / (rpm_max - rpm_min)) * 0.95
 
             # Calculate label position (below the RPM line - downward direction)
             label_y = normalized_rpm - CAMSHAFT_LINE_HEIGHT
