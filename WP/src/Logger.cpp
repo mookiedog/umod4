@@ -300,7 +300,9 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
     static uint32_t writeCount;
     
     writeCount++;
+    #if 0
     printf("%s: %d: Write time: %lld uSec, bytes written: %d\n", __FUNCTION__, writeCount, elapsed, bytesWritten);
+    #endif
     
     totalWriteEvents += 1;
     totalTimeWriting += elapsed;
@@ -310,7 +312,9 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
     if (elapsed > maxTimeWriting) {
         maxTimeWriting = elapsed;
         if (maxTimeWriting > 0) {
+            #if 0
             printf("%s: New max write time: %lld uSec\n", __FUNCTION__, maxTimeWriting);
+            #endif
             uint16_t mSecs;
             if (elapsed > 65535000) {
                 mSecs = 65535;
@@ -341,7 +345,9 @@ int32_t Logger::syncLog()
     if (elapsed > maxTimeSyncing) {
         maxTimeSyncing = elapsed;
         if (maxTimeSyncing > 0) {
+            #if 0
             printf("%s: New max sync time: %lld uSec\n", __FUNCTION__, maxTimeSyncing);
+            #endif
             uint16_t mSecs;
             if (elapsed > 65535000) {
                 mSecs = 65535;
@@ -440,7 +446,7 @@ void Logger::logTask()
             
         case WAIT_FOR_DATA:
             logLength = inUse();
-            #if 1
+            #if 0
             printf("%d/%d P%d E%d E1:%d E2:%d\n", logLength, bytesToWriteBeforeSyncing, pps_isr_count, ecu_isr_count, isr1_err_cnt, isr2_err_cnt);
             #endif
             if (logLength >= bytesToWriteBeforeSyncing) {

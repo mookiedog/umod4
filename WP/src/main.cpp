@@ -20,6 +20,7 @@
 #include "log_base.h"
 #include "Logger.h"
 #include "NeoPixelConnect.h"
+#include "FlashEp.h"
 #include "SdCard.h"
 #include "Shell.h"
 #include "Spi.h"
@@ -37,7 +38,10 @@ NeoPixelConnect* rgb_led;
 Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
+FlashEp* flashEp;
 
+uint32_t flashBuffer[1024];
+        
 #if defined LFS
 
 // Configuration of the filesystem is provided by this struct
@@ -57,6 +61,7 @@ int lfs_sync(const struct lfs_config *c);
 // This struct contains everything that littlefs needs to work with a mounted filesystem.
 lfs_t lfs;
 mutex_t lfs_mutex;
+bool lfs_mounted = false;  // Track whether filesystem is successfully mounted
 
 // --------------------------------------------------------------------------------------------
 int lfs_read(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, void *buffer, lfs_size_t size_bytes)
@@ -117,12 +122,8 @@ int lfs_sync(const struct lfs_config *c)
 // --------------------------------------------------------------------------------------------
 int lfs_mutex_take(const struct lfs_config *c)
 {
-    uint32_t currentOwner;
-    
-    if (!mutex_try_enter(&lfs_mutex, &currentOwner)) {
-        return -1;
-    }
-    
+    mutex_enter_blocking(&lfs_mutex);
+
     return 0;
 }
 
@@ -190,8 +191,9 @@ bool comingOnline(SdCard* sdCard)
     int32_t mount_err;
     
     printf("%s: Bringing SD card online\n", __FUNCTION__);
-    
+
     // Default all fields to zero
+    memset((void*)&lfs, 0, sizeof(lfs));
     memset((void*)&lfs_cfg, 0, sizeof(lfs_cfg));
     
     // Save an opaque pointer to the SdCard that will be servicing the LFS read/write requests
@@ -207,6 +209,7 @@ bool comingOnline(SdCard* sdCard)
     
     if ((blockSize == 0) || (capacity_blocks == 0)) {
         // If we don't know the blocksize or overall capacity, we will be unable to boot littleFS.
+        lfs_mounted = false;
         return false;
     }
     
@@ -253,6 +256,7 @@ bool comingOnline(SdCard* sdCard)
                 printf("%s: Mount failed! err=%d\n", __FUNCTION__, mount_err);
                 if (mount_err == LFS_ERR_IO) {
                     if (mountAttempts > 5) {
+                        lfs_mounted = false;
                         return false;
                     }
                     vTaskDelay(pdMS_TO_TICKS(500));
@@ -274,6 +278,7 @@ bool comingOnline(SdCard* sdCard)
         if (mount_err < 0) {
             // Format operation failed
             printf("%s: Format failed! mount_err=%d\n", __FUNCTION__, mount_err);
+            lfs_mounted = false;
             return false;
         }
         // Mount the freshly formatted device
@@ -282,6 +287,7 @@ bool comingOnline(SdCard* sdCard)
         if (mount_err<0) {
             // Still unable to mount the device!
             printf("%s: Mount of reformatted filesystem failed! mount_err=%d\n", __FUNCTION__, mount_err);
+            lfs_mounted = false;
             return false;
         }
         mountTime_us = time_us_32() - t1;
@@ -303,7 +309,8 @@ bool comingOnline(SdCard* sdCard)
     #endif
     
     printf("%s: Filesystem mounted in %.2f milliseconds\n", __FUNCTION__, mountTime_us/1000.0);
-    
+    lfs_mounted = true;  // Mark filesystem as successfully mounted
+
     // Reinit the logger if for some reason a card got hotplugged after the system had booted.
     if (logger) {
         if (!logger->init(&lfs)) {
@@ -629,15 +636,34 @@ int main()
     gpio_set_dir(GPS_PPS_PIN, GPIO_IN);
     gpio_set_pulls(GPS_PPS_PIN, false, true);
     
-    #warning " ********** EXTREMELY TEMP - RESETTING THE EP **************"
-    // Check if the debugger is attached by examining
-    // the debug control registers
-    if (1 /*sio_hw->dbgprcr & SIO_DBGPRCR_DBGPRCR_BITS */) {
+    {
+        // While bench testing, it is hugely useful to reset the EP here which
+        // mimics both processors getting reset at ignition key ON.
+        #warning " ********** EXTREMELY TEMP - RESETTING THE EP **************"
         gpio_init(EP_RUN_PIN);
         gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
         gpio_put(EP_RUN_PIN, 0);
         sleep_us(100);
         gpio_put(EP_RUN_PIN, 1);
+
+        flashEp = new FlashEp(EP_SWCLK_PIN, EP_SWDAT_PIN, EP_RUN_PIN);
+        #if 0
+        // While the EP is in a known state due to the reboot, test our ability to take control of it:
+        flashEp->takeControl();
+
+        uint32_t result = flashEp->readBlk(0x10000000, flashBuffer);
+        if (result == 0) {
+            sleep_us(100);
+            #if 0
+            for (int i=0; i<1024; i++) {
+                if ((i%8)==0) printf("%08x: ", i);
+                printf("%04X ", buffer[i]);
+                if ((i%8)==7) printf("\n");
+            }
+            #endif
+        }
+        flashEp->releaseControl();
+        #endif
     }
 
     #if defined SPARE1_LED_PIN

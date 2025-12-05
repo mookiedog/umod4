@@ -2,8 +2,13 @@
 #include "string.h"
 #include "ctype.h"
 
+#include "FlashEp.h"
+
 // The tiny_regex_c interface library:
 #include "re.h"
+
+// Access to filesystem mounted flag from main.cpp
+extern bool lfs_mounted;
 
 // ----------------------------------------------------------------------------------
 extern "C" void start_shell_task(void *pvParameters);
@@ -210,6 +215,12 @@ char* Shell::decompose(char** theString, const char* separatorList)
 // ----------------------------------------------------------------------------------
 void Shell::cmd_touch(char* argList)
 {
+    // Check if filesystem is mounted before attempting any operations
+    if (!lfs_mounted) {
+        printf("Error: Filesystem not mounted\n");
+        return;
+    }
+
     int32_t err;
     lfs_file_t fp;
     char* path;
@@ -245,6 +256,12 @@ void Shell::cmd_touch(char* argList)
 // ----------------------------------------------------------------------------------
 void Shell::cmd_rm(char* argList)
 {
+    // Check if filesystem is mounted before attempting any operations
+    if (!lfs_mounted) {
+        printf("Error: Filesystem not mounted\n");
+        return;
+    }
+
     int32_t err;
     lfs_file_t fp;
     char* path;
@@ -282,6 +299,12 @@ void Shell::cmd_rm(char* argList)
 //  hd [width=N] path
 void Shell::cmd_hd(char* argList)
 {
+    // Check if filesystem is mounted before attempting any operations
+    if (!lfs_mounted) {
+        printf("Error: Filesystem not mounted\n");
+        return;
+    }
+
     int32_t err;
     lfs_file_t fp;
     char* path;
@@ -455,6 +478,12 @@ void Shell::cmd_ls(char* args)
 // ----------------------------------------------------------------------------------
 void Shell::cmd_ls(char* args)
 {
+    // Check if filesystem is mounted before attempting any operations
+    if (!lfs_mounted) {
+        printf("Error: Filesystem not mounted\n");
+        return;
+    }
+
     lfs_dir_t dir;
     int32_t lfs_err;
     struct lfs_info info;
@@ -644,6 +673,23 @@ void Shell::cmd_pwd(char* args)
 }
 
 // ----------------------------------------------------------------------------------
+void Shell::cmd_flashEp(char* pathToUf2File)
+{
+    extern FlashEp* flashEp;
+    flashEp->flashUF2(pathToUf2File);
+}
+
+
+// ----------------------------------------------------------------------------------
+void Shell::cmd_validate(char* pathToUf2File)
+{
+    extern FlashEp* flashEp;
+    const bool skipProgramming = true;
+
+    flashEp->flashUF2(pathToUf2File, skipProgramming);
+}
+
+// ----------------------------------------------------------------------------------
 void Shell::shell_task()
 {
     bool done;
@@ -677,6 +723,12 @@ void Shell::shell_task()
                     }
                     else if (strcmp(cmd, "pwd") == 0) {
                         cmd_pwd(args);
+                    }
+                    else if (strcmp(cmd, "flashEp") == 0) {
+                        cmd_flashEp(args);
+                    }
+                    else if (strcmp(cmd, "validate") == 0) {
+                        cmd_validate(args);
                     }
                     #if 0
                     else if (strcmp(cmd, "cp") == 0) {

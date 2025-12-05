@@ -16,7 +16,7 @@ Once the version 3 hardware was working back in 2006-ish timeframe, I had to go 
 
 You can learn many things from that data log. Mostly, it proves that I'm slow: it took me about 7.9 seconds to go from 0 to 100MPH. A better rider than me would have given it a lot more throttle (green trace) in first gear. You can see I was modulating the clutch around 4000 RPM or so. A better rider would probably have been using a higher RPM and might have slipped the clutch a bit longer before letting it lock up. It took me forever to get the throttle wide open in second gear. I was shifting at about 9500 RPM (1000 RPM below redline, not optimal!) and clearly, my shifts are slow. It's all proof as to why my day job was in software, not as a drag racer.
 
-The RPM (red trace) may look surprisingly thick & ragged, if only because a 60 degree V-twin's crankshaft rotation speed is suprisingly inconsistent through the course of any adjacent pair of crankshaft rotations. The Umod4 logs the timing of the crankshaft rotation in increments of 1/6 of a rotation. The graph makes it clear that the crank does not rotate at a nice smooth speed: the 60 degree V-twin means that the crank is speeding up and slowing down as it makes a single rotation. Those effects are more pronounced at larger throttle openings. When I closed the throttle at the end of the run, you can see that the RPM becomes more consistent (the line gets thinner).
+The RPM (red trace) may look surprisingly thick & ragged, if only because a 60 degree V-twin's crankshaft rotation speed is surprisingly inconsistent through the course of any adjacent pair of crankshaft rotations. The Umod4 logs the timing of the crankshaft rotation in increments of 1/6 of a rotation. The graph makes it clear that the crank does not rotate at a nice smooth speed: the 60 degree V-twin means that the crank is speeding up and slowing down as it makes a single rotation. Those effects are more pronounced at larger throttle openings. When I closed the throttle at the end of the run, you can see that the RPM becomes more consistent (the line gets thinner).
 
 ## Umod4 Updated
 
@@ -35,10 +35,12 @@ The latest V4 hardware supports the following features:
   * Bluetooth - The main user interface to the Umod4
     * EPROM image selection
     * real time ECU and system status
-    * Uploading new ECU firmware images
-    * Uploading new Umod4 firmware images
   * WiFi - A faster interface used for:
     * Dumping ECU data logs to a server after a ride
+    * Uploading new ECU firmware images
+    * Uploading new Umod4 firmware images
+
+The software for a lot of these features still needs to be developed.
 
 ## Block Diagram
 
@@ -63,16 +65,17 @@ The circuit board design is on Github, located [here](https://github.com/mookied
 
 I am developing software using the second revision of the PCB, named 4V1.
 It contains all the changes and improvements found while doing the 4V0 bringup.
-There is a small list of changes for a potential 4V2 board, but there has been no real need to make the 4V2 yet: the 4V1 has no issues to speak of.
-In other words, a 4V2 update would be feature-driven, not for bug fixes.
+While developing the software, a list of changes for a potential 4V2 board is becoming clear.
+There has been no critical need to make the 4V2 yet: the 4V1 is serving well so far.
+A 4V2 PCB update would be essentially feature-driven, not for bug fixes.
 
 ### Installation
 
-Installing a Umod4 PCB requires populating a connecter in the original ECU PCB. There is an unused connector marked "CN1" located beside the HC11 CPU. The solder needs to be removed from the connector holes as seen here:
+Installing a Umod4 PCB requires populating a connector in the original ECU PCB. There is an unused connector marked "CN1" located beside the HC11 CPU. The solder needs to be removed from the connector holes as seen here:
 
 ![Umod4 ECU Prep 1](doc/images/ECU-CN1-before.jpg)
 
-Then, a new connector strip is added. The connections on this new strip are critical. First off, they add 2 more power and ground connections so that I am not trying to power everything on the board through the single power and GND connections on the EPROM socket. Secondly, the new connecter gives me access to three critical signals required for working with the HC11 processor on the ECU:
+Then, a new connector strip is added. The connections on this new strip are critical. First off, they add 2 more power and ground connections so that I am not trying to power everything on the board through the single power and GND connections on the EPROM socket. Secondly, the new connector gives me access to three critical signals required for working with the HC11 processor on the ECU:
 
 * HC11 RESET: allows the umod4 to prevent the ECU processor from running while it sets up the ECU code that it will present to the ECU
 * HC11 E clock: Synchronizes the timing between the umod4's fake EPROM interface and the ECU's processor clock
@@ -88,7 +91,7 @@ The little white box with the three wires just above the ECU is a hardware debug
 The fake EPROM is a busy little thing. The ECU sends it read and write requests 2 million times a second. Each request needs to be performed properly and within the HC11's timing requirements. It has to be verifiably perfect in its timing and operation. The last thing I want is a software bug that makes my engine stop running. While my bike is straddling some railway tracks. With a train coming...
 
 The 4V1 board made a few substantive changes.
-One of them was to rotate the PicoW module end for end so that a USB cable could be plugged into the board permanently while the ECU was mounted on the bike.
+One of them was to rotate the Pico processor module end for end so that a USB cable could be plugged into the board permanently while the ECU was mounted on the bike.
 The other end of the cable sits under the seat.
 When parked in the garage, the cable can be plugged into a nearby USB power supply.
 This source of power allows the 4V2 board to operate even though the bike is turned off.
@@ -116,8 +119,12 @@ In short, that means that basically any Aprilia EPROM codebase except the early 
 
 The next steps mostly revolve around getting the Visualizer features fleshed out.
 After that, I really want to make some progress on:
-* getting the log file unloaded after a ride via wireless
-* getting wireless OTA firmware updates working so I don't have to carry a laptop out to the garage to reflash all the processors
+
+* Getting wireless OTA firmware updates working so I don't have to carry a laptop out to the garage to reflash the two umod4 processors
+* Using WiFi to get log files automatically uploaded to a server after a ride
+
+I think that OTA updates will take precedence.
+Now that winter is here, I will be updating umod4 software way more than I go for rides.
 
 ## Further Reading
 
@@ -136,7 +143,7 @@ It's not much use without a circuit board, but if you are a software person, you
 
 ## Clarity
 
-Just to set expectations, **this is all just for fun**.
+Just to set expectations, **this project is all just for fun**.
 I am not trying to build a product.
 I do not want to build a product.
 Any decent product needs support, support takes time, and I am jealous of my time.
