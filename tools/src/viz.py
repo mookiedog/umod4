@@ -32,9 +32,19 @@ except ImportError:
     h5py = None
 
 # Event visualization constants
-SPARK_LABEL_OFFSET = 0.05  # Vertical offset from RPM line for spark labels (5% of normalized range)
-CRANKREF_LINE_HEIGHT = 0.08  # Height of vertical line for crankref markers (8% of normalized range)
-CAMSHAFT_LINE_HEIGHT = 0.08  # Height of vertical line for camshaft markers (8% of normalized range)
+SPARK_LABEL_OFFSET = 0.025  # Vertical offset from RPM line for spark labels (2.5% of normalized range)
+CRANKREF_LINE_HEIGHT = 0.04  # Height of vertical line for crankref markers (4% of normalized range)
+CAMSHAFT_LINE_HEIGHT = 0.04  # Height of vertical line for camshaft markers (4% of normalized range)
+MAX_VISIBLE_EVENT_MARKERS = 100  # Skip drawing event markers if more than this many are visible
+
+# Injector bar visualization constants
+FRONT_INJECTOR_BAR_Y = 0.25  # Fixed Y position for front injector bars (normalized)
+REAR_INJECTOR_BAR_Y = 0.15  # Fixed Y position for rear injector bars (normalized)
+INJECTOR_BAR_HEIGHT = 0.05  # Height of injector bars (normalized)
+INJECTOR_BAR_ALPHA = 0.7  # Transparency of injector bars (0-1)
+TIMER_TICK_DURATION_S = 2e-6  # ECU timer tick duration: 2 microseconds
+MAX_INJECTOR_BARS_VISIBLE = 5000  # Maximum bars to draw for performance
+MAX_REASONABLE_DURATION_TICKS = 25000  # 50ms max reasonable duration
 
 
 class AppConfig:
@@ -763,6 +773,27 @@ class ZoomableGraphWidget(pg.PlotWidget):
 # Data Decimation Functions
 # ================================================================================================
 
+def parse_color_to_rgba(color_string, alpha=1.0):
+    """
+    Convert hex color string to RGBA tuple for QBrush.
+
+    Args:
+        color_string: Hex color like '#FF6600' or named color
+        alpha: Transparency 0.0-1.0
+
+    Returns:
+        Tuple of (r, g, b, a) where each is 0-255
+    """
+    if isinstance(color_string, str) and color_string.startswith('#'):
+        hex_str = color_string.lstrip('#')
+        if len(hex_str) == 6:
+            r = int(hex_str[0:2], 16)
+            g = int(hex_str[2:4], 16)
+            b = int(hex_str[4:6], 16)
+            return (r, g, b, int(alpha * 255))
+    # Fallback for invalid colors
+    return (255, 0, 0, int(alpha * 255))
+
 def min_max_decimate(time_array, value_array, target_points):
     """Decimate data while preserving min/max peaks in each bin.
 
@@ -999,23 +1030,41 @@ class DataVisualizationTool(QMainWindow):
 
         view_menu.addSeparator()
 
+        # Zoom In 2x
+        zoom_in_action = QAction("Zoom &In 2x", self)
+        zoom_in_action.setShortcut("Ctrl++")
+        zoom_in_action.triggered.connect(self.zoom_in_2x)
+        view_menu.addAction(zoom_in_action)
+
         # Zoom Out 2x
         zoom_out_action = QAction("Zoom &Out 2x", self)
-        zoom_out_action.setShortcut("Ctrl+O")
+        zoom_out_action.setShortcut("Ctrl+-")
         zoom_out_action.triggered.connect(self.zoom_out_2x)
         view_menu.addAction(zoom_out_action)
 
         # Pan Left 50%
         pan_left_action = QAction("Pan &Left 50%", self)
-        pan_left_action.setShortcut("Ctrl+Left")
+        pan_left_action.setShortcut("Shift+Left")
         pan_left_action.triggered.connect(self.pan_left_50)
         view_menu.addAction(pan_left_action)
 
         # Pan Right 50%
         pan_right_action = QAction("Pan Right 50%", self)
-        pan_right_action.setShortcut("Ctrl+Right")
+        pan_right_action.setShortcut("Shift+Right")
         pan_right_action.triggered.connect(self.pan_right_50)
         view_menu.addAction(pan_right_action)
+
+        # Pan Left 15%
+        pan_left_15_action = QAction("Pan Left 15%", self)
+        pan_left_15_action.setShortcut("Ctrl+Left")
+        pan_left_15_action.triggered.connect(self.pan_left_15)
+        view_menu.addAction(pan_left_15_action)
+
+        # Pan Right 15%
+        pan_right_15_action = QAction("Pan Right 15%", self)
+        pan_right_15_action.setShortcut("Ctrl+Right")
+        pan_right_15_action.triggered.connect(self.pan_right_15)
+        view_menu.addAction(pan_right_15_action)
 
         view_menu.addSeparator()
 
@@ -1401,7 +1450,10 @@ class DataVisualizationTool(QMainWindow):
                                 'time': time_data,
                                 'values': value_data
                             }
-                            stream_names.append(key)
+                            # Don't add duration streams to stream_names (they're paired with ON streams)
+                            # ON streams appear in the list so user can enable them to see injector bars
+                            if key not in ['ecu_front_inj_duration', 'ecu_rear_inj_duration']:
+                                stream_names.append(key)
 
                     elif len(ds.shape) == 2 and ds.shape[1] == 3:
                         # 3D data like gps_position (time_ns, lat, lon)
@@ -1652,7 +1704,8 @@ class DataVisualizationTool(QMainWindow):
             self.enabled_streams.append(stream)
 
             # Event streams don't own axes - they're just visual markers
-            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']:
+            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp',
+                          'ecu_front_inj_on_actual', 'ecu_rear_inj_on_actual']:
                 self.update_graph_plot()
             # Assign ownership - but don't change the axis owner yet
             elif self.axis_owner is None:
@@ -1770,7 +1823,10 @@ class DataVisualizationTool(QMainWindow):
                 continue
 
             # Skip event marker streams - they have custom visualization
-            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']:
+            # Also skip injector streams - they have custom bar visualization
+            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp',
+                          'ecu_front_inj_on_actual', 'ecu_rear_inj_on_actual',
+                          'ecu_front_inj_duration', 'ecu_rear_inj_duration']:
                 continue
 
             color = self.stream_colors[stream]
@@ -1803,8 +1859,8 @@ class DataVisualizationTool(QMainWindow):
             # Get the stream's full data range for normalization
             stream_min, stream_max = self.stream_ranges.get(stream, (0, 1))
 
-            # Normalize the data to 0-0.95 range (95% of window height)
-            normalized_data = ((plot_values - stream_min) / (stream_max - stream_min)) * 0.95
+            # Normalize the data to 0-0.85 range (85% of window height)
+            normalized_data = ((plot_values - stream_min) / (stream_max - stream_min)) * 0.85
 
             # Get display mode for this stream
             stream_widget = None
@@ -2233,6 +2289,7 @@ class DataVisualizationTool(QMainWindow):
         self.draw_spark_events()
         self.draw_crankref_events()
         self.draw_camshaft_events()
+        self.draw_injector_bars()
 
     def draw_spark_events(self):
         """Draw spark event markers (x1/x2) on the graph, positioned relative to RPM"""
@@ -2277,6 +2334,11 @@ class DataVisualizationTool(QMainWindow):
             visible_spark_times = spark_times[mask]
             print(f"DEBUG: {spark_name} has {len(visible_spark_times)} visible events in window {self.view_start:.2f} to {self.view_end:.2f}")
 
+            # Skip drawing if too many markers would be visible
+            if len(visible_spark_times) > MAX_VISIBLE_EVENT_MARKERS:
+                print(f"DEBUG: Skipping {spark_name} markers - {len(visible_spark_times)} exceeds limit of {MAX_VISIBLE_EVENT_MARKERS}")
+                continue
+
             for spark_time in visible_spark_times:
                 # Interpolate RPM value at spark time
                 if spark_time < rpm_time[0] or spark_time > rpm_time[-1]:
@@ -2285,8 +2347,8 @@ class DataVisualizationTool(QMainWindow):
                 # Linear interpolation of RPM at spark time
                 rpm_at_spark = np.interp(spark_time, rpm_time, rpm_values)
 
-                # Normalize RPM value to 0-0.95 range (same as plot data)
-                normalized_rpm = ((rpm_at_spark - rpm_min) / (rpm_max - rpm_min)) * 0.95
+                # Normalize RPM value to 0-0.85 range (same as plot data)
+                normalized_rpm = ((rpm_at_spark - rpm_min) / (rpm_max - rpm_min)) * 0.85
 
                 # Calculate label position (above or below RPM line)
                 label_y = normalized_rpm + offset
@@ -2336,6 +2398,11 @@ class DataVisualizationTool(QMainWindow):
         visible_crankref_times = crankref_times[mask]
         visible_crankref_ids = crankref_ids[mask]
 
+        # Skip drawing if too many markers would be visible
+        if len(visible_crankref_times) > MAX_VISIBLE_EVENT_MARKERS:
+            print(f"DEBUG: Skipping crankref markers - {len(visible_crankref_times)} exceeds limit of {MAX_VISIBLE_EVENT_MARKERS}")
+            return
+
         for crankref_time, crankref_id in zip(visible_crankref_times, visible_crankref_ids):
             # Interpolate RPM value at crankref time
             if crankref_time < rpm_time[0] or crankref_time > rpm_time[-1]:
@@ -2344,8 +2411,8 @@ class DataVisualizationTool(QMainWindow):
             # Linear interpolation of RPM at crankref time
             rpm_at_crankref = np.interp(crankref_time, rpm_time, rpm_values)
 
-            # Normalize RPM value to 0-0.95 range (same as plot data)
-            normalized_rpm = ((rpm_at_crankref - rpm_min) / (rpm_max - rpm_min)) * 0.95
+            # Normalize RPM value to 0-0.85 range (same as plot data)
+            normalized_rpm = ((rpm_at_crankref - rpm_min) / (rpm_max - rpm_min)) * 0.85
 
             # Calculate label position (above the RPM line)
             label_y = normalized_rpm + CRANKREF_LINE_HEIGHT
@@ -2402,8 +2469,8 @@ class DataVisualizationTool(QMainWindow):
             # Linear interpolation of RPM at camshaft time
             rpm_at_camshaft = np.interp(camshaft_time, rpm_time, rpm_values)
 
-            # Normalize RPM value to 0-0.95 range (same as plot data)
-            normalized_rpm = ((rpm_at_camshaft - rpm_min) / (rpm_max - rpm_min)) * 0.95
+            # Normalize RPM value to 0-0.85 range (same as plot data)
+            normalized_rpm = ((rpm_at_camshaft - rpm_min) / (rpm_max - rpm_min)) * 0.85
 
             # Calculate label position (below the RPM line - downward direction)
             label_y = normalized_rpm - CAMSHAFT_LINE_HEIGHT
@@ -2421,6 +2488,94 @@ class DataVisualizationTool(QMainWindow):
             text_item = pg.TextItem(text=label_text, color=color, anchor=(0.5, 0.0))  # anchor top center
             text_item.setPos(camshaft_time, label_y)
             self.graph_plot.addItem(text_item)
+
+    def draw_injector_bars(self):
+        """Draw injector pulse bars on the graph showing injection timing and duration."""
+
+        # Process front injector
+        if 'ecu_front_inj_on_actual' in self.enabled_streams:
+            self._draw_injector_bars_for_stream(
+                on_stream='ecu_front_inj_on_actual',
+                dur_stream='ecu_front_inj_duration',
+                bar_y=FRONT_INJECTOR_BAR_Y,
+                label='FI'
+            )
+
+        # Process rear injector
+        if 'ecu_rear_inj_on_actual' in self.enabled_streams:
+            self._draw_injector_bars_for_stream(
+                on_stream='ecu_rear_inj_on_actual',
+                dur_stream='ecu_rear_inj_duration',
+                bar_y=REAR_INJECTOR_BAR_Y,
+                label='RI'
+            )
+
+    def _draw_injector_bars_for_stream(self, on_stream, dur_stream, bar_y, label):
+        """
+        Helper to draw bars for a single injector (front or rear).
+
+        Args:
+            on_stream: Name of the ON event stream (e.g., 'ecu_front_inj_on_actual')
+            dur_stream: Name of the duration stream (e.g., 'ecu_front_inj_duration')
+            bar_y: Fixed Y position for these bars (normalized coordinate)
+            label: Text label for debugging (e.g., 'FI' or 'RI')
+        """
+
+        # Check data availability
+        if on_stream not in self.raw_data or dur_stream not in self.raw_data:
+            return
+
+        # Get data
+        on_data = self.raw_data[on_stream]
+        dur_data = self.raw_data[dur_stream]
+        on_times = on_data['time']
+        dur_values = dur_data['values']
+
+        # Validate pairing (use minimum length)
+        num_pulses = min(len(on_times), len(dur_values))
+        if num_pulses == 0:
+            return
+
+        # Get color from stream checkbox
+        color = self.stream_colors.get(on_stream, '#FF6600')
+
+        # Filter to visible window
+        mask = (on_times[:num_pulses] >= self.view_start) & (on_times[:num_pulses] <= self.view_end)
+        visible_indices = np.where(mask)[0]
+
+        if len(visible_indices) == 0:
+            return
+
+        visible_on_times = on_times[visible_indices]
+        visible_dur_values = dur_values[visible_indices]
+
+        # Performance limit
+        if len(visible_on_times) > MAX_INJECTOR_BARS_VISIBLE:
+            step = len(visible_on_times) // MAX_INJECTOR_BARS_VISIBLE
+            visible_on_times = visible_on_times[::step]
+            visible_dur_values = visible_dur_values[::step]
+
+        # Draw bars
+        rgba = parse_color_to_rgba(color, INJECTOR_BAR_ALPHA)
+
+        for i in range(len(visible_on_times)):
+            duration_ticks = visible_dur_values[i]
+
+            # Validate duration
+            if duration_ticks <= 0 or duration_ticks > MAX_REASONABLE_DURATION_TICKS:
+                continue
+
+            start_time = visible_on_times[i]
+            duration_seconds = duration_ticks * TIMER_TICK_DURATION_S
+
+            # Create rectangle
+            rect = QtWidgets.QGraphicsRectItem(
+                start_time, bar_y, duration_seconds, INJECTOR_BAR_HEIGHT
+            )
+            rect.setPen(pg.mkPen(color=color, width=1))
+            rect.setBrush(pg.mkBrush(*rgba))
+
+            self.graph_plot.addItem(rect)
 
     def update_navigation_plot(self):
         """Update the navigation plot with decimated overview"""
@@ -2441,7 +2596,10 @@ class DataVisualizationTool(QMainWindow):
                 continue
 
             # Skip event marker streams - they're not plotted in navigation view
-            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']:
+            # Also skip injector streams - they have custom bar visualization (not in nav view)
+            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp',
+                          'ecu_front_inj_on_actual', 'ecu_rear_inj_on_actual',
+                          'ecu_front_inj_duration', 'ecu_rear_inj_duration']:
                 continue
 
             stream_data = self.raw_data[stream]
@@ -2553,6 +2711,42 @@ class DataVisualizationTool(QMainWindow):
 
         self.update_graph_plot()
 
+    def zoom_in_2x(self):
+        """Zoom in by 2x (halve the time shown), centered on current view"""
+        # Add current view to history
+        self.add_to_history(self.view_start, self.view_end, 0, 1)
+
+        # Calculate current view duration and center
+        current_duration = self.view_end - self.view_start
+        center = (self.view_start + self.view_end) / 2
+
+        # Halve the duration
+        new_duration = current_duration / 2
+
+        # Calculate new start/end centered on the same point
+        new_start = center - new_duration / 2
+        new_end = center + new_duration / 2
+
+        # Clamp to valid range
+        new_start = max(0, new_start)
+        new_end = min(self.total_time_span, new_end)
+
+        # If we hit a boundary, adjust the other side to maintain zoom if possible
+        if new_start == 0:
+            new_end = min(new_duration, self.total_time_span)
+        elif new_end == self.total_time_span:
+            new_start = max(0, self.total_time_span - new_duration)
+
+        self.view_start = new_start
+        self.view_end = new_end
+
+        # Update navigation region
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+
+        self.update_graph_plot()
+
     def zoom_out_2x(self):
         """Zoom out by 2x (double the time shown), centered on current view"""
         # Add current view to history
@@ -2645,7 +2839,63 @@ class DataVisualizationTool(QMainWindow):
 
         self.update_graph_plot()
 
-    
+    def pan_left_15(self):
+        """Pan left by 15% of current view duration"""
+        # Add current view to history
+        self.add_to_history(self.view_start, self.view_end, 0, 1)
+
+        # Calculate 15% of current duration
+        current_duration = self.view_end - self.view_start
+        shift = current_duration * 0.15
+
+        # Shift left (decrease both start and end)
+        new_start = self.view_start - shift
+        new_end = self.view_end - shift
+
+        # Clamp to valid range
+        if new_start < 0:
+            new_start = 0
+            new_end = current_duration
+
+        self.view_start = new_start
+        self.view_end = new_end
+
+        # Update navigation region
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+
+        self.update_graph_plot()
+
+    def pan_right_15(self):
+        """Pan right by 15% of current view duration"""
+        # Add current view to history
+        self.add_to_history(self.view_start, self.view_end, 0, 1)
+
+        # Calculate 15% of current duration
+        current_duration = self.view_end - self.view_start
+        shift = current_duration * 0.15
+
+        # Shift right (increase both start and end)
+        new_start = self.view_start + shift
+        new_end = self.view_end + shift
+
+        # Clamp to valid range
+        if new_end > self.total_time_span:
+            new_end = self.total_time_span
+            new_start = self.total_time_span - current_duration
+
+        self.view_start = new_start
+        self.view_end = new_end
+
+        # Update navigation region
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+
+        self.update_graph_plot()
+
+
     def add_to_history(self, start, end, y_min, y_max):
         """Add state to history (only X/time axis, Y is always 0-1)"""
         self.history = self.history[:self.history_index + 1]
