@@ -105,14 +105,14 @@ The piston gains the most mechanical advantage to turn the crank after the crank
 The final 60 degrees of the power stroke in CR0 is not just wimpy, the crank is actually slowing down!
 That's partly because the rod is becoming vertical again so there is little mechanical advantage to twist the crank.
 It's also due to the fact that the temperature and pressure in the cylinder has dropped dramatically because the increase in volume in the cylinder as the piston sweeps downwards.
-Finally, it's because at idle speeds, the engine has hardly any mixture to burn, so its over and done with pretty quick.
+Finally, it's because at idle speeds, the engine has hardly any mixture to burn, so peak pressure is probably not very high, and then its over and done with pretty quick.
 
 The takeaway is that when things are running properly at idle speeds, the crankshaft will clearly increase its rotational velocity during:
 
 * CR6: when the front cylinder fires
 * CR11: when the rear cylinder fires.
 
-Now check out the detail in the circled area below:
+Now check out the detail in the circled areas below:
 ![operation](./images/viz-detail-2-crid.jpg)
 
 There are a few things to note.
@@ -179,52 +179,54 @@ Much fun ensues!
 
 The basic issue is getting GPS data on the screen.
 
-For that, I added a button to the visualizer to display all the GPS info from a ride using Google Maps.
+For that, I added a visualizer view menu option that would display all the GPS info from a ride as data points on a Google Map webpage.
 This is what I got from my first ride:
 
 ![ride-1-overview](images/ride-1-overview.jpg)
 
-The level of detail is reasonably significant since the GPS reports 10 times per second:
+The level of detail is pretty significant since the GPS reports 10 times per second:
 
 ![ride-1-detail](images/ride-1-detail.jpg)
 
-Each of those blue dots is a position and velocity  report.
-This map is probably the least interesting log you will ever see since the speed limit in town is basically 25 MPH.
-But, it was the first GPS-tagged ride log that I could display on Google Maps!
+Each of those blue dots is a position and velocity report.
+This particular ride map is probably the least interesting one you will ever see since the speed limit in town is basically 25 MPH.
+But, it was my first GPS-tagged ride log ever!
 
-Now that I have GPS, even more debugging becomes possible.
-Case in point: I went for another ride the next day.
+I even got to use GPS data as a debug aid.
+Case in point: to get another log test file, I went for another ride the next day.
 It was equally cold, and I nearly froze my hands off.
-At least, the bike startup up without missing.
-At one point during the ride, I was turning right by the Safeway store. As I went through the right turn, the engine missed.
+At least, the bike startup up without missing that day.
+At one point during the ride, I was turning right by a local grocery store. As I went through the right turn, the engine missed.
 I made a mental note of that.
 After getting home, I looked up my ride visualization.
 It was a longer trip, hence the frozen fingers.
 ![ride-2](images/ride-2-overview.jpg)
 
-I used Google Maps to zoom in and find that left turn by the Safeway:
+I used Google Maps to zoom in and find that left turn by the grocery store:
 ![ride-2-safeways](images/ride-2-safeways.jpg)
 
-Clicking on any of the blue dots gave me the time associated with that event (approx. 1889.7 seconds into the ride).
-I used that timestamp value to find the general area in the navigation view:
+Clicking on any of the blue dots gives me time information.
+The map tag indicates that I was turning the corner approximately 1889.7 seconds into the ride.
+In the navigation view, I panned to that time area in the log, then zoomed in:
 ![ride-2-safeways](images/ride-2-safeways-detail.jpg)
 
-From there, it was not hard to scan through the instantaneous RPM data and visually locate the engine miss I had felt.
+From there, it was not hard to eyeball the instantaneous RPM data and locate the engine miss I had felt.
 Above, you can see me sitting at the corner, throttle closed (green graph line).
 Then you can see me feed in a bit of throttle, and accelerate through the corner.
 The engine clearly misbehaves pretty much exactly where the green throttle line intersects with the red RPM trace at 1888.4 seconds.
 Zooming in on that event makes things clear:
 ![ride-2-safeways](images/ride-2-safeways-detail-3.jpg)
 
-Check out CR6 in the circled area: that is where the crank should speed up during the CR6 (front cyl) power stroke.
-Instead the crank slows down even more than CR5.
+Check out CR6 in the circled area: that is where the crank would normally be speeding up during a front cyl power stroke.
+Instead, the crank slows down!
 You can see that the spark occured just before CR5, and the width of CR5 generally matches CR2/3/4, so this is not the same problem as the misses after starting in the ride the day before.
-This event was an engine miss, pure and simple: the spark happened, but there was no bang!
+My interpretation is that this specific event was an engine miss, pure and simple: the spark happened, but there was no bang!
+Given that the Rotax engine has dual plugs, and therefore two chances to get the charge lit off, it feels more like something weird happened with the fueling.
 
-Maybe it's time to check my plugs.
-Honestly, I can't remember replacing them.
+Or not.
 
-Ever.
+I have a good friend who spent his entire career as a professional mechanic.
+His sage advice was that "90% of fueling problems are ignition related."
 
 ## Higher Engine Speeds
 
@@ -240,7 +242,7 @@ This allows time for the flamefront to propagate through the mixture, so that pe
 
 Secondly, unlike the idle situation where the crankshaft only showed an increase in rotational speed during one CR period, the crankshaft clearly speeds up during two of them now: CR6 & CR7, CR10 & CR11.
 
-What is confusing to me at the minute is that front and rear cylinders don't seem to be acting the same. CR6 and CR7 are the 2nd and 3rd portions of the front cylinder power stroke, while CR10 and CR11 are the 1st and second portions of the rear cylinder power stroke.
+What is confusing to me at the minute is that front and rear cylinders don't seem to be acting the same. CR6 and CR7 are the 2nd and 3rd portions of the front cylinder power stroke, while CR10 and CR11 are the 1st and 2nd portions of the rear cylinder power stroke.
 Obviously, I don't have answers for everything yet.
 
 ## Wrap
@@ -281,5 +283,5 @@ The big breakthrough occurred when I decided to treat the vizualizer as an exper
 Specifically, to see if I could get a visualizer built in conjunction with the AI service, Claude Code.
 
 I will say this: the great AI experiment was certainly not without its problems and false starts.
-But on the plus side, this whole visualizer only took about 2 weeks to get from a simple idea to its current state.
+But on the plus side, this whole visualizer only took about 3 weeks to get from a simple idea to its current state.
 Maybe AI is good for something!

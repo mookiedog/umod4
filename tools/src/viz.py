@@ -34,6 +34,15 @@ except ImportError:
 # Import stream configuration system
 from stream_config import get_config_manager, StreamType
 
+# Import viz_components modules
+from viz_components.config import AppConfig, UnitConverter
+from viz_components.widgets import (ColorCheckbox, StreamCheckbox, DraggableStreamList,
+                                     ZoomableGraphWidget, ResizableSplitter)
+from viz_components.utils import parse_color_to_rgba
+from viz_components.rendering import min_max_decimate
+from viz_components.data import HDF5DataLoader, DataManager
+from viz_components.navigation import ViewNavigationController, ViewHistory
+
 # Event visualization constants
 SPARK_LABEL_OFFSET = 0.025  # Vertical offset from RPM line for spark labels (2.5% of normalized range)
 CRANKREF_LINE_HEIGHT = 0.04  # Height of vertical line for crankref markers (4% of normalized range)
@@ -52,810 +61,9 @@ MAX_REASONABLE_DURATION_TICKS = 50000  # 100ms max reasonable duration (startup 
 # Axis tick spacing constraints
 MIN_TEMPERATURE_TICK_SPACING_C = 5.0  # Minimum spacing between temperature axis ticks (degrees C)
 
-
-class AppConfig:
-    """
-    Global application configuration manager using QSettings.
-
-    Handles:
-    - Window geometry and state
-    - Recently opened files
-    - User display preferences (theme, unit conversions)
-    - Splitter positions
-    """
-
-    def __init__(self):
-        # Use organization and application name for proper scoping
-        # This will create: ~/.config/umod4/LogVisualizer.conf on Linux
-        self.settings = QSettings("umod4", "LogVisualizer")
-
-        # Default values
-        self.defaults = {
-            # Application settings
-            "theme": "light",
-            "max_recent_files": 10,
-            "default_view_duration": 10.0,  # seconds
-            "show_grid": True,
-            "grid_alpha": 0.3,
-            "max_plot_points": 5000,
-            "default_file_location": str(os.path.expanduser("~/logs")),
-            "axis_font_size": 12,  # Font size for all axis labels and tick labels
-
-            # Display unit preferences (global, apply to all files)
-            "temperature_units": "celsius",  # "celsius" or "fahrenheit"
-            "velocity_units": "mph",         # "mph" or "kph"
-            "pressure_units": "psi",         # "psi" or "bar"
-            "distance_units": "miles",       # "miles" or "km"
-        }
-
-    def get(self, key, default=None):
-        """Get a configuration value with optional default."""
-        if default is None and key in self.defaults:
-            default = self.defaults[key]
-
-        # Type-safe retrieval based on key type
-        if isinstance(default, bool):
-            return self.settings.value(key, default, type=bool)
-        elif isinstance(default, int):
-            return self.settings.value(key, default, type=int)
-        elif isinstance(default, float):
-            return self.settings.value(key, default, type=float)
-        else:
-            return self.settings.value(key, default, type=str)
-
-    def set(self, key, value):
-        """Set a configuration value."""
-        self.settings.setValue(key, value)
-        self.settings.sync()  # Force write to disk
-
-    # Unit preference accessors
-    def get_temperature_units(self):
-        """Get preferred temperature units."""
-        return self.get("temperature_units")
-
-    def set_temperature_units(self, units):
-        """Set preferred temperature units ('celsius' or 'fahrenheit')."""
-        self.set("temperature_units", units)
-
-    def get_velocity_units(self):
-        """Get preferred velocity units."""
-        return self.get("velocity_units")
-
-    def set_velocity_units(self, units):
-        """Set preferred velocity units ('mph' or 'kph')."""
-        self.set("velocity_units", units)
-
-    def get_pressure_units(self):
-        """Get preferred pressure units."""
-        return self.get("pressure_units")
-
-    def set_pressure_units(self, units):
-        """Set preferred pressure units ('psi' or 'bar')."""
-        self.set("pressure_units", units)
-
-    # Recent files management
-    def get_recent_files(self):
-        """Get list of recently opened files."""
-        files = self.settings.value("recent_files", [], type=list)
-        # Filter out non-existent files
-        return [f for f in files if os.path.exists(f)]
-
-    def add_recent_file(self, filepath):
-        """Add a file to the recent files list."""
-        filepath = os.path.abspath(filepath)
-        recent = self.get_recent_files()
-
-        # Remove if already exists (will be re-added at top)
-        if filepath in recent:
-            recent.remove(filepath)
-
-        # Add to beginning
-        recent.insert(0, filepath)
-
-        # Limit to max count
-        max_count = self.get("max_recent_files")
-        recent = recent[:max_count]
-
-        self.settings.setValue("recent_files", recent)
-        self.settings.sync()
-
-    def clear_recent_files(self):
-        """Clear the recent files list."""
-        self.settings.setValue("recent_files", [])
-        self.settings.sync()
-
-    # Window geometry
-    def save_window_geometry(self, window):
-        """Save window geometry and state."""
-        self.settings.beginGroup("MainWindow")
-        self.settings.setValue("geometry", window.saveGeometry())
-        self.settings.setValue("state", window.saveState())
-        self.settings.endGroup()
-        self.settings.sync()
-
-    def restore_window_geometry(self, window):
-        """Restore window geometry and state."""
-        self.settings.beginGroup("MainWindow")
-        geometry = self.settings.value("geometry", QByteArray())
-        state = self.settings.value("state", QByteArray())
-        self.settings.endGroup()
-
-        if geometry:
-            window.restoreGeometry(geometry)
-        if state:
-            window.restoreState(state)
-
-    # Splitter positions
-    def save_splitter_state(self, name, splitter):
-        """Save splitter sizes."""
-        self.settings.beginGroup("Splitters")
-        self.settings.setValue(name, splitter.saveState())
-        self.settings.endGroup()
-        self.settings.sync()
-
-    def restore_splitter_state(self, name, splitter):
-        """Restore splitter sizes."""
-        self.settings.beginGroup("Splitters")
-        state = self.settings.value(name, QByteArray())
-        self.settings.endGroup()
-
-        if state:
-            splitter.restoreState(state)
-
-    # Stream order persistence
-    def save_stream_order(self, stream_order):
-        """Save the custom stream order."""
-        self.settings.setValue("stream_order", stream_order)
-        self.settings.sync()
-
-    def get_stream_order(self):
-        """Get the saved stream order."""
-        return self.settings.value("stream_order", [], type=list)
-
-
-class UnitConverter:
-    """
-    Handles unit detection, conversion, and display label generation.
-    """
-
-    @staticmethod
-    def parse_units_from_name(dataset_name):
-        """
-        Extract native units from dataset name based on suffix.
-
-        Args:
-            dataset_name: Name of the dataset (e.g., 'ecu_coolant_temp_c')
-
-        Returns:
-            Tuple of (data_type, native_units) or (None, None) if unknown
-        """
-        name_lower = dataset_name.lower()
-
-        # Temperature detection
-        if '_temp_c' in name_lower or 'coolant_temp_c' in name_lower or 'air_temp_c' in name_lower:
-            return ('temperature', 'celsius')
-        elif '_temp_f' in name_lower:
-            return ('temperature', 'fahrenheit')
-
-        # Velocity detection
-        if '_velocity_mph' in name_lower or '_speed_mph' in name_lower:
-            return ('velocity', 'mph')
-        elif '_velocity_kph' in name_lower or '_speed_kph' in name_lower:
-            return ('velocity', 'kph')
-
-        # Pressure detection
-        if '_psi' in name_lower:
-            return ('pressure', 'psi')
-        elif '_bar' in name_lower:
-            return ('pressure', 'bar')
-
-        # Voltage detection
-        if '_voltage_v' in name_lower or '_v' == name_lower[-2:]:
-            return ('voltage', 'volts')
-
-        return (None, None)
-
-    @staticmethod
-    def convert_temperature(value, from_units, to_units):
-        """
-        Convert temperature between Celsius and Fahrenheit.
-
-        Args:
-            value: Temperature value or array
-            from_units: 'celsius' or 'fahrenheit'
-            to_units: 'celsius' or 'fahrenheit'
-
-        Returns:
-            Converted value or array
-        """
-        if from_units == to_units:
-            return value
-
-        if from_units == 'celsius' and to_units == 'fahrenheit':
-            return (value * 9.0/5.0) + 32.0
-        elif from_units == 'fahrenheit' and to_units == 'celsius':
-            return (value - 32.0) * 5.0/9.0
-        else:
-            return value  # Unknown conversion
-
-    @staticmethod
-    def convert_velocity(value, from_units, to_units):
-        """
-        Convert velocity between MPH and km/h.
-
-        Args:
-            value: Velocity value or array
-            from_units: 'mph' or 'kph'
-            to_units: 'mph' or 'kph'
-
-        Returns:
-            Converted value or array
-        """
-        if from_units == to_units:
-            return value
-
-        if from_units == 'mph' and to_units == 'kph':
-            return value * 1.60934
-        elif from_units == 'kph' and to_units == 'mph':
-            return value / 1.60934
-        else:
-            return value
-
-    @staticmethod
-    def convert_pressure(value, from_units, to_units):
-        """
-        Convert pressure between PSI and bar.
-
-        Args:
-            value: Pressure value or array
-            from_units: 'psi' or 'bar'
-            to_units: 'psi' or 'bar'
-
-        Returns:
-            Converted value or array
-        """
-        if from_units == to_units:
-            return value
-
-        if from_units == 'psi' and to_units == 'bar':
-            return value * 0.0689476
-        elif from_units == 'bar' and to_units == 'psi':
-            return value / 0.0689476
-        else:
-            return value
-
-    @staticmethod
-    def get_display_name(dataset_name, native_units, display_units):
-        """
-        Generate a human-readable display name with units.
-
-        Args:
-            dataset_name: Original dataset name
-            native_units: Native units from dataset
-            display_units: User's preferred display units
-
-        Returns:
-            String like "Coolant Temperature (°F)" or "GPS Velocity (km/h)"
-        """
-        # Convert dataset name to readable format
-        # e.g., 'ecu_coolant_temp_c' -> 'Coolant Temp'
-        parts = dataset_name.replace('ecu_', '').replace('_', ' ').split()
-
-        # Remove unit suffixes from name
-        readable_parts = []
-        for part in parts:
-            if part not in ['c', 'f', 'mph', 'kph', 'psi', 'bar', 'v']:
-                readable_parts.append(part.capitalize())
-
-        readable_name = ' '.join(readable_parts)
-
-        # Add unit suffix
-        if display_units == 'celsius':
-            return f"{readable_name} (°C)"
-        elif display_units == 'fahrenheit':
-            return f"{readable_name} (°F)"
-        elif display_units == 'mph':
-            return f"{readable_name} (mph)"
-        elif display_units == 'kph':
-            return f"{readable_name} (km/h)"
-        elif display_units == 'psi':
-            return f"{readable_name} (psi)"
-        elif display_units == 'bar':
-            return f"{readable_name} (bar)"
-        elif display_units == 'volts':
-            return f"{readable_name} (V)"
-        else:
-            return readable_name
-
-class ResizableSplitter(QSplitter):
-    """Custom splitter that can hide/show panes with minimum size handling"""
-    def __init__(self, orientation, parent=None):
-        super().__init__(orientation, parent)
-        self.setHandleWidth(3)
-        self.setStyleSheet("QSplitter::handle { background-color: black; }")
-        self.min_size = 40
-        
-class ColorCheckbox(QCheckBox):
-    """Custom checkbox that fills with color when checked instead of showing a checkmark"""
-    def __init__(self, color, parent=None):
-        super().__init__(parent)
-        self.fill_color = color
-        self.setFixedSize(16, 16)
-        # Remove default styling
-        self.setStyleSheet("""
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 2px solid #888;
-                border-radius: 3px;
-                background: white;
-            }
-            QCheckBox::indicator:checked {
-                background: white;
-            }
-        """)
-
-    def paintEvent(self, event):
-        """Custom paint to fill with color when checked"""
-        super().paintEvent(event)
-        if self.isChecked():
-            from PyQt6.QtGui import QPainter, QColor, QPen
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-            # Fill the checkbox with the stream color
-            painter.fillRect(2, 2, 12, 12, QColor(self.fill_color))
-            painter.end()
-
-
-class StreamCheckbox(QWidget):
-    """Custom widget for stream selection with color-filled checkbox and colored label - supports drag and drop"""
-    def __init__(self, stream_name, color, display_name=None, parent=None):
-        super().__init__(parent)
-        self.stream_name = stream_name
-        self.display_name = display_name or stream_name  # Use display name if provided
-        self.color = color
-        self.drag_start_pos = None
-        self.dark_theme = False  # Track current theme
-        self.display_mode = "line"  # "line" or "points"
-        self.color_change_callback = None  # Callback for color changes
-        self.display_mode_callback = None  # Callback for display mode changes
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(5)
-
-        # Use custom color-filled checkbox
-        self.checkbox = ColorCheckbox(color)
-        self.checkbox.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.checkbox.customContextMenuRequested.connect(self.show_color_picker)
-
-        # Use monospace font for stream names
-        mono_font = QFont("Monospace", 9)
-        mono_font.setStyleHint(QFont.StyleHint.TypeWriter)
-
-        # Create a drag handle area (the label area) - use display name
-        self.label = QLabel(self.display_name)
-        self.label.setFont(mono_font)
-        self.label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.label.customContextMenuRequested.connect(self.show_stream_context_menu)
-        self.update_label_style()  # Set initial style
-
-        # Install event filter on label to capture mouse events
-        self.label.installEventFilter(self)
-
-        layout.addWidget(self.checkbox)
-        layout.addWidget(self.label, stretch=1)
-
-        self.setLayout(layout)
-
-    def update_label_style(self):
-        """Update label text color based on theme - use basic readable colors"""
-        # Use simple readable colors based on theme, not stream color
-        if self.dark_theme:
-            text_color = "#e0e0e0"  # Light gray for dark theme
-        else:
-            text_color = "#202020"  # Dark gray for light theme
-
-        self.label.setStyleSheet(f"color: {text_color};")
-
-    def set_theme(self, dark_theme):
-        """Update theme for this widget"""
-        self.dark_theme = dark_theme
-        self.update_label_style()
-
-    def set_font_size(self, size):
-        """Update font size for the label"""
-        mono_font = QFont("Monospace", size)
-        mono_font.setStyleHint(QFont.StyleHint.TypeWriter)
-        self.label.setFont(mono_font)
-
-    def show_color_picker(self, pos):
-        """Show color picker dialog when right-clicking checkbox"""
-        from PyQt6.QtWidgets import QColorDialog
-        from PyQt6.QtGui import QColor
-
-        initial_color = QColor(self.color)
-        color = QColorDialog.getColor(initial_color, self, f"Choose color for {self.stream_name}")
-
-        if color.isValid():
-            self.color = color.name()
-            self.checkbox.fill_color = self.color
-            self.checkbox.update()  # Redraw checkbox
-
-            # Notify parent via callback
-            if self.color_change_callback:
-                self.color_change_callback(self.stream_name, self.color)
-
-    def show_stream_context_menu(self, pos):
-        """Show context menu when right-clicking stream name"""
-        from PyQt6.QtWidgets import QMenu
-        from PyQt6.QtGui import QAction
-
-        menu = QMenu(self)
-
-        # Display mode toggle
-        if self.display_mode == "line":
-            action_text = "Display as Points"
-        else:
-            action_text = "Display as Line"
-
-        toggle_action = QAction(action_text, self)
-        toggle_action.triggered.connect(self.toggle_display_mode)
-        menu.addAction(toggle_action)
-
-        menu.exec(self.label.mapToGlobal(pos))
-
-    def toggle_display_mode(self):
-        """Toggle between line and points display mode"""
-        if self.display_mode == "line":
-            self.display_mode = "points"
-        else:
-            self.display_mode = "line"
-
-        # Notify parent via callback
-        if self.display_mode_callback:
-            self.display_mode_callback(self.stream_name, self.display_mode)
-
-    def eventFilter(self, obj, event):
-        """Filter events on the label to handle dragging"""
-        if obj == self.label:
-            if event.type() == event.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self.drag_start_pos = event.pos()
-                    return False
-            elif event.type() == event.Type.MouseMove:
-                if event.buttons() & Qt.MouseButton.LeftButton:
-                    if self.drag_start_pos is not None:
-                        distance = (event.pos() - self.drag_start_pos).manhattanLength()
-                        if distance >= QApplication.startDragDistance():
-                            self.start_drag()
-                            return True
-        return super().eventFilter(obj, event)
-
-    def start_drag(self):
-        """Initiate the drag operation"""
-        drag = QDrag(self)
-        mime_data = QMimeData()
-        mime_data.setText(self.stream_name)
-        drag.setMimeData(mime_data)
-
-        # Execute drag
-        result = drag.exec(Qt.DropAction.MoveAction)
-        self.drag_start_pos = None
-
-
-class DraggableStreamList(QWidget):
-    """Custom list widget that supports drag-and-drop reordering with visual feedback"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-
-        self.layout = QVBoxLayout()
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(2)
-        self.layout.addStretch()
-        self.setLayout(self.layout)
-
-        self.stream_widgets = []
-        self.drop_indicator_pos = -1  # -1 means no indicator
-        self.dragging = False
-        self.reorder_callback = None  # Callback to notify parent of reorder
-
-    def add_stream_widget(self, widget):
-        """Add a stream widget to the list"""
-        # Insert before the stretch
-        insert_pos = self.layout.count() - 1
-        self.layout.insertWidget(insert_pos, widget)
-        self.stream_widgets.append(widget)
-
-    def clear_streams(self):
-        """Clear all stream widgets"""
-        while self.layout.count() > 1:  # Keep the stretch
-            item = self.layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self.stream_widgets.clear()
-
-    def get_stream_order(self):
-        """Get the current order of stream names"""
-        order = []
-        for i in range(self.layout.count() - 1):  # Exclude stretch
-            widget = self.layout.itemAt(i).widget()
-            if isinstance(widget, StreamCheckbox):
-                order.append(widget.stream_name)
-        return order
-
-    def reorder_to_match(self, stream_order):
-        """Reorder widgets to match the given order"""
-        # Create a mapping of stream name to widget
-        widget_map = {}
-        for widget in self.stream_widgets:
-            widget_map[widget.stream_name] = widget
-
-        # Remove all widgets from layout (except stretch)
-        while self.layout.count() > 1:
-            self.layout.takeAt(0)
-
-        # Re-add in the specified order
-        for stream_name in stream_order:
-            if stream_name in widget_map:
-                self.layout.insertWidget(self.layout.count() - 1, widget_map[stream_name])
-
-    def dragEnterEvent(self, event):
-        """Accept drag events"""
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
-            self.dragging = True
-
-    def dragMoveEvent(self, event):
-        """Update drop indicator position during drag"""
-        if event.mimeData().hasText():
-            # Find insertion position based on mouse Y coordinate
-            y_pos = event.position().y()
-            insert_index = self._get_drop_index(y_pos)
-
-            if insert_index != self.drop_indicator_pos:
-                self.drop_indicator_pos = insert_index
-                self.update()  # Trigger repaint
-
-            event.acceptProposedAction()
-
-    def dragLeaveEvent(self, event):
-        """Clear drop indicator when drag leaves"""
-        self.drop_indicator_pos = -1
-        self.dragging = False
-        self.update()
-
-    def dropEvent(self, event):
-        """Handle drop - reorder the widgets"""
-        if event.mimeData().hasText():
-            stream_name = event.mimeData().text()
-            insert_index = self._get_drop_index(event.position().y())
-
-            # Find the widget being dragged
-            dragged_widget = None
-            old_index = -1
-            for i, widget in enumerate(self.stream_widgets):
-                if widget.stream_name == stream_name:
-                    dragged_widget = widget
-                    old_index = i
-                    break
-
-            if dragged_widget and insert_index != old_index:
-                # Remove from old position
-                self.layout.removeWidget(dragged_widget)
-
-                # Adjust insert index if moving down
-                if insert_index > old_index:
-                    insert_index -= 1
-
-                # Insert at new position
-                self.layout.insertWidget(insert_index, dragged_widget)
-
-                # Update internal list
-                self.stream_widgets.remove(dragged_widget)
-                self.stream_widgets.insert(insert_index, dragged_widget)
-
-                # Notify parent about reorder via callback
-                if self.reorder_callback:
-                    self.reorder_callback()
-
-            event.acceptProposedAction()
-
-        self.drop_indicator_pos = -1
-        self.dragging = False
-        self.update()
-
-    def _get_drop_index(self, y_pos):
-        """Calculate the insertion index based on Y position"""
-        for i in range(self.layout.count() - 1):  # Exclude stretch
-            widget = self.layout.itemAt(i).widget()
-            if widget:
-                widget_y = widget.y()
-                widget_height = widget.height()
-
-                # If above midpoint, insert before this widget
-                if y_pos < widget_y + widget_height / 2:
-                    return i
-
-        # Insert at end
-        return self.layout.count() - 1
-
-    def paintEvent(self, event):
-        """Draw drop indicator line"""
-        super().paintEvent(event)
-
-        if self.drop_indicator_pos >= 0 and self.dragging:
-            painter = QPainter(self)
-            painter.setPen(QPen(QColor(0, 120, 215), 2))  # Blue line
-
-            # Calculate Y position for the indicator
-            if self.drop_indicator_pos < self.layout.count() - 1:
-                widget = self.layout.itemAt(self.drop_indicator_pos).widget()
-                if widget:
-                    y = widget.y() - 1
-                else:
-                    y = 0
-            else:
-                # Draw at bottom
-                if self.layout.count() > 1:
-                    last_widget = self.layout.itemAt(self.layout.count() - 2).widget()
-                    if last_widget:
-                        y = last_widget.y() + last_widget.height()
-                    else:
-                        y = 0
-                else:
-                    y = 0
-
-            # Draw horizontal line
-            painter.drawLine(0, y, self.width(), y)
-            painter.end()
-        
-class ZoomableGraphWidget(pg.PlotWidget):
-    """Graph widget with rubber band zoom capability"""
-    
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.rubberband_start = None
-        self.rubberband_rect = None
-        self.is_dragging = False
-        self.zoom_callback = None
-        
-    def mousePressEvent(self, ev):
-        if ev.button() == Qt.MouseButton.LeftButton:
-            pos = QPointF(ev.pos())
-            self.rubberband_start = self.plotItem.vb.mapSceneToView(pos)
-            self.is_dragging = True
-            ev.accept()
-        else:
-            super().mousePressEvent(ev)
-            
-    def mouseMoveEvent(self, ev):
-        if self.is_dragging and self.rubberband_start is not None:
-            if self.rubberband_rect is not None:
-                self.plotItem.vb.removeItem(self.rubberband_rect)
-            
-            pos = QPointF(ev.pos())
-            current = self.plotItem.vb.mapSceneToView(pos)
-            
-            x = min(self.rubberband_start.x(), current.x())
-            y = min(self.rubberband_start.y(), current.y())
-            w = abs(current.x() - self.rubberband_start.x())
-            h = abs(current.y() - self.rubberband_start.y())
-            
-            self.rubberband_rect = QtWidgets.QGraphicsRectItem(x, y, w, h)
-            self.rubberband_rect.setPen(pg.mkPen('b', width=2, style=Qt.PenStyle.DashLine))
-            self.rubberband_rect.setBrush(pg.mkBrush(100, 150, 255, 50))
-            self.plotItem.vb.addItem(self.rubberband_rect)
-            ev.accept()
-        else:
-            super().mouseMoveEvent(ev)
-            
-    def mouseReleaseEvent(self, ev):
-        if ev.button() == Qt.MouseButton.LeftButton and self.is_dragging:
-            if self.rubberband_start is not None:
-                pos = QPointF(ev.pos())
-                end = self.plotItem.vb.mapSceneToView(pos)
-                
-                x_min = min(self.rubberband_start.x(), end.x())
-                x_max = max(self.rubberband_start.x(), end.x())
-                y_min = min(self.rubberband_start.y(), end.y())
-                y_max = max(self.rubberband_start.y(), end.y())
-                
-                if abs(x_max - x_min) > 0.01 and abs(y_max - y_min) > 0.01:
-                    if self.zoom_callback:
-                        self.zoom_callback(x_min, x_max, y_min, y_max)
-            
-            if self.rubberband_rect is not None:
-                self.plotItem.vb.removeItem(self.rubberband_rect)
-                self.rubberband_rect = None
-            self.rubberband_start = None
-            self.is_dragging = False
-            ev.accept()
-        else:
-            super().mouseReleaseEvent(ev)
-
 # ================================================================================================
-# Data Decimation Functions
+# Main Application Class
 # ================================================================================================
-
-def parse_color_to_rgba(color_string, alpha=1.0):
-    """
-    Convert hex color string to RGBA tuple for QBrush.
-
-    Args:
-        color_string: Hex color like '#FF6600' or named color
-        alpha: Transparency 0.0-1.0
-
-    Returns:
-        Tuple of (r, g, b, a) where each is 0-255
-    """
-    if isinstance(color_string, str) and color_string.startswith('#'):
-        hex_str = color_string.lstrip('#')
-        if len(hex_str) == 6:
-            r = int(hex_str[0:2], 16)
-            g = int(hex_str[2:4], 16)
-            b = int(hex_str[4:6], 16)
-            return (r, g, b, int(alpha * 255))
-    # Fallback for invalid colors
-    return (255, 0, 0, int(alpha * 255))
-
-def min_max_decimate(time_array, value_array, target_points):
-    """Decimate data while preserving min/max peaks in each bin.
-
-    This ensures that when zoomed out, you still see all the peaks and valleys
-    in the data, unlike simple decimation which might miss spikes.
-
-    For each bin, we keep: first point, min, max, and last point to ensure
-    continuity and preserve all features.
-
-    Args:
-        time_array: numpy array of time values
-        value_array: numpy array of data values
-        target_points: desired number of output points
-
-    Returns:
-        tuple of (decimated_time, decimated_values) numpy arrays
-    """
-    n = len(time_array)
-
-    # If already small enough, return as-is
-    if n <= target_points:
-        return time_array, value_array
-
-    # Each bin contributes up to 4 points (first, min, max, last)
-    # So we need target_points/4 bins
-    num_bins = max(1, target_points // 4)
-    bin_size = max(1, n // num_bins)
-
-    result_time = []
-    result_values = []
-
-    for i in range(0, n, bin_size):
-        bin_time = time_array[i:i+bin_size]
-        bin_values = value_array[i:i+bin_size]
-
-        if len(bin_values) == 0:
-            continue
-
-        # Always keep first and last points of each bin for continuity
-        first_idx = 0
-        last_idx = len(bin_values) - 1
-
-        # Find min and max indices within this bin
-        min_idx = bin_values.argmin()
-        max_idx = bin_values.argmax()
-
-        # Collect unique indices in time order
-        indices = sorted(set([first_idx, min_idx, max_idx, last_idx]))
-
-        # Add all unique points in time order
-        for idx in indices:
-            result_time.append(bin_time[idx])
-            result_values.append(bin_values[idx])
-
-    return np.array(result_time), np.array(result_values)
 
 class DataVisualizationTool(QMainWindow):
     def __init__(self):
@@ -873,19 +81,26 @@ class DataVisualizationTool(QMainWindow):
         self.setWindowTitle(self.base_title)
         self.setGeometry(100, 100, 1600, 900)
 
-        # Data storage
-        self.df = None
-        self.raw_data = {}  # Store raw unsampled data from HDF5
-        self.data_streams = []
-        self.stream_colors = {}
-        self.stream_metadata = {}  # Store unit information per stream
-        self.stream_ranges = {}  # Store min/max range for each stream
-        self.enabled_streams = []
-        self.axis_owner = None  # Stream that owns the left Y-axis
-        self.right_axis_owner = None  # Stream that owns the right Y-axis
-        self.current_file = None  # Track currently loaded file
+        # Data management (Phase 2 refactoring)
+        self.hdf5_loader = HDF5DataLoader(self.stream_config)
+        self.data_manager = DataManager()
 
-        # View state
+        # Legacy data accessors (for backward compatibility during refactoring)
+        # TODO: Phase 4+ will remove these in favor of data_manager methods
+        self.raw_data = {}  # Will point to data_manager.raw_data
+        self.data_streams = []  # Will point to data_manager.stream_names
+        self.stream_metadata = {}  # Will point to data_manager.stream_metadata
+        self.stream_ranges = {}  # Will point to data_manager.stream_ranges
+
+        # Navigation management (Phase 3 refactoring)
+        self.view_controller = ViewNavigationController()
+        self.view_history = ViewHistory(max_history=50)
+
+        # Connect view history signal to update UI buttons
+        self.view_history.history_changed.connect(self._on_history_changed)
+
+        # Legacy view state accessors (for backward compatibility during refactoring)
+        # TODO: Phase 5+ will remove these in favor of view_controller methods
         self.view_start = 0
         self.view_end = self.config.get("default_view_duration")
         self.view_y_min = 0
@@ -893,10 +108,19 @@ class DataVisualizationTool(QMainWindow):
         self.total_time_span = 0
         self.initial_view_start = 0
         self.initial_view_end = self.config.get("default_view_duration")
+        self.time_min = 0
+        self.time_max = 0
 
-        # History for undo/redo
+        # Legacy history accessors (for backward compatibility)
         self.history = []
         self.history_index = -1
+
+        # UI state
+        self.stream_colors = {}
+        self.enabled_streams = []
+        self.axis_owner = None  # Stream that owns the left Y-axis
+        self.right_axis_owner = None  # Stream that owns the right Y-axis
+        self.current_file = None  # Track currently loaded file
 
         # Update timer for real-time updates (30 FPS max)
         self.update_timer = QTimer()
@@ -924,7 +148,13 @@ class DataVisualizationTool(QMainWindow):
 
         # Restore window geometry after UI initialization
         self.config.restore_window_geometry(self)
-        
+
+    def _on_history_changed(self, can_undo, can_redo):
+        """Callback when history state changes - update UI buttons"""
+        if hasattr(self, 'undo_action'):  # Check if UI is initialized
+            self.undo_action.setEnabled(can_undo)
+            self.redo_action.setEnabled(can_redo)
+
     def init_ui(self):
         # Create main widget with grey border
         central_widget = QWidget()
@@ -1397,182 +627,71 @@ class DataVisualizationTool(QMainWindow):
 
     def load_hdf5_file_internal(self, filename):
         """Internal method to load HDF5 file (used by both file picker and recent files)."""
-        if not os.path.exists(filename):
-            print(f"Error: File not found: {filename}")
-            return
-
         try:
             self.current_file = filename
-            print(f"Loading HDF5 file: {filename}")
 
-            with h5py.File(filename, 'r') as h5file:
-                # Read metadata
-                print("Metadata:")
-                for key, value in h5file.attrs.items():
-                    print(f"  {key}: {value}")
+            # Load data using HDF5DataLoader (Phase 2 refactoring)
+            loaded_data = self.hdf5_loader.load_file(filename, self.config)
 
-                # Collect all datasets
-                raw_data = {}
-                stream_names = []
-                self.stream_metadata = {}  # Reset metadata
+            # Store data in DataManager
+            self.data_manager.set_data(
+                loaded_data['raw_data'],
+                loaded_data['stream_names'],
+                loaded_data['stream_ranges'],
+                loaded_data['stream_metadata'],
+                loaded_data['file_metadata'],
+                loaded_data['time_bounds']
+            )
 
-                # Get all dataset names
-                for key in h5file.keys():
-                    if key == 'eprom_loads':  # Skip special datasets
-                        continue
+            # Update legacy accessors (backward compatibility)
+            self.raw_data = self.data_manager.raw_data
+            self.data_streams = self.data_manager.stream_names
+            self.stream_metadata = self.data_manager.stream_metadata
+            self.stream_ranges = self.data_manager.stream_ranges
 
-                    ds = h5file[key]
+            # Set time bounds
+            time_min, time_max = self.data_manager.get_time_bounds()
+            self.total_time_span = self.data_manager.time_span
+            self.time_min = time_min
+            self.time_max = time_max
 
-                    # Handle different dataset shapes
-                    if len(ds.shape) == 2 and ds.shape[1] == 2:
-                        # Standard (time_ns, value) format
-                        if ds.shape[0] > 0:  # Only include non-empty datasets
-                            print(f"  Loading {key}: {ds.shape[0]} samples")
+            # Initialize view controller with time bounds
+            self.view_controller.set_time_bounds(time_min, time_max)
 
-                            # Detect native units from dataset name
-                            data_type, native_units = UnitConverter.parse_units_from_name(key)
+            # Calculate initial view window
+            self.view_start, self.view_end = self.data_manager.calculate_initial_view(
+                self.stream_config,
+                self.config.get("default_view_duration", 10.0)
+            )
+            self.initial_view_start = self.view_start
+            self.initial_view_end = self.view_end
 
-                            # Get user's preferred display units
-                            display_units = native_units  # Default to native
-                            if data_type == 'temperature':
-                                display_units = self.config.get_temperature_units()
-                            elif data_type == 'velocity':
-                                display_units = self.config.get_velocity_units()
-                            elif data_type == 'pressure':
-                                display_units = self.config.get_pressure_units()
+            # Set initial view in controller
+            self.view_controller.set_initial_view(self.view_start, self.view_end)
+            self.view_controller.set_view_range(self.view_start, self.view_end)
 
-                            # Store metadata for this stream
-                            self.stream_metadata[key] = {
-                                'data_type': data_type,
-                                'native_units': native_units,
-                                'display_units': display_units
-                            }
+            print(f"Initial view: [{self.view_start:.2f}s, {self.view_end:.2f}s]")
 
-                            # Load and convert data
-                            time_data = ds[:, 0] / 1e9  # Convert ns to seconds
-                            value_data = ds[:, 1]
+            # Reset state
+            self.enabled_streams = []
+            self.axis_owner = None
+            self.view_history.clear()
 
-                            # Apply unit conversion if needed
-                            if data_type == 'temperature' and native_units != display_units:
-                                value_data = UnitConverter.convert_temperature(value_data, native_units, display_units)
-                                print(f"    Converted from {native_units} to {display_units}")
-                            elif data_type == 'velocity' and native_units != display_units:
-                                value_data = UnitConverter.convert_velocity(value_data, native_units, display_units)
-                                print(f"    Converted from {native_units} to {display_units}")
-                            elif data_type == 'pressure' and native_units != display_units:
-                                value_data = UnitConverter.convert_pressure(value_data, native_units, display_units)
-                                print(f"    Converted from {native_units} to {display_units}")
+            self.populate_stream_selection()
+            self.update_navigation_plot()
+            self.update_graph_plot()
 
-                            # Store converted data
-                            raw_data[key] = {
-                                'time': time_data,
-                                'values': value_data
-                            }
-                            # Don't add duration streams to stream_names (they're paired with ON streams)
-                            # ON streams appear in the list so user can enable them to see injector bars
-                            if not self.stream_config.should_skip_in_selection(key):
-                                stream_names.append(key)
+            # Add to recent files and update menu
+            self.config.add_recent_file(filename)
+            self.update_recent_files_menu()
 
-                    elif len(ds.shape) == 2 and ds.shape[1] == 3:
-                        # 3D data like gps_position (time_ns, lat, lon)
-                        if ds.shape[0] > 0:
-                            print(f"  Loading {key}: {ds.shape[0]} samples (3D)")
-                            time_ns = ds[:, 0] / 1e9
-                            # Keep GPS position as a single entity (lat/lon cannot be separated)
-                            if key == 'gps_position':
-                                raw_data['gps_position'] = {
-                                    'time': time_ns,
-                                    'lat': ds[:, 1],
-                                    'lon': ds[:, 2]
-                                }
-                                # Note: gps_position is NOT added to stream_names
-                                # It will be displayed as markers, not as a plottable stream
+            # Save the directory for next time
+            self.config.set("default_file_location", os.path.dirname(filename))
 
-                    elif len(ds.shape) == 1:
-                        # 1D timestamp arrays (markers) - skip for now
-                        if ds.shape[0] > 0:
-                            print(f"  Skipping 1D marker dataset {key}: {ds.shape[0]} samples")
+            # Update window title with filename
+            self.setWindowTitle(f"{self.base_title} - {os.path.basename(filename)}")
 
-                print(f"\nTotal streams loaded: {len(stream_names)}")
-
-                # Store raw data without resampling
-                self.raw_data = raw_data
-                self.data_streams = stream_names
-
-                # Calculate and store the range for each stream (for normalization)
-                # Also find the overall time bounds
-                self.stream_ranges = {}
-                all_times = []
-                for stream in stream_names:
-                    stream_min = float(raw_data[stream]['values'].min())
-                    stream_max = float(raw_data[stream]['values'].max())
-                    # Add a small epsilon to avoid division by zero for constant streams
-                    if stream_max - stream_min < 1e-10:
-                        stream_max = stream_min + 1.0
-                    self.stream_ranges[stream] = (stream_min, stream_max)
-                    print(f"  {stream}: range [{stream_min:.2f}, {stream_max:.2f}]")
-
-                    # Collect all time values to find overall bounds
-                    all_times.extend([raw_data[stream]['time'].min(), raw_data[stream]['time'].max()])
-
-                # Set time bounds from raw data
-                time_min = float(min(all_times))
-                time_max = float(max(all_times))
-                self.total_time_span = time_max - time_min
-                self.time_min = time_min  # Store for navigation plot
-                self.time_max = time_max
-
-                # Calculate initial view window based on configuration
-                nav_anchor = self.stream_config.get_setting('nav_initial_anchor', 'first_cam')
-                nav_offset_before = self.stream_config.get_setting('nav_offset_before', 1.0)
-                nav_offset_after = self.stream_config.get_setting('nav_offset_after', 5.0)
-
-                if nav_anchor == 'first_cam' and 'ecu_camshaft_timestamp' in raw_data:
-                    # Position around first CAM event
-                    cam_data = raw_data['ecu_camshaft_timestamp']
-                    if len(cam_data['time']) > 0:
-                        first_cam_time = float(cam_data['time'][0])
-                        self.view_start = max(time_min, first_cam_time - nav_offset_before)
-                        self.view_end = min(time_max, first_cam_time + nav_offset_after)
-                    else:
-                        # No CAM events, fall back to data_start
-                        self.view_start = time_min
-                        view_duration = min(self.config.get("default_view_duration", 10.0), self.total_time_span * 0.1)
-                        self.view_end = min(time_max, self.view_start + view_duration)
-                else:
-                    # Use data_start or default behavior
-                    self.view_start = time_min
-                    view_duration = min(self.config.get("default_view_duration", 10.0), self.total_time_span * 0.1)
-                    self.view_end = min(time_max, self.view_start + view_duration)
-
-                self.initial_view_start = self.view_start
-                self.initial_view_end = self.view_end
-
-                print(f"Time range: [{time_min:.2f}s, {time_max:.2f}s], span: {self.total_time_span:.2f}s")
-                print(f"Initial view: [{self.view_start:.2f}s, {self.view_end:.2f}s] (anchor: {nav_anchor})")
-
-                # Reset state
-                self.enabled_streams = []
-                self.axis_owner = None
-                self.history = []
-                self.history_index = -1
-                self.update_history_buttons()
-
-                self.populate_stream_selection()
-                self.update_navigation_plot()
-                self.update_graph_plot()
-
-                # Add to recent files and update menu
-                self.config.add_recent_file(filename)
-                self.update_recent_files_menu()
-
-                # Save the directory for next time
-                self.config.set("default_file_location", os.path.dirname(filename))
-
-                # Update window title with filename
-                self.setWindowTitle(f"{self.base_title} - {os.path.basename(filename)}")
-
-                print("HDF5 file loaded successfully!")
+            print("HDF5 file loaded successfully!")
 
         except Exception as e:
             print(f"Error loading HDF5 file: {e}")
@@ -2562,9 +1681,11 @@ class DataVisualizationTool(QMainWindow):
         # Check if we have the attach_to stream (usually RPM)
         attach_to = config.attach_to
         if not attach_to or attach_to not in self.raw_data:
+            print(f"DEBUG: {stream_name} - attach_to stream '{attach_to}' not found in raw_data")
             return
 
         if stream_name not in self.raw_data:
+            print(f"DEBUG: {stream_name} - marker stream not found in raw_data")
             return
 
         # Get the base stream data (e.g., RPM)
@@ -2595,6 +1716,22 @@ class DataVisualizationTool(QMainWindow):
         marker_times = marker_data['time']
         marker_values = marker_data.get('values', None)  # May have values (e.g., CRID) or not (e.g., spark)
 
+        # DEBUG: Print marker time range
+        if len(marker_times) > 0:
+            print(f"DEBUG: {stream_name} - total markers: {len(marker_times)}, time range: {marker_times[0]:.2f} - {marker_times[-1]:.2f}")
+            print(f"DEBUG: {stream_name} - attach_to '{attach_to}' time range: {base_time[0]:.2f} - {base_time[-1]:.2f}")
+            print(f"DEBUG: {stream_name} - current view window: {self.view_start:.2f} - {self.view_end:.2f}")
+
+            # Check for gaps in spark data around the problematic time
+            if self.view_start < 21 and self.view_end > 18:
+                # Find markers in the 18-21 second range
+                early_mask = (marker_times >= 18) & (marker_times <= 21)
+                early_markers = marker_times[early_mask]
+                if len(early_markers) > 0:
+                    print(f"DEBUG: {stream_name} - markers in 18-21s range: {len(early_markers)}")
+                    print(f"DEBUG: {stream_name} - first few times: {early_markers[:10]}")
+                    print(f"DEBUG: {stream_name} - last few times: {early_markers[-10:]}")
+
         # Get visual properties from config
         color = self.stream_colors.get(stream_name, config.default_color)
         offset = config.offset
@@ -2610,6 +1747,8 @@ class DataVisualizationTool(QMainWindow):
             visible_marker_values = marker_values[mask]
         else:
             visible_marker_values = None
+
+        print(f"DEBUG: {stream_name} - visible markers in window: {len(visible_marker_times)}")
 
         # Skip drawing if too many markers
         if len(visible_marker_times) > max_visible:
@@ -2932,7 +2071,10 @@ class DataVisualizationTool(QMainWindow):
         
         self.view_start = new_start
         self.view_end = new_end
-        
+
+        # Sync to view controller so keyboard shortcuts use current position
+        self.view_controller.set_view_range(new_start, new_end)
+
         self.request_update()
     
     def on_region_change_finished(self):
@@ -2948,6 +2090,9 @@ class DataVisualizationTool(QMainWindow):
         # Only zoom on X-axis (time), ignore Y since streams are independently scaled
         self.view_start = max(0, x_min)
         self.view_end = min(self.total_time_span, x_max)
+
+        # Sync to view controller so keyboard shortcuts use current position
+        self.view_controller.set_view_range(self.view_start, self.view_end)
 
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
@@ -2969,50 +2114,27 @@ class DataVisualizationTool(QMainWindow):
     
     def reset_view(self):
         """Reset view to initial state"""
-        self.view_start = self.initial_view_start
-        self.view_end = self.initial_view_end
-        # No need to reset view_y_min/max since Y is always 0-1
+        self.view_controller.reset_to_initial()
+        self.view_history.clear()
 
-        self.update_graph_plot()
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
 
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
-
-        self.history = []
-        self.history_index = -1
-        self.update_history_buttons()
 
         self.update_graph_plot()
 
     def zoom_in_2x(self):
         """Zoom in by 2x (halve the time shown), centered on current view"""
         # Add current view to history
-        self.add_to_history(self.view_start, self.view_end, 0, 1)
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
 
-        # Calculate current view duration and center
-        current_duration = self.view_end - self.view_start
-        center = (self.view_start + self.view_end) / 2
+        # Use view controller to perform zoom
+        self.view_controller.zoom_in_2x()
 
-        # Halve the duration
-        new_duration = current_duration / 2
-
-        # Calculate new start/end centered on the same point
-        new_start = center - new_duration / 2
-        new_end = center + new_duration / 2
-
-        # Clamp to valid range
-        new_start = max(0, new_start)
-        new_end = min(self.total_time_span, new_end)
-
-        # If we hit a boundary, adjust the other side to maintain zoom if possible
-        if new_start == 0:
-            new_end = min(new_duration, self.total_time_span)
-        elif new_end == self.total_time_span:
-            new_start = max(0, self.total_time_span - new_duration)
-
-        self.view_start = new_start
-        self.view_end = new_end
+        # Update legacy accessors
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
 
         # Update navigation region
         self.view_region.blockSignals(True)
@@ -3024,31 +2146,13 @@ class DataVisualizationTool(QMainWindow):
     def zoom_out_2x(self):
         """Zoom out by 2x (double the time shown), centered on current view"""
         # Add current view to history
-        self.add_to_history(self.view_start, self.view_end, 0, 1)
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
 
-        # Calculate current view duration and center
-        current_duration = self.view_end - self.view_start
-        center = (self.view_start + self.view_end) / 2
+        # Use view controller to perform zoom
+        self.view_controller.zoom_out_2x()
 
-        # Double the duration
-        new_duration = current_duration * 2
-
-        # Calculate new start/end centered on the same point
-        new_start = center - new_duration / 2
-        new_end = center + new_duration / 2
-
-        # Clamp to valid range
-        new_start = max(0, new_start)
-        new_end = min(self.total_time_span, new_end)
-
-        # If we hit a boundary, adjust the other side to maintain 2x zoom if possible
-        if new_start == 0:
-            new_end = min(new_duration, self.total_time_span)
-        elif new_end == self.total_time_span:
-            new_start = max(0, self.total_time_span - new_duration)
-
-        self.view_start = new_start
-        self.view_end = new_end
+        # Update legacy accessors
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
 
         # Update navigation region
         self.view_region.blockSignals(True)
@@ -3059,168 +2163,75 @@ class DataVisualizationTool(QMainWindow):
 
     def pan_left_50(self):
         """Pan left by 50% of current view duration"""
-        # Add current view to history
-        self.add_to_history(self.view_start, self.view_end, 0, 1)
-
-        # Calculate 50% of current duration
-        current_duration = self.view_end - self.view_start
-        shift = current_duration * 0.5
-
-        # Shift left (decrease both start and end)
-        new_start = self.view_start - shift
-        new_end = self.view_end - shift
-
-        # Clamp to valid range
-        if new_start < 0:
-            new_start = 0
-            new_end = current_duration
-
-        self.view_start = new_start
-        self.view_end = new_end
-
-        # Update navigation region
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
+        self.view_controller.pan_left(0.5)
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
-
         self.update_graph_plot()
 
     def pan_right_50(self):
         """Pan right by 50% of current view duration"""
-        # Add current view to history
-        self.add_to_history(self.view_start, self.view_end, 0, 1)
-
-        # Calculate 50% of current duration
-        current_duration = self.view_end - self.view_start
-        shift = current_duration * 0.5
-
-        # Shift right (increase both start and end)
-        new_start = self.view_start + shift
-        new_end = self.view_end + shift
-
-        # Clamp to valid range
-        if new_end > self.total_time_span:
-            new_end = self.total_time_span
-            new_start = self.total_time_span - current_duration
-
-        self.view_start = new_start
-        self.view_end = new_end
-
-        # Update navigation region
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
+        self.view_controller.pan_right(0.5)
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
-
         self.update_graph_plot()
 
     def pan_left_15(self):
         """Pan left by 15% of current view duration"""
-        # Add current view to history
-        self.add_to_history(self.view_start, self.view_end, 0, 1)
-
-        # Calculate 15% of current duration
-        current_duration = self.view_end - self.view_start
-        shift = current_duration * 0.15
-
-        # Shift left (decrease both start and end)
-        new_start = self.view_start - shift
-        new_end = self.view_end - shift
-
-        # Clamp to valid range
-        if new_start < 0:
-            new_start = 0
-            new_end = current_duration
-
-        self.view_start = new_start
-        self.view_end = new_end
-
-        # Update navigation region
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
+        self.view_controller.pan_left(0.15)
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
-
         self.update_graph_plot()
 
     def pan_right_15(self):
         """Pan right by 15% of current view duration"""
-        # Add current view to history
-        self.add_to_history(self.view_start, self.view_end, 0, 1)
-
-        # Calculate 15% of current duration
-        current_duration = self.view_end - self.view_start
-        shift = current_duration * 0.15
-
-        # Shift right (increase both start and end)
-        new_start = self.view_start + shift
-        new_end = self.view_end + shift
-
-        # Clamp to valid range
-        if new_end > self.total_time_span:
-            new_end = self.total_time_span
-            new_start = self.total_time_span - current_duration
-
-        self.view_start = new_start
-        self.view_end = new_end
-
-        # Update navigation region
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
+        self.view_controller.pan_right(0.15)
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
-
         self.update_graph_plot()
 
-
     def add_to_history(self, start, end, y_min, y_max):
-        """Add state to history (only X/time axis, Y is always 0-1)"""
-        self.history = self.history[:self.history_index + 1]
-        # Still store 4 values for compatibility, but y_min/y_max are ignored (always 0, 1)
-        self.history.append((start, end, 0, 1))
-        self.history_index += 1
-
-        if len(self.history) > 50:
-            self.history.pop(0)
-            self.history_index -= 1
-
-        self.update_history_buttons()
+        """Add state to history - delegated to view_history"""
+        self.view_history.push(start, end, y_min, y_max)
 
     def undo(self):
         """Undo last operation"""
-        if self.history_index > 0:
-            self.history_index -= 1
-            start, end, _, _ = self.history[self.history_index]  # Ignore y_min, y_max
-
+        result = self.view_history.undo()
+        if result:
+            start, end, _, _ = result
             self.view_start = start
             self.view_end = end
-            # No need to restore Y range since it's always 0-1
-
             self.view_region.blockSignals(True)
             self.view_region.setRegion([start, end])
             self.view_region.blockSignals(False)
-
             self.update_graph_plot()
-            self.update_history_buttons()
 
     def redo(self):
         """Redo previously undone operation"""
-        if self.history_index < len(self.history) - 1:
-            self.history_index += 1
-            start, end, _, _ = self.history[self.history_index]  # Ignore y_min, y_max
-
+        result = self.view_history.redo()
+        if result:
+            start, end, _, _ = result
             self.view_start = start
             self.view_end = end
-            # No need to restore Y range since it's always 0-1
-
             self.view_region.blockSignals(True)
             self.view_region.setRegion([start, end])
             self.view_region.blockSignals(False)
-
             self.update_graph_plot()
-            self.update_history_buttons()
-    
+
     def update_history_buttons(self):
-        """Update undo/redo action states"""
-        self.undo_action.setEnabled(self.history_index > 0)
-        self.redo_action.setEnabled(self.history_index < len(self.history) - 1)
+        """Update undo/redo action states - now handled by view_history signal"""
+        pass  # Kept for backward compatibility but functionality moved to _on_history_changed
 
     def apply_window_border(self):
         """Apply window border based on theme"""
