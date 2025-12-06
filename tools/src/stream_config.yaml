@@ -1,0 +1,351 @@
+# Stream Configuration for Visualization Tool
+# Version 1.0
+#
+# Stream Types:
+#   - graph_data: Time-series plots with normalization
+#   - graph_marker: Event markers attached to graph data (e.g., spark, CRID)
+#   - bar_data: Horizontal bars with start time and duration
+#   - time_marker: Markers on the time axis itself
+
+version: 1
+
+streams:
+  # ============================================================================
+  # GRAPH DATA - Time-series plots
+  # ============================================================================
+
+  ecu_rpm_instantaneous:
+    type: graph_data
+    display_name: "RPM (Instantaneous)"
+    units: rpm
+    owns_axis: true
+    normalize: true
+
+  ecu_rpm_smoothed:
+    type: graph_data
+    display_name: "RPM (Smoothed)"
+    units: rpm
+    owns_axis: true
+    normalize: true
+
+  ecu_air_temp_c:
+    type: graph_data
+    display_name: "Air Temperature"
+    units: celsius
+    owns_axis: true
+    normalize: true
+    display_range_min: 0.0     # Fixed display range (no dynamic scaling)
+    display_range_max: 120.0
+
+  ecu_coolant_temp_c:
+    type: graph_data
+    display_name: "Coolant Temperature"
+    units: celsius
+    owns_axis: true
+    normalize: true
+    display_range_min: 0.0     # Fixed display range (no dynamic scaling)
+    display_range_max: 120.0
+
+  ecu_battery_voltage_v:
+    type: graph_data
+    display_name: "Battery Voltage"
+    units: volts
+    owns_axis: true
+    normalize: true
+    display_range_min_top: 14.0  # Minimum value for top of display
+
+  ecu_throttle_adc:
+    type: graph_data
+    display_name: "Throttle Position"
+    units: adc
+    owns_axis: true
+    normalize: true
+
+  ecu_map_kpa:
+    type: graph_data
+    display_name: "MAP (kPa)"
+    default_color: "#FF00FF"
+    units: kPa
+    owns_axis: false
+    normalize: true
+
+  ecu_aap_kpa:
+    type: graph_data
+    display_name: "AAP (kPa)"
+    default_color: "#00FFFF"
+    units: kPa
+    owns_axis: false
+    normalize: true
+
+  ecu_front_ign_delay:
+    type: graph_data
+    display_name: "Front Ignition Delay"
+    units: degrees
+    owns_axis: true
+    normalize: true
+
+  ecu_rear_ign_delay:
+    type: graph_data
+    display_name: "Rear Ignition Delay"
+    units: degrees
+    owns_axis: true
+    normalize: true
+
+  gps_velocity_mph:
+    type: graph_data
+    display_name: "GPS Speed"
+    units: mph
+    owns_axis: true
+    normalize: true
+    display_range_min_top: 30.0  # Minimum value for top of display (prevents over-scaling at low speeds)
+
+  # ============================================================================
+  # GRAPH MARKERS - Event markers attached to graph data
+  # ============================================================================
+
+  ecu_spark_x1:
+    type: graph_marker
+    display_name: "Spark X1"
+    attach_to: ecu_rpm_instantaneous
+    offset: 0.025
+    label: "S1"
+    max_visible: 100
+    default_color: "#FF0000"
+
+  ecu_spark_x2:
+    type: graph_marker
+    display_name: "Spark X2"
+    attach_to: ecu_rpm_instantaneous
+    offset: -0.025
+    label: "S2"
+    max_visible: 100
+    default_color: "#FF6600"
+
+  ecu_crankref_id:
+    type: graph_marker
+    display_name: "ecu_crank_sensor"
+    attach_to: ecu_rpm_instantaneous
+    line_height: 0.04
+    label_format: "CR{value}"
+    max_visible: 100
+    default_color: "#00FF00"
+
+  ecu_camshaft_timestamp:
+    type: graph_marker
+    display_name: "ecu_cam_sensor"
+    attach_to: ecu_rpm_instantaneous
+    line_height: -0.04
+    label: "CAM"
+    max_visible: 100
+    default_color: "#00FFFF"
+
+  ecu_crankref_timestamp:
+    type: graph_data
+    display_name: "Crank Reference Timestamp"
+    default_color: "#808080"
+    hidden: true  # Internal stream, not displayed to user
+
+  # ============================================================================
+  # BAR DATA - Horizontal bars with start time and duration
+  # ============================================================================
+
+  # Injector bars - Phase 3+ combined format (preferred)
+  ecu_front_inj:
+    type: bar_data
+    display_name: "Front Injector"
+    y_position: 0.95  # Will be dynamically adjusted
+    height: 0.04
+    alpha: 0.7
+    default_color: "#FF6600"
+    tooltip: "Front Injector\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    # Combined format: single dataset with [time_ns, duration_ticks where 1 tick = 2μs]
+    combined_format: true
+    duration_units: "ticks"  # Duration in 2μs timer ticks
+
+  ecu_rear_inj:
+    type: bar_data
+    display_name: "Rear Injector"
+    y_position: 0.90  # Will be dynamically adjusted
+    height: 0.04
+    alpha: 0.7
+    default_color: "#FF9900"
+    tooltip: "Rear Injector\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    # Combined format: single dataset with [time_ns, duration_ticks where 1 tick = 2μs]
+    combined_format: true
+    duration_units: "ticks"  # Duration in 2μs timer ticks
+
+  # Coil bars - Phase 5+ combined format
+  ecu_front_coil_bar:
+    type: bar_data
+    display_name: "Front Coil #1"
+    y_position: 1.03  # Will be dynamically adjusted
+    height: 0.04
+    alpha: 0.7
+    default_color: "#FF0000"
+    tooltip: "Front Coil #1\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    # Combined format: single dataset with [time_ns, duration_ns]
+    combined_format: true
+    duration_units: "nanoseconds"
+
+  ecu_front_coil_manual_bar:
+    type: bar_data
+    display_name: "Front Coil #2"
+    y_position: 1.08  # Will be dynamically adjusted
+    height: 0.04
+    alpha: 0.7
+    default_color: "#CC0000"
+    tooltip: "Front Coil #2\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    # Combined format: single dataset with [time_ns, duration_ns]
+    combined_format: true
+    duration_units: "nanoseconds"
+
+  ecu_rear_coil_bar:
+    type: bar_data
+    display_name: "Rear Coil #1"
+    y_position: 1.13  # Will be dynamically adjusted
+    height: 0.04
+    alpha: 0.7
+    default_color: "#0000FF"
+    tooltip: "Rear Coil #1\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    # Combined format: single dataset with [time_ns, duration_ns]
+    combined_format: true
+    duration_units: "nanoseconds"
+
+  ecu_rear_coil_manual_bar:
+    type: bar_data
+    display_name: "Rear Coil #2"
+    y_position: 1.18  # Will be dynamically adjusted
+    height: 0.04
+    alpha: 0.7
+    default_color: "#0000CC"
+    tooltip: "Rear Coil #2\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    # Combined format: single dataset with [time_ns, duration_ns]
+    combined_format: true
+    duration_units: "nanoseconds"
+
+  # Coil bars - legacy format (fallback for old HDF5 files)
+  ecu_front_coil_on_actual:
+    type: bar_data
+    display_name: "Front Coil #1 (Legacy)"
+    y_position: 1.03
+    height: 0.04
+    alpha: 0.7
+    default_color: "#FF0000"
+    tooltip: "Front Coil #1"
+    off_stream: ecu_front_coil_off_actual
+    legacy_format: true
+
+  ecu_front_coil_manual_on_actual:
+    type: bar_data
+    display_name: "Front Coil #2 (Legacy)"
+    y_position: 1.08
+    height: 0.04
+    alpha: 0.7
+    default_color: "#CC0000"
+    tooltip: "Front Coil #2"
+    off_stream: ecu_front_coil_manual_off_actual
+    legacy_format: true
+
+  ecu_rear_coil_on_actual:
+    type: bar_data
+    display_name: "Rear Coil #1 (Legacy)"
+    y_position: 1.13
+    height: 0.04
+    alpha: 0.7
+    default_color: "#0000FF"
+    tooltip: "Rear Coil #1"
+    off_stream: ecu_rear_coil_off_actual
+    legacy_format: true
+
+  ecu_rear_coil_manual_on_actual:
+    type: bar_data
+    display_name: "Rear Coil #2 (Legacy)"
+    y_position: 1.18
+    height: 0.04
+    alpha: 0.7
+    default_color: "#0000CC"
+    tooltip: "Rear Coil #2"
+    off_stream: ecu_rear_coil_manual_off_actual
+    legacy_format: true
+
+  # ============================================================================
+  # TIME MARKERS - Markers on the time axis
+  # ============================================================================
+
+  gps_position:
+    type: time_marker
+    display_name: "GPS Position"
+    y_position: -0.05
+    shape: triangle
+    size: 10
+    default_color: "#0000FF"
+    tooltip: "GPS\nLat: {lat:.6f}\nLon: {lon:.6f}\nSpeed: {speed:.1f} mph"
+
+  gps_fix_type:
+    type: time_marker
+    display_name: "GPS Fix Change"
+    y_position: -0.06
+    shape: diamond
+    size: 8
+    default_color: "#00AAFF"
+    tooltip: "GPS Fix: {fix_type}"
+
+  ecu_cam_error:
+    type: time_marker
+    display_name: "Cam Error"
+    y_position: -0.07
+    shape: square
+    size: 8
+    default_color: "#FF0000"
+    tooltip: "Cam Error at {time:.3f}s"
+
+  ecu_cpu_event:
+    type: time_marker
+    display_name: "CPU Event"
+    y_position: -0.075
+    shape: circle
+    size: 6
+    default_color: "#FFAA00"
+    tooltip: "CPU Event: {value}"
+
+  ecu_fuel_pump:
+    type: time_marker
+    display_name: "Fuel Pump"
+    y_position: -0.08
+    shape: square
+    size: 8
+    default_color: "#00FF00"
+    tooltip: "Fuel Pump: {state}"
+
+  ecu_nospark:
+    type: time_marker
+    display_name: "No Spark Event"
+    y_position: -0.085
+    shape: circle
+    size: 6
+    default_color: "#FF00FF"
+    tooltip: "No Spark at {time:.3f}s"
+
+  ecu_portg_debug:
+    type: time_marker
+    display_name: "Port G Debug"
+    y_position: -0.09
+    shape: circle
+    size: 5
+    default_color: "#AAAAAA"
+    tooltip: "Port G: {value}"
+
+# Global visualization settings
+settings:
+  data_normalize_max: 0.85  # Scale data to 85% of window height
+  y_range_min: -0.10  # Bottom of view (for time markers)
+  y_range_max: 1.0    # Top of view
+
+  # Initial navigation selection box positioning
+  nav_initial_anchor: "first_cam"  # Options: "first_cam", "data_start"
+  nav_offset_before: 1.0  # Seconds before anchor point (default: 1.0)
+  nav_offset_after: 5.0   # Seconds after anchor point (default: 5.0)
+
+  performance:
+    max_injector_bars_visible: 5000
+    max_event_markers_visible: 100

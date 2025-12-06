@@ -354,6 +354,16 @@ class HDF5Writer:
         # Prospective timestamp warnings (deprecated - will be removed)
         self.prospective_past_warning_count = 0  # Prospective timestamps in the past
 
+        # Pending injector events for pairing ON+duration into combined bar datasets
+        self.pending_front_inj = None  # (time_ns, on_value) waiting for duration
+        self.pending_rear_inj = None   # (time_ns, on_value) waiting for duration
+
+        # Pending coil events for pairing ON+OFF into combined bar datasets
+        self.pending_front_coil = None  # (time_ns, on_value) waiting for OFF
+        self.pending_front_coil_manual = None  # (time_ns, on_value) waiting for OFF
+        self.pending_rear_coil = None  # (time_ns, on_value) waiting for OFF
+        self.pending_rear_coil_manual = None  # (time_ns, on_value) waiting for OFF
+
     def open(self):
         """Open HDF5 file and create resizable datasets with chunking."""
         self.h5file = h5py.File(self.filename, 'w')
@@ -377,15 +387,19 @@ class HDF5Writer:
         self.datasets['ecu_rpm_instantaneous'] = self.h5file.create_dataset('ecu_rpm_instantaneous', (0, 2), dtype='float64', **ds_opts)
         self.datasets['ecu_rpm_smoothed'] = self.h5file.create_dataset('ecu_rpm_smoothed', (0, 2), dtype='float64', **ds_opts)
 
-        # Fuel injection - dual events for prospective timestamps
-        # _calc: when ECU calculated the schedule (sequenced time)
-        # _actual: when injector actually turns on (prospective timestamp converted to absolute)
-        self.datasets['ecu_front_inj_on_calc'] = self.h5file.create_dataset('ecu_front_inj_on_calc', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_front_inj_on_actual'] = self.h5file.create_dataset('ecu_front_inj_on_actual', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_front_inj_duration'] = self.h5file.create_dataset('ecu_front_inj_duration', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_rear_inj_on_calc'] = self.h5file.create_dataset('ecu_rear_inj_on_calc', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_rear_inj_on_actual'] = self.h5file.create_dataset('ecu_rear_inj_on_actual', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_rear_inj_duration'] = self.h5file.create_dataset('ecu_rear_inj_duration', (0, 2), dtype='uint64', **ds_opts)
+        # Combined injector bar datasets (Phase 3+)
+        # Legacy separate ON/duration datasets removed - only combined format now
+        # Format: (time_ns, duration_ticks) - time is actual ON time, duration in timer ticks (2μs per tick)
+        ds_opts_bar = {'maxshape': (None, 2), 'chunks': chunk_2d, 'compression': 'gzip', 'compression_opts': 4}
+        self.datasets['ecu_front_inj'] = self.h5file.create_dataset('ecu_front_inj', (0, 2), dtype='uint64', **ds_opts_bar)
+        self.datasets['ecu_rear_inj'] = self.h5file.create_dataset('ecu_rear_inj', (0, 2), dtype='uint64', **ds_opts_bar)
+
+        # Combined coil bar datasets (Phase 5+)
+        # Format: (on_time_ns, duration_ns) - time is actual ON time, duration calculated from ON-to-OFF
+        self.datasets['ecu_front_coil_bar'] = self.h5file.create_dataset('ecu_front_coil_bar', (0, 2), dtype='uint64', **ds_opts_bar)
+        self.datasets['ecu_front_coil_manual_bar'] = self.h5file.create_dataset('ecu_front_coil_manual_bar', (0, 2), dtype='uint64', **ds_opts_bar)
+        self.datasets['ecu_rear_coil_bar'] = self.h5file.create_dataset('ecu_rear_coil_bar', (0, 2), dtype='uint64', **ds_opts_bar)
+        self.datasets['ecu_rear_coil_manual_bar'] = self.h5file.create_dataset('ecu_rear_coil_manual_bar', (0, 2), dtype='uint64', **ds_opts_bar)
 
         # Ignition - dual events for prospective timestamps
         self.datasets['ecu_front_coil_on_calc'] = self.h5file.create_dataset('ecu_front_coil_on_calc', (0, 2), dtype='uint64', **ds_opts)
@@ -414,8 +428,8 @@ class HDF5Writer:
 
         # Sensors
         self.datasets['ecu_throttle_adc'] = self.h5file.create_dataset('ecu_throttle_adc', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_map_adc'] = self.h5file.create_dataset('ecu_map_adc', (0, 2), dtype='uint64', **ds_opts)
-        self.datasets['ecu_aap_adc'] = self.h5file.create_dataset('ecu_aap_adc', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_map_kpa'] = self.h5file.create_dataset('ecu_map_kpa', (0, 2), dtype='float32', **ds_opts)
+        self.datasets['ecu_aap_kpa'] = self.h5file.create_dataset('ecu_aap_kpa', (0, 2), dtype='float32', **ds_opts)
         self.datasets['ecu_coolant_temp_c'] = self.h5file.create_dataset('ecu_coolant_temp_c', (0, 2), dtype='float32', **ds_opts)
         self.datasets['ecu_air_temp_c'] = self.h5file.create_dataset('ecu_air_temp_c', (0, 2), dtype='float32', **ds_opts)
         self.datasets['ecu_battery_voltage_v'] = self.h5file.create_dataset('ecu_battery_voltage_v', (0, 2), dtype='float32', **ds_opts)
@@ -489,6 +503,92 @@ class HDF5Writer:
 
         # Clear buffer
         self.buffers[dataset_name] = []
+
+    def append_injector_on(self, injector, time_ns, on_value):
+        """Record injector ON event, waiting for duration to create combined bar.
+
+        Args:
+            injector: 'front' or 'rear'
+            time_ns: Timestamp in nanoseconds
+            on_value: ON event value (not currently used, but kept for compatibility)
+        """
+        if injector == 'front':
+            self.pending_front_inj = (time_ns, on_value)
+        elif injector == 'rear':
+            self.pending_rear_inj = (time_ns, on_value)
+
+    def append_injector_duration(self, injector, duration_ticks):
+        """Record injector duration, pair with pending ON event to create combined bar.
+
+        Args:
+            injector: 'front' or 'rear'
+            duration_ticks: Duration in timer ticks (2μs per tick)
+        """
+        if injector == 'front':
+            if self.pending_front_inj is not None:
+                time_ns, on_value = self.pending_front_inj
+                # Create combined bar record: [time_ns, duration_ticks]
+                self.append_data('ecu_front_inj', [time_ns, duration_ticks])
+                self.pending_front_inj = None
+        elif injector == 'rear':
+            if self.pending_rear_inj is not None:
+                time_ns, on_value = self.pending_rear_inj
+                # Create combined bar record: [time_ns, duration_ticks]
+                self.append_data('ecu_rear_inj', [time_ns, duration_ticks])
+                self.pending_rear_inj = None
+
+    def append_coil_on(self, coil, time_ns, on_value):
+        """Record coil ON event, waiting for OFF to create combined bar.
+
+        Args:
+            coil: 'front_coil', 'front_coil_manual', 'rear_coil', or 'rear_coil_manual'
+            time_ns: Timestamp in nanoseconds
+            on_value: ON event value (not currently used, but kept for compatibility)
+        """
+        if coil == 'front_coil':
+            self.pending_front_coil = (time_ns, on_value)
+        elif coil == 'front_coil_manual':
+            self.pending_front_coil_manual = (time_ns, on_value)
+        elif coil == 'rear_coil':
+            self.pending_rear_coil = (time_ns, on_value)
+        elif coil == 'rear_coil_manual':
+            self.pending_rear_coil_manual = (time_ns, on_value)
+
+    def append_coil_off(self, coil, off_time_ns):
+        """Record coil OFF event, pair with pending ON event to create combined bar.
+
+        Args:
+            coil: 'front_coil', 'front_coil_manual', 'rear_coil', or 'rear_coil_manual'
+            off_time_ns: OFF event timestamp in nanoseconds
+        """
+        if coil == 'front_coil':
+            if self.pending_front_coil is not None:
+                on_time_ns, on_value = self.pending_front_coil
+                duration_ns = off_time_ns - on_time_ns
+                if duration_ns > 0:  # Sanity check
+                    self.append_data('ecu_front_coil_bar', [on_time_ns, duration_ns])
+                self.pending_front_coil = None
+        elif coil == 'front_coil_manual':
+            if self.pending_front_coil_manual is not None:
+                on_time_ns, on_value = self.pending_front_coil_manual
+                duration_ns = off_time_ns - on_time_ns
+                if duration_ns > 0:
+                    self.append_data('ecu_front_coil_manual_bar', [on_time_ns, duration_ns])
+                self.pending_front_coil_manual = None
+        elif coil == 'rear_coil':
+            if self.pending_rear_coil is not None:
+                on_time_ns, on_value = self.pending_rear_coil
+                duration_ns = off_time_ns - on_time_ns
+                if duration_ns > 0:
+                    self.append_data('ecu_rear_coil_bar', [on_time_ns, duration_ns])
+                self.pending_rear_coil = None
+        elif coil == 'rear_coil_manual':
+            if self.pending_rear_coil_manual is not None:
+                on_time_ns, on_value = self.pending_rear_coil_manual
+                duration_ns = off_time_ns - on_time_ns
+                if duration_ns > 0:
+                    self.append_data('ecu_rear_coil_manual_bar', [on_time_ns, duration_ns])
+                self.pending_rear_coil_manual = None
 
     def close(self):
         """Write metadata and close HDF5 file."""
@@ -580,9 +680,6 @@ rpm_hist = arr.array('d', [])
 class TimeKeeper:
     """Manages 64-bit nanosecond time tracking with wraparound detection.
 
-    SIMPLIFIED: ECU firmware guarantees _TS events are in non-decreasing time order.
-    No reordering or lookahead needed - just handle wraparound correctly.
-
     Implements the time tracking requirements:
     - 64-bit nanosecond counter starting at 0
     - 16-bit timer (2µs per tick) wraparound detection
@@ -618,8 +715,13 @@ class TimeKeeper:
     def process_ts_event(self, raw_ts, is_oflo=False, is_hoflo=False):
         """Process a _TS (retrospective timestamp) event and advance time.
 
-        SIMPLIFIED: ECU guarantees _TS events are in non-decreasing order.
-        Negative delta always means wraparound (not out-of-order).
+        Rollover is detected by checking sign bits of consecutive timestamps:
+        - If prev_ts[15]==1 and raw_ts[15]==0: rollover occurred
+        - Otherwise: no rollover
+
+        Special OFLO handling:
+        - If OFLO event is seen but sign-bit check indicates NO rollover,
+          the OFLO must be completely ignored (stale prediction).
 
         Args:
             raw_ts: Raw 16-bit timestamp value
@@ -629,12 +731,21 @@ class TimeKeeper:
         Returns:
             Current absolute time in nanoseconds
         """
+        # Check sign bits for rollover detection
+        prev_sign_bit = (self.prev_ts >> 15) & 1
+        curr_sign_bit = (raw_ts >> 15) & 1
+        rollover_occurred = (prev_sign_bit == 1) and (curr_sign_bit == 0)
+
+        # Special case: OFLO event with no actual rollover must be ignored
+        if is_oflo and not rollover_occurred:
+            # Stale OFLO prediction - do not update time or prev_ts
+            return self.time_ns
+
         # Calculate delta from previous timestamp
         delta_ticks = raw_ts - self.prev_ts
 
-        # Handle wraparound: if delta is negative, timer must have wrapped
-        # (since ECU guarantees non-decreasing time order)
-        if delta_ticks < 0:
+        # Handle wraparound if rollover detected
+        if rollover_occurred:
             delta_ticks += self.TIMER_MAX
 
         # Advance time
@@ -871,6 +982,12 @@ def decodeL000D(byte):
 # An excellent calculator of NTC thermistor response can be found here:
 #   https://www.thinksrs.com/downloads/programs/therm%20calc/ntccalibrator/ntccalculator.html
 #
+# This thermistor data was published in Aprilia's "Mille Training Manual":
+#  - At 20 degrees centigrade the resistance must be about 2450 Ohms
+#  - At 40 degrees centigrade the resistance must be about 1114 Ohms
+#  - At 60 degrees centigrade the resistance must be about 584 Ohms
+#  - At 90 degrees centigrade the resistance must be about 245 Ohms
+
 def convertApriliaTempSensorAdcToDegC(adc):
     # Work backwards to get the voltage we must have measured.
     # Vref is nominally 5.0V, and the ADC is 8 bits (255 max value)
@@ -912,6 +1029,27 @@ def convertApriliaTempSensorAdcToDegC(adc):
     # Experiments show that S_H and Beta differ by about 1 degree at most, so it probably does not matter which
     # one to use. Nonetheless, the S-H method is known to be more accurate so we use it.
     return degC_SH
+
+
+def convertPressureSensorAdcToKpa(adc_counts):
+    """
+    Convert Aprilia MAP/AAP pressure sensor ADC counts to kPa.
+
+    Sensor output formula: Vo = Vcc * (0.006*Pi + 0.12)
+    Solving for pressure: Pi = [Vo - (0.12*Vcc)] / (0.006*Vcc)
+    Where Vo = (ADC/256) * Vref
+    and Vref = Vcc = 5.0V
+
+    Args:
+        adc_counts: ADC value (0-255)
+
+    Returns:
+        Pressure in kPa (float)
+    """
+    Vref = 5.0
+    Vo = (adc_counts / 256.0) * Vref
+    pressure_kpa = (Vo - (0.12 * Vref)) / (0.006 * Vref)
+    return pressure_kpa
 
 
 def read(f, readCount, showAddress=False, newLine=True):
@@ -1119,7 +1257,7 @@ def main():
                     # RETROSPECTIVE timestamp - event HAS occurred (b15 went 0→1)
                     # This is a time anchor event, marks ~65536 ticks from previous anchor
                     timekeeper.process_ts_event(marker_ts, is_hoflo=True)
-                    print(f"{fmt_record(recordCnt, timekeeper)} H_OFLO_TS: {marker_ts}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} HOFLO_TS: {marker_ts}")
                     # HOFLO not written to HDF5 - used only for time tracking
 
                 elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_PTS:
@@ -1129,19 +1267,17 @@ def main():
                     timekeeper.advance_time_by_ns(1)
                     print(f"{fmt_record(recordCnt, timekeeper)} FI_ON:  {fi_on}")
                     if h5_writer:
-                        # Create dual events: calc time (sequenced) and actual time (prospective)
-                        calc_time_ns = timekeeper.get_time_ns()
-                        h5_writer.append_data('ecu_front_inj_on_calc', [calc_time_ns, fi_on])
-                        # Convert prospective timestamp to absolute time
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
-                        if actual_time_ns is not None:
-                            h5_writer.append_data('ecu_front_inj_on_actual', [actual_time_ns, fi_on])
+                        # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()
+                        # Record as pending for combined bar dataset
+                        h5_writer.append_injector_on('front', actual_time_ns, fi_on)
 
                 elif byte == L.LOGID_ECU_F_INJ_DUR_TYPE_U16:
                     fi_dur = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_DUR_DLEN), byteorder='little', signed=False)
                     print(f"{fmt_record(recordCnt, timekeeper)} FI_DUR: {fi_dur}")
                     if h5_writer:
-                        h5_writer.append_data('ecu_front_inj_duration', [timekeeper.get_time_ns(), fi_dur])
+                        # Pair with pending ON event to create combined bar
+                        h5_writer.append_injector_duration('front', fi_dur)
 
                 elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_PTS:
                     ri_on = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_ON_DLEN), byteorder='little', signed=False)
@@ -1149,19 +1285,17 @@ def main():
                     timekeeper.advance_time_by_ns(1)
                     print(f"{fmt_record(recordCnt, timekeeper)} RI_ON:  {ri_on}")
                     if h5_writer:
-                        # Create dual events: calc time (sequenced) and actual time (prospective)
-                        calc_time_ns = timekeeper.get_time_ns()
-                        h5_writer.append_data('ecu_rear_inj_on_calc', [calc_time_ns, ri_on])
-                        # Convert prospective timestamp to absolute time
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
-                        if actual_time_ns is not None:
-                            h5_writer.append_data('ecu_rear_inj_on_actual', [actual_time_ns, ri_on])
+                        # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()
+                        # Record as pending for combined bar dataset
+                        h5_writer.append_injector_on('rear', actual_time_ns, ri_on)
 
                 elif byte == L.LOGID_ECU_R_INJ_DUR_TYPE_U16:
                     ri_dur = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_DUR_DLEN), byteorder='little', signed=False)
                     print(f"{fmt_record(recordCnt, timekeeper)} RI_DUR: {ri_dur}")
                     if h5_writer:
-                        h5_writer.append_data('ecu_rear_inj_duration', [timekeeper.get_time_ns(), ri_dur])
+                        # Pair with pending ON event to create combined bar
+                        h5_writer.append_injector_duration('rear', ri_dur)
 
                 elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_PTS:
                     fc_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_ON_DLEN), byteorder='little', signed=False)
@@ -1173,6 +1307,8 @@ def main():
                         actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_front_coil_on_actual', [actual_time_ns, fc_on])
+                            # Record as pending for combined bar dataset
+                            h5_writer.append_coil_on('front_coil', actual_time_ns, fc_on)
 
                 elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_PTS:
                     fc_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_OFF_DLEN), byteorder='little', signed=False)
@@ -1184,6 +1320,8 @@ def main():
                         actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_front_coil_off_actual', [actual_time_ns, fc_off])
+                            # Pair with pending ON event to create combined bar
+                            h5_writer.append_coil_off('front_coil', actual_time_ns)
 
                 elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_PTS:
                     rc_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_ON_DLEN), byteorder='little', signed=False)
@@ -1195,6 +1333,8 @@ def main():
                         actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_rear_coil_on_actual', [actual_time_ns, rc_on])
+                            # Record as pending for combined bar dataset
+                            h5_writer.append_coil_on('rear_coil', actual_time_ns, rc_on)
 
                 elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_PTS:
                     rc_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_OFF_DLEN), byteorder='little', signed=False)
@@ -1206,6 +1346,8 @@ def main():
                         actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_rear_coil_off_actual', [actual_time_ns, rc_off])
+                            # Pair with pending ON event to create combined bar
+                            h5_writer.append_coil_off('rear_coil', actual_time_ns)
 
                 elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_PTS:
                     fcm_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
@@ -1217,6 +1359,8 @@ def main():
                         actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_front_coil_manual_on_actual', [actual_time_ns, fcm_on])
+                            # Record as pending for combined bar dataset
+                            h5_writer.append_coil_on('front_coil_manual', actual_time_ns, fcm_on)
 
                 elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS:
                     fcm_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
@@ -1228,6 +1372,8 @@ def main():
                         actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_front_coil_manual_off_actual', [actual_time_ns, fcm_off])
+                            # Pair with pending ON event to create combined bar
+                            h5_writer.append_coil_off('front_coil_manual', actual_time_ns)
 
                 elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_PTS:
                     rcm_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
@@ -1239,6 +1385,8 @@ def main():
                         actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_rear_coil_manual_on_actual', [actual_time_ns, rcm_on])
+                            # Record as pending for combined bar dataset
+                            h5_writer.append_coil_on('rear_coil_manual', actual_time_ns, rcm_on)
 
                 elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS:
                     rcm_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
@@ -1250,6 +1398,8 @@ def main():
                         actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_rear_coil_manual_off_actual', [actual_time_ns, rcm_off])
+                            # Pair with pending ON event to create combined bar
+                            h5_writer.append_coil_off('rear_coil_manual', actual_time_ns)
 
                 elif byte == L.LOGID_ECU_F_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_F_IGN_DLY_DLEN)[0]
@@ -1318,27 +1468,29 @@ def main():
                         # Trouble: the VTA is only a 10-bit value. This reading is out of range!
                         print(f"ERR: At byte {(f.tell()-L.LOGID_ECU_RAW_VTA_DLEN):08X}: LOGID_ECU_RAW_VTA_TYPE_U16 is out of range 0x000..0x3FF: 0x{vta:04X}, ignoring!", file=sys.stderr)
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta} ADC")
                         if h5_writer:
                             h5_writer.append_data('ecu_throttle_adc', [timekeeper.get_time_ns(), vta])
 
                 elif byte == L.LOGID_ECU_RAW_MAP_TYPE_U8:
-                    map = read(f, L.LOGID_ECU_RAW_MAP_DLEN)[0]
-                    print(f"{fmt_record(recordCnt, timekeeper)} MAP:    {map}")
+                    map_adc = read(f, L.LOGID_ECU_RAW_MAP_DLEN)[0]
+                    map_kpa = convertPressureSensorAdcToKpa(map_adc)
+                    print(f"{fmt_record(recordCnt, timekeeper)} MAP:    {map_kpa:.1f} kPa")
                     if h5_writer:
-                        h5_writer.append_data('ecu_map_adc', [timekeeper.get_time_ns(), map])
+                        h5_writer.append_data('ecu_map_kpa', [timekeeper.get_time_ns(), map_kpa])
 
                 elif byte == L.LOGID_ECU_RAW_AAP_TYPE_U8:
-                    aap = read(f, L.LOGID_ECU_RAW_AAP_DLEN)[0]
-                    print(f"{fmt_record(recordCnt, timekeeper)} AAP:    {aap}")
+                    aap_adc = read(f, L.LOGID_ECU_RAW_AAP_DLEN)[0]
+                    aap_kpa = convertPressureSensorAdcToKpa(aap_adc)
+                    print(f"{fmt_record(recordCnt, timekeeper)} AAP:    {aap_kpa:.1f} kPa")
                     if h5_writer:
-                        h5_writer.append_data('ecu_aap_adc', [timekeeper.get_time_ns(), aap])
+                        h5_writer.append_data('ecu_aap_kpa', [timekeeper.get_time_ns(), aap_kpa])
 
                 elif byte == L.LOGID_ECU_RAW_THW_TYPE_U8:
                     thw_adc = read(f, L.LOGID_ECU_RAW_THW_DLEN)[0]
 
                     thw_C = convertApriliaTempSensorAdcToDegC(thw_adc)
-                    print(f"{fmt_record(recordCnt, timekeeper)} THW:    {thw_C:.1f}C")
+                    print(f"{fmt_record(recordCnt, timekeeper)} THW:    {thw_C:.1f} C")
                     if h5_writer:
                         h5_writer.append_data('ecu_coolant_temp_c', [timekeeper.get_time_ns(), thw_C])
 
@@ -1346,7 +1498,7 @@ def main():
                     tha_adc = read(f, L.LOGID_ECU_RAW_THA_DLEN)[0]
 
                     tha_C = convertApriliaTempSensorAdcToDegC(tha_adc)
-                    print(f"{fmt_record(recordCnt, timekeeper)} THA:    {tha_C:.1f}C")
+                    print(f"{fmt_record(recordCnt, timekeeper)} THA:    {tha_C:.1f} C")
                     if h5_writer:
                         h5_writer.append_data('ecu_air_temp_c', [timekeeper.get_time_ns(), tha_C])
 
@@ -1355,7 +1507,7 @@ def main():
                     # then feeds it to an ADC where 5V represents the max ADC value 0xFF.
                     adc = read(f, L.LOGID_ECU_RAW_VM_DLEN)[0]
                     vm_V = (adc/256) * 5 * 4
-                    print(f"{fmt_record(recordCnt, timekeeper)} VM:     {vm_V:.2f}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} VM:     {vm_V:.2f} V")
                     if h5_writer:
                         h5_writer.append_data('ecu_battery_voltage_v', [timekeeper.get_time_ns(), vm_V])
 
@@ -1372,7 +1524,6 @@ def main():
                     # Save timestamp AFTER advancing - this is when the current CR event occurred
                     # This marks the END of the previous period, which is what the RPM calculation represents
                     rpm_timestamp_ns = timekeeper.get_time_ns()
-                    print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts}")
                     if h5_writer:
                         h5_writer.append_data('ecu_crankref_timestamp', [timekeeper.get_time_ns(), cr_ts])
 
@@ -1382,7 +1533,9 @@ def main():
                             elapsed += 65536
 
                     cr_ts_prev = cr_ts
-                    if (elapsed >= 0):
+                    if (elapsed < 0):
+                        print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts}")
+                    else:
                         rpm = 60000000 / (elapsed * 2 * 6)
 
                         rpm_hist.append(rpm)
@@ -1390,7 +1543,7 @@ def main():
                             rpm_hist.pop(0)
                         rpm_avg = sum(rpm_hist) / len(rpm_hist)
 
-                        print(f"{fmt_record(recordCnt, timekeeper)} cr_ts: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
 
                         if h5_writer:
                             # Use rpm_timestamp_ns which captures the END of the period being measured
@@ -1399,7 +1552,7 @@ def main():
 
                 elif byte == L.LOGID_ECU_CRANKREF_ID_TYPE_U8:
                     crid = read(f, L.LOGID_ECU_CRANKREF_ID_DLEN)[0]
-                    print(f"{fmt_record(recordCnt, timekeeper)} CRID:  {crid}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} CRID:   {crid}")
                     if h5_writer:
                         h5_writer.append_data('ecu_crankref_id', [timekeeper.get_time_ns(), crid])
                     if (elapsed > 0):
@@ -1429,12 +1582,11 @@ def main():
 
                 elif byte == L.LOGID_ECU_CAMSHAFT_TYPE_TS:
                     cam_ts = int.from_bytes(read(f, L.LOGID_ECU_CAMSHAFT_DLEN), byteorder='little', signed=False)
-                    # RETROSPECTIVE timestamp - camshaft event HAS occurred
-                    # Convert raw timestamp to actual time when camshaft event occurred
-                    actual_cam_time_ns = timekeeper.process_retrospective_t_event(cam_ts)
-                    print(f"{fmt_record(recordCnt, timekeeper)} CAM_TS:  {cam_ts} (actual: {actual_cam_time_ns})")
+                    # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
+                    timekeeper.process_ts_event(cam_ts)
+                    print(f"{fmt_record(recordCnt, timekeeper)} CAM_TS: {cam_ts}")
                     if h5_writer:
-                        h5_writer.append_data('ecu_camshaft_timestamp', [actual_cam_time_ns, cam_ts])
+                        h5_writer.append_data('ecu_camshaft_timestamp', [timekeeper.get_time_ns(), cam_ts])
 
                 elif byte == L.LOGID_ECU_CAM_ERR_TYPE_U8:
                     camErr = read(f, L.LOGID_ECU_CAM_ERR_DLEN)[0]
@@ -1447,7 +1599,8 @@ def main():
                     # RETROSPECTIVE timestamp - spark HAS fired
                     # Convert raw timestamp to actual time when spark occurred
                     actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx1_ts)
-                    print(f"{fmt_record(recordCnt, timekeeper)} SP1_TS: {spx1_ts} (actual: {actual_spark_time_ns})")
+                    actual_spark_time_secs = actual_spark_time_ns / 1000000000.0
+                    print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts} (actual: {actual_spark_time_secs})")
                     if h5_writer:
                         h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_ts])
 
@@ -1456,7 +1609,8 @@ def main():
                     # RETROSPECTIVE timestamp - spark HAS fired
                     # Convert raw timestamp to actual time when spark occurred
                     actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx2_ts)
-                    print(f"{fmt_record(recordCnt, timekeeper)} SP2_TS: {spx2_ts} (actual: {actual_spark_time_ns})")
+                    actual_spark_time_secs = actual_spark_time_ns / 1000000000.0
+                    print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts} (actual: {actual_spark_time_secs})")
                     if h5_writer:
                         h5_writer.append_data('ecu_spark_x2', [actual_spark_time_ns, spx2_ts])
 

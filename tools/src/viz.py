@@ -31,6 +31,9 @@ except ImportError:
     HDF5_AVAILABLE = False
     h5py = None
 
+# Import stream configuration system
+from stream_config import get_config_manager, StreamType
+
 # Event visualization constants
 SPARK_LABEL_OFFSET = 0.025  # Vertical offset from RPM line for spark labels (2.5% of normalized range)
 CRANKREF_LINE_HEIGHT = 0.04  # Height of vertical line for crankref markers (4% of normalized range)
@@ -44,7 +47,10 @@ INJECTOR_BAR_HEIGHT = 0.05  # Height of injector bars (normalized)
 INJECTOR_BAR_ALPHA = 0.7  # Transparency of injector bars (0-1)
 TIMER_TICK_DURATION_S = 2e-6  # ECU timer tick duration: 2 microseconds
 MAX_INJECTOR_BARS_VISIBLE = 5000  # Maximum bars to draw for performance
-MAX_REASONABLE_DURATION_TICKS = 25000  # 50ms max reasonable duration
+MAX_REASONABLE_DURATION_TICKS = 50000  # 100ms max reasonable duration (startup injector pulses can be long)
+
+# Axis tick spacing constraints
+MIN_TEMPERATURE_TICK_SPACING_C = 5.0  # Minimum spacing between temperature axis ticks (degrees C)
 
 
 class AppConfig:
@@ -404,9 +410,10 @@ class ColorCheckbox(QCheckBox):
 
 class StreamCheckbox(QWidget):
     """Custom widget for stream selection with color-filled checkbox and colored label - supports drag and drop"""
-    def __init__(self, stream_name, color, parent=None):
+    def __init__(self, stream_name, color, display_name=None, parent=None):
         super().__init__(parent)
         self.stream_name = stream_name
+        self.display_name = display_name or stream_name  # Use display name if provided
         self.color = color
         self.drag_start_pos = None
         self.dark_theme = False  # Track current theme
@@ -427,8 +434,8 @@ class StreamCheckbox(QWidget):
         mono_font = QFont("Monospace", 9)
         mono_font.setStyleHint(QFont.StyleHint.TypeWriter)
 
-        # Create a drag handle area (the label area)
-        self.label = QLabel(stream_name)
+        # Create a drag handle area (the label area) - use display name
+        self.label = QLabel(self.display_name)
         self.label.setFont(mono_font)
         self.label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.label.customContextMenuRequested.connect(self.show_stream_context_menu)
@@ -854,11 +861,13 @@ class DataVisualizationTool(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Initialize configuration manager FIRST
+        # Initialize configuration managers FIRST
         self.config = AppConfig()
+        self.stream_config = get_config_manager()
 
         # Print config location for user awareness
         print(f"Configuration file: {self.config.settings.fileName()}")
+        print(f"Stream configuration: {self.stream_config.config_path}")
 
         self.base_title = "Data Visualization Tool - v1.1"
         self.setWindowTitle(self.base_title)
@@ -1174,6 +1183,11 @@ class DataVisualizationTool(QMainWindow):
         self.graph_plot.zoom_callback = self.handle_graph_zoom
         self.graph_plot.setYRange(0, 100)
 
+        # Disable automatic SI prefix scaling (prevents "(x0.001)" annotations)
+        self.graph_plot.getAxis('left').enableAutoSIPrefix(False)
+        self.graph_plot.getAxis('right').enableAutoSIPrefix(False)
+        self.graph_plot.getAxis('bottom').enableAutoSIPrefix(False)
+
         # Enable and show the right Y-axis
         self.graph_plot.showAxis('right')
         self.graph_plot.setLabel('right', 'Value')
@@ -1258,7 +1272,11 @@ class DataVisualizationTool(QMainWindow):
             color = self.colors[i % len(self.colors)]
             self.stream_colors[stream] = color
 
-            stream_widget = StreamCheckbox(stream, color)
+            # Get display name from config, fallback to stream name
+            stream_config = self.stream_config.get_stream(stream)
+            display_name = stream_config.display_name if stream_config else stream
+
+            stream_widget = StreamCheckbox(stream, color, display_name=display_name)
             stream_widget.set_theme(self.dark_theme)  # Initialize theme
             stream_widget.set_font_size(self.axis_font_size)  # Initialize font size
 
@@ -1452,7 +1470,7 @@ class DataVisualizationTool(QMainWindow):
                             }
                             # Don't add duration streams to stream_names (they're paired with ON streams)
                             # ON streams appear in the list so user can enable them to see injector bars
-                            if key not in ['ecu_front_inj_duration', 'ecu_rear_inj_duration']:
+                            if not self.stream_config.should_skip_in_selection(key):
                                 stream_names.append(key)
 
                     elif len(ds.shape) == 2 and ds.shape[1] == 3:
@@ -1498,13 +1516,40 @@ class DataVisualizationTool(QMainWindow):
                     all_times.extend([raw_data[stream]['time'].min(), raw_data[stream]['time'].max()])
 
                 # Set time bounds from raw data
-                self.total_time_span = float(max(all_times))
-                self.view_start = 0
-                self.view_end = min(self.config.get("default_view_duration"), self.total_time_span * 0.1)
+                time_min = float(min(all_times))
+                time_max = float(max(all_times))
+                self.total_time_span = time_max - time_min
+                self.time_min = time_min  # Store for navigation plot
+                self.time_max = time_max
+
+                # Calculate initial view window based on configuration
+                nav_anchor = self.stream_config.get_setting('nav_initial_anchor', 'first_cam')
+                nav_offset_before = self.stream_config.get_setting('nav_offset_before', 1.0)
+                nav_offset_after = self.stream_config.get_setting('nav_offset_after', 5.0)
+
+                if nav_anchor == 'first_cam' and 'ecu_camshaft_timestamp' in raw_data:
+                    # Position around first CAM event
+                    cam_data = raw_data['ecu_camshaft_timestamp']
+                    if len(cam_data['time']) > 0:
+                        first_cam_time = float(cam_data['time'][0])
+                        self.view_start = max(time_min, first_cam_time - nav_offset_before)
+                        self.view_end = min(time_max, first_cam_time + nav_offset_after)
+                    else:
+                        # No CAM events, fall back to data_start
+                        self.view_start = time_min
+                        view_duration = min(self.config.get("default_view_duration", 10.0), self.total_time_span * 0.1)
+                        self.view_end = min(time_max, self.view_start + view_duration)
+                else:
+                    # Use data_start or default behavior
+                    self.view_start = time_min
+                    view_duration = min(self.config.get("default_view_duration", 10.0), self.total_time_span * 0.1)
+                    self.view_end = min(time_max, self.view_start + view_duration)
+
                 self.initial_view_start = self.view_start
                 self.initial_view_end = self.view_end
 
-                print(f"Time span: {self.total_time_span:.2f} seconds")
+                print(f"Time range: [{time_min:.2f}s, {time_max:.2f}s], span: {self.total_time_span:.2f}s")
+                print(f"Initial view: [{self.view_start:.2f}s, {self.view_end:.2f}s] (anchor: {nav_anchor})")
 
                 # Reset state
                 self.enabled_streams = []
@@ -1704,8 +1749,7 @@ class DataVisualizationTool(QMainWindow):
             self.enabled_streams.append(stream)
 
             # Event streams don't own axes - they're just visual markers
-            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp',
-                          'ecu_front_inj_on_actual', 'ecu_rear_inj_on_actual']:
+            if self.stream_config.is_event_only_stream(stream):
                 self.update_graph_plot()
             # Assign ownership - but don't change the axis owner yet
             elif self.axis_owner is None:
@@ -1736,12 +1780,11 @@ class DataVisualizationTool(QMainWindow):
                     # Find next enabled stream for left axis (skip event marker streams)
                     stream_idx = self.data_streams.index(stream)
                     next_owner = None
-                    event_streams = ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']
 
                     # Search below
                     for i in range(stream_idx + 1, len(self.data_streams)):
                         candidate = self.data_streams[i]
-                        if candidate in self.enabled_streams and candidate not in event_streams:
+                        if candidate in self.enabled_streams and not self.stream_config.is_event_only_stream(candidate):
                             next_owner = candidate
                             break
 
@@ -1749,7 +1792,7 @@ class DataVisualizationTool(QMainWindow):
                     if next_owner is None:
                         for i in range(0, stream_idx):
                             candidate = self.data_streams[i]
-                            if candidate in self.enabled_streams and candidate not in event_streams:
+                            if candidate in self.enabled_streams and not self.stream_config.is_event_only_stream(candidate):
                                 next_owner = candidate
                                 break
 
@@ -1769,7 +1812,7 @@ class DataVisualizationTool(QMainWindow):
     def on_stream_name_clicked(self, stream, event):
         """Handle clicking on stream name to change axis ownership"""
         # Event marker streams can't own axes
-        if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp']:
+        if self.stream_config.is_event_only_stream(stream):
             return
 
         if stream in self.enabled_streams:
@@ -1799,6 +1842,7 @@ class DataVisualizationTool(QMainWindow):
     
     def update_graph_plot(self):
         """Update the main graph plot with dynamic level-of-detail"""
+        import math  # For temperature range calculations
         self.graph_plot.clear()
 
         # Re-add GPS markers after clear (they get removed by clear())
@@ -1817,16 +1861,88 @@ class DataVisualizationTool(QMainWindow):
             self.graph_plot.setYRange(0, 100)
             return
 
+        # First pass: calculate visible range for axis owner (needed for normalization)
+        # Use full dataset minimum, but visible maximum
+        axis_owner_visible_range = None
+        if self.axis_owner and self.axis_owner in self.enabled_streams:
+            if self.axis_owner in self.raw_data:
+                # Get full dataset minimum
+                full_min, full_max = self.stream_ranges.get(self.axis_owner, (0, 1))
+
+                # Get visible data
+                stream_data = self.raw_data[self.axis_owner]
+                all_time = stream_data['time']
+                all_values = stream_data['values']
+                mask = (all_time >= self.view_start) & (all_time <= self.view_end)
+                visible_values = all_values[mask]
+
+                if len(visible_values) > 0:
+                    # Get stream configuration for display range constraints
+                    stream_cfg = self.stream_config.get_stream(self.axis_owner)
+
+                    # Check for fixed display range (e.g., temperature: 0-120°C)
+                    if stream_cfg and stream_cfg.display_range_min is not None and stream_cfg.display_range_max is not None:
+                        # Fixed range - no dynamic scaling
+                        range_min = stream_cfg.display_range_min
+                        range_max = stream_cfg.display_range_max
+                        axis_owner_visible_range = (range_min, range_max)
+                        visible_median = float(np.median(visible_values))
+                        print(f"Stream {self.axis_owner}: fixed range [{range_min:.1f}, {range_max:.1f}] (median: {visible_median:.1f})")
+                    else:
+                        # Dynamic scaling with optional minimum top constraint
+                        visible_max = float(visible_values.max())
+                        range_min = full_min
+
+                        # Check for minimum top constraint (e.g., GPS speed: min 30mph at top)
+                        if stream_cfg and stream_cfg.display_range_min_top is not None:
+                            min_top = stream_cfg.display_range_min_top
+                            if visible_max < min_top:
+                                visible_max = min_top
+                                print(f"Stream {self.axis_owner}: applied min_top constraint {min_top:.1f}")
+
+                        axis_owner_visible_range = (range_min, visible_max)
+
+                    # Avoid division by zero
+                    if axis_owner_visible_range[1] - axis_owner_visible_range[0] < 1e-10:
+                        axis_owner_visible_range = (axis_owner_visible_range[0], axis_owner_visible_range[0] + 1.0)
+                else:
+                    # No visible values in current view - use constraints or full dataset range
+                    stream_cfg = self.stream_config.get_stream(self.axis_owner)
+
+                    # Check for fixed display range
+                    if stream_cfg and stream_cfg.display_range_min is not None and stream_cfg.display_range_max is not None:
+                        range_min = stream_cfg.display_range_min
+                        range_max = stream_cfg.display_range_max
+                        axis_owner_visible_range = (range_min, range_max)
+                        print(f"Stream {self.axis_owner}: no visible data, using fixed range [{range_min:.1f}, {range_max:.1f}]")
+                    else:
+                        # Use full dataset range with optional min_top constraint
+                        range_min = full_min
+                        range_max = full_max
+
+                        if stream_cfg and stream_cfg.display_range_min_top is not None:
+                            min_top = stream_cfg.display_range_min_top
+                            if range_max < min_top:
+                                range_max = min_top
+                                print(f"Stream {self.axis_owner}: no visible data, using full range with min_top {min_top:.1f}")
+
+                        axis_owner_visible_range = (range_min, range_max)
+
+                    # Avoid division by zero
+                    if axis_owner_visible_range[1] - axis_owner_visible_range[0] < 1e-10:
+                        axis_owner_visible_range = (axis_owner_visible_range[0], axis_owner_visible_range[0] + 1.0)
+
         # Plot each enabled stream with dynamic decimation
         for stream in self.enabled_streams:
             if stream not in self.raw_data:
                 continue
 
-            # Skip event marker streams - they have custom visualization
-            # Also skip injector streams - they have custom bar visualization
-            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp',
-                          'ecu_front_inj_on_actual', 'ecu_rear_inj_on_actual',
-                          'ecu_front_inj_duration', 'ecu_rear_inj_duration']:
+            # Skip event-only streams (markers, bars, etc.) - they have custom visualization
+            if self.stream_config.is_event_only_stream(stream):
+                continue
+
+            # Skip duration/helper streams that shouldn't be plotted
+            if self.stream_config.should_skip_in_selection(stream):
                 continue
 
             color = self.stream_colors[stream]
@@ -1836,10 +1952,43 @@ class DataVisualizationTool(QMainWindow):
             all_time = stream_data['time']
             all_values = stream_data['values']
 
-            # Filter to visible time window
+            # Filter to visible time window, including one point on each edge
+            # This ensures lines connect properly even at extreme zoom levels
             mask = (all_time >= self.view_start) & (all_time <= self.view_end)
-            visible_time = all_time[mask]
-            visible_values = all_values[mask]
+            visible_indices = np.where(mask)[0]
+
+            if len(visible_indices) == 0:
+                # No points in view - find closest points on either side
+                left_idx = np.searchsorted(all_time, self.view_start, side='right') - 1
+                right_idx = np.searchsorted(all_time, self.view_end, side='left')
+
+                if left_idx >= 0 and right_idx < len(all_time):
+                    # Points exist on both sides
+                    visible_indices = np.array([left_idx, right_idx])
+                elif left_idx >= 0:
+                    # Only point on left exists
+                    visible_indices = np.array([left_idx])
+                elif right_idx < len(all_time):
+                    # Only point on right exists
+                    visible_indices = np.array([right_idx])
+                else:
+                    # No data at all
+                    continue
+            else:
+                # Expand to include edge points
+                first_visible = visible_indices[0]
+                last_visible = visible_indices[-1]
+
+                # Include one point before first visible (if exists)
+                if first_visible > 0:
+                    visible_indices = np.concatenate([[first_visible - 1], visible_indices])
+
+                # Include one point after last visible (if exists)
+                if last_visible < len(all_time) - 1:
+                    visible_indices = np.concatenate([visible_indices, [last_visible + 1]])
+
+            visible_time = all_time[visible_indices]
+            visible_values = all_values[visible_indices]
 
             if len(visible_time) == 0:
                 continue
@@ -1856,11 +2005,32 @@ class DataVisualizationTool(QMainWindow):
                 plot_time = visible_time
                 plot_values = visible_values
 
-            # Get the stream's full data range for normalization
-            stream_min, stream_max = self.stream_ranges.get(stream, (0, 1))
+            # Get normalization range
+            # Use full dataset minimum, but visible maximum for all streams
+            if stream == self.axis_owner:
+                # Axis owner: use pre-calculated range
+                stream_min, stream_max = axis_owner_visible_range
+            else:
+                # Other streams: full min, visible max
+                full_min, full_max = self.stream_ranges.get(stream, (0, 1))
+                if len(visible_values) > 0:
+                    visible_max = float(visible_values.max())
+                    stream_min = full_min
+                    stream_max = visible_max
+                    if stream_max - stream_min < 1e-10:
+                        stream_max = stream_min + 1.0
+                else:
+                    stream_min, stream_max = full_min, full_max
 
-            # Normalize the data to 0-0.85 range (85% of window height)
-            normalized_data = ((plot_values - stream_min) / (stream_max - stream_min)) * 0.85
+            # Normalize the data to [0, normalize_max]
+            normalize_max = getattr(self, 'dynamic_normalize_max',
+                                   self.stream_config.get_setting('data_normalize_max', 0.85))
+            normalized_data = ((plot_values - stream_min) / (stream_max - stream_min)) * normalize_max
+
+            # If bars are enabled, shift data UP by bar_space_offset so bars appear below
+            bar_offset = getattr(self, 'bar_space_offset', 0.0)
+            if bar_offset > 0:
+                normalized_data = normalized_data + bar_offset
 
             # Get display mode for this stream
             stream_widget = None
@@ -1969,15 +2139,33 @@ class DataVisualizationTool(QMainWindow):
         self.graph_plot.getAxis('bottom').setTickFont(x_tick_font)
 
         # Set the actual Y range for display
-        # Since all streams are now normalized to 0-1, always use 0-1 range
-        # Extend slightly below 0 to show GPS markers at y=-0.05
+        # Account for:
+        # - Bar space at bottom (bar_space_offset)
+        # - Data range (dynamic_normalize_max)
+        # - Headroom above for graph markers (e.g., CRID with line_height=0.04)
+        bar_offset = getattr(self, 'bar_space_offset', 0.0)
+        normalize_max = getattr(self, 'dynamic_normalize_max',
+                               self.stream_config.get_setting('data_normalize_max', 0.85))
+
+        # Calculate top of display area: bar_offset + normalize_max + headroom for markers
+        # Headroom of 0.10 provides space for CRID markers (line_height=0.04) plus text labels
+        # Total: data at 0.85 + marker line 0.04 + text ~0.03 + margin 0.03 = ~0.10 headroom needed
+        y_max = bar_offset + normalize_max + 0.10
+
         self.graph_plot.setXRange(self.view_start, self.view_end, padding=0)
-        self.graph_plot.setYRange(-0.08, 1, padding=0)
+        self.graph_plot.setYRange(-0.08, y_max, padding=0)
 
         # Set up custom tick formatter to show axis owner's real values with round numbers
         if self.axis_owner and self.axis_owner in self.enabled_streams:
-            axis_min, axis_max = self.stream_ranges.get(self.axis_owner, (0, 1))
+            # Use visible range if available, otherwise fall back to full range
+            if axis_owner_visible_range is not None:
+                axis_min, axis_max = axis_owner_visible_range
+            else:
+                axis_min, axis_max = self.stream_ranges.get(self.axis_owner, (0, 1))
+
             axis_range = axis_max - axis_min
+            if axis_range == 0:
+                axis_range = 1  # Avoid division by zero for constant data
 
             # Calculate nice round tick spacing
             import math
@@ -2005,6 +2193,13 @@ class DataVisualizationTool(QMainWindow):
 
             tick_spacing_real = get_nice_tick_spacing(axis_range)  # Calculate spacing based on full range
 
+            # Apply minimum spacing constraints for specific stream types
+            # Check if this is a temperature stream (contains "temp" in name)
+            if 'temp' in self.axis_owner.lower():
+                if tick_spacing_real < MIN_TEMPERATURE_TICK_SPACING_C:
+                    tick_spacing_real = MIN_TEMPERATURE_TICK_SPACING_C
+                    print(f"  Applied MIN_TEMPERATURE_TICK_SPACING_C: {MIN_TEMPERATURE_TICK_SPACING_C}°C")
+
             # Round axis_min DOWN to nearest tick spacing multiple
             # This ensures ticks start at nice round numbers (0, 500, 1000, etc)
             axis_min_rounded = math.floor(axis_min / tick_spacing_real) * tick_spacing_real
@@ -2028,14 +2223,24 @@ class DataVisualizationTool(QMainWindow):
 
             # Convert tick positions to DATA's normalized 0-1 space (where 0=axis_min, 1=axis_max)
             # This is where the ticks will actually be drawn since data is normalized to this range
-            data_normalized_ticks = [(t - axis_min) / axis_range for t in real_ticks]
+            normalize_max = getattr(self, 'dynamic_normalize_max',
+                                   self.stream_config.get_setting('data_normalize_max', 0.85))
+            data_normalized_ticks = [((t - axis_min) / axis_range) * normalize_max for t in real_ticks]
+
+            # If bars are enabled, shift tick positions up by bar offset to match shifted data
+            bar_offset = getattr(self, 'bar_space_offset', 0.0)
+            if bar_offset > 0:
+                data_normalized_ticks = [pos + bar_offset for pos in data_normalized_ticks]
+
             print(f"  Normalized tick positions: {data_normalized_ticks}")
 
             left_axis = self.graph_plot.getAxis('left')
 
-            # Filter ticks to only those within the 0-1 range (visible area)
+            # Filter ticks to only those within the visible area (accounting for bar offset)
+            min_visible = bar_offset
+            max_visible = bar_offset + normalize_max
             visible_ticks = [(norm_pos, real_val) for norm_pos, real_val in zip(data_normalized_ticks, real_ticks)
-                           if 0 <= norm_pos <= 1]
+                           if min_visible <= norm_pos <= max_visible]
 
             print(f"  Visible ticks: {visible_ticks}")
 
@@ -2096,7 +2301,44 @@ class DataVisualizationTool(QMainWindow):
 
         # Set up custom tick formatter for RIGHT axis to show axis owner's real values with round numbers
         if self.right_axis_owner and self.right_axis_owner in self.enabled_streams:
-            axis_min, axis_max = self.stream_ranges.get(self.right_axis_owner, (0, 1))
+            # Get stream configuration for display range constraints
+            right_stream_cfg = self.stream_config.get_stream(self.right_axis_owner)
+
+            # Get visible data for right axis stream
+            full_min, full_max = self.stream_ranges.get(self.right_axis_owner, (0, 1))
+
+            # Check for fixed display range or constraints
+            if right_stream_cfg and right_stream_cfg.display_range_min is not None and right_stream_cfg.display_range_max is not None:
+                # Fixed range - no dynamic scaling
+                axis_min = right_stream_cfg.display_range_min
+                axis_max = right_stream_cfg.display_range_max
+            else:
+                # Dynamic scaling with optional constraints
+                if self.right_axis_owner in self.raw_data:
+                    stream_data = self.raw_data[self.right_axis_owner]
+                    all_time = stream_data['time']
+                    all_values = stream_data['values']
+                    mask = (all_time >= self.view_start) & (all_time <= self.view_end)
+                    visible_values = all_values[mask]
+
+                    if len(visible_values) > 0:
+                        visible_max = float(visible_values.max())
+                        axis_min = full_min
+
+                        # Check for minimum top constraint
+                        if right_stream_cfg and right_stream_cfg.display_range_min_top is not None:
+                            min_top = right_stream_cfg.display_range_min_top
+                            if visible_max < min_top:
+                                visible_max = min_top
+
+                        axis_max = visible_max
+                    else:
+                        axis_min = full_min
+                        axis_max = full_max
+                else:
+                    axis_min = full_min
+                    axis_max = full_max
+
             axis_range = axis_max - axis_min
 
             # Calculate nice round tick spacing
@@ -2124,6 +2366,13 @@ class DataVisualizationTool(QMainWindow):
                 return nice_spacing
 
             tick_spacing_real = get_nice_tick_spacing(axis_range)  # Calculate spacing based on full range
+
+            # Apply minimum spacing constraints for specific stream types
+            # Check if this is a temperature stream (contains "temp" in name)
+            if 'temp' in self.right_axis_owner.lower():
+                if tick_spacing_real < MIN_TEMPERATURE_TICK_SPACING_C:
+                    tick_spacing_real = MIN_TEMPERATURE_TICK_SPACING_C
+                    print(f"  Applied MIN_TEMPERATURE_TICK_SPACING_C: {MIN_TEMPERATURE_TICK_SPACING_C}°C")
 
             # Round axis_min DOWN to nearest tick spacing multiple
             # This ensures ticks start at nice round numbers (0, 500, 1000, etc)
@@ -2285,297 +2534,313 @@ class DataVisualizationTool(QMainWindow):
             # Disable grid for right axis to prevent duplicate horizontal lines
             self.graph_plot.getAxis('right').setGrid(False)
 
-        # Draw event markers if ecu_rpm_instantaneous is available
-        self.draw_spark_events()
-        self.draw_crankref_events()
-        self.draw_camshaft_events()
-        self.draw_injector_bars()
+        # Draw event markers (spark, crankref, camshaft) and bars (injectors, coils)
+        self.draw_spark_events()  # Now draws all graph markers from config
+        self.draw_injector_bars()  # Draws all bar data from config
 
     def draw_spark_events(self):
-        """Draw spark event markers (x1/x2) on the graph, positioned relative to RPM"""
-        # Only draw if we have instantaneous RPM data
-        if 'ecu_rpm_instantaneous' not in self.raw_data:
-            print("DEBUG: No ecu_rpm_instantaneous data for spark events")
+        """Draw all graph marker events (spark, crankref, camshaft) from config"""
+        # Get all graph marker streams from config
+        marker_streams = self.stream_config.get_streams_by_type(StreamType.GRAPH_MARKER)
+
+        for stream_name, stream_cfg in marker_streams.items():
+            # Only draw if enabled
+            if stream_name not in self.enabled_streams:
+                continue
+
+            # Draw this marker stream
+            self._draw_graph_marker_stream(stream_name, stream_cfg)
+
+    def _draw_graph_marker_stream(self, stream_name, config):
+        """
+        Generic function to draw graph marker events positioned relative to their attach_to stream.
+
+        Args:
+            stream_name: Name of the marker stream (e.g., 'ecu_spark_x1')
+            config: StreamConfig object with display properties
+        """
+        # Check if we have the attach_to stream (usually RPM)
+        attach_to = config.attach_to
+        if not attach_to or attach_to not in self.raw_data:
             return
 
-        rpm_data = self.raw_data['ecu_rpm_instantaneous']
-        rpm_time = rpm_data['time']
-        rpm_values = rpm_data['values']
+        if stream_name not in self.raw_data:
+            return
 
-        # Get RPM normalization range
-        rpm_min, rpm_max = self.stream_ranges.get('ecu_rpm_instantaneous', (0, 1))
-        print(f"DEBUG draw_spark_events: RPM range {rpm_min:.1f} to {rpm_max:.1f}")
+        # Get the base stream data (e.g., RPM)
+        base_data = self.raw_data[attach_to]
+        base_time = base_data['time']
+        base_values = base_data['values']
 
-        # Process each spark type
-        spark_streams = [
-            ('ecu_spark_x1', 'S1', SPARK_LABEL_OFFSET),   # x1 above
-            ('ecu_spark_x2', 'S2', -SPARK_LABEL_OFFSET)  # x2 below
-        ]
+        # Get normalization range: full dataset min, visible max
+        full_base_min, full_base_max = self.stream_ranges.get(attach_to, (0, 1))
 
-        for spark_name, label_text, offset in spark_streams:
-            # Only draw if this spark stream is enabled
-            if spark_name not in self.enabled_streams:
-                print(f"DEBUG: {spark_name} not in enabled_streams")
-                continue
+        # Calculate visible max for the base stream
+        visible_base_mask = (base_time >= self.view_start) & (base_time <= self.view_end)
+        visible_base_values = base_values[visible_base_mask]
+        if len(visible_base_values) > 0:
+            visible_base_max = float(visible_base_values.max())
+            base_min = full_base_min
+            base_max = visible_base_max
+        else:
+            base_min = full_base_min
+            base_max = full_base_max
 
-            if spark_name not in self.raw_data:
-                print(f"DEBUG: {spark_name} not in raw_data")
-                continue
+        # Avoid division by zero
+        if base_max - base_min < 1e-10:
+            base_max = base_min + 1.0
 
-            spark_data = self.raw_data[spark_name]
-            spark_times = spark_data['time']
-            print(f"DEBUG: {spark_name} has {len(spark_times)} events, time range {spark_times[0]:.2f} to {spark_times[-1]:.2f}")
+        # Get marker event data
+        marker_data = self.raw_data[stream_name]
+        marker_times = marker_data['time']
+        marker_values = marker_data.get('values', None)  # May have values (e.g., CRID) or not (e.g., spark)
 
-            # Get color from stream colors if available
-            color = self.stream_colors.get(spark_name, '#FF0000')  # Default to red
+        # Get visual properties from config
+        color = self.stream_colors.get(stream_name, config.default_color)
+        offset = config.offset
+        line_height = config.line_height
+        label = config.label
+        label_format = config.label_format
+        max_visible = config.max_visible or self.stream_config.get_setting('performance.max_event_markers_visible', MAX_VISIBLE_EVENT_MARKERS)
 
-            # Filter to visible time window
-            mask = (spark_times >= self.view_start) & (spark_times <= self.view_end)
-            visible_spark_times = spark_times[mask]
-            print(f"DEBUG: {spark_name} has {len(visible_spark_times)} visible events in window {self.view_start:.2f} to {self.view_end:.2f}")
+        # Filter to visible time window
+        mask = (marker_times >= self.view_start) & (marker_times <= self.view_end)
+        visible_marker_times = marker_times[mask]
+        if marker_values is not None:
+            visible_marker_values = marker_values[mask]
+        else:
+            visible_marker_values = None
 
-            # Skip drawing if too many markers would be visible
-            if len(visible_spark_times) > MAX_VISIBLE_EVENT_MARKERS:
-                print(f"DEBUG: Skipping {spark_name} markers - {len(visible_spark_times)} exceeds limit of {MAX_VISIBLE_EVENT_MARKERS}")
-                continue
+        # Skip drawing if too many markers
+        if len(visible_marker_times) > max_visible:
+            print(f"DEBUG: Skipping {stream_name} markers - {len(visible_marker_times)} exceeds limit of {max_visible}")
+            return
 
-            for spark_time in visible_spark_times:
-                # Interpolate RPM value at spark time
-                if spark_time < rpm_time[0] or spark_time > rpm_time[-1]:
-                    continue  # Skip if spark is outside RPM data range
+        # Get normalization factor - use dynamic max if bars are enabled
+        normalize_max = getattr(self, 'dynamic_normalize_max',
+                               self.stream_config.get_setting('data_normalize_max', 0.85))
 
-                # Linear interpolation of RPM at spark time
-                rpm_at_spark = np.interp(spark_time, rpm_time, rpm_values)
+        # Get bar offset if bars are enabled
+        bar_offset = getattr(self, 'bar_space_offset', 0.0)
 
-                # Normalize RPM value to 0-0.85 range (same as plot data)
-                normalized_rpm = ((rpm_at_spark - rpm_min) / (rpm_max - rpm_min)) * 0.85
+        # Draw each marker
+        for i, marker_time in enumerate(visible_marker_times):
+            # Interpolate base value at marker time, or use midpoint if outside attach_to range
+            if marker_time < base_time[0] or marker_time > base_time[-1]:
+                # Marker occurs before/after attach_to stream data
+                # Use midpoint of graph height for positioning
+                normalized_base = normalize_max / 2.0
+                if bar_offset > 0:
+                    normalized_base = normalized_base + bar_offset
+            else:
+                base_at_marker = np.interp(marker_time, base_time, base_values)
+                normalized_base = ((base_at_marker - base_min) / (base_max - base_min)) * normalize_max
 
-                # Calculate label position (above or below RPM line)
-                label_y = normalized_rpm + offset
+                # Shift up by bar offset if bars are enabled
+                if bar_offset > 0:
+                    normalized_base = normalized_base + bar_offset
 
-                # Draw vertical line from label to RPM point
+            # Calculate label position
+            if line_height != 0:
+                # Vertical line with specified height (upward or downward)
+                # line_height determines the line length, offset is ignored
+                if line_height > 0:
+                    # Upward line
+                    label_y = normalized_base + line_height
+                    line_start_y = normalized_base
+                    line_end_y = label_y
+                    text_anchor = (0.5, 1.0)  # Bottom center
+                else:
+                    # Downward line (negative line_height)
+                    label_y = normalized_base + line_height
+                    line_start_y = normalized_base
+                    line_end_y = label_y
+                    text_anchor = (0.5, 0.0)  # Top center
+                draw_line = True
+            elif offset != 0:
+                # Offset-based positioning (spark events style)
+                # Draw line from base to label position
+                label_y = normalized_base + offset
+                line_start_y = normalized_base
+                line_end_y = label_y
+                text_anchor = (0.5, 0.5)  # Center
+                draw_line = True
+            else:
+                # No line, label at base position
+                label_y = normalized_base
+                line_start_y = normalized_base
+                line_end_y = label_y
+                text_anchor = (0.5, 0.5)  # Center
+                draw_line = False
+
+            # Draw line if needed
+            if draw_line:
                 line_item = pg.PlotDataItem(
-                    [spark_time, spark_time],
-                    [label_y, normalized_rpm],
+                    [marker_time, marker_time],
+                    [line_start_y, line_end_y],
                     pen=pg.mkPen(color=color, width=2.0, style=Qt.PenStyle.SolidLine)
                 )
                 self.graph_plot.addItem(line_item)
 
-                # Add text label at offset position
-                text_item = pg.TextItem(text=label_text, color=color, anchor=(0.5, 0.5))
-                text_item.setPos(spark_time, label_y)
-                self.graph_plot.addItem(text_item)
+            # Format label text
+            if label_format and visible_marker_values is not None:
+                # Use format string with value
+                label_text = label_format.format(value=int(visible_marker_values[i]))
+            elif label:
+                # Use fixed label
+                label_text = label
+            else:
+                # No label
+                continue
 
-    def draw_crankref_events(self):
-        """Draw crankref event markers on the graph, positioned relative to RPM"""
-        # Only draw if we have instantaneous RPM data
-        if 'ecu_rpm_instantaneous' not in self.raw_data:
-            return
-
-        # Only draw if crankref stream is enabled
-        if 'ecu_crankref_id' not in self.enabled_streams:
-            return
-
-        if 'ecu_crankref_id' not in self.raw_data:
-            return
-
-        rpm_data = self.raw_data['ecu_rpm_instantaneous']
-        rpm_time = rpm_data['time']
-        rpm_values = rpm_data['values']
-
-        # Get RPM normalization range
-        rpm_min, rpm_max = self.stream_ranges.get('ecu_rpm_instantaneous', (0, 1))
-
-        crankref_data = self.raw_data['ecu_crankref_id']
-        crankref_times = crankref_data['time']
-        crankref_ids = crankref_data['values']
-
-        # Get color for crankref stream
-        color = self.stream_colors.get('ecu_crankref_id', '#00FF00')  # Default to green
-
-        # Filter to visible time window
-        mask = (crankref_times >= self.view_start) & (crankref_times <= self.view_end)
-        visible_crankref_times = crankref_times[mask]
-        visible_crankref_ids = crankref_ids[mask]
-
-        # Skip drawing if too many markers would be visible
-        if len(visible_crankref_times) > MAX_VISIBLE_EVENT_MARKERS:
-            print(f"DEBUG: Skipping crankref markers - {len(visible_crankref_times)} exceeds limit of {MAX_VISIBLE_EVENT_MARKERS}")
-            return
-
-        for crankref_time, crankref_id in zip(visible_crankref_times, visible_crankref_ids):
-            # Interpolate RPM value at crankref time
-            if crankref_time < rpm_time[0] or crankref_time > rpm_time[-1]:
-                continue  # Skip if crankref is outside RPM data range
-
-            # Linear interpolation of RPM at crankref time
-            rpm_at_crankref = np.interp(crankref_time, rpm_time, rpm_values)
-
-            # Normalize RPM value to 0-0.85 range (same as plot data)
-            normalized_rpm = ((rpm_at_crankref - rpm_min) / (rpm_max - rpm_min)) * 0.85
-
-            # Calculate label position (above the RPM line)
-            label_y = normalized_rpm + CRANKREF_LINE_HEIGHT
-
-            # Draw vertical line upward from RPM point
-            line_item = pg.PlotDataItem(
-                [crankref_time, crankref_time],
-                [normalized_rpm, label_y],
-                pen=pg.mkPen(color=color, width=2.0, style=Qt.PenStyle.SolidLine)
-            )
-            self.graph_plot.addItem(line_item)
-
-            # Add text label above the line
-            label_text = f"CR{int(crankref_id)}"
-            text_item = pg.TextItem(text=label_text, color=color, anchor=(0.5, 1.0))  # anchor bottom center
-            text_item.setPos(crankref_time, label_y)
-            self.graph_plot.addItem(text_item)
-
-    def draw_camshaft_events(self):
-        """Draw camshaft event markers on the graph, positioned relative to RPM"""
-        # Only draw if we have instantaneous RPM data
-        if 'ecu_rpm_instantaneous' not in self.raw_data:
-            return
-
-        # Only draw if camshaft stream is enabled
-        if 'ecu_camshaft_timestamp' not in self.enabled_streams:
-            return
-
-        if 'ecu_camshaft_timestamp' not in self.raw_data:
-            return
-
-        rpm_data = self.raw_data['ecu_rpm_instantaneous']
-        rpm_time = rpm_data['time']
-        rpm_values = rpm_data['values']
-
-        # Get RPM normalization range
-        rpm_min, rpm_max = self.stream_ranges.get('ecu_rpm_instantaneous', (0, 1))
-
-        camshaft_data = self.raw_data['ecu_camshaft_timestamp']
-        camshaft_times = camshaft_data['time']
-
-        # Get color for camshaft stream
-        color = self.stream_colors.get('ecu_camshaft_timestamp', '#FF00FF')  # Default to magenta
-
-        # Filter to visible time window
-        mask = (camshaft_times >= self.view_start) & (camshaft_times <= self.view_end)
-        visible_camshaft_times = camshaft_times[mask]
-
-        for camshaft_time in visible_camshaft_times:
-            # Interpolate RPM value at camshaft time
-            if camshaft_time < rpm_time[0] or camshaft_time > rpm_time[-1]:
-                continue  # Skip if camshaft is outside RPM data range
-
-            # Linear interpolation of RPM at camshaft time
-            rpm_at_camshaft = np.interp(camshaft_time, rpm_time, rpm_values)
-
-            # Normalize RPM value to 0-0.85 range (same as plot data)
-            normalized_rpm = ((rpm_at_camshaft - rpm_min) / (rpm_max - rpm_min)) * 0.85
-
-            # Calculate label position (below the RPM line - downward direction)
-            label_y = normalized_rpm - CAMSHAFT_LINE_HEIGHT
-
-            # Draw vertical line downward from RPM point
-            line_item = pg.PlotDataItem(
-                [camshaft_time, camshaft_time],
-                [normalized_rpm, label_y],
-                pen=pg.mkPen(color=color, width=2.0, style=Qt.PenStyle.SolidLine)
-            )
-            self.graph_plot.addItem(line_item)
-
-            # Add text label below the line
-            label_text = "CAM"
-            text_item = pg.TextItem(text=label_text, color=color, anchor=(0.5, 0.0))  # anchor top center
-            text_item.setPos(camshaft_time, label_y)
+            # Draw text
+            text_item = pg.TextItem(text=label_text, color=color, anchor=text_anchor)
+            text_item.setPos(marker_time, label_y)
             self.graph_plot.addItem(text_item)
 
     def draw_injector_bars(self):
-        """Draw injector pulse bars on the graph showing injection timing and duration."""
+        """Draw all bar streams (injectors, coils) on the graph."""
 
-        # Process front injector
-        if 'ecu_front_inj_on_actual' in self.enabled_streams:
-            self._draw_injector_bars_for_stream(
-                on_stream='ecu_front_inj_on_actual',
-                dur_stream='ecu_front_inj_duration',
-                bar_y=FRONT_INJECTOR_BAR_Y,
-                label='FI'
-            )
+        # Get all bar_data streams from config
+        bar_streams = self.stream_config.get_streams_by_type(StreamType.BAR_DATA)
 
-        # Process rear injector
-        if 'ecu_rear_inj_on_actual' in self.enabled_streams:
-            self._draw_injector_bars_for_stream(
-                on_stream='ecu_rear_inj_on_actual',
-                dur_stream='ecu_rear_inj_duration',
-                bar_y=REAR_INJECTOR_BAR_Y,
-                label='RI'
-            )
+        # Calculate dynamic Y positions for enabled bars
+        enabled_bars = [(name, cfg) for name, cfg in bar_streams.items()
+                       if name in self.enabled_streams and name in self.raw_data]
 
-    def _draw_injector_bars_for_stream(self, on_stream, dur_stream, bar_y, label):
+        if len(enabled_bars) > 0:
+            # Assign Y positions dynamically - bars stack below graph data
+            bar_y_positions = self._calculate_bar_positions(enabled_bars)
+        else:
+            bar_y_positions = {}
+
+        # Draw each enabled bar
+        for stream_name, stream_cfg in enabled_bars:
+            # Get dynamically calculated Y position
+            bar_y = bar_y_positions.get(stream_name, stream_cfg.y_position)
+
+            # Draw the bar with its assigned position
+            self._draw_combined_bars(stream_name, stream_cfg, bar_y)
+
+    def _draw_combined_bars(self, stream_name, config, bar_y):
         """
-        Helper to draw bars for a single injector (front or rear).
+        Draw bars using combined format [time_ns, duration].
 
         Args:
-            on_stream: Name of the ON event stream (e.g., 'ecu_front_inj_on_actual')
-            dur_stream: Name of the duration stream (e.g., 'ecu_front_inj_duration')
-            bar_y: Fixed Y position for these bars (normalized coordinate)
-            label: Text label for debugging (e.g., 'FI' or 'RI')
+            stream_name: Name of the combined bar stream (e.g., 'ecu_front_inj')
+            config: StreamConfig object with display properties
+            bar_y: Y position for this bar (dynamically calculated)
         """
-
         # Check data availability
-        if on_stream not in self.raw_data or dur_stream not in self.raw_data:
+        if stream_name not in self.raw_data:
             return
 
-        # Get data
-        on_data = self.raw_data[on_stream]
-        dur_data = self.raw_data[dur_stream]
-        on_times = on_data['time']
-        dur_values = dur_data['values']
+        # Get combined data
+        stream_data = self.raw_data[stream_name]
+        bar_times = stream_data['time']
+        duration_values = stream_data['values']  # Duration in ticks or nanoseconds
 
-        # Validate pairing (use minimum length)
-        num_pulses = min(len(on_times), len(dur_values))
-        if num_pulses == 0:
+        if len(bar_times) == 0:
             return
 
-        # Get color from stream checkbox
-        color = self.stream_colors.get(on_stream, '#FF6600')
+        # Get visual properties from config
+        color = self.stream_colors.get(stream_name, config.default_color)
+        bar_height = config.height
+        bar_alpha = config.alpha
 
-        # Filter to visible window
-        mask = (on_times[:num_pulses] >= self.view_start) & (on_times[:num_pulses] <= self.view_end)
-        visible_indices = np.where(mask)[0]
+        # Convert duration based on units (needed for visibility filtering)
+        duration_units = config.duration_units or "ticks"  # Default to ticks for backward compat
 
-        if len(visible_indices) == 0:
+        # Convert all durations to seconds for end-time calculation
+        if duration_units == "ticks":
+            # Timer ticks: 2 microseconds per tick
+            duration_seconds = duration_values * TIMER_TICK_DURATION_S
+            # Validate reasonable duration (0 to 50ms)
+            valid_mask = (duration_values > 0) & (duration_values <= MAX_REASONABLE_DURATION_TICKS)
+        elif duration_units == "nanoseconds":
+            # Nanoseconds: convert directly
+            duration_seconds = duration_values / 1e9
+            # Validate reasonable duration (0 to 100ms)
+            valid_mask = (duration_values > 0) & (duration_values <= 100_000_000)
+        else:
+            # Unknown units, skip all
             return
 
-        visible_on_times = on_times[visible_indices]
-        visible_dur_values = dur_values[visible_indices]
+        # Calculate end times for all bars
+        end_times = bar_times + duration_seconds
+
+        # Filter to visible window: include bars where ANY part is visible
+        # - Bar starts before view_end (bar_times <= view_end), AND
+        # - Bar ends after view_start (end_times >= view_start), AND
+        # - Duration is valid
+        mask = (bar_times <= self.view_end) & (end_times >= self.view_start) & valid_mask
+        visible_bar_times = bar_times[mask]
+        visible_durations = duration_seconds[mask]
+
+        if len(visible_bar_times) == 0:
+            return
 
         # Performance limit
-        if len(visible_on_times) > MAX_INJECTOR_BARS_VISIBLE:
-            step = len(visible_on_times) // MAX_INJECTOR_BARS_VISIBLE
-            visible_on_times = visible_on_times[::step]
-            visible_dur_values = visible_dur_values[::step]
+        max_bars = self.stream_config.get_setting('performance.max_injector_bars_visible', MAX_INJECTOR_BARS_VISIBLE)
+        if len(visible_bar_times) > max_bars:
+            step = len(visible_bar_times) // max_bars
+            visible_bar_times = visible_bar_times[::step]
+            visible_durations = visible_durations[::step]
 
         # Draw bars
-        rgba = parse_color_to_rgba(color, INJECTOR_BAR_ALPHA)
+        rgba = parse_color_to_rgba(color, bar_alpha)
 
-        for i in range(len(visible_on_times)):
-            duration_ticks = visible_dur_values[i]
-
-            # Validate duration
-            if duration_ticks <= 0 or duration_ticks > MAX_REASONABLE_DURATION_TICKS:
-                continue
-
-            start_time = visible_on_times[i]
-            duration_seconds = duration_ticks * TIMER_TICK_DURATION_S
+        for i in range(len(visible_bar_times)):
+            start_time = visible_bar_times[i]
+            duration_seconds = visible_durations[i]
 
             # Create rectangle
             rect = QtWidgets.QGraphicsRectItem(
-                start_time, bar_y, duration_seconds, INJECTOR_BAR_HEIGHT
+                start_time, bar_y, duration_seconds, bar_height
             )
             rect.setPen(pg.mkPen(color=color, width=1))
             rect.setBrush(pg.mkBrush(*rgba))
 
             self.graph_plot.addItem(rect)
+
+    def _calculate_bar_positions(self, enabled_bars):
+        """
+        Calculate dynamic Y positions for bars to stack compactly below graph data.
+
+        Bars are positioned at the BOTTOM of the graph area (low Y values, near 0).
+        Graph data is shifted UP to start ABOVE the bars.
+
+        Args:
+            enabled_bars: List of (stream_name, config) tuples for enabled bars
+
+        Returns:
+            Dictionary mapping stream_name -> y_position
+        """
+        positions = {}
+
+        # Calculate how much vertical space the bars need
+        bar_spacing = 0.01  # Small gap between bars
+        total_bar_space = sum(cfg.height + bar_spacing for _, cfg in enabled_bars)
+
+        # Get the default data normalization max (how high graph data goes without bars)
+        default_normalize_max = self.stream_config.get_setting('data_normalize_max', 0.85)
+
+        # When bars are enabled, shift the graph data UP by adding total_bar_space as offset
+        # Graph data will use: [total_bar_space] to [total_bar_space + default_normalize_max]
+        # Bars will use: [0] to [total_bar_space]
+
+        # Store the base offset - data normalization will ADD this to normalized values
+        self.bar_space_offset = total_bar_space
+        # Keep normalize_max the same, but data will be shifted up
+        self.dynamic_normalize_max = default_normalize_max
+
+        # Assign Y positions starting at bottom (Y=0)
+        current_y = 0.0
+        for stream_name, cfg in enabled_bars:
+            positions[stream_name] = current_y
+            current_y += cfg.height + bar_spacing
+
+        return positions
 
     def update_navigation_plot(self):
         """Update the navigation plot with decimated overview"""
@@ -2585,9 +2850,17 @@ class DataVisualizationTool(QMainWindow):
         if not self.raw_data or len(self.enabled_streams) == 0:
             return
 
-        self.nav_plot.setXRange(0, self.total_time_span, padding=0)
+        # Use actual time range from data (time_min to time_max)
+        time_min = getattr(self, 'time_min', 0)
+        time_max = getattr(self, 'time_max', self.total_time_span)
+        self.nav_plot.setXRange(time_min, time_max, padding=0)
         # Set Y range to 0-1 since all streams are normalized
         self.nav_plot.setYRange(0, 1, padding=0)
+
+        # Update view region to match current view
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
 
         # Plot enabled streams with heavy decimation for overview
         max_nav_points = 1000
@@ -2595,11 +2868,12 @@ class DataVisualizationTool(QMainWindow):
             if stream not in self.raw_data:
                 continue
 
-            # Skip event marker streams - they're not plotted in navigation view
-            # Also skip injector streams - they have custom bar visualization (not in nav view)
-            if stream in ['ecu_spark_x1', 'ecu_spark_x2', 'ecu_crankref_id', 'ecu_camshaft_timestamp',
-                          'ecu_front_inj_on_actual', 'ecu_rear_inj_on_actual',
-                          'ecu_front_inj_duration', 'ecu_rear_inj_duration']:
+            # Skip event-only streams (markers, bars, etc.) - not plotted in navigation view
+            if self.stream_config.is_event_only_stream(stream):
+                continue
+
+            # Skip duration/helper streams that shouldn't be plotted
+            if self.stream_config.should_skip_in_selection(stream):
                 continue
 
             stream_data = self.raw_data[stream]
