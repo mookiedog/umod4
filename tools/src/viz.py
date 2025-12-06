@@ -39,7 +39,7 @@ from viz_components.config import AppConfig, UnitConverter
 from viz_components.widgets import (ColorCheckbox, StreamCheckbox, DraggableStreamList,
                                      ZoomableGraphWidget, ResizableSplitter)
 from viz_components.utils import parse_color_to_rgba
-from viz_components.rendering import min_max_decimate
+from viz_components.rendering import min_max_decimate, DataNormalizer
 from viz_components.data import HDF5DataLoader, DataManager
 from viz_components.navigation import ViewNavigationController, ViewHistory
 
@@ -95,6 +95,10 @@ class DataVisualizationTool(QMainWindow):
         # Navigation management (Phase 3 refactoring)
         self.view_controller = ViewNavigationController()
         self.view_history = ViewHistory(max_history=50)
+
+        # Rendering management (Phase 4 refactoring - partial)
+        # Normalizer will be initialized after data is loaded (needs stream_ranges)
+        self.normalizer = None
 
         # Connect view history signal to update UI buttons
         self.view_history.history_changed.connect(self._on_history_changed)
@@ -670,6 +674,9 @@ class DataVisualizationTool(QMainWindow):
             self.view_controller.set_initial_view(self.view_start, self.view_end)
             self.view_controller.set_view_range(self.view_start, self.view_end)
 
+            # Initialize normalizer (Phase 4 refactoring)
+            self.normalizer = DataNormalizer(self.stream_config, self.stream_ranges)
+
             print(f"Initial view: [{self.view_start:.2f}s, {self.view_end:.2f}s]")
 
             # Reset state
@@ -981,75 +988,15 @@ class DataVisualizationTool(QMainWindow):
             return
 
         # First pass: calculate visible range for axis owner (needed for normalization)
-        # Use full dataset minimum, but visible maximum
+        # Use DataNormalizer (Phase 4 refactoring)
         axis_owner_visible_range = None
-        if self.axis_owner and self.axis_owner in self.enabled_streams:
-            if self.axis_owner in self.raw_data:
-                # Get full dataset minimum
-                full_min, full_max = self.stream_ranges.get(self.axis_owner, (0, 1))
-
-                # Get visible data
-                stream_data = self.raw_data[self.axis_owner]
-                all_time = stream_data['time']
-                all_values = stream_data['values']
-                mask = (all_time >= self.view_start) & (all_time <= self.view_end)
-                visible_values = all_values[mask]
-
-                if len(visible_values) > 0:
-                    # Get stream configuration for display range constraints
-                    stream_cfg = self.stream_config.get_stream(self.axis_owner)
-
-                    # Check for fixed display range (e.g., temperature: 0-120°C)
-                    if stream_cfg and stream_cfg.display_range_min is not None and stream_cfg.display_range_max is not None:
-                        # Fixed range - no dynamic scaling
-                        range_min = stream_cfg.display_range_min
-                        range_max = stream_cfg.display_range_max
-                        axis_owner_visible_range = (range_min, range_max)
-                        visible_median = float(np.median(visible_values))
-                        print(f"Stream {self.axis_owner}: fixed range [{range_min:.1f}, {range_max:.1f}] (median: {visible_median:.1f})")
-                    else:
-                        # Dynamic scaling with optional minimum top constraint
-                        visible_max = float(visible_values.max())
-                        range_min = full_min
-
-                        # Check for minimum top constraint (e.g., GPS speed: min 30mph at top)
-                        if stream_cfg and stream_cfg.display_range_min_top is not None:
-                            min_top = stream_cfg.display_range_min_top
-                            if visible_max < min_top:
-                                visible_max = min_top
-                                print(f"Stream {self.axis_owner}: applied min_top constraint {min_top:.1f}")
-
-                        axis_owner_visible_range = (range_min, visible_max)
-
-                    # Avoid division by zero
-                    if axis_owner_visible_range[1] - axis_owner_visible_range[0] < 1e-10:
-                        axis_owner_visible_range = (axis_owner_visible_range[0], axis_owner_visible_range[0] + 1.0)
-                else:
-                    # No visible values in current view - use constraints or full dataset range
-                    stream_cfg = self.stream_config.get_stream(self.axis_owner)
-
-                    # Check for fixed display range
-                    if stream_cfg and stream_cfg.display_range_min is not None and stream_cfg.display_range_max is not None:
-                        range_min = stream_cfg.display_range_min
-                        range_max = stream_cfg.display_range_max
-                        axis_owner_visible_range = (range_min, range_max)
-                        print(f"Stream {self.axis_owner}: no visible data, using fixed range [{range_min:.1f}, {range_max:.1f}]")
-                    else:
-                        # Use full dataset range with optional min_top constraint
-                        range_min = full_min
-                        range_max = full_max
-
-                        if stream_cfg and stream_cfg.display_range_min_top is not None:
-                            min_top = stream_cfg.display_range_min_top
-                            if range_max < min_top:
-                                range_max = min_top
-                                print(f"Stream {self.axis_owner}: no visible data, using full range with min_top {min_top:.1f}")
-
-                        axis_owner_visible_range = (range_min, range_max)
-
-                    # Avoid division by zero
-                    if axis_owner_visible_range[1] - axis_owner_visible_range[0] < 1e-10:
-                        axis_owner_visible_range = (axis_owner_visible_range[0], axis_owner_visible_range[0] + 1.0)
+        if self.normalizer and self.axis_owner and self.axis_owner in self.enabled_streams:
+            axis_owner_visible_range = self.normalizer.calculate_axis_owner_range(
+                self.axis_owner,
+                self.raw_data,
+                self.view_start,
+                self.view_end
+            )
 
         # Plot each enabled stream with dynamic decimation
         for stream in self.enabled_streams:
@@ -1124,32 +1071,26 @@ class DataVisualizationTool(QMainWindow):
                 plot_time = visible_time
                 plot_values = visible_values
 
-            # Get normalization range
-            # Use full dataset minimum, but visible maximum for all streams
-            if stream == self.axis_owner:
-                # Axis owner: use pre-calculated range
-                stream_min, stream_max = axis_owner_visible_range
-            else:
-                # Other streams: full min, visible max
-                full_min, full_max = self.stream_ranges.get(stream, (0, 1))
-                if len(visible_values) > 0:
-                    visible_max = float(visible_values.max())
-                    stream_min = full_min
-                    stream_max = visible_max
-                    if stream_max - stream_min < 1e-10:
-                        stream_max = stream_min + 1.0
-                else:
-                    stream_min, stream_max = full_min, full_max
+            # Get normalization range using DataNormalizer (Phase 4 refactoring)
+            stream_min, stream_max = self.normalizer.calculate_stream_range(
+                stream,
+                self.raw_data,
+                self.view_start,
+                self.view_end,
+                axis_owner_visible_range if stream == self.axis_owner else None
+            )
 
-            # Normalize the data to [0, normalize_max]
+            # Normalize the data using DataNormalizer (Phase 4 refactoring)
             normalize_max = getattr(self, 'dynamic_normalize_max',
                                    self.stream_config.get_setting('data_normalize_max', 0.85))
-            normalized_data = ((plot_values - stream_min) / (stream_max - stream_min)) * normalize_max
-
-            # If bars are enabled, shift data UP by bar_space_offset so bars appear below
             bar_offset = getattr(self, 'bar_space_offset', 0.0)
-            if bar_offset > 0:
-                normalized_data = normalized_data + bar_offset
+            normalized_data = self.normalizer.normalize_data(
+                plot_values,
+                stream_min,
+                stream_max,
+                normalize_max,
+                bar_offset
+            )
 
             # Get display mode for this stream
             stream_widget = None
