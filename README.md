@@ -25,29 +25,35 @@ This UltraMod4 project revisits the original hardware design and brings it about
 The latest V4 hardware supports the following features:
 
 * EPROM Processor (EP)
-  * RP2040 Dual-core Cortex M0+ processor
-  * One core pretends to be the EPROM for the Gen I ECU
-  * One core passes the ECU data stream to a secondary processor for logging
-  * 16 Megabytes of Flash for holding potentially hundreds of ECU images
-  * ECU images can be selected before going for a ride
+  * RP2040 Dual-core ARM Cortex M0+ processor at 125 MHz
+  * Core1:
+    * Pretends to be the EPROM for the Aprilia Gen I ECU
+    * Provides a communications back channel to allow the Aprilia ECU to send data to the outside world
+  * Core 0:
+    * At boot time, constructs a specific EPROM image to present to the ECU
+      * 16 Megabytes of Flash for holding potentially hundreds of ECU images
+    * Forwards the incoming ECU data stream to the WP for logging
 * Wireless Processor (WP)
-  * Correlates the ECU data stream with GPS position and velocity information, then logs the correlated data stream
-  * Bluetooth - The main user interface to the Umod4
-    * EPROM image selection
-    * real time ECU and system status
-  * WiFi - A faster interface used for:
-    * Dumping ECU data logs to a server after a ride
-    * Uploading new ECU firmware images
-    * Uploading new Umod4 firmware images
+  * Raspberry Pi Pico2W: RP2350 dual-core ARM Cortex M-33 at 150 MHz
+  * Correlates the incoming ECU data stream with GPS position and velocity information
+  * Logs the combined data stream to a micro SD Card
 
-The software for a lot of these features still needs to be developed.
+In the future, the WP will be extended with more features:
+
+* Bluetooth - The main user interface to the Umod4
+  * EPROM image selection
+  * real time ECU and system status
+* WiFi - A faster interface used for:
+  * Dumping ECU data logs to a server after a ride
+  * Uploading new ECU firmware images
+  * Uploading new Umod4 firmware images
 
 ## Block Diagram
 
 The Umod4 replaces the EPROM in a stock ECU with a circuit board to extend the capabilities of the overall system:
 ![Umod4 Hardware Block Diagram](doc/images/BlockDiag.jpg)
 
-The SPI flash is the non-volatile storage that replaces the original EPROM. As mentioned earlier, the SPI Flash has room to contain hundreds of ECU code images.
+The SPI flash is the non-volatile storage that replaces the original EPROM.
 
 The "V-Cvt" block performs voltage conversion between the ECU's legacy 5 volt logic domain and the Umod4's 3.3V logic domain.
 
@@ -55,18 +61,25 @@ The SD card is used to log the data stream arriving from the ECU. The NEO-8 GPS 
 
 The GPS module is a generic uBlox NEO-8 from Aliexpress. The NEO-8 can report position and velocity data 10 times a second.
 
-The board also contains a socketed Micro SD card. The card is treated as non-removable. This is partly because it is a bit of a pain to physically access it when the ECU is mounted on the bike, but mainly because the goal is offload logs using WiFi whenever the bike gets parked at home.
+The board also contains a socketed Micro SD card.
+Once the WiFi interfaces get working, the card is treated as non-removable.
+This is partly because it is a bit of a pain to physically access it when the ECU is mounted on the bike.
+The long term goal is to offload logs using WiFi whenever the bike gets parked at home.
 
 ## PCB Hardware
 
-The circuit board design is on Github, located [here](https://github.com/mookiedog/umod4-PCB). It is designed to be fabricated at JLCPCB.com. The part selections and circuit board CAM setup is ready to go for the JLCPCB process. This is kind of important because the RP2040 processor is not suited to soldering by hand. It works better to spend a few bucks and have JLCPCB perform the fabrication process using commercial pick&place machines and a real reflow oven.
+The circuit board design is on Github, located [here](https://github.com/mookiedog/umod4-PCB).
+It is designed to be fabricated at JLCPCB.com.
+The part selections and circuit board CAM setup is ready to go for the JLCPCB fabrication process.
+This is important because the RP2040 processor is not suited to soldering by hand.
+It works better to spend a few bucks and have JLCPCB perform the fabrication process using commercial pick&place machines and a real reflow oven.
 
 ![Umod4 PCB](doc/images/ultraMod4_pcb.jpg)
 
 I am developing software using the second revision of the PCB, named 4V1.
 It contains all the changes and improvements found while doing the 4V0 bringup.
 While developing the software, a list of changes for a potential 4V2 board is becoming clear.
-There has been no critical need to make the 4V2 yet: the 4V1 is serving well so far.
+There has been no critical need to make the 4V2 yet since the 4V1 is serving well so far.
 A 4V2 PCB update would be essentially feature-driven, not for bug fixes.
 
 ### Installation
@@ -79,7 +92,9 @@ Then, a new connector strip is added. The connections on this new strip are crit
 
 * HC11 RESET: allows the umod4 to prevent the ECU processor from running while it sets up the ECU code that it will present to the ECU
 * HC11 E clock: Synchronizes the timing between the umod4's fake EPROM interface and the ECU's processor clock
-* HC11 RW signal: lets the umod4 know if the current bus operation is a read or a write. Depending on the specific write address, writes can represent requests to log data, or they can be treated as RAM accesses to special areas inside the EPROM image which act like RAM instead of EPROM. This allows the ECU firmware to expand its RAM space, which was pretty limited in the original system at only 512 bytes.
+* HC11 RW signal: lets the umod4 know if the current bus operation is a read or a write
+
+Depending on the specific write address, writes can represent requests to log data, or they can be treated as RAM accesses to special areas inside the EPROM image which act like RAM instead of EPROM. This allows the ECU firmware to expand its RAM space, which was pretty limited in the original system at only 512 bytes.
 
 ![Umod4 ECU Prep 2](doc/images/ECU-CN1-after.jpg)
 
@@ -88,7 +103,13 @@ With the new CN1 connector strip added as shown above, the Ultramod4 board can b
 
 The little white box with the three wires just above the ECU is a hardware debugger that was used to develop and debug the "Fake EPROM" software in the RP2040.
 
-The fake EPROM is a busy little thing. The ECU sends it read and write requests 2 million times a second. Each request needs to be performed properly and within the HC11's timing requirements. It has to be verifiably perfect in its timing and operation. The last thing I want is a software bug that makes my engine stop running. While my bike is straddling some railway tracks. With a train coming...
+The fake EPROM is a busy little thing.
+The ECU sends it read and write requests 2 million times a second.
+Each request needs to be performed properly and within the HC11's timing requirements.
+It has to be verifiably perfect in its timing and operation.
+The last thing I want is a software bug that makes my engine stop running.
+While my bike is straddling some railway tracks.
+With a train coming...
 
 The 4V1 board made a few substantive changes.
 One of them was to rotate the Pico processor module end for end so that a USB cable could be plugged into the board permanently while the ECU was mounted on the bike.
@@ -101,14 +122,14 @@ And that is how it will be able to do things like dump ride logs over a wifi con
 
 As always, things are in a state of flux. On the plus side:
 
-* The entire project is in a Github repository
+* The entire project is in a Github repository (you are reading it's README right now!)
 * The fake EPROM code works great:
   * The Tuono runs fine!
   * I can mix and match maps from EPROMs with my data-logging codebase (at build time)
   * The EPROM image loader works with both normal and protected EPROMs
 * Data logging works: ECU data and GPS data are written to a single, time-correlated logfile, currently using LittleFS as the file system.
 * The WP module is now using a Pico2W. The extra speed and RAM space is much appreciated.
-* A log [Visualizer](./tools/README_Visualizer.md) is taking form!
+* A log [Visualizer](./tools/README_Visualizer.md) exists!
 * A new [4V2 revision](https://github.com/mookiedog/umod4-PCB) of the PCB is being planned
 
 Since the Bluetooth interface is not yet developed, the choice of what EPROM or combination of EPROMs to run is a built-time option.
@@ -123,8 +144,7 @@ After that, I really want to make some progress on:
 * Getting wireless OTA firmware updates working so I don't have to carry a laptop out to the garage to reflash the two umod4 processors
 * Using WiFi to get log files automatically uploaded to a server after a ride
 
-I think that OTA updates will take precedence.
-Now that winter is here, I will be updating umod4 software way more than I go for rides.
+I made the decision that OTA updates will take precedence.
 
 ## Further Reading
 
@@ -138,17 +158,21 @@ At the moment, this repository contains a number of pieces that make up the proj
 
 Check out the README.md files in each of the repository subdirectories.
 
+The [umod4 hardware design](https://github.com/mookiedog/umod4-PCB) can also be found on github.
+
 For a real challenge, try [building the software system](BUILDING.md) yourself.
 It's not much use without a circuit board, but if you are a software person, you might give it a shot just for fun.
+If you do, let me know how it goes and I can update the docs for anything that is broken, or not clear.
 
 ## Clarity
 
 Just to set expectations, **this project is all just for fun**.
-I am not trying to build a product.
-I do not want to build a product.
-Any decent product needs support, support takes time, and I am jealous of my time.
+I am **not** trying to build a product.
+I **do not** want to build a product.
+Any decent product that costs money needs support.
+Good support takes time, and I am very jealous of my time.
 Time is best spent on fun things.
-Which is not support.
+Which is **not support**.
 
 ## ...As Always
 

@@ -124,6 +124,9 @@ execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask)
 message(STATUS "   ---> Installing python lib: flask-cors")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask-cors)
 
+message(STATUS "   ---> Installing python lib: PyYAML")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install PyYAML)
+
 project(umod4)
 
 # Littlefs is a small enough project that we just pull it into our superbuild's build tree

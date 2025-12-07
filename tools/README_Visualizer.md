@@ -55,46 +55,45 @@ To see the detail in a ride log, look for that narrow blue box in the navigation
 The data inside that blue box corresponds to what you see in the big graphic window.
 
 You can quickly drag the blue box anywhere in the navigation window to see different parts of the log.
-Once the blue box is on top of an area you want to look at, you can zoom in on the details by either resizing the blue box by grabbing its borders in the navigation window, or you can click and drag in the main graphic window to zoom in on the area selected by the click&drag.
+Once the blue box is on top of an area you want to look at, you can zoom in on the details by either resizing the blue box by grabbing its borders in the navigation window, or you can select an area to zoom in on by clicking and dragging in the main graphic window.
 
-Let's look at that first graph in more detail:
+Looking at that first graph in more detail:
 ![overview](images/viz-1a-annotated.jpg)
 
 The blue arrow shows the engine turning slowly as the starter cranks it over.
 Note: the blue and green arrows were added manually to aid in the descriptions below - the visualizer did not put them in by itself.
 
-After only a bit of cranking, you can see the engine fire up.
+After only a bit of cranking, the engine fires right up.
 In about 2 rotations of the crankshaft, the RPMs jump from below 500 RPM to nearly 2000 RPM.
 The RPMs picked up even more until I adjusted the handlebar fast idle control to slow it down a bit.
 
 What is really interesting though is the 7 green arrows.
 I put those in because as the bike started that day, it was missing.
-Running rough.
+That's really unusual: it does not normally do that.
 The green arrows clearly show the engine missing - slowing down for a rotation or two, then speeding back up again to where the RPMs should have been all along.
 
-And this is where the visualizer proves its worth.
+And this is where the visualizer starts to prove its worth.
 Zooming in on that very first green arrow, we see this:
 ![detail](images/viz-detail-1.jpg)
 
-You can see the rotation speed of the crank drop from nearly 2000 RPM to below 1000 RPM.
+It can be seen that the rotation speed of the crank drops from nearly 2000 RPM to below 1000 RPM in the span of 2 rotations.
 
-So what's going on here?
-I'm glad you asked...
-
-First off, lets take a look at a diagram from the Aprilia doc describing the sequence of events that occur as the engine operates:
+To anaklyze why that is happening, look at a diagram from the Aprilia doc describing the sequence of events that occur as the engine goes through a full two rotations of the crank (one complete 4-cycle sequence):
 ![operation](../ecu/doc/OperationalSequencing.jpg)
 
-The diagram shows a complete two-rotation sequence of what happens in the 4-stroke Aprilia engine.
-The graph line N (NNUM) is what I call the CRID, or Crankshaft Reference identifier.
-The CRID starts at 0, counts up to 11, then the CAM sensor tells it that CR0 is about to happen again, and it all starts over.
+The graph line N (NNUM) in the Aprilia documentation is what I call the CRID, or Crankshaft Reference IDentifier.
+A cam sensor event tells the ECU that the next crank sensor event will be CR0.
+From there, each subsequent crank sensor event increments the CRID count up to 11.
+At that point, the next cam sensor will arrive and it all starts over at CR0.
 The important aspects of the Aprilia diagram show that the power stroke for the front cylinder starts on CR5 and runs through CR7.
 For the rear, the power stroke starts on CR10 and runs through CR0.
 
-I'm proud of this next bit: one of the graphical ECU streams I can display is the CRID, and I can display it in relation to instantaneous RPM:
+I'm proud of this next bit: one of the graphical ECU streams the log visualizer can display is the CRID.
+Not only that, it can be displayed in relation to the instantaneous RPM:
 ![crid-detail](./images/viz-detail-crid.jpg)
-Those markers indicate the start of each CR event, as per the Aprilia doc.
+Those markers on the RPM data indicate the start of each CR event, as per the Aprilia doc.
 
-So what does it tell us?
+So what does it all mean?
 Firstly: the power stroke may not be entirely intuitive, at least at idle speeds.
 Starting from the left side of that graph, you can see CR10,11, and 0 which represent the power stroke of the rear cylinder.
 You can see that the crank barely speeds up at all during CR10, even though it represents the first 60 degrees of the power stroke.
@@ -109,10 +108,10 @@ Finally, it's because at idle speeds, the engine has hardly any mixture to burn,
 
 The takeaway is that when things are running properly at idle speeds, the crankshaft will clearly increase its rotational velocity during:
 
-* CR6: when the front cylinder fires
-* CR11: when the rear cylinder fires.
+* CR6, when the front cylinder fires
+* CR11, when the rear cylinder fires
 
-Now check out the detail in the circled areas below:
+Now check out the detail in the circled areas in the screenshot below:
 ![operation](./images/viz-detail-2-crid.jpg)
 
 There are a few things to note.
@@ -126,27 +125,39 @@ If you look inside the orange cicle, you see a proper firing cycle.
 So what happened when the engine "missed", inside the blue circle?
 A few things are obvious:
 
-1) The duration of both CR4 and CR5 are a lot wider than CR3. That is __NOT__ how the previous cycle CR4/5 looked where CR3/4/5 were about the same duration.
+1) The duration of both CR4 and CR5 are a lot wider than CR3. The crank is slowing down. That is __NOT__ how the previous cycle CR4/5 looked where CR3/4/5 were about the same duration.
 1) Interesting Fact: the front cylinder did __not__ misfire: the crank clearly speeds up during CR6. Had it been a genuine misfire, CR6 would have been slower than CR5.
-1) Even More Interesting Fact: CR5 took an extra long time compared to the previouws CR5. Normally, you will see the crank slow slightly during CR5 because it was just completed the compression stroke. The spark should have lit off the cylinder just prior to TDC, but the increasing pressure is unable to spin the crank faster just yet.
+1) Even More Interesting Fact: CR5 took an extra long time compared to the previous CR5. Normally, you will see the crank slow slightly during CR5 because it was just completed the compression stroke. The spark should have lit off the cylinder just prior to TDC, but the increasing pressure is unable to spin the crank faster just yet.
 
 So why was the CR5 circled in blue _so_ much slower?
-Well, there is more data to look at.
+Well, the log contains even more data to look at.
 
-The ECU has circuitry that detects the high-voltage kickback that occurs when the coils fire.
-In theory, this means that a spark occurred.
-This may not be _precisely_ true since you could have situations where a coil fires but no spark occurs, like if the spark plug boot fell off, or maybe a sparkplug tip is fouled.
-In any case, if the ECU does not see these "coil fired" signals when it expects to, it gets irritated and blinks the EFI light on the dash.
-For the purposes of the umod4 datalogger, it turns out that the ECU processor captures the precise time that the coil fired.
-That means I can log the time of every single coil/spark.
+The ECU has [circuitry that detects the high-voltage kickback](https://github.com/mookiedog/ApriliaGen1ECU/blob/main/ECU_s2.png) that occurs when the coils fire.
+In theory, this circuitry detects that a spark occurred.
+In practice, this may not be _precisely_ true.
+There are plenty of reasons why a coil could fire, but result in no spark at the sparkplug:
 
-Enabling the spark data stream yields interesting results:
+* The sparkplug boot fell off
+* Cracked insulation on a high-voltage wire
+* Fouled sparkplug tip
+
+But assuming that those abnormal situations above were not happening, the spark sensor circuit really does indicate that a spark occurred.
+The standard ECU firmware uses these "coil fired" signals to verify that sparks are happending.
+If it failes to see them, it will blink the EFI light on the dash.
+For the purposes of the umod4 datalogger, it gets even better.
+The ECU's processor actually captures the precise time that the coil fired.
+That allows the UM4 logging firmware to logs the precise time of every single coil/spark.
+
+The visualizer allows this "spark occurred" data stream to be graphed.
+Enabling the spark data stream yields some interesting results:
 ![operation](./images/viz-detail-3.jpg)
 
 The tags marked 'S2' indicate when plug #2 fired.
-The ECU also tracks when plug 1 fires, but the timing for plug 1 and 2 only differ by microseconds, so for simplicity, I only displayed sparks on plug #2 on this graph.
+The ECU also tracks when plug 1 fires.
+Typically, the time difference between S1 and S2 events is a very small number of microseconds.
+For simplicity, the graph above only enables plug #2.
 
-If you look at the first 3 spark firing events, you can see that they line up almost exactly with the start of CR10 or CR5, meaning that they are firing when the piston basically right at TDC (Top Dead Center).
+Looking at the first 3 spark firing events, it can be seen that they line up almost exactly with the start of CR10 or CR5, meaning that they are firing when the piston basically right at TDC (Top Dead Center).
 
 But if you look at the problem event, you see something different.
 In short, CR4 takes unusually long to complete, which has the side effect that the spark occurs significantly in advance of TDC.
@@ -164,7 +175,8 @@ There will always be mysteries.
 
 There are plenty more ECU data streams, too.
 Here is an example showing the cam sensor signal.
-The cam sensor indicates that the next CRID will be CR0, as can be seen here. You can see it doing exactly what it should be doing here:
+As mentioned earlier, the cam sensor indicates that the next CRID will be CR0.
+It can be seen doing exactly what it should be doing right here:
 
 ![cam sensor operation](images/viz-detail-4.jpg)
 
@@ -202,7 +214,7 @@ After getting home, I looked up my ride visualization.
 It was a longer trip, hence the frozen fingers.
 ![ride-2](images/ride-2-overview.jpg)
 
-I used Google Maps to zoom in and find that left turn by the grocery store:
+I used Google Maps to zoom in and find that right turn by the grocery store:
 ![ride-2-safeways](images/ride-2-safeways.jpg)
 
 Clicking on any of the blue dots gives me time information.
