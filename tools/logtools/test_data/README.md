@@ -26,4 +26,20 @@ When adding sample logs to this directory:
 
 ## Sample Log Descriptions
 
-(Add descriptions of sample logs here as they are added)
+### log_3.um4
+
+This is the original logfile that incorporates GPS data during a ride.
+It was just a short ride around town.
+The only point was to collect GPS data so that the vizualizer map display functions could be tested.
+The bike was warmed up for about 10 minutes, then a short 10-ish minute ride, immortalized for posterity.
+
+#### Weird Events
+
+The bike was missing just after starting.
+It was a pretty cold day (about 9C), so I did not think much of it at the time.
+However, the engine misses are clear to see with the visualizer.
+There were 8 events, all located in the first 22 seconds of the log.
+If you zoom in on those events, you will see that the engine did not actually 'miss', because it clearly sped up during the power stroke.
+The funky part is that the engine seemed to slow down a lot just before the power stroke began, like as the piston was approaching TDC.
+Enabling the spark data streams will show that the spark events seem to have occured a fair bit earlier than the other power stroke events before and after for that same cylinder.
+It looks like the early spark caused the engine to stumble by significantly raising pressures in the combustion chamber before the piston got to TDC.
