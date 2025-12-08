@@ -9,9 +9,6 @@
   Resolution of time advancement would be 128 uSec
   Logs would get bigger since VTA would always get sent, not just when it changed.
 
-* Visualizer
-  * Get it broken up as per Claude's refactoring plan
-  * Get the new setup checked in
 * Work on Getting the EP flashed from the WP
   * Convert the low-level SWD stuff to use the code from [Raspberry Pi Picoprobe](https://github.com/raspberrypi/debugprobe/tree/master)
     * Uses PIO instead of bit-banging
