@@ -101,18 +101,24 @@ The build system creates a virtual environment at `build/.venv` and installs req
 **Log Decoder:**
 ```bash
 # Decode binary logs to HDF5 format
-build/.venv/bin/python3 tools/src/decodelog.py <logfile> --format hdf5 -o output.h5
+build/.venv/bin/python3 tools/logtools/decoder/decodelog.py <logfile> --format hdf5 -o output.h5
 
 # Verify HDF5 output
-build/.venv/bin/python3 tools/src/verify_hdf5.py output.h5
+build/.venv/bin/python3 tools/logtools/decoder/verify_hdf5.py output.h5
+
+# Run visualizer
+build/.venv/bin/python3 tools/logtools/viz/viz.py output.h5
 ```
 
 **Key Tools:**
-- `tools/src/decodelog.py` - Decodes binary logs to HDF5 or text
-- `tools/src/verify_hdf5.py` - Validates HDF5 log structure and content
-- `tools/src/bin-to-bson.py` - Converts EPROM .bin + .dsc (JSON) to BSON
-- `tools/src/h2py.py` - Converts C header log IDs to Python
-- `tools/src/generate_encoder.py` - Generates log encoding code
+- **Build-time tools** (in `tools/src/`):
+  - `bin-to-bson.py` - Converts EPROM .bin + .dsc (JSON) to BSON
+  - `h2py.py` - Converts C header log IDs to Python
+  - `generate_encoder.py` - Generates log encoding code
+- **Runtime log analysis tools** (in `tools/logtools/`):
+  - `decoder/decodelog.py` - Decodes binary logs to HDF5 or text
+  - `decoder/verify_hdf5.py` - Validates HDF5 log structure and content
+  - `viz/viz.py` - Interactive visualization tool for HDF5 logs
 
 ### EPROM Library (eprom_lib)
 
@@ -194,7 +200,7 @@ Edit `cmake/toolchains/arm-none-eabi.cmake`, update `ARM_NONE_EABI_VERSION` vari
 **Modifying Log Event IDs:**
 1. Edit appropriate `*_log.h` file (ECU_log.h, EP_log.h, or WP_log.h)
 2. Run `build/.venv/bin/python3 tools/src/h2py.py` to regenerate Python constants
-3. Update `tools/src/decodelog.py` decoder logic for new events
+3. Update `tools/logtools/decoder/decodelog.py` decoder logic for new events
 4. Rebuild affected components (all components include log headers from same directory)
 
 **Adding New EPROM:**
@@ -260,5 +266,6 @@ Currently no automated test suite. Testing happens on physical hardware (Aprilia
 2. Flash EP and WP firmware via debugger
 3. Install in bike ECU, verify engine runs correctly
 4. Verify data logging to SD card
-5. Extract and decode logs with decodelog.py
-6. Validate HDF5 output with verify_hdf5.py
+5. Extract and decode logs with `tools/logtools/decoder/decodelog.py`
+6. Validate HDF5 output with `tools/logtools/decoder/verify_hdf5.py`
+7. Visualize with `tools/logtools/viz/viz.py`

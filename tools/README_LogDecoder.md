@@ -7,11 +7,11 @@ If the engine had been running at high RPMs, the file would have been even large
 
 These log files need to be processed on a laptop or PC before they become useful to humans.
 
-The first step involves the [decodeLog](src/decodelog.py) tool.
+The first step involves the [decodeLog](logtools/decoder/decodelog.py) tool.
 This tool can do 2 things to a raw umod4 logfile:
 
 * Convert it into 'human readable' form
-* Convert it into HDF5 form, suitable for display by '[viz](src/viz.py)', a graphics visualizer program
+* Convert it into HDF5 form, suitable for display by '[viz](logtools/viz/viz.py)', a graphics visualizer program
 
 ## Running the Decoder
 

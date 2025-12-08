@@ -8,10 +8,10 @@ Use `decodelog.py` with the `--format hdf5` option:
 
 ```bash
 # Using the project's Python virtual environment
-build/.venv/bin/python3 tools/src/decodelog.py <input_log_file> --format hdf5 -o output.h5
+build/.venv/bin/python3 tools/logtools/decoder/decodelog.py <input_log_file> --format hdf5 -o output.h5
 
 # Example:
-build/.venv/bin/python3 tools/src/decodelog.py ~/logs/log.17 --format hdf5 -o log17.h5
+build/.venv/bin/python3 tools/logtools/decoder/decodelog.py ~/logs/log.17 --format hdf5 -o log17.h5
 ```
 
 **Note:** The `--output` (or `-o`) parameter is required when using HDF5 format.
@@ -22,10 +22,10 @@ After creating an HDF5 file, verify its contents using `verify_hdf5.py`:
 
 ```bash
 # Using the project's Python virtual environment
-build/.venv/bin/python3 tools/src/verify_hdf5.py <hdf5_file>
+build/.venv/bin/python3 tools/logtools/decoder/verify_hdf5.py <hdf5_file>
 
 # Example:
-build/.venv/bin/python3 tools/src/verify_hdf5.py log17.h5
+build/.venv/bin/python3 tools/logtools/decoder/verify_hdf5.py log17.h5
 ```
 
 The verification script will:

@@ -807,8 +807,9 @@ class DataVisualizationTool(QMainWindow):
 
             # Run decodelog.py
             try:
-                # Find decodelog.py - should be in same directory as this script
-                decodelog_path = os.path.join(os.path.dirname(__file__), 'decodelog.py')
+                # Find decodelog.py - now in ../decoder/ relative to this script
+                decodelog_path = os.path.join(os.path.dirname(__file__), '../decoder/decodelog.py')
+                decodelog_path = os.path.abspath(decodelog_path)
                 python_exe = sys.executable
 
                 # Show progress message
