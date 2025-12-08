@@ -6,3 +6,8 @@ __*
 build/
 *.bak
 ~$*
+
+# PyInstaller artifacts if built outside build/ directory
+tools/logtools/viz/dist/
+tools/logtools/viz/build/
+tools/logtools/viz/*.spec

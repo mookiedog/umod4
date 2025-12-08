@@ -1,0 +1,156 @@
+name: Build and Release Visualizer
+
+on:
+  push:
+    tags:
+      - 'viz-v*'  # Triggers on viz-v1.0.0, viz-v2.1.0, etc.
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: DataVisualizer.exe
+            asset_name: DataVisualizer-Windows
+          - os: ubuntu-latest
+            artifact_name: DataVisualizer
+            asset_name: DataVisualizer-Linux
+          - os: macos-latest
+            artifact_name: DataVisualizer
+            asset_name: DataVisualizer-macOS
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller PyQt6 pyqtgraph numpy pandas h5py
+
+      - name: Build with PyInstaller (Windows/Linux)
+        if: runner.os != 'macOS'
+        run: |
+          python -m PyInstaller --onefile --windowed \
+            --add-data "tools/logtools/viz/stream_config.py:." \
+            --add-data "tools/logtools/viz/stream_config.yaml:." \
+            --add-data "tools/logtools/viz/viz_components:viz_components" \
+            --add-data "tools/logtools/decoder/decodelog.py:." \
+            --add-data "tools/logtools/decoder/conversions.py:." \
+            --name "DataVisualizer" \
+            --clean \
+            tools/logtools/viz/viz.py
+
+      - name: Build with PyInstaller (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python -m PyInstaller --onefile --windowed \
+            --add-data "tools/logtools/viz/stream_config.py:." \
+            --add-data "tools/logtools/viz/stream_config.yaml:." \
+            --add-data "tools/logtools/viz/viz_components:viz_components" \
+            --add-data "tools/logtools/decoder/decodelog.py:." \
+            --add-data "tools/logtools/decoder/conversions.py:." \
+            --name "DataVisualizer" \
+            --clean \
+            tools/logtools/viz/viz.py
+
+      - name: Create release package
+        shell: bash
+        run: |
+          # Extract version from tag (viz-v1.0.0 -> v1.0.0)
+          VERSION=${GITHUB_REF#refs/tags/viz-}
+
+          # Create release directory
+          mkdir -p release
+
+          # Copy executable
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cp dist/DataVisualizer.exe release/
+          else
+            cp dist/DataVisualizer release/
+          fi
+
+          # Copy sample log files
+          cp tools/logtools/test_data/*.um4 release/ 2>/dev/null || true
+          cp tools/logtools/test_data/*.log release/ 2>/dev/null || true
+
+          # Create README
+          cat > release/README.txt << 'EOF'
+          Data Visualizer $VERSION
+          =========================
+
+          QUICK START
+          -----------
+          1. Double-click DataVisualizer to launch
+          2. Open one of the sample .um4 files to see example data
+          3. Use File > Open to load your own .h5 or .um4 log files
+
+          SYSTEM REQUIREMENTS
+          -------------------
+          - Windows 10 or later / Linux / macOS 10.13+
+          - No additional software needed
+
+          SAMPLE FILES
+          ------------
+          Included .um4 files are raw binary log files. When you open them,
+          the visualizer will automatically offer to convert them to HDF5 format.
+
+          GETTING YOUR OWN LOGS
+          ---------------------
+          1. Extract log files from your umod4 SD card (*.um4 or *.log files)
+          2. Open them directly in the visualizer
+          3. The visualizer will automatically convert them to HDF5 format
+
+          MORE INFORMATION
+          ----------------
+          Project: https://github.com/mookiedog/umod4
+          Issues: https://github.com/mookiedog/umod4/issues
+          EOF
+
+          # Create ZIP archive
+          cd release
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            7z a ../${{ matrix.asset_name }}-${VERSION}.zip *
+          else
+            zip -r ../${{ matrix.asset_name }}-${VERSION}.zip *
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}-${{ github.ref_name }}
+          path: ${{ matrix.asset_name }}-*.zip
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
