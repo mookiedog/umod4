@@ -6,6 +6,17 @@
 #   - graph_marker: Event markers attached to graph data (e.g., spark, CRID)
 #   - bar_data: Horizontal bars with start time and duration
 #   - time_marker: Markers on the time axis itself
+#
+# Local Overrides:
+#   You can create a stream_config.yaml file in your current directory to override
+#   settings on a per-project basis. The local config is deep-merged with this base
+#   config, so you only need to specify the values you want to change.
+#
+#   Example local override (./stream_config.yaml):
+#     streams:
+#       ecu_air_temp_c:
+#         default_color: "#00FF00"  # Change just the color
+#         # All other settings inherited from base config
 
 version: 1
 
@@ -60,6 +71,7 @@ streams:
     units: adc
     owns_axis: true
     normalize: true
+    display_range_min_top: 300.0
 
   ecu_map_kpa:
     type: graph_data
@@ -76,7 +88,9 @@ streams:
     units: kPa
     owns_axis: false
     normalize: true
-
+    display_range_min_top: 120.0       # Minimum value for top of display
+    display_range_max_bottom: 80.0     # Maximum value for bottom of display
+    
   ecu_front_ign_delay:
     type: graph_data
     display_name: "Front Ignition Delay"
@@ -157,7 +171,7 @@ streams:
     height: 0.04
     alpha: 0.7
     default_color: "#FF6600"
-    tooltip: "Front Injector\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    tooltip: "Front Injector\nDuration: {duration_us:.1f} μs"
     # Combined format: single dataset with [time_ns, duration_ticks where 1 tick = 2μs]
     combined_format: true
     duration_units: "ticks"  # Duration in 2μs timer ticks
@@ -169,7 +183,7 @@ streams:
     height: 0.04
     alpha: 0.7
     default_color: "#FF9900"
-    tooltip: "Rear Injector\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    tooltip: "Rear Injector\nDuration: {duration_us:.1f} μs"
     # Combined format: single dataset with [time_ns, duration_ticks where 1 tick = 2μs]
     combined_format: true
     duration_units: "ticks"  # Duration in 2μs timer ticks
@@ -182,7 +196,7 @@ streams:
     height: 0.04
     alpha: 0.7
     default_color: "#FF0000"
-    tooltip: "Front Coil #1\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    tooltip: "Front Coil #1\nDuration: {duration_us:.1f} μs"
     # Combined format: single dataset with [time_ns, duration_ns]
     combined_format: true
     duration_units: "nanoseconds"
@@ -194,7 +208,7 @@ streams:
     height: 0.04
     alpha: 0.7
     default_color: "#CC0000"
-    tooltip: "Front Coil #2\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    tooltip: "Front Coil #2\nDuration: {duration_us:.1f} μs"
     # Combined format: single dataset with [time_ns, duration_ns]
     combined_format: true
     duration_units: "nanoseconds"
@@ -206,7 +220,7 @@ streams:
     height: 0.04
     alpha: 0.7
     default_color: "#0000FF"
-    tooltip: "Rear Coil #1\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    tooltip: "Rear Coil #1\nDuration: {duration_us:.1f} μs"
     # Combined format: single dataset with [time_ns, duration_ns]
     combined_format: true
     duration_units: "nanoseconds"
@@ -218,7 +232,7 @@ streams:
     height: 0.04
     alpha: 0.7
     default_color: "#0000CC"
-    tooltip: "Rear Coil #2\nStart: {start_time:.3f}s\nDuration: {duration_us:.1f}μs"
+    tooltip: "Rear Coil #2\nDuration: {duration_us:.1f} μs"
     # Combined format: single dataset with [time_ns, duration_ns]
     combined_format: true
     duration_units: "nanoseconds"

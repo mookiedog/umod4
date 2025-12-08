@@ -53,9 +53,15 @@ class ViewHistory(QObject):
         """
         Undo to previous view state.
 
+        The history works as follows:
+        - history[history_index] is the CURRENT view being displayed
+        - Undo should go to history[history_index - 1] (the previous view)
+        - After undo, we're displaying history[history_index - 1], so index should point there
+
         Returns:
             Tuple of (start, end, y_min, y_max) or None if can't undo
         """
+        # Can only undo if there's a previous state to go back to
         if self.history_index > 0:
             self.history_index -= 1
             self._emit_state()

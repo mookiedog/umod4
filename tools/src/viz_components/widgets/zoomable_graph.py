@@ -16,11 +16,23 @@ class ZoomableGraphWidget(pg.PlotWidget):
         self.rubberband_rect = None
         self.is_dragging = False
         self.zoom_callback = None
+        self.exclude_region = None  # Optional LinearRegionItem to exclude from rubber band zoom
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.MouseButton.LeftButton:
             pos = QPointF(ev.pos())
-            self.rubberband_start = self.plotItem.vb.mapSceneToView(pos)
+            view_pos = self.plotItem.vb.mapSceneToView(pos)
+
+            # Check if click is inside the exclude region (e.g., navigation box)
+            if self.exclude_region is not None:
+                region = self.exclude_region.getRegion()
+                if region[0] <= view_pos.x() <= region[1]:
+                    # Click is inside the region - let it handle the event (for dragging)
+                    super().mousePressEvent(ev)
+                    return
+
+            # Start rubber band zoom
+            self.rubberband_start = view_pos
             self.is_dragging = True
             ev.accept()
         else:

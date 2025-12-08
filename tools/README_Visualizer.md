@@ -31,21 +31,25 @@ For the purposes of viewing logs, this is defined to be the crankshaft's 'instan
 
 The narrow strip at the bottom is called the Navigation View.
 The navigation view shows the entire log (timewise).
-In this case you can see that I warmed the bike up for nearly 600 seconds (10 minutes) before heading out.
-The bike is clearly warming up as evidenced by the slowly rising blue line in the navigation window.
-The navigation window shows the coolant temp slowly rise as the bike warms up until it hits about 75C, which is where the thermostat opens.
-As the thermostat opens, it is clear to see the thermstat do its job.
-The coolant temperature hold at 75C while the coolant in the radiator gradually warms up.
-Once the entire cooling system is up to the thermostat's 75C temperature setting, the coolant begins getting hotter again.
+You can click and drag a box in the navigation window (or in the graph window) to zoom in on any area you want.
+Clicking inside the blue box in the navigation window allows you to quickly pan the upper graph screen to anywhere in the log.
+The program suppports infinite "undo" that undoes the entire sequence of zoom or pan operations you might have performed before.
+In all, you can quickly move around the log, quickly take a detailed peek at something, then "undo" to pop back to the previous view you.
+
+In this case, the navigation window shows you that I warmed the bike up for nearly 10 minutes (600 seconds) before heading out.
+The bike is clearly warming up as evidenced by the slowly rising blue line (coolant temp) in the navigation window.
+The navigation window shows the coolant temp stops rising when it hits about 75C, which is where the thermostat begins to open.
+The thermostat clearly does its job, and coolant temperatures hold at 75C for a bit.
+Once the entire cooling system gets up to 75C, the coolant can begin getting hotter again.
 
 You can see the revs rise twice as I left my driveway, then three more times as I drove down the road away from my house towards the main road.
 
 I had to wait for at idle for nearly 90 seconds before traffic opened up and I could turn left onto the main road.
 After that, revs rise and fall as I drive around.
-As the bike gets some velocity under it and some cold air through its radiator, you can see the coolant temperature drop right back to 75C again.
+As the bike gets some velocity under it and some cold air moving through its radiator, you can see the coolant temperatures drop right back to 75C again.
 The thermostat does its job though, and never lets the coolant temperature go below 75C.
 
-And at the very end, RPMs are back to idle as I get the bike parked in the garage again.
+The ride was a short loop through the local neighborhood, just to test the latest logging software. And at end, the RPMs are back to idle as I get the bike parked in the garage.
 
 ## Details
 
@@ -54,14 +58,25 @@ The navigation window always shows the entire ride, but there will be plenty of 
 To see the detail in a ride log, look for that narrow blue box in the navigation window.
 The data inside that blue box corresponds to what you see in the big graphic window.
 
-You can quickly drag the blue box anywhere in the navigation window to see different parts of the log.
-Once the blue box is on top of an area you want to look at, you can zoom in on the details by either resizing the blue box by grabbing its borders in the navigation window, or you can select an area to zoom in on by clicking and dragging in the main graphic window.
+You can click and drag the blue box anywhere in the navigation window to quickly pan to any part of the log.
+
+If you click and drag in the navigation windown, you can select an area to look at in the main window.
+A bigger selection area zooms out, and smaller selection area zooms in.
+You can also click and drag in the main window to zoom in on an area.
+Keyboard shortcuts also work to zoom in and out, and to pan the whole main window left or right:
+
+* "ctrl +" to zoom in by a factor of 2
+* "ctrl -" to zoom out by a factor of 2
+* "ctrl \<arrow-key\>" pans right or left by 15%
+* "shft \<arrow-key\>" pans right or left by 50%
+
+Once zoomed into a particular level of detail, the arrow keys make it easy to see what came before or after without changing the zoom level.
 
 Looking at that first graph in more detail:
 ![overview](images/viz-1a-annotated.jpg)
 
 The blue arrow shows the engine turning slowly as the starter cranks it over.
-Note: the blue and green arrows were added manually to aid in the descriptions below - the visualizer did not put them in by itself.
+Note: the blue and green arrows were added manually to aid in the descriptions below.
 
 After only a bit of cranking, the engine fires right up.
 In about 2 rotations of the crankshaft, the RPMs jump from below 500 RPM to nearly 2000 RPM.
@@ -78,13 +93,13 @@ Zooming in on that very first green arrow, we see this:
 
 It can be seen that the rotation speed of the crank drops from nearly 2000 RPM to below 1000 RPM in the span of 2 rotations.
 
-To anaklyze why that is happening, look at a diagram from the Aprilia doc describing the sequence of events that occur as the engine goes through a full two rotations of the crank (one complete 4-cycle sequence):
+To analyze why that is happening, here is a diagram from the Aprilia doc describing the sequence of events that occur as the engine goes through the first full two rotations of the crank (one complete 4-cycle sequence) when starting up:
 ![operation](../ecu/doc/OperationalSequencing.jpg)
 
-The graph line N (NNUM) in the Aprilia documentation is what I call the CRID, or Crankshaft Reference IDentifier.
-A cam sensor event tells the ECU that the next crank sensor event will be CR0.
+The graph line N (NNUM) in the Aprilia documentation is what I call the CRID, or **C**rankshaft **R**eference **ID**entifier.
+The falling edge of the cam sensor signal tells the ECU that the next crank sensor event will be CR0.
 From there, each subsequent crank sensor event increments the CRID count up to 11.
-At that point, the next cam sensor will arrive and it all starts over at CR0.
+At that point, the next cam sensor arrives and the CRID count starts over at CR0.
 The important aspects of the Aprilia diagram show that the power stroke for the front cylinder starts on CR5 and runs through CR7.
 For the rear, the power stroke starts on CR10 and runs through CR0.
 
@@ -180,7 +195,7 @@ It can be seen doing exactly what it should be doing right here:
 
 ![cam sensor operation](images/viz-detail-4.jpg)
 
-## GPS Operation
+## GPS Data
 
 The umod4 is not just about ECU data streams.
 It also contains a Neo-8 GPS module.
@@ -192,7 +207,9 @@ Much fun ensues!
 The basic issue is getting GPS data on the screen.
 
 For that, I added a visualizer view menu option that would display all the GPS info from a ride as data points on a Google Map webpage.
-This is what I got from my first ride:
+Clicking on view/"Show Ride On Maps" will cause a browser window to open, with a Google Map view showing an overview of the entire ride.
+
+This is what I got from my test ride:
 
 ![ride-1-overview](images/ride-1-overview.jpg)
 
@@ -207,8 +224,11 @@ But, it was my first GPS-tagged ride log ever!
 I even got to use GPS data as a debug aid.
 Case in point: to get another log test file, I went for another ride the next day.
 It was equally cold, and I nearly froze my hands off.
-At least, the bike startup up without missing that day.
-At one point during the ride, I was turning right by a local grocery store. As I went through the right turn, the engine missed.
+The bike started up without the peculiar engine misses like the day before.
+
+It was a mostly uneventful test ride, except for one thing.
+At one point, I was turning right by a local grocery store.
+As I started accelerating through the turn, the engine missed.
 I made a mental note of that.
 After getting home, I looked up my ride visualization.
 It was a longer trip, hence the frozen fingers.
@@ -217,7 +237,7 @@ It was a longer trip, hence the frozen fingers.
 I used Google Maps to zoom in and find that right turn by the grocery store:
 ![ride-2-safeways](images/ride-2-safeways.jpg)
 
-Clicking on any of the blue dots gives me time information.
+Clicking on any of the blue dots gives me time information for that dot.
 The map tag indicates that I was turning the corner approximately 1889.7 seconds into the ride.
 In the navigation view, I panned to that time area in the log, then zoomed in:
 ![ride-2-safeways](images/ride-2-safeways-detail.jpg)
@@ -257,10 +277,26 @@ Secondly, unlike the idle situation where the crankshaft only showed an increase
 What is confusing to me at the minute is that front and rear cylinders don't seem to be acting the same. CR6 and CR7 are the 2nd and 3rd portions of the front cylinder power stroke, while CR10 and CR11 are the 1st and 2nd portions of the rear cylinder power stroke.
 Obviously, I don't have answers for everything yet.
 
+## Fuel Injectors
+
+I added a feature to display the fuel injector pulse widths.
+
+Here is the bike starting up.
+You can see the ECU give a little priming shot to both cylinders as soon as the ECU gets its first signal from the cam sensor.
+If you scroll back up on this page to the Aprilia diagram, you will see the ECU doing exactly what the diagram indicates:
+![injectors-squirting](./images/viz-detail-injectors-1.jpg)
+
+This next screen shows the bike at a bit over 7K RPM with the throttle fairly wide open:
+![injectors-squirting-even-more](./images/viz-detail-injectors-2.jpg)
+
+Hovering over an injector event will light up a tooltip telling you the pulse duration in microseconds.
+You can see that the duration is a lot longer then when the bike was warming up in the previous image.
+It makes sense: the engine is making serious power at this point!
+
 ## Wrap
 
 So there it is.
-After 20-some years of off and on development, I am finally getting some big pieces that I have wished for for years. The log visualizer is a big step forward.
+After 20-some years of off and on development, I am finally getting some big pieces that I have wished for for years. Creating a log visualizer was a **huge** step forward.
 
 Since day 1, I had always dreamed of getting a system like this out for a track day.
 Truthfully, it's taken so long to get all this working that I think my track days are over.
@@ -269,7 +305,7 @@ It's a bit of a bummer because I would have loved to have a log of me going arou
 Oh well, I would have been going slowly anyway.
 I always rode in the 'B' group with the rest of the slow guys.
 But to my secret delight, I was never the slowest person at the track.
-Just before I got the Tuono, I took my nearly 20 year old Yamaha V-Max to a Reg Pridmore Class ride at Laguna Seca.
+Just before I got the Tuono, I took my 15+ year old Yamaha V-Max to a Reg Pridmore Class Ride at Laguna Seca.
 It was a great day.
 The class photographer snapped me scraping the centerstand going through turn 3:
 ![vmax-at-laguna-seca](images/laguna-seca.jpg)
@@ -280,11 +316,11 @@ I raised my hand.
 I got a dismissive wave, and he said "Anyone else?"
 
 The best part of that day?
-Catching up to someone riding an Aprilia Mille (really!) entering turn 2.
-I followed them through 2, realized I was faster, and set up to pass them through turn 3.
+Catching up to someone riding an Aprilia Mille (really!) in turn 2.
+I followed them through 2, realized I was faster, got myself set up and then passed them through turn 3.
 On a V-Max!!
 It is proof that a 1985 V-Max can turn.
-They just don't like to.
+They just don't _like_ to.
 
 ## Acknowledgements
 
@@ -296,4 +332,13 @@ Specifically, to see if I could get a visualizer built in conjunction with the A
 
 I will say this: the great AI experiment was certainly not without its problems and false starts.
 But on the plus side, this whole visualizer only took about 3 weeks to get from a simple idea to its current state.
-Maybe AI is good for something!
+It was a really interesting experiment.
+Some things that seemed complicated to me were trivial for Claude.
+For example, I asked Claude to display the GPS data from the log on a Google Map.
+That probably took about 2 minutes and it worked perfectly, the first try.
+On the other hand, getting tool tips to display injector durations properly took a couple hours of frustrating AI-interaction hell.
+
+But clearly, I could not have made this visualizer on my own except maybe in a timeframe measured in years.
+All in all, AI was good for something!
+
+It's a brave new world out there.

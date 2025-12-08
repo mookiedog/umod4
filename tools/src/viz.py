@@ -58,6 +58,41 @@ TIMER_TICK_DURATION_S = 2e-6  # ECU timer tick duration: 2 microseconds
 MAX_INJECTOR_BARS_VISIBLE = 5000  # Maximum bars to draw for performance
 MAX_REASONABLE_DURATION_TICKS = 50000  # 100ms max reasonable duration (startup injector pulses can be long)
 
+
+class InjectorBarItem(QtWidgets.QGraphicsRectItem):
+    """Custom rectangle item for injector bars with proper hover detection"""
+
+    def __init__(self, x, y, width, height, tooltip_text, color, alpha):
+        # Create rect at (0, 0) with the specified size
+        super().__init__(0, 0, width, height)
+        # Then set the item's position in the scene
+        self.setPos(x, y)
+
+        self._tooltip_text = tooltip_text
+        self.setAcceptHoverEvents(True)
+
+        # Set up appearance - use NO PEN to avoid bounding box issues
+        self.setPen(pg.mkPen(None))
+
+        rgba = parse_color_to_rgba(color, alpha)
+        self.setBrush(pg.mkBrush(*rgba))
+
+    def hoverEnterEvent(self, event):
+        """Show tooltip only when mouse enters the actual bar rectangle"""
+        self.setToolTip(self._tooltip_text)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        """Clear tooltip when mouse leaves"""
+        self.setToolTip("")
+        super().hoverLeaveEvent(event)
+
+    def shape(self):
+        """Override shape to return exact rectangle bounds for hover detection"""
+        path = QtWidgets.QPainterPath()
+        path.addRect(self.rect())
+        return path
+
 # Axis tick spacing constraints
 MIN_TEMPERATURE_TICK_SPACING_C = 5.0  # Minimum spacing between temperature axis ticks (degrees C)
 
@@ -66,16 +101,19 @@ MIN_TEMPERATURE_TICK_SPACING_C = 5.0  # Minimum spacing between temperature axis
 # ================================================================================================
 
 class DataVisualizationTool(QMainWindow):
-    def __init__(self):
+    def __init__(self, debug=False):
         super().__init__()
+
+        # Debug flag for verbose output
+        self.debug = debug
 
         # Initialize configuration managers FIRST
         self.config = AppConfig()
         self.stream_config = get_config_manager()
 
         # Print config location for user awareness
-        print(f"Configuration file: {self.config.settings.fileName()}")
-        print(f"Stream configuration: {self.stream_config.config_path}")
+        self.debug_print(f"Configuration file: {self.config.settings.fileName()}")
+        self.debug_print(f"Stream configuration: {self.stream_config.config_path}")
 
         self.base_title = "Data Visualization Tool - v1.1"
         self.setWindowTitle(self.base_title)
@@ -152,6 +190,11 @@ class DataVisualizationTool(QMainWindow):
 
         # Restore window geometry after UI initialization
         self.config.restore_window_geometry(self)
+
+    def debug_print(self, *args, **kwargs):
+        """Print debug message if debug flag is enabled"""
+        if self.debug:
+            print(*args, **kwargs)
 
     def _on_history_changed(self, can_undo, can_redo):
         """Callback when history state changes - update UI buttons"""
@@ -239,37 +282,17 @@ class DataVisualizationTool(QMainWindow):
 
         # Undo action
         self.undo_action = QAction("&Undo", self)
-        self.undo_action.setShortcut("Ctrl+Z")
+        self.undo_action.setShortcut("Alt+Left")
         self.undo_action.triggered.connect(self.undo)
         self.undo_action.setEnabled(False)
         view_menu.addAction(self.undo_action)
 
         # Redo action
         self.redo_action = QAction("&Redo", self)
-        self.redo_action.setShortcut("Ctrl+Y")
+        self.redo_action.setShortcut("Alt+Right")
         self.redo_action.triggered.connect(self.redo)
         self.redo_action.setEnabled(False)
         view_menu.addAction(self.redo_action)
-
-        view_menu.addSeparator()
-
-        # Reset View
-        reset_action = QAction("&Reset View", self)
-        reset_action.setShortcut("Ctrl+R")
-        reset_action.triggered.connect(self.reset_view)
-        view_menu.addAction(reset_action)
-
-        # Fit
-        fit_action = QAction("&Fit", self)
-        fit_action.setShortcut("Ctrl+F")
-        fit_action.triggered.connect(self.fit_axis_owner)
-        view_menu.addAction(fit_action)
-
-        # Fit All
-        fit_all_action = QAction("Fit &All", self)
-        fit_all_action.setShortcut("Ctrl+Shift+F")
-        fit_all_action.triggered.connect(self.fit_all)
-        view_menu.addAction(fit_all_action)
 
         view_menu.addSeparator()
 
@@ -457,16 +480,16 @@ class DataVisualizationTool(QMainWindow):
         self.nav_widget = QWidget()
         self.nav_widget.setMinimumHeight(40)
         self.nav_widget.setMaximumHeight(200)
-        
+
         nav_layout = QVBoxLayout(self.nav_widget)
         nav_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.nav_plot = pg.PlotWidget()
+
+        self.nav_plot = ZoomableGraphWidget()
         self.nav_plot.setBackground('w')
         self.nav_plot.setLabel('bottom', 'Time (s)')
         self.nav_plot.hideAxis('left')
-        self.nav_plot.setMouseEnabled(x=False, y=False)
-        
+        self.nav_plot.getPlotItem().setMouseEnabled(x=False, y=False)
+
         # Add linear region for view selection
         self.view_region = pg.LinearRegionItem(
             [0, 10],
@@ -475,10 +498,23 @@ class DataVisualizationTool(QMainWindow):
             movable=True
         )
         self.view_region.setZValue(10)
+
+        # Disable edge resizing - only allow dragging the entire box
+        # The rubber band zoom is the preferred way to resize the view
+        for line in self.view_region.lines:
+            line.setMovable(False)
+
         self.nav_plot.addItem(self.view_region)
         self.view_region.sigRegionChanged.connect(self.on_region_changed)
         self.view_region.sigRegionChangeFinished.connect(self.on_region_change_finished)
-        
+
+        # Set zoom callback for rubber band zoom
+        self.nav_plot.zoom_callback = self.on_nav_zoom
+
+        # Exclude the navigation region from rubber band zoom - clicking inside
+        # the blue box should drag it, not start a rubber band zoom
+        self.nav_plot.exclude_region = self.view_region
+
         nav_layout.addWidget(self.nav_plot)
         
     def populate_stream_selection(self):
@@ -675,9 +711,9 @@ class DataVisualizationTool(QMainWindow):
             self.view_controller.set_view_range(self.view_start, self.view_end)
 
             # Initialize normalizer (Phase 4 refactoring)
-            self.normalizer = DataNormalizer(self.stream_config, self.stream_ranges)
+            self.normalizer = DataNormalizer(self.stream_config, self.stream_ranges, debug=self.debug)
 
-            print(f"Initial view: [{self.view_start:.2f}s, {self.view_end:.2f}s]")
+            self.debug_print(f"Initial view: [{self.view_start:.2f}s, {self.view_end:.2f}s]")
 
             # Reset state
             self.enabled_streams = []
@@ -687,6 +723,9 @@ class DataVisualizationTool(QMainWindow):
             self.populate_stream_selection()
             self.update_navigation_plot()
             self.update_graph_plot()
+
+            # Add initial view to history
+            self.view_history.push(self.view_start, self.view_end, 0, 1)
 
             # Add to recent files and update menu
             self.config.add_recent_file(filename)
@@ -845,7 +884,7 @@ class DataVisualizationTool(QMainWindow):
 
         uniform_time = np.linspace(time_min, time_max, num_samples)
 
-        print(f"Creating unified time axis: {num_samples} samples from {time_min:.3f}s to {time_max:.3f}s")
+        self.debug_print(f"Creating unified time axis: {num_samples} samples from {time_min:.3f}s to {time_max:.3f}s")
 
         # Create DataFrame
         df_data = {'time': uniform_time}
@@ -1258,7 +1297,7 @@ class DataVisualizationTool(QMainWindow):
             if 'temp' in self.axis_owner.lower():
                 if tick_spacing_real < MIN_TEMPERATURE_TICK_SPACING_C:
                     tick_spacing_real = MIN_TEMPERATURE_TICK_SPACING_C
-                    print(f"  Applied MIN_TEMPERATURE_TICK_SPACING_C: {MIN_TEMPERATURE_TICK_SPACING_C}°C")
+                    self.debug_print(f"  Applied MIN_TEMPERATURE_TICK_SPACING_C: {MIN_TEMPERATURE_TICK_SPACING_C}°C")
 
             # Round axis_min DOWN to nearest tick spacing multiple
             # This ensures ticks start at nice round numbers (0, 500, 1000, etc)
@@ -1275,11 +1314,11 @@ class DataVisualizationTool(QMainWindow):
                 tick_value += tick_spacing_real
 
             # DEBUG
-            print(f"Stream: {self.axis_owner}")
-            print(f"  Data range: {axis_min:.1f} to {axis_max:.1f}")
-            print(f"  Rounded range: {axis_min_rounded:.1f} to {axis_max_rounded:.1f}")
-            print(f"  Tick spacing: {tick_spacing_real:.1f}")
-            print(f"  Real ticks: {real_ticks}")
+            self.debug_print(f"Stream: {self.axis_owner}")
+            self.debug_print(f"  Data range: {axis_min:.1f} to {axis_max:.1f}")
+            self.debug_print(f"  Rounded range: {axis_min_rounded:.1f} to {axis_max_rounded:.1f}")
+            self.debug_print(f"  Tick spacing: {tick_spacing_real:.1f}")
+            self.debug_print(f"  Real ticks: {real_ticks}")
 
             # Convert tick positions to DATA's normalized 0-1 space (where 0=axis_min, 1=axis_max)
             # This is where the ticks will actually be drawn since data is normalized to this range
@@ -1292,7 +1331,7 @@ class DataVisualizationTool(QMainWindow):
             if bar_offset > 0:
                 data_normalized_ticks = [pos + bar_offset for pos in data_normalized_ticks]
 
-            print(f"  Normalized tick positions: {data_normalized_ticks}")
+            self.debug_print(f"  Normalized tick positions: {data_normalized_ticks}")
 
             left_axis = self.graph_plot.getAxis('left')
 
@@ -1302,7 +1341,7 @@ class DataVisualizationTool(QMainWindow):
             visible_ticks = [(norm_pos, real_val) for norm_pos, real_val in zip(data_normalized_ticks, real_ticks)
                            if min_visible <= norm_pos <= max_visible]
 
-            print(f"  Visible ticks: {visible_ticks}")
+            self.debug_print(f"  Visible ticks: {visible_ticks}")
 
             # Override tickValues to specify exact tick positions
             def custom_tick_values(minVal, maxVal, size):
@@ -1311,7 +1350,7 @@ class DataVisualizationTool(QMainWindow):
                 major_ticks = [pos for pos, _ in visible_ticks]
                 minor_ticks = []  # No minor ticks
 
-                print(f"  tickValues returning {len(major_ticks)} positions")
+                self.debug_print(f"  tickValues returning {len(major_ticks)} positions")
                 return [(1.0, major_ticks), (0.0, minor_ticks)]
 
             self._custom_tick_values = custom_tick_values
@@ -1331,7 +1370,7 @@ class DataVisualizationTool(QMainWindow):
                 precision = 3  # Three decimal places for very small spacing
 
             def custom_tick_strings(values, scale, spacing):
-                print(f"  tickStrings called with {len(values)} positions: {values[:5]}")
+                self.debug_print(f"  tickStrings called with {len(values)} positions: {values[:5]}")
                 strings = []
                 for v in values:
                     # Find closest tick in our mapping
@@ -1432,7 +1471,7 @@ class DataVisualizationTool(QMainWindow):
             if 'temp' in self.right_axis_owner.lower():
                 if tick_spacing_real < MIN_TEMPERATURE_TICK_SPACING_C:
                     tick_spacing_real = MIN_TEMPERATURE_TICK_SPACING_C
-                    print(f"  Applied MIN_TEMPERATURE_TICK_SPACING_C: {MIN_TEMPERATURE_TICK_SPACING_C}°C")
+                    self.debug_print(f"  Applied MIN_TEMPERATURE_TICK_SPACING_C: {MIN_TEMPERATURE_TICK_SPACING_C}°C")
 
             # Round axis_min DOWN to nearest tick spacing multiple
             # This ensures ticks start at nice round numbers (0, 500, 1000, etc)
@@ -1449,16 +1488,16 @@ class DataVisualizationTool(QMainWindow):
                 tick_value += tick_spacing_real
 
             # DEBUG
-            print(f"Right Axis Stream: {self.right_axis_owner}")
-            print(f"  Data range: {axis_min:.1f} to {axis_max:.1f}")
-            print(f"  Rounded range: {axis_min_rounded:.1f} to {axis_max_rounded:.1f}")
-            print(f"  Tick spacing: {tick_spacing_real:.1f}")
-            print(f"  Real ticks: {real_ticks}")
+            self.debug_print(f"Right Axis Stream: {self.right_axis_owner}")
+            self.debug_print(f"  Data range: {axis_min:.1f} to {axis_max:.1f}")
+            self.debug_print(f"  Rounded range: {axis_min_rounded:.1f} to {axis_max_rounded:.1f}")
+            self.debug_print(f"  Tick spacing: {tick_spacing_real:.1f}")
+            self.debug_print(f"  Real ticks: {real_ticks}")
 
             # Convert tick positions to DATA's normalized 0-1 space (where 0=axis_min, 1=axis_max)
             # This is where the ticks will actually be drawn since data is normalized to this range
             data_normalized_ticks = [(t - axis_min) / axis_range for t in real_ticks]
-            print(f"  Normalized tick positions: {data_normalized_ticks}")
+            self.debug_print(f"  Normalized tick positions: {data_normalized_ticks}")
 
             right_axis = self.graph_plot.getAxis('right')
 
@@ -1466,7 +1505,7 @@ class DataVisualizationTool(QMainWindow):
             visible_ticks_right = [(norm_pos, real_val) for norm_pos, real_val in zip(data_normalized_ticks, real_ticks)
                            if 0 <= norm_pos <= 1]
 
-            print(f"  Visible ticks: {visible_ticks_right}")
+            self.debug_print(f"  Visible ticks: {visible_ticks_right}")
 
             # Override tickValues to specify exact tick positions
             def custom_tick_values_right(minVal, maxVal, size):
@@ -1475,7 +1514,7 @@ class DataVisualizationTool(QMainWindow):
                 major_ticks = [pos for pos, _ in visible_ticks_right]
                 minor_ticks = []  # No minor ticks
 
-                print(f"  Right tickValues returning {len(major_ticks)} positions")
+                self.debug_print(f"  Right tickValues returning {len(major_ticks)} positions")
                 return [(1.0, major_ticks), (0.0, minor_ticks)]
 
             self._custom_right_tick_values = custom_tick_values_right
@@ -1495,7 +1534,7 @@ class DataVisualizationTool(QMainWindow):
                 precision_right = 3  # Three decimal places for very small spacing
 
             def custom_tick_strings_right(values, scale, spacing):
-                print(f"  Right tickStrings called with {len(values)} positions: {values[:5]}")
+                self.debug_print(f"  Right tickStrings called with {len(values)} positions: {values[:5]}")
                 strings = []
                 for v in values:
                     # Find closest tick in our mapping
@@ -1622,11 +1661,11 @@ class DataVisualizationTool(QMainWindow):
         # Check if we have the attach_to stream (usually RPM)
         attach_to = config.attach_to
         if not attach_to or attach_to not in self.raw_data:
-            print(f"DEBUG: {stream_name} - attach_to stream '{attach_to}' not found in raw_data")
+            self.debug_print(f"DEBUG: {stream_name} - attach_to stream '{attach_to}' not found in raw_data")
             return
 
         if stream_name not in self.raw_data:
-            print(f"DEBUG: {stream_name} - marker stream not found in raw_data")
+            self.debug_print(f"DEBUG: {stream_name} - marker stream not found in raw_data")
             return
 
         # Get the base stream data (e.g., RPM)
@@ -1659,9 +1698,9 @@ class DataVisualizationTool(QMainWindow):
 
         # DEBUG: Print marker time range
         if len(marker_times) > 0:
-            print(f"DEBUG: {stream_name} - total markers: {len(marker_times)}, time range: {marker_times[0]:.2f} - {marker_times[-1]:.2f}")
-            print(f"DEBUG: {stream_name} - attach_to '{attach_to}' time range: {base_time[0]:.2f} - {base_time[-1]:.2f}")
-            print(f"DEBUG: {stream_name} - current view window: {self.view_start:.2f} - {self.view_end:.2f}")
+            self.debug_print(f"DEBUG: {stream_name} - total markers: {len(marker_times)}, time range: {marker_times[0]:.2f} - {marker_times[-1]:.2f}")
+            self.debug_print(f"DEBUG: {stream_name} - attach_to '{attach_to}' time range: {base_time[0]:.2f} - {base_time[-1]:.2f}")
+            self.debug_print(f"DEBUG: {stream_name} - current view window: {self.view_start:.2f} - {self.view_end:.2f}")
 
             # Check for gaps in spark data around the problematic time
             if self.view_start < 21 and self.view_end > 18:
@@ -1669,9 +1708,9 @@ class DataVisualizationTool(QMainWindow):
                 early_mask = (marker_times >= 18) & (marker_times <= 21)
                 early_markers = marker_times[early_mask]
                 if len(early_markers) > 0:
-                    print(f"DEBUG: {stream_name} - markers in 18-21s range: {len(early_markers)}")
-                    print(f"DEBUG: {stream_name} - first few times: {early_markers[:10]}")
-                    print(f"DEBUG: {stream_name} - last few times: {early_markers[-10:]}")
+                    self.debug_print(f"DEBUG: {stream_name} - markers in 18-21s range: {len(early_markers)}")
+                    self.debug_print(f"DEBUG: {stream_name} - first few times: {early_markers[:10]}")
+                    self.debug_print(f"DEBUG: {stream_name} - last few times: {early_markers[-10:]}")
 
         # Get visual properties from config
         color = self.stream_colors.get(stream_name, config.default_color)
@@ -1689,11 +1728,11 @@ class DataVisualizationTool(QMainWindow):
         else:
             visible_marker_values = None
 
-        print(f"DEBUG: {stream_name} - visible markers in window: {len(visible_marker_times)}")
+        self.debug_print(f"DEBUG: {stream_name} - visible markers in window: {len(visible_marker_times)}")
 
         # Skip drawing if too many markers
         if len(visible_marker_times) > max_visible:
-            print(f"DEBUG: Skipping {stream_name} markers - {len(visible_marker_times)} exceeds limit of {max_visible}")
+            self.debug_print(f"DEBUG: Skipping {stream_name} markers - {len(visible_marker_times)} exceeds limit of {max_visible}")
             return
 
         # Get normalization factor - use dynamic max if bars are enabled
@@ -1873,13 +1912,24 @@ class DataVisualizationTool(QMainWindow):
         for i in range(len(visible_bar_times)):
             start_time = visible_bar_times[i]
             duration_seconds = visible_durations[i]
+            duration_us = duration_seconds * 1e6  # Convert to microseconds
 
-            # Create rectangle
-            rect = QtWidgets.QGraphicsRectItem(
-                start_time, bar_y, duration_seconds, bar_height
+            # Add tooltip - use template from config if available
+            if config.tooltip:
+                # Use template from YAML config and format it
+                tooltip_text = config.tooltip.format(
+                    start_time=start_time,
+                    duration_us=duration_us
+                )
+            else:
+                # Fallback to default format (duration only)
+                tooltip_text = f"{config.display_name}\nDuration: {duration_us:.1f} μs"
+
+            # Create custom bar item with proper hover detection
+            rect = InjectorBarItem(
+                start_time, bar_y, duration_seconds, bar_height,
+                tooltip_text, color, bar_alpha
             )
-            rect.setPen(pg.mkPen(color=color, width=1))
-            rect.setBrush(pg.mkBrush(*rgba))
 
             self.graph_plot.addItem(rect)
 
@@ -1967,8 +2017,19 @@ class DataVisualizationTool(QMainWindow):
                 nav_time = all_time
                 nav_values = all_values
 
-            # Normalize to 0-1 range like main graph
-            stream_min, stream_max = self.stream_ranges.get(stream, (0, 1))
+            # Normalize to 0-1 range like main graph, using display constraints
+            # Use the entire time range for navigation (not just visible window)
+            if self.normalizer:
+                stream_min, stream_max = self.normalizer.calculate_stream_range(
+                    stream,
+                    self.raw_data,
+                    time_min,  # Use full data range for navigation
+                    time_max,
+                    axis_owner_range=None
+                )
+            else:
+                stream_min, stream_max = self.stream_ranges.get(stream, (0, 1))
+
             normalized_values = (nav_values - stream_min) / (stream_max - stream_min)
 
             color = self.stream_colors[stream]
@@ -1989,27 +2050,31 @@ class DataVisualizationTool(QMainWindow):
         """Handle navigation region changes (real-time)"""
         region = self.view_region.getRegion()
         new_start, new_end = region
-        
+
+        # Save the starting position on first change (for undo)
+        if not hasattr(self, '_region_drag_start'):
+            self._region_drag_start = (self.view_start, self.view_end)
+
         # Clamp
         view_duration = new_end - new_start
-        
+
         if view_duration < 0.1:
             view_duration = 0.1
             new_end = new_start + view_duration
-        
+
         if new_start < 0:
             new_start = 0
             new_end = view_duration
-        
+
         if new_end > self.total_time_span:
             new_end = self.total_time_span
             new_start = max(0, new_end - view_duration)
-        
+
         if new_start != region[0] or new_end != region[1]:
             self.view_region.blockSignals(True)
             self.view_region.setRegion([new_start, new_end])
             self.view_region.blockSignals(False)
-        
+
         self.view_start = new_start
         self.view_end = new_end
 
@@ -2017,20 +2082,50 @@ class DataVisualizationTool(QMainWindow):
         self.view_controller.set_view_range(new_start, new_end)
 
         self.request_update()
-    
+
     def on_region_change_finished(self):
         """Handle navigation region change completion"""
-        # Add to history when user finishes dragging (Y is always 0-1, so no need to store)
+        # Add the NEW position to history (after the drag)
         self.add_to_history(self.view_start, self.view_end, 0, 1)
 
-    
+        # Clean up drag tracking
+        if hasattr(self, '_region_drag_start'):
+            delattr(self, '_region_drag_start')
+
+    def on_nav_zoom(self, x_min, x_max, y_min, y_max):
+        """Handle rubber band zoom in navigation plot - zoom to selected time range"""
+        # Only zoom on X-axis (time), ignore Y since navigation always shows 0-1
+        self.view_start = max(0, x_min)
+        self.view_end = min(self.total_time_span, x_max)
+
+        # Ensure minimum duration
+        if self.view_end - self.view_start < 0.1:
+            mid = (self.view_start + self.view_end) / 2
+            self.view_start = max(0, mid - 0.05)
+            self.view_end = min(self.total_time_span, mid + 0.05)
+
+        # Add the NEW view to history (after modifying)
+        self.add_to_history(self.view_start, self.view_end, 0, 1)
+
+        # Sync to view controller so keyboard shortcuts use current position
+        self.view_controller.set_view_range(self.view_start, self.view_end)
+
+        # Update the navigation region to show the new view
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+
+        # Update main graph
+        self.update_graph_plot()
+
     def handle_graph_zoom(self, x_min, x_max, y_min, y_max):
         """Handle rubber band zoom in graph - only X-axis zoom, Y is always 0-1"""
-        self.add_to_history(self.view_start, self.view_end, 0, 1)
-
         # Only zoom on X-axis (time), ignore Y since streams are independently scaled
         self.view_start = max(0, x_min)
         self.view_end = min(self.total_time_span, x_max)
+
+        # Add NEW view to history (after modifying)
+        self.add_to_history(self.view_start, self.view_end, 0, 1)
 
         # Sync to view controller so keyboard shortcuts use current position
         self.view_controller.set_view_range(self.view_start, self.view_end)
@@ -2041,41 +2136,17 @@ class DataVisualizationTool(QMainWindow):
 
         self.update_graph_plot()
     
-    def fit_axis_owner(self):
-        """No-op: Each stream is always shown at its full natural scale"""
-        # With normalization, each stream is always displayed at its full range (0-1 normalized)
-        # Just refresh the plot to update axis labels if needed
-        self.update_graph_plot()
-
-    def fit_all(self):
-        """No-op: Each stream is always shown at its full natural scale"""
-        # With normalization, each stream is always displayed at its full range (0-1 normalized)
-        # Just refresh the plot
-        self.update_graph_plot()
-    
-    def reset_view(self):
-        """Reset view to initial state"""
-        self.view_controller.reset_to_initial()
-        self.view_history.clear()
-
-        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
-
-        self.view_region.blockSignals(True)
-        self.view_region.setRegion([self.view_start, self.view_end])
-        self.view_region.blockSignals(False)
-
-        self.update_graph_plot()
 
     def zoom_in_2x(self):
         """Zoom in by 2x (halve the time shown), centered on current view"""
-        # Add current view to history
-        self.view_history.push(self.view_start, self.view_end, 0, 1)
-
         # Use view controller to perform zoom
         self.view_controller.zoom_in_2x()
 
         # Update legacy accessors
         self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
+
+        # Add NEW view to history (after modifying)
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
 
         # Update navigation region
         self.view_region.blockSignals(True)
@@ -2086,14 +2157,14 @@ class DataVisualizationTool(QMainWindow):
 
     def zoom_out_2x(self):
         """Zoom out by 2x (double the time shown), centered on current view"""
-        # Add current view to history
-        self.view_history.push(self.view_start, self.view_end, 0, 1)
-
         # Use view controller to perform zoom
         self.view_controller.zoom_out_2x()
 
         # Update legacy accessors
         self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
+
+        # Add NEW view to history (after modifying)
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
 
         # Update navigation region
         self.view_region.blockSignals(True)
@@ -2104,9 +2175,9 @@ class DataVisualizationTool(QMainWindow):
 
     def pan_left_50(self):
         """Pan left by 50% of current view duration"""
-        self.view_history.push(self.view_start, self.view_end, 0, 1)
         self.view_controller.pan_left(0.5)
         self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
@@ -2114,9 +2185,9 @@ class DataVisualizationTool(QMainWindow):
 
     def pan_right_50(self):
         """Pan right by 50% of current view duration"""
-        self.view_history.push(self.view_start, self.view_end, 0, 1)
         self.view_controller.pan_right(0.5)
         self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
@@ -2124,9 +2195,9 @@ class DataVisualizationTool(QMainWindow):
 
     def pan_left_15(self):
         """Pan left by 15% of current view duration"""
-        self.view_history.push(self.view_start, self.view_end, 0, 1)
         self.view_controller.pan_left(0.15)
         self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
@@ -2134,9 +2205,9 @@ class DataVisualizationTool(QMainWindow):
 
     def pan_right_15(self):
         """Pan right by 15% of current view duration"""
-        self.view_history.push(self.view_start, self.view_end, 0, 1)
         self.view_controller.pan_right(0.15)
         self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
         self.view_region.blockSignals(True)
         self.view_region.setRegion([self.view_start, self.view_end])
         self.view_region.blockSignals(False)
@@ -2147,27 +2218,41 @@ class DataVisualizationTool(QMainWindow):
         self.view_history.push(start, end, y_min, y_max)
 
     def undo(self):
-        """Undo last operation"""
+        """Undo last zoom or pan operation"""
         result = self.view_history.undo()
         if result:
             start, end, _, _ = result
             self.view_start = start
             self.view_end = end
+
+            # Sync to view controller so keyboard shortcuts use correct position
+            self.view_controller.set_view_range(start, end)
+
+            # Update navigation region
             self.view_region.blockSignals(True)
             self.view_region.setRegion([start, end])
             self.view_region.blockSignals(False)
+
+            # Update main graph
             self.update_graph_plot()
 
     def redo(self):
-        """Redo previously undone operation"""
+        """Redo previously undone zoom or pan operation"""
         result = self.view_history.redo()
         if result:
             start, end, _, _ = result
             self.view_start = start
             self.view_end = end
+
+            # Sync to view controller so keyboard shortcuts use correct position
+            self.view_controller.set_view_range(start, end)
+
+            # Update navigation region
             self.view_region.blockSignals(True)
             self.view_region.setRegion([start, end])
             self.view_region.blockSignals(False)
+
+            # Update main graph
             self.update_graph_plot()
 
     def update_history_buttons(self):
@@ -2227,12 +2312,12 @@ class DataVisualizationTool(QMainWindow):
         # Call the GPS marker handler with no specific clicked point
         # We'll use the first GPS point as the "clicked" point for centering
         if 'gps_position' not in self.raw_data:
-            print("No GPS data available")
+            self.debug_print("No GPS data available")
             return
 
         gps_data = self.raw_data['gps_position']
         if len(gps_data['time']) == 0:
-            print("No GPS data available")
+            self.debug_print("No GPS data available")
             return
 
         # Create a fake clicked point using the middle of the track
@@ -2261,7 +2346,7 @@ class DataVisualizationTool(QMainWindow):
         import json
 
         if 'gps_position' not in self.raw_data:
-            print("No GPS data available")
+            self.debug_print("No GPS data available")
             return
 
         gps_data = self.raw_data['gps_position']
@@ -2272,8 +2357,8 @@ class DataVisualizationTool(QMainWindow):
         clicked_lat = gps_data['lat'][clicked_index]
         clicked_lon = gps_data['lon'][clicked_index]
 
-        print(f"GPS marker clicked at time={clicked_time:.3f}s, lat={clicked_lat:.6f}, lon={clicked_lon:.6f}")
-        print(f"Generating map with all {len(gps_data['time'])} GPS positions...")
+        self.debug_print(f"GPS marker clicked at time={clicked_time:.3f}s, lat={clicked_lat:.6f}, lon={clicked_lon:.6f}")
+        self.debug_print(f"Generating map with all {len(gps_data['time'])} GPS positions...")
 
         # Create a list of all GPS positions for the map
         positions = []
@@ -2388,15 +2473,15 @@ class DataVisualizationTool(QMainWindow):
                 result = subprocess.run(['wslpath', '-w', html_file],
                                       capture_output=True, text=True)
                 windows_path = result.stdout.strip()
-                print(f"Opening GPS track map at: {windows_path}")
+                self.debug_print(f"Opening GPS track map at: {windows_path}")
                 subprocess.Popen(['powershell.exe', '-Command', 'Start-Process', f'"{windows_path}"'])
             else:
                 import webbrowser
                 file_url = f'file:///{html_file.replace(os.sep, "/")}'
                 webbrowser.open(file_url, new=2)
         except Exception as e:
-            print(f"Error opening browser: {e}")
-            print(f"Map file: {html_file}")
+            self.debug_print(f"Error opening browser: {e}")
+            self.debug_print(f"Map file: {html_file}")
 
     def closeEvent(self, event):
         """Handle window close event - save configuration."""
@@ -2431,6 +2516,11 @@ Examples:
         default=None,
         help='HDF5 log file to open (optional)'
     )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug output'
+    )
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
@@ -2440,15 +2530,20 @@ Examples:
     QApplication.setOrganizationName("umod4")
     QApplication.setApplicationName("LogVisualizer")
 
-    window = DataVisualizationTool()
+    window = DataVisualizationTool(debug=args.debug)
     window.show()
+
+    # Raise window to front to ensure it's visible
+    window.raise_()
+    window.activateWindow()
 
     # Load file if specified on command line
     if args.logfile:
         if os.path.exists(args.logfile):
             window.load_hdf5_file_internal(args.logfile)
         else:
-            print(f"Error: File not found: {args.logfile}")
+            if args.debug:
+                print(f"Error: File not found: {args.logfile}")
 
     sys.exit(app.exec())
 

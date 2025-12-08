@@ -1,19 +1,119 @@
 # To Do
 
-## Bugs and Features
+## Super Short Term
 
-1) HC11: VTA A/D Results Should Only Report Changes
+* UM4
+  * Change VTA reports so that the upper 6 bits contain the upper 6 bits of the TCNT1 timer.
+  The idea would be to give supply a crude advancement of time in between crankshaft events.
+  It would also get rid of needing OFLO and HOFLO events since there are plenty of VTA events per counter overflow.
+  Resolution of time advancement would be 128 uSec
+  Logs would get bigger since VTA would always get sent, not just when it changed.
 
-### Viewer_Bundle
+* Visualizer
+  * Get it broken up as per Claude's refactoring plan
+  * Get the new setup checked in
+* Work on Getting the EP flashed from the WP
+  * Convert the low-level SWD stuff to use the code from [Raspberry Pi Picoprobe](https://github.com/raspberrypi/debugprobe/tree/master)
+    * Uses PIO instead of bit-banging
+    * 100% sure it works instead of the reflasher code
+  * Extract what I need from the reflasher code
+    * send data, verify data, issue programming commands, release control, etc.
+* 4-bit SD Card accesses
+  * Would speed writes when logging, reads when reflashing EP
+  * THere is a pi pico version in examples
+  * There is another example at zuluscsi, GPL-3 under continuous development too
 
-1) Progress Bar does not update often enough
-1) decode error bits for L00C..L00F
+* Add wifi to WP
+  * auto-connect to wifi at boot
+  * provide a shell so that I could connect in from my desktop
 
-### PCB
+### Bugs
 
-1) Hardware.h only defines PCB 4V0
+## Spark Events Not Getting Logged
 
-## Data Path From ECU to WP
+Proposal: Add ISRs for the spark detectors input capture events, IC3 (coil 1) and TO5I4 (coil 2).
+The ISRs would just log the captured timestamp for SPRK1 and SPRK2 events.
+It may be that the crankshaft processing code that manually reads injector IC events during CR6/11 is not happening.
+
+Background:
+
+There are times when SPRK events are not logged.
+They are missing in terms of spans of seconds when no spark events are recorded.
+The engine is obviously running, so somehow the spark events are being lost.
+In log.3 for example, they stop at 11.35 seconds and start up again at 13.27 seconds.
+
+I have evidence of missing spark events as far back as 11/15 in log.11, which was when spark events were first added to the log.
+Log.11 shows a gap in spark events between events 1576 and 3451 when the engine was clearly running, just like log.3 above.
+
+They could be getting lost in the following places:
+
+1) EP: inter-core FIFO is full when CORE1 inserts a new log event
+2) EP: lost because PIO TX32 FIFO is full due to enforced gaps between insertions
+3) WP: PIO RX32 FIFO is full when a 32-bit transfer arrives from EP
+
+In the initial log.3 example, spark are lost when they are being generated approximately 30 per second, and there is a nearly 2 second gap in the data.
+That's about 60 in a row.
+
+Which of the items above could account that kind of data loss?
+Also: it is JUST spark items getting lost.
+Crankref events and ADC data keep coming throughout that whole period.
+
+It seems unlikely that it is the inter-core fifo.
+The core0 mainloop pulls things from the inter-core fifo and puts them in a gigantic streamBuffer queue immediately.
+That queue will never fill.
+
+There is a rate-limiter on how items get removed from the gigantic queue and put in the TX32 PIO UART.
+But nothing will get lost between the streamBuffer and the TX32 FIFO.
+
+On the WP side, the PIO RX32 queue is 8 elements long.
+If interrupts were inhibited for some reason for long enough (8 * 64 uSec or 512 uSec), then the RS32 FIFO could overflow.
+
+One interesting thing would be that spark events always arrive at the end of a burst: CRANK_TS, CRID, then SPRK, SPRK.
+But again, they are immediately buffered in the gigantic queue, then rate-limited transmitted to the WP.
+The only way they could be lost is if the intercore fifo overflowed while being buffered into the giant queue.
+
+
+## Visualizer
+
+* Total Visualizer re-write
+  * Includes reworking the HDF5 file, so it affects decodeLog.py too
+* work out how to display injector pulses
+* Build a Log Viewer into visualizer
+  * Right click on any event in the graph window to view it in the log
+* Get viz packaged up for others to play with
+
+Features to add:
+
+* Coil dwell bars
+* Get rid of undisplyable streams from selection list
+* Get time markers events drawn
+  * GPS
+  * CPU events
+  * EPROM load events
+
+
+## WP
+
+The big items are:
+
+* Complete EP Reflash Mechanism
+* WiFi
+  * Auto Log Upload
+  * OTA reflash:
+    * WP
+    * EP
+
+### WiFi
+
+* __OTA firmware updates__
+* __Unattended Log offload by WP__
+
+## decodeLog.py
+
+### LogDecoder Not Sync'd to Constants in XX_log.h Files
+
+If any of the xx_log.h files are changed, it requires a manual step to make sure that logDecoder and visualizer might mods to deal with the changes.
+It would be better if this could be automated, or at least detected and flagged if they get out of sync.
 
 ### Recombine All XX_log.h files into logid.h?
 
@@ -28,68 +128,21 @@ Note that the ECU image is always part of the EP image (in the BSON partition), 
 It would make things a tiny bit easier on the toolchain if ECU/EP/WP all just included the same global log file that defined everything.
 The build subsystem doesn't really care though.
 
-## PCB Support
-
-1) See if I can make 4-bit SD Card operations work.
-I know that they should because the RP2350 Rabbit SCSI adaptor I bought for the logic analyzer uses 4-bit PIO SD.
-
-1) Supercap operation
-    1) charging
-    1) switchover after power fail
-
-1) Do I need a star GND on bottom layer?
-
-## Experiments
-
-1) Power the Pico2W externally to relieve the ECU from powering the umod4 at all.
-
-    Theory: if the ECU power supply has a problem due to the extra load, either by
-    average power consumption or short term power spikes, this experiment will remove
-    the umod4 board from the equation.
-
-1) Graph all the data to see if there is anything that correlates to the RPM changes and engine loss of power.
-
-
-
-## Software Short Term
+## ECU
 
 ### Log ALL Ignition Events
 
-At the moment, logs such as 2025-10-22/log.10.decoded show that FC_OFF events are missing for large stretches of time
-even though the engine is clearly running.
+At the moment, logs such as 2025-10-22/log.10.decoded show that FC_OFF events are missing for large stretches of time even though the engine is clearly running.
 
-### Find Out Why Board Draws High Current at ECU Power-Off
+### Find Out Why 4V1 PCB Draws High Current at ECU Power-Off
 
-If the umod4 is powered via USB, when the ECU gets
+### ECU Power Supply Noise From Ignition
 
-## Short-Term Plan
-
-* Test running the system off a 5.4V power supply fed into the Pico2 WP USB port.
-  Goal is to see if removing the umod4 load from the ECU power supply affects the engine operation for the better.
-
-## ECU Power Supply Noise From Ignition
-
-## ECU Loses Crank Posn
+#### ECU Loses Crank Posn
 
 Seems to be noise-related, perhaps when an ignition event occurs at the same time as the leading edge of a crank event.
 
-## Log Writing Bug
-
-I have many examples where a log appears to be writting starting well after boot.
-The log entries that should have been generated by the initial boot HC11 boot process is missing.
-Instead, the log begins with the engine already running, meaning at least 3 seconds of data is gone.
-The 3 seconds comes from me always letting the fuel pump shut down before starting the bike.
-
-Data is missing at the end of some files too, but that could simply be that LittleFS takes so long to write data
-and a write could have been in progress while the key was turned off.
-
-The missing data at the start is more critical right now.
-That should simply never happen.
-
-As of now, the EP writes the FIFO data stream in pairs using blocking byte-writes, as fast as it can.
-
-
-## Debug Power Supply Noise Coupling into CAM and CRANK
+#### Debug Power Supply Noise Coupling into CAM and CRANK
 
 1) With bike OFF, check +5V output
 
@@ -101,63 +154,7 @@ As of now, the EP writes the FIFO data stream in pairs using blocking byte-write
 
     If it is noisy, then I know that +12 in is still noisy
 
-2) Try out the better scope probes
-
-
-
-A high-level list of bugs and features to consider.
-
-## Gah: loading images
-
-There should be one single bottom-level routine that does all loading:
-
-loadEprom(bsonDoc_t epromDoc, uint32_t startOffset, uint32_t length)
-
-On top of that would be:
-  loadEprom(const char* name)     which converts the name to a bson doc* and if successful, invokes loadEprom(bson, 0, 32768)
-  loadEprom(bsondoc*)             which invokes loadEprom(bson, 0, 32768)
-  loadMapBlob(const char* name)   which converts the name to a bson doc* and if successful invokes loadEprom(bson, blobstartaddr, bloblen)
-  loadMapBlob(bsondoc*)           which invokes loadEprom(bson, mapblobstart, mabbloblen)
-
-
-## Logging
-
-* Get the EP to log info about every image it processes while creating the ECU runtime image:
-    * 16 Image name (truncated to N chars max)
-    * 4 Image M3 ID
-    * Image found
-    * Image complete M3 checksum OK
-    * Image range.addr (16 bits)
-    * Image range.length (16 bits)
-    * Image range verified after copy to RAM
-
-For the purposes of the big bang bug, I can send out the data as 1 complete packet.
-The WP will not get an interrupt until the packet is totally received.
-
-
-* Does the EP logger need to enforce a minimal time between messages going out?
-    The RX timeout interrupt triggers when no more data is received during a 32-
-bit period.
-At 921600 baud, that's just under 35 uSec of dead time.
-Would also need to consider that the ISR will not run until at least 35 uSec later,
-but it takes time to do its job, so maybe it is safer to never transmit faster than 100 uSec between packets.
-That might be an argument for DMA meaning that the data is already in a RAM buffer, and all that needs to be done is to call the log function.
-
-
-### WP Logging from EP
-
-Right now, the UART ISR expects character pairs to arrive, signalled by an RX Timeout interrupt.
-This could be changed to wait for packets of data to arrive, signalled by RX Timeout.
-The RX FIFO is 32 bytes, so a packet could be up to 32 bytes long.
-
-The ISR would pull the data out of the FIFO, put it in a static RAM buffer, then log it as 1 transaction.
-
-## EP Startup
-
-* track all failures while loading images
-    * Perform retries on failures
-    * Have a backup, like trying to load 549USA if everything fails
-        * flash LED if absolutely everything fails
+1) Try out the better scope probes
 
 ## EP
 
@@ -166,11 +163,6 @@ The ISR would pull the data out of the FIFO, put it in a static RAM buffer, then
 * Look harder for a binfile to run if the UM4 file cannot be accessed
   * Perhaps a list of EPROMs to try running in case of flash corruption issues
 
-## ECU/UM4
-
-* Allow the ECU to log string messages?
-  * This would let the ECU log its own EPROM string ID. This could also be done from the EP itself because in theory, the EP knows what EPROM it loaded, but the absolute proof would be if the code running in the ECU identified itself. Of course, stock EPROMs would not identify themselves, so maybe this is not useful except for UM4 eproms. Given that the UM4 will be changing over time, maybe this is still useful though.
-
 ## EPROM Lib
 
 * Always build a BSON object for every eprom that has a .dsc file, even if the corresponding .bin file is not present.
@@ -178,11 +170,26 @@ The ISR would pull the data out of the FIFO, put it in a static RAM buffer, then
   If no .bin file is present for a given .dsc file, just leave the .bin element out of the bson object that gets created.
   This simplifies the build process because the CMakeLists.txt file does not need to comment out adding eproms just because the .bin file is not present.
 
-## WP
+## PCB
 
-* Look into OTA mechanisms
-  * OTA is problematic on RP2040 processors because they run code from SPI flash, meaning that you can't put two copies in flash at the same time unless the second copy has been built to execute in a different part of the address space. If the code ran from RAM, this would not be an issue, but codebase will be too big to run from RAM.
-  * The RP2350 adds address translation for the SPI addresses which allows multiple images to reside in the SPI flash.
-  By programming the address translation registers properly, any of the multiple images can be made to appear at a specific, consistent place in the address map.
+### Remaining Things to Think About
 
-* Get serial output mechanisms working as a debug channel when the ECU is mounted on the bike
+1) See if I can make 4-bit SD Card operations work.
+I know that they should because the RP2350 Rabbit SCSI adaptor I bought for the logic analyzer uses 4-bit PIO SD.
+
+1) Supercap operation?
+    1) charging
+    1) switchover after power fail
+
+1) Do I need a star GND on bottom layer?
+
+### Experiments
+
+1) Power the Pico2W externally to relieve the ECU from powering the umod4 at all.
+
+    Theory: if the ECU power supply has a problem due to the extra load, either by
+    average power consumption or short term power spikes, this experiment will remove
+    the umod4 board from the equation.
+
+1) Graph all the data to see if there is anything that correlates to the RPM changes and engine loss of power.
+

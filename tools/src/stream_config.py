@@ -6,13 +6,42 @@ data streams should be visualized. Stream types include:
 - graph_marker: Event markers attached to graph data
 - bar_data: Horizontal bars with start/duration
 - time_marker: Markers on the time axis itself
+
+Configuration cascading:
+- Base config: tools/src/stream_config.yaml (shipped with application)
+- Local override: ./stream_config.yaml (in current directory)
+- Local overrides are deep-merged with base config
 """
 
 import yaml
+import os
 from pathlib import Path
 from enum import Enum
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
+
+
+def deep_merge(base: dict, override: dict) -> dict:
+    """
+    Deep merge override dictionary into base dictionary.
+
+    Recursively merges nested dictionaries. Lists and primitive values are replaced.
+
+    Args:
+        base: Base dictionary
+        override: Override dictionary (takes precedence)
+
+    Returns:
+        Merged dictionary (modifies base in-place and returns it)
+    """
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            # Recursively merge nested dicts
+            deep_merge(base[key], value)
+        else:
+            # Replace value (works for primitives, lists, or new keys)
+            base[key] = value
+    return base
 
 
 class StreamType(Enum):
@@ -41,6 +70,7 @@ class StreamConfig:
     display_range_min: Optional[float] = None  # Fixed minimum for display range
     display_range_max: Optional[float] = None  # Fixed maximum for display range
     display_range_min_top: Optional[float] = None  # Minimum value for top of display (prevents over-scaling)
+    display_range_max_bottom: Optional[float] = None  # Maximum value for bottom of display (prevents under-scaling)
 
     # Graph marker specific
     attach_to: Optional[str] = None
@@ -90,12 +120,13 @@ class StreamConfigManager:
         self._load_config()
 
     def _load_config(self):
-        """Load configuration from YAML file"""
+        """Load configuration from YAML file with local overrides"""
+        # Load base configuration
         try:
             with open(self.config_path, 'r') as f:
                 config = yaml.safe_load(f)
         except FileNotFoundError:
-            print(f"WARNING: Config file not found: {self.config_path}")
+            print(f"ERROR: Config file not found: {self.config_path}")
             print("Using empty configuration")
             return
         except yaml.YAMLError as e:
@@ -103,22 +134,130 @@ class StreamConfigManager:
             print("Using empty configuration")
             return
 
+        # Check for local override in current directory
+        local_config_path = Path.cwd() / "stream_config.yaml"
+        if local_config_path.exists() and local_config_path != self.config_path:
+            try:
+                with open(local_config_path, 'r') as f:
+                    local_config = yaml.safe_load(f)
+
+                if local_config:
+                    print(f"Loading local config overrides from: {local_config_path}")
+                    # Deep merge local config into base config
+                    config = deep_merge(config, local_config)
+                    print(f"  Applied overrides from {local_config_path}")
+            except yaml.YAMLError as e:
+                print(f"WARNING: Failed to parse local config {local_config_path}: {e}")
+                print("  Ignoring local overrides")
+            except Exception as e:
+                print(f"WARNING: Error loading local config {local_config_path}: {e}")
+                print("  Ignoring local overrides")
+
         # Load global settings
         self.settings = config.get('settings', {})
 
         # Load stream configurations
         streams_config = config.get('streams', {})
+        errors = []
+        warnings = []
+
         for name, stream_data in streams_config.items():
             try:
-                self.streams[name] = StreamConfig(
+                stream_config = StreamConfig(
                     name=name,
                     **stream_data
                 )
+
+                # Validate display constraints
+                validation_errors = self._validate_stream_config(stream_config)
+                if validation_errors:
+                    errors.extend([f"Stream '{name}': {err}" for err in validation_errors])
+                else:
+                    self.streams[name] = stream_config
+
+            except TypeError as e:
+                warnings.append(f"Stream '{name}': Unknown or invalid field in YAML: {e}")
+                # Still try to create the stream without the invalid fields
+                try:
+                    # Filter out invalid fields by only using known fields
+                    valid_data = {k: v for k, v in stream_data.items()
+                                 if k in StreamConfig.__dataclass_fields__}
+                    stream_config = StreamConfig(name=name, **valid_data)
+                    self.streams[name] = stream_config
+                except Exception as e2:
+                    errors.append(f"Stream '{name}': Failed to load even after filtering: {e2}")
             except Exception as e:
-                print(f"WARNING: Failed to load config for stream '{name}': {e}")
+                errors.append(f"Stream '{name}': {e}")
                 continue
 
+        # Print validation results
+        if errors:
+            print(f"\nERROR: Found {len(errors)} error(s) in stream configuration:")
+            for error in errors:
+                print(f"  - {error}")
+            print()
+
+        if warnings:
+            print(f"\nWARNING: Found {len(warnings)} warning(s) in stream configuration:")
+            for warning in warnings:
+                print(f"  - {warning}")
+            print()
+
         print(f"Loaded configuration for {len(self.streams)} streams from {self.config_path}")
+
+    def _validate_stream_config(self, config: StreamConfig) -> list:
+        """
+        Validate a stream configuration for common errors.
+
+        Args:
+            config: StreamConfig to validate
+
+        Returns:
+            List of error messages (empty if valid)
+        """
+        errors = []
+
+        # Validate display range constraints
+        if config.display_range_min is not None and config.display_range_max is not None:
+            if config.display_range_min >= config.display_range_max:
+                errors.append(
+                    f"display_range_min ({config.display_range_min}) must be less than "
+                    f"display_range_max ({config.display_range_max})"
+                )
+
+            # Fixed range should not be combined with other constraints
+            if config.display_range_min_top is not None:
+                errors.append(
+                    "display_range_min_top should not be used with fixed range "
+                    "(display_range_min/max). Use only fixed range or dynamic constraints, not both."
+                )
+            if config.display_range_max_bottom is not None:
+                errors.append(
+                    "display_range_max_bottom should not be used with fixed range "
+                    "(display_range_min/max). Use only fixed range or dynamic constraints, not both."
+                )
+
+        # Validate min_top and max_bottom constraints
+        if config.display_range_min_top is not None and config.display_range_max_bottom is not None:
+            if config.display_range_max_bottom >= config.display_range_min_top:
+                errors.append(
+                    f"display_range_max_bottom ({config.display_range_max_bottom}) must be less than "
+                    f"display_range_min_top ({config.display_range_min_top})"
+                )
+
+        # Validate graph markers
+        if config.type == StreamType.GRAPH_MARKER:
+            if not config.attach_to:
+                errors.append("Graph markers must specify 'attach_to' stream")
+
+        # Validate bar data
+        if config.type == StreamType.BAR_DATA:
+            if config.legacy_format and not config.off_stream:
+                errors.append("Legacy format bars must specify 'off_stream'")
+            if not config.legacy_format and not config.combined_format:
+                errors.append("Bars must be either legacy_format or combined_format")
+
+        return errors
 
     def get_stream(self, name: str) -> Optional[StreamConfig]:
         """
