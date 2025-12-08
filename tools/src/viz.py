@@ -35,7 +35,7 @@ except ImportError:
 from stream_config import get_config_manager, StreamType
 
 # Import viz_components modules
-from viz_components.config import AppConfig, UnitConverter
+from viz_components.config import AppConfig, UnitConverter, PerFileSettingsManager, PerFileSettings
 from viz_components.widgets import (ColorCheckbox, StreamCheckbox, DraggableStreamList,
                                      ZoomableGraphWidget, ResizableSplitter)
 from viz_components.utils import parse_color_to_rgba
@@ -110,6 +110,7 @@ class DataVisualizationTool(QMainWindow):
         # Initialize configuration managers FIRST
         self.config = AppConfig()
         self.stream_config = get_config_manager()
+        self.per_file_settings_manager = PerFileSettingsManager(debug=self.debug)
 
         # Print config location for user awareness
         self.debug_print(f"Configuration file: {self.config.settings.fileName()}")
@@ -163,6 +164,7 @@ class DataVisualizationTool(QMainWindow):
         self.axis_owner = None  # Stream that owns the left Y-axis
         self.right_axis_owner = None  # Stream that owns the right Y-axis
         self.current_file = None  # Track currently loaded file
+        self._pending_per_file_settings = None  # Settings loaded from .viz file, applied during populate_stream_selection()
 
         # Update timer for real-time updates (30 FPS max)
         self.update_timer = QTimer()
@@ -257,17 +259,35 @@ class DataVisualizationTool(QMainWindow):
         file_menu = menu_bar.addMenu("&File")
 
         # Load action
-        load_action = QAction("&Load HDF5 Log File...", self)
+        load_action = QAction("&Load File...", self)
         load_action.setShortcut("Ctrl+O")
         load_action.triggered.connect(self.load_hdf5_file)
         load_action.setEnabled(HDF5_AVAILABLE)
         if not HDF5_AVAILABLE:
-            load_action.setText("&Load HDF5 Log File... (h5py not installed)")
+            load_action.setText("&Load File... (h5py not installed)")
         file_menu.addAction(load_action)
 
         # Recent files submenu
         self.recent_files_menu = file_menu.addMenu("Recent Files")
         self.update_recent_files_menu()
+
+        file_menu.addSeparator()
+
+        # Save Layout action
+        save_layout_action = QAction("&Save Layout", self)
+        save_layout_action.setShortcut("Ctrl+S")
+        save_layout_action.triggered.connect(self.save_layout_manual)
+        file_menu.addAction(save_layout_action)
+
+        # Reset Layout action
+        reset_layout_action = QAction("&Reset Layout", self)
+        reset_layout_action.triggered.connect(self.reset_layout)
+        file_menu.addAction(reset_layout_action)
+
+        # Import Layout action
+        import_layout_action = QAction("&Import Layout...", self)
+        import_layout_action.triggered.connect(self.import_layout)
+        file_menu.addAction(import_layout_action)
 
         file_menu.addSeparator()
 
@@ -523,19 +543,29 @@ class DataVisualizationTool(QMainWindow):
         self.stream_list_widget.clear_streams()
         self.stream_colors.clear()
 
-        # Get saved stream order, or use default order
-        saved_order = self.config.get_stream_order()
+        # Get stream order: per-file settings → global QSettings → default
+        per_file_settings = self._pending_per_file_settings
 
-        # Determine display order
-        if saved_order:
-            # Filter to only include streams that exist in current file
-            display_order = [s for s in saved_order if s in self.data_streams]
+        if per_file_settings and per_file_settings.stream_order:
+            # Use per-file order
+            display_order = [s for s in per_file_settings.stream_order if s in self.data_streams]
             # Add any new streams not in saved order
             for stream in self.data_streams:
                 if stream not in display_order:
                     display_order.append(stream)
+            self.debug_print(f"Using stream order from .viz file")
         else:
-            display_order = self.data_streams[:]
+            # Fall back to global settings or default
+            saved_order = self.config.get_stream_order()
+            if saved_order:
+                # Filter to only include streams that exist in current file
+                display_order = [s for s in saved_order if s in self.data_streams]
+                # Add any new streams not in saved order
+                for stream in self.data_streams:
+                    if stream not in display_order:
+                        display_order.append(stream)
+            else:
+                display_order = self.data_streams[:]
 
         # Create checkboxes for each stream in display order
         for i, stream in enumerate(display_order):
@@ -554,14 +584,33 @@ class DataVisualizationTool(QMainWindow):
             stream_widget.color_change_callback = self.on_stream_color_changed
             stream_widget.display_mode_callback = self.on_stream_display_mode_changed
 
-            # Load saved preferences
-            saved_color = self.config.get(f"stream_color_{stream}")
-            if saved_color:
+            # Load saved preferences: per-file → global QSettings → YAML default → color cycle
+            # Color precedence
+            if per_file_settings and stream in per_file_settings.stream_colors:
+                saved_color = per_file_settings.stream_colors[stream]
                 stream_widget.color = saved_color
                 stream_widget.checkbox.fill_color = saved_color
                 self.stream_colors[stream] = saved_color
+            else:
+                # Check global QSettings
+                saved_color = self.config.get(f"stream_color_{stream}")
+                if saved_color:
+                    stream_widget.color = saved_color
+                    stream_widget.checkbox.fill_color = saved_color
+                    self.stream_colors[stream] = saved_color
+                else:
+                    # Check YAML default
+                    stream_config = self.stream_config.get_stream(stream)
+                    if stream_config and hasattr(stream_config, 'color') and stream_config.color:
+                        stream_widget.color = stream_config.color
+                        stream_widget.checkbox.fill_color = stream_config.color
+                        self.stream_colors[stream] = stream_config.color
 
-            saved_mode = self.config.get(f"stream_display_mode_{stream}", "line")
+            # Display mode precedence
+            if per_file_settings and stream in per_file_settings.stream_display_modes:
+                saved_mode = per_file_settings.stream_display_modes[stream]
+            else:
+                saved_mode = self.config.get(f"stream_display_mode_{stream}", "line")
             stream_widget.display_mode = saved_mode
 
             # Connect signal before setting default state so it fires
@@ -569,13 +618,43 @@ class DataVisualizationTool(QMainWindow):
                 lambda state, s=stream: self.toggle_stream(s, state)
             )
 
-            # Enable ecu_rpm_instantaneous by default (signal will fire)
-            if stream == "ecu_rpm_instantaneous":
-                stream_widget.checkbox.setChecked(True)
-
             stream_widget.label.mousePressEvent = lambda ev, s=stream: self.on_stream_name_clicked(s, ev)
 
             self.stream_list_widget.add_stream_widget(stream_widget)
+
+        # Enable streams and restore axis ownership
+        if per_file_settings and per_file_settings.enabled_streams:
+            # Use per-file enabled streams
+            self.debug_print(f"Enabling streams from .viz: {per_file_settings.enabled_streams}")
+            for stream_name in per_file_settings.enabled_streams:
+                for widget in self.stream_list_widget.stream_widgets:
+                    if widget.stream_name == stream_name:
+                        widget.checkbox.setChecked(True)
+                        break
+
+            # Restore axis ownership
+            if per_file_settings.axis_owner:
+                self.axis_owner = per_file_settings.axis_owner
+                self.debug_print(f"Restored left axis owner: {self.axis_owner}")
+            if per_file_settings.right_axis_owner:
+                self.right_axis_owner = per_file_settings.right_axis_owner
+                self.debug_print(f"Restored right axis owner: {self.right_axis_owner}")
+        else:
+            # Enable default streams AFTER all widgets are created
+            # Order matters: coolant temp (left), throttle ADC (right), RPM (left)
+            # This results in: RPM owns left axis, throttle ADC owns right axis, coolant temp enabled
+            default_streams = [
+                "ecu_coolant_temp_c",     # First: becomes left axis owner
+                "ecu_throttle_adc",       # Second: moves first to right, becomes left (will be moved to right by third)
+                "ecu_rpm_instantaneous"   # Third: moves second to right, becomes left axis owner
+            ]
+
+            for stream_name in default_streams:
+                # Find the widget for this stream
+                for widget in self.stream_list_widget.stream_widgets:
+                    if widget.stream_name == stream_name:
+                        widget.checkbox.setChecked(True)
+                        break
 
     def filter_streams(self, search_text):
         """Filter visible streams based on search text"""
@@ -657,13 +736,139 @@ class DataVisualizationTool(QMainWindow):
 
         filename, _ = QFileDialog.getOpenFileName(
             self,
-            "Open HDF5 Log File",
+            "Open Log File",
             start_dir,
-            "HDF5 Files (*.h5 *.hdf5);;All Files (*)"
+            "Log Files (*.h5 *.hdf5 *.um4);;HDF5 Files (*.h5 *.hdf5);;Binary Logs (*.um4);;All Files (*)"
         )
 
         if filename:
+            self.load_file_with_conversion(filename)
+
+    def load_file_with_conversion(self, filename):
+        """Load a file, offering to convert from .um4 to .h5 if needed."""
+        from PyQt6.QtWidgets import QMessageBox
+        import subprocess
+
+        # Check if file is HDF5
+        if filename.endswith('.h5') or filename.endswith('.hdf5'):
             self.load_hdf5_file_internal(filename)
+            return
+
+        # File is not HDF5 - offer to convert
+        if filename.endswith('.um4'):
+            # Check if corresponding .h5 file already exists
+            suggested_h5 = os.path.splitext(filename)[0] + '.h5'
+
+            if os.path.exists(suggested_h5):
+                # .h5 file exists - ask user what to do
+                reply = QMessageBox.question(
+                    self,
+                    "HDF5 File Exists",
+                    f"Found existing HDF5 file:\n{os.path.basename(suggested_h5)}\n\n"
+                    f"Do you want to:\n"
+                    f"  • YES: Load the existing .h5 file\n"
+                    f"  • NO: Recreate it from {os.path.basename(filename)}",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Yes
+                )
+
+                if reply == QMessageBox.StandardButton.Cancel:
+                    return
+                elif reply == QMessageBox.StandardButton.Yes:
+                    # Load existing .h5 file
+                    self.load_hdf5_file_internal(suggested_h5)
+                    return
+                # If No, fall through to conversion
+            else:
+                # No .h5 file exists - ask if they want to convert
+                reply = QMessageBox.question(
+                    self,
+                    "Convert Binary Log",
+                    f"This is a binary log file (.um4).\n\n"
+                    f"Would you like to convert it to HDF5 format?\n\n"
+                    f"This will run: decodelog.py {os.path.basename(filename)} --format h5",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+
+                if reply == QMessageBox.StandardButton.No:
+                    return
+
+            # Ask user where to save the .h5 file
+            h5_filename, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Converted HDF5 File",
+                suggested_h5,
+                "HDF5 Files (*.h5);;All Files (*)"
+            )
+
+            if not h5_filename:
+                return
+
+            # Run decodelog.py
+            try:
+                # Find decodelog.py - should be in same directory as this script
+                decodelog_path = os.path.join(os.path.dirname(__file__), 'decodelog.py')
+                python_exe = sys.executable
+
+                # Show progress message
+                QMessageBox.information(
+                    self,
+                    "Converting...",
+                    f"Converting {os.path.basename(filename)} to HDF5...\n\n"
+                    f"This may take a moment. Click OK to continue.",
+                    QMessageBox.StandardButton.Ok
+                )
+
+                # Run the conversion
+                result = subprocess.run(
+                    [python_exe, decodelog_path, filename, '--format', 'h5', '-o', h5_filename],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minute timeout
+                )
+
+                if result.returncode == 0:
+                    # Success - load the converted file
+                    QMessageBox.information(
+                        self,
+                        "Conversion Complete",
+                        f"Successfully converted to:\n{h5_filename}",
+                        QMessageBox.StandardButton.Ok
+                    )
+                    self.load_hdf5_file_internal(h5_filename)
+                else:
+                    # Error
+                    QMessageBox.critical(
+                        self,
+                        "Conversion Failed",
+                        f"Failed to convert file.\n\nError:\n{result.stderr}",
+                        QMessageBox.StandardButton.Ok
+                    )
+
+            except subprocess.TimeoutExpired:
+                QMessageBox.critical(
+                    self,
+                    "Conversion Timeout",
+                    "Conversion took too long (>5 minutes) and was cancelled.",
+                    QMessageBox.StandardButton.Ok
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Conversion Error",
+                    f"Error running decodelog.py:\n\n{str(e)}",
+                    QMessageBox.StandardButton.Ok
+                )
+        else:
+            # Unknown file type
+            QMessageBox.warning(
+                self,
+                "Unknown File Type",
+                f"File must be either .h5/.hdf5 or .um4\n\nSelected: {os.path.basename(filename)}",
+                QMessageBox.StandardButton.Ok
+            )
+
 
     def load_hdf5_file_internal(self, filename):
         """Internal method to load HDF5 file (used by both file picker and recent files)."""
@@ -698,15 +903,45 @@ class DataVisualizationTool(QMainWindow):
             # Initialize view controller with time bounds
             self.view_controller.set_time_bounds(time_min, time_max)
 
-            # Calculate initial view window
-            self.view_start, self.view_end = self.data_manager.calculate_initial_view(
-                self.stream_config,
-                self.config.get("default_view_duration", 10.0)
-            )
+            # Load per-file settings if available
+            per_file_settings = self.per_file_settings_manager.load(filename)
+            if per_file_settings:
+                # Validate streams against actual file contents
+                per_file_settings = self.per_file_settings_manager.validate_against_file(
+                    per_file_settings,
+                    self.data_streams
+                )
+                # Validate and clamp view bounds
+                per_file_settings = self.per_file_settings_manager.validate_view_bounds(
+                    per_file_settings,
+                    time_min,
+                    time_max
+                )
+                self._pending_per_file_settings = per_file_settings
+                self.debug_print(f"Loaded per-file settings from .viz file")
+            else:
+                self._pending_per_file_settings = None
+                self.debug_print(f"No .viz file found, using defaults")
+
+            # Calculate initial view window (may be overridden by per-file settings)
+            # Note: If view_history exists, we'll use the current entry from history instead
+            if per_file_settings and per_file_settings.view_start is not None and per_file_settings.view_end is not None:
+                self.view_start = per_file_settings.view_start
+                self.view_end = per_file_settings.view_end
+                self.debug_print(f"Using saved view from .viz: [{self.view_start:.2f}s, {self.view_end:.2f}s]")
+            else:
+                self.view_start, self.view_end = self.data_manager.calculate_initial_view(
+                    self.stream_config,
+                    self.config.get("default_view_duration", 10.0)
+                )
+                self.debug_print(f"Calculated initial view: [{self.view_start:.2f}s, {self.view_end:.2f}s]")
+
+            # Store the initial view (for the "reset zoom" to full data range)
+            # If restoring from history, this might get overridden below
             self.initial_view_start = self.view_start
             self.initial_view_end = self.view_end
 
-            # Set initial view in controller
+            # Set initial view in controller (may be updated after history restoration)
             self.view_controller.set_initial_view(self.view_start, self.view_end)
             self.view_controller.set_view_range(self.view_start, self.view_end)
 
@@ -724,8 +959,28 @@ class DataVisualizationTool(QMainWindow):
             self.update_navigation_plot()
             self.update_graph_plot()
 
-            # Add initial view to history
-            self.view_history.push(self.view_start, self.view_end, 0, 1)
+            # Restore view history from per-file settings or add initial view
+            if per_file_settings and per_file_settings.view_history:
+                history_data = per_file_settings.view_history
+                self.view_history.history = [tuple(entry) for entry in history_data.get('history', [])]
+                self.view_history.history_index = history_data.get('current_index', 0)
+                self.view_history._emit_state()  # Update UI buttons
+                self.debug_print(f"Restored view history: {len(self.view_history.history)} entries, index={self.view_history.history_index}")
+
+                # Ensure the displayed view matches the current history entry
+                # The history[current_index] should be the view we're displaying
+                if self.view_history.history and 0 <= self.view_history.history_index < len(self.view_history.history):
+                    current_view = self.view_history.history[self.view_history.history_index]
+                    self.view_start, self.view_end = current_view[0], current_view[1]
+                    self.view_controller.set_view_range(self.view_start, self.view_end)
+                    self.debug_print(f"Set view to history[{self.view_history.history_index}]: [{self.view_start:.2f}s, {self.view_end:.2f}s]")
+
+                    # Update plots to show the correct view
+                    self.update_navigation_plot()
+                    self.update_graph_plot()
+            else:
+                # Add initial view to history
+                self.view_history.push(self.view_start, self.view_end, 0, 1)
 
             # Add to recent files and update menu
             self.config.add_recent_file(filename)
@@ -2483,8 +2738,194 @@ class DataVisualizationTool(QMainWindow):
             self.debug_print(f"Error opening browser: {e}")
             self.debug_print(f"Map file: {html_file}")
 
+    def _save_per_file_settings(self):
+        """Save current visualizer state to .viz file."""
+        if not self.current_file:
+            return False
+
+        # Gather current state
+        app_state = {
+            'enabled_streams': self.enabled_streams.copy(),
+            'stream_colors': self.stream_colors.copy(),
+            'stream_display_modes': {},
+            'stream_order': [],
+            'axis_owner': self.axis_owner,
+            'right_axis_owner': self.right_axis_owner,
+            'view_start': self.view_start,
+            'view_end': self.view_end,
+            'view_history': self.view_history
+        }
+
+        # Get display modes from stream widgets
+        for widget in self.stream_list_widget.stream_widgets:
+            app_state['stream_display_modes'][widget.stream_name] = widget.display_mode
+
+        # Get stream order from widget order
+        for widget in self.stream_list_widget.stream_widgets:
+            app_state['stream_order'].append(widget.stream_name)
+
+        # Capture and save
+        settings = self.per_file_settings_manager.capture_current_state(app_state)
+        success = self.per_file_settings_manager.save(self.current_file, settings)
+
+        if success:
+            self.debug_print(f"Saved per-file settings to .viz file")
+        return success
+
+    def save_layout_manual(self):
+        """Manually save layout (Ctrl+S handler)."""
+        if self._save_per_file_settings():
+            QMessageBox.information(
+                self,
+                "Layout Saved",
+                f"Visualizer layout saved to:\n{self.per_file_settings_manager.current_viz_path}",
+                QMessageBox.StandardButton.Ok
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Save Failed",
+                "No file is currently loaded.",
+                QMessageBox.StandardButton.Ok
+            )
+
+    def reset_layout(self):
+        """Reset layout by deleting .viz file and reloading."""
+        if not self.current_file:
+            QMessageBox.warning(
+                self,
+                "No File Loaded",
+                "No file is currently loaded.",
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
+        # Confirm with user
+        viz_path = self.per_file_settings_manager.get_viz_path(self.current_file)
+        reply = QMessageBox.question(
+            self,
+            "Reset Layout",
+            f"This will delete the saved layout and reload the file with default settings.\n\n"
+            f"Layout file: {viz_path}\n\n"
+            f"Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # Delete .viz file if it exists
+            if os.path.exists(viz_path):
+                try:
+                    os.remove(viz_path)
+                    self.debug_print(f"Deleted .viz file: {viz_path}")
+                except Exception as e:
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        f"Failed to delete layout file:\n{e}",
+                        QMessageBox.StandardButton.Ok
+                    )
+                    return
+
+            # Reload file
+            current_file = self.current_file
+            self.load_hdf5_file_internal(current_file)
+
+    def import_layout(self):
+        """Import layout from another .viz file."""
+        if not self.current_file:
+            QMessageBox.warning(
+                self,
+                "No File Loaded",
+                "No file is currently loaded.",
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
+        # File picker to select source .viz file
+        source_viz, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Layout File to Import",
+            os.path.dirname(self.current_file),
+            "Layout Files (*.viz);;All Files (*)"
+        )
+
+        if not source_viz:
+            return  # User cancelled
+
+        # Load source .viz file
+        try:
+            with open(source_viz, 'r') as f:
+                import json
+                source_data = json.load(f)
+
+            # Create settings object
+            source_settings = PerFileSettings(
+                version=source_data.get('version', 1),
+                logfile=source_data.get('logfile', ''),
+                enabled_streams=source_data.get('enabled_streams', []),
+                stream_colors=source_data.get('stream_colors', {}),
+                stream_display_modes=source_data.get('stream_display_modes', {}),
+                stream_order=source_data.get('stream_order', []),
+                axis_owner=source_data.get('axis_owner'),
+                right_axis_owner=source_data.get('right_axis_owner'),
+                view_start=source_data.get('view_start'),
+                view_end=source_data.get('view_end'),
+                view_history=source_data.get('view_history')
+            )
+
+            # Validate against current file
+            source_settings = self.per_file_settings_manager.validate_against_file(
+                source_settings,
+                self.data_streams
+            )
+            source_settings = self.per_file_settings_manager.validate_view_bounds(
+                source_settings,
+                self.time_min,
+                self.time_max
+            )
+
+            # Save to current file's .viz path
+            if self.per_file_settings_manager.save(self.current_file, source_settings):
+                # Reload current file to apply imported settings
+                current_file = self.current_file
+                self.load_hdf5_file_internal(current_file)
+
+                QMessageBox.information(
+                    self,
+                    "Layout Imported",
+                    f"Layout imported from:\n{os.path.basename(source_viz)}\n\n"
+                    f"File reloaded with imported settings.",
+                    QMessageBox.StandardButton.Ok
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Import Failed",
+                    "Failed to save imported layout.",
+                    QMessageBox.StandardButton.Ok
+                )
+
+        except json.JSONDecodeError as e:
+            QMessageBox.critical(
+                self,
+                "Invalid File",
+                f"Selected file is not a valid layout file:\n{e}",
+                QMessageBox.StandardButton.Ok
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Import Error",
+                f"Error importing layout:\n{e}",
+                QMessageBox.StandardButton.Ok
+            )
+
     def closeEvent(self, event):
         """Handle window close event - save configuration."""
+        # Auto-save per-file settings
+        self._save_per_file_settings()
+
         # Save window geometry and splitter positions
         self.config.save_window_geometry(self)
         self.config.save_splitter_state("horizontal", self.h_splitter)
@@ -2506,7 +2947,8 @@ def main():
         epilog="""
 Examples:
   %(prog)s                    # Open without loading a file
-  %(prog)s logfile.h5         # Open and load specified log file
+  %(prog)s logfile.h5         # Open and load HDF5 log file
+  %(prog)s log_123.um4        # Open binary log (offers conversion to HDF5)
   %(prog)s /path/to/data.h5   # Open with absolute path
         """
     )
@@ -2514,7 +2956,7 @@ Examples:
         'logfile',
         nargs='?',
         default=None,
-        help='HDF5 log file to open (optional)'
+        help='Log file to open (.h5, .hdf5, or .um4)'
     )
     parser.add_argument(
         '--debug',
@@ -2540,7 +2982,7 @@ Examples:
     # Load file if specified on command line
     if args.logfile:
         if os.path.exists(args.logfile):
-            window.load_hdf5_file_internal(args.logfile)
+            window.load_file_with_conversion(args.logfile)
         else:
             if args.debug:
                 print(f"Error: File not found: {args.logfile}")
