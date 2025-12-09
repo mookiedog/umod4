@@ -2,10 +2,32 @@
 # PyInstaller spec file for Windows builds
 # This explicitly includes viz_components as a package
 
-from PyInstaller.utils.hooks import collect_submodules
-
-# Collect all viz_components submodules
-hiddenimports = collect_submodules('viz_components')
+# Manually list EVERY viz_components module to ensure they're included
+hiddenimports = [
+    'viz_components',
+    'viz_components.config',
+    'viz_components.config.app_config',
+    'viz_components.config.unit_converter',
+    'viz_components.config.per_file_settings',
+    'viz_components.data',
+    'viz_components.data.data_manager',
+    'viz_components.data.hdf5_loader',
+    'viz_components.navigation',
+    'viz_components.navigation.view_controller',
+    'viz_components.navigation.view_history',
+    'viz_components.rendering',
+    'viz_components.rendering.decimation',
+    'viz_components.rendering.normalization',
+    'viz_components.ui',
+    'viz_components.utils',
+    'viz_components.utils.color_utils',
+    'viz_components.widgets',
+    'viz_components.widgets.color_checkbox',
+    'viz_components.widgets.draggable_list',
+    'viz_components.widgets.resizable_splitter',
+    'viz_components.widgets.stream_checkbox',
+    'viz_components.widgets.zoomable_graph',
+]
 
 a = Analysis(
     ['viz.py'],
