@@ -43,9 +43,15 @@ jobs:
           python -m PyInstaller --onefile --windowed `
             --add-data "tools/logtools/viz/stream_config.py;." `
             --add-data "tools/logtools/viz/stream_config.yaml;." `
-            --add-data "tools/logtools/viz/viz_components;viz_components" `
             --add-data "tools/logtools/decoder/decodelog.py;." `
             --add-data "tools/logtools/decoder/conversions.py;." `
+            --hidden-import viz_components.config `
+            --hidden-import viz_components.widgets `
+            --hidden-import viz_components.data `
+            --hidden-import viz_components.rendering `
+            --hidden-import viz_components.navigation `
+            --hidden-import viz_components.utils `
+            --paths tools/logtools/viz `
             --name "DataVisualizer" `
             --clean `
             tools/logtools/viz/viz.py
@@ -56,9 +62,15 @@ jobs:
           python -m PyInstaller --onefile --windowed \
             --add-data "tools/logtools/viz/stream_config.py:." \
             --add-data "tools/logtools/viz/stream_config.yaml:." \
-            --add-data "tools/logtools/viz/viz_components:viz_components" \
             --add-data "tools/logtools/decoder/decodelog.py:." \
             --add-data "tools/logtools/decoder/conversions.py:." \
+            --hidden-import viz_components.config \
+            --hidden-import viz_components.widgets \
+            --hidden-import viz_components.data \
+            --hidden-import viz_components.rendering \
+            --hidden-import viz_components.navigation \
+            --hidden-import viz_components.utils \
+            --paths tools/logtools/viz \
             --name "DataVisualizer" \
             --clean \
             tools/logtools/viz/viz.py
@@ -69,9 +81,15 @@ jobs:
           python -m PyInstaller --onefile --windowed \
             --add-data "tools/logtools/viz/stream_config.py:." \
             --add-data "tools/logtools/viz/stream_config.yaml:." \
-            --add-data "tools/logtools/viz/viz_components:viz_components" \
             --add-data "tools/logtools/decoder/decodelog.py:." \
             --add-data "tools/logtools/decoder/conversions.py:." \
+            --hidden-import viz_components.config \
+            --hidden-import viz_components.widgets \
+            --hidden-import viz_components.data \
+            --hidden-import viz_components.rendering \
+            --hidden-import viz_components.navigation \
+            --hidden-import viz_components.utils \
+            --paths tools/logtools/viz \
             --name "DataVisualizer" \
             --clean \
             tools/logtools/viz/viz.py
