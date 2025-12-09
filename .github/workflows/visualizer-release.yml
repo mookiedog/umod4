@@ -39,45 +39,42 @@ jobs:
       - name: Build with PyInstaller (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        working-directory: tools/logtools/viz
         run: |
           python -m PyInstaller --onefile --windowed `
-            --add-data "tools/logtools/viz/viz_components;viz_components" `
-            --add-data "tools/logtools/viz/stream_config.py;." `
-            --add-data "tools/logtools/viz/stream_config.yaml;." `
-            --add-data "tools/logtools/decoder/decodelog.py;." `
-            --add-data "tools/logtools/decoder/conversions.py;." `
-            --paths tools/logtools/viz `
+            --add-data "stream_config.py;." `
+            --add-data "stream_config.yaml;." `
+            --add-data "../decoder/decodelog.py;." `
+            --add-data "../decoder/conversions.py;." `
             --name "DataVisualizer" `
             --clean `
-            tools/logtools/viz/viz.py
+            viz.py
 
       - name: Build with PyInstaller (Linux)
         if: runner.os == 'Linux'
+        working-directory: tools/logtools/viz
         run: |
           python -m PyInstaller --onefile --windowed \
-            --add-data "tools/logtools/viz/viz_components:viz_components" \
-            --add-data "tools/logtools/viz/stream_config.py:." \
-            --add-data "tools/logtools/viz/stream_config.yaml:." \
-            --add-data "tools/logtools/decoder/decodelog.py:." \
-            --add-data "tools/logtools/decoder/conversions.py:." \
-            --paths tools/logtools/viz \
+            --add-data "stream_config.py:." \
+            --add-data "stream_config.yaml:." \
+            --add-data "../decoder/decodelog.py:." \
+            --add-data "../decoder/conversions.py:." \
             --name "DataVisualizer" \
             --clean \
-            tools/logtools/viz/viz.py
+            viz.py
 
       - name: Build with PyInstaller (macOS)
         if: runner.os == 'macOS'
+        working-directory: tools/logtools/viz
         run: |
           python -m PyInstaller --onefile --windowed \
-            --add-data "tools/logtools/viz/viz_components:viz_components" \
-            --add-data "tools/logtools/viz/stream_config.py:." \
-            --add-data "tools/logtools/viz/stream_config.yaml:." \
-            --add-data "tools/logtools/decoder/decodelog.py:." \
-            --add-data "tools/logtools/decoder/conversions.py:." \
-            --paths tools/logtools/viz \
+            --add-data "stream_config.py:." \
+            --add-data "stream_config.yaml:." \
+            --add-data "../decoder/decodelog.py:." \
+            --add-data "../decoder/conversions.py:." \
             --name "DataVisualizer" \
             --clean \
-            tools/logtools/viz/viz.py
+            viz.py
 
       - name: Create release package
         shell: bash
@@ -90,9 +87,9 @@ jobs:
 
           # Copy executable
           if [ "$RUNNER_OS" == "Windows" ]; then
-            cp dist/DataVisualizer.exe release/
+            cp tools/logtools/viz/dist/DataVisualizer.exe release/
           else
-            cp dist/DataVisualizer release/
+            cp tools/logtools/viz/dist/DataVisualizer release/
           fi
 
           # Copy sample log files
