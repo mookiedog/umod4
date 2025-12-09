@@ -44,7 +44,6 @@ jobs:
           python -m PyInstaller --onefile `
             --debug all `
             --collect-submodules viz_components `
-            --copy-metadata viz_components `
             --add-data "stream_config.py;." `
             --add-data "stream_config.yaml;." `
             --add-data "../decoder/decodelog.py;." `
@@ -59,7 +58,6 @@ jobs:
         run: |
           python -m PyInstaller --onefile --windowed \
             --collect-submodules viz_components \
-            --copy-metadata viz_components \
             --add-data "stream_config.py:." \
             --add-data "stream_config.yaml:." \
             --add-data "../decoder/decodelog.py:." \
@@ -74,7 +72,6 @@ jobs:
         run: |
           python -m PyInstaller --onefile --windowed \
             --collect-submodules viz_components \
-            --copy-metadata viz_components \
             --add-data "stream_config.py:." \
             --add-data "stream_config.yaml:." \
             --add-data "../decoder/decodelog.py:." \
