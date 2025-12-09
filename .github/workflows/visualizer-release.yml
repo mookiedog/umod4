@@ -41,8 +41,11 @@ jobs:
         shell: pwsh
         working-directory: tools/logtools/viz
         run: |
+          $env:PYTHONPATH = "$PWD"
+          python -c "import viz_components; print('viz_components found at:', viz_components.__file__)"
           python -m PyInstaller --onefile `
             --debug all `
+            --paths "$PWD" `
             --collect-submodules viz_components `
             --add-data "stream_config.py;." `
             --add-data "stream_config.yaml;." `
