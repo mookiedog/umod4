@@ -1,46 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec file for Windows builds
-# This explicitly includes viz_components as a package
+# NO hiddenimports - let Analysis find everything from viz.py imports
+# Just ensure viz_components dir is in the path
 
-# Manually list EVERY viz_components module to ensure they're included
-hiddenimports = [
-    'viz_components',
-    'viz_components.config',
-    'viz_components.config.app_config',
-    'viz_components.config.unit_converter',
-    'viz_components.config.per_file_settings',
-    'viz_components.data',
-    'viz_components.data.data_manager',
-    'viz_components.data.hdf5_loader',
-    'viz_components.navigation',
-    'viz_components.navigation.view_controller',
-    'viz_components.navigation.view_history',
-    'viz_components.rendering',
-    'viz_components.rendering.decimation',
-    'viz_components.rendering.normalization',
-    'viz_components.ui',
-    'viz_components.utils',
-    'viz_components.utils.color_utils',
-    'viz_components.widgets',
-    'viz_components.widgets.color_checkbox',
-    'viz_components.widgets.draggable_list',
-    'viz_components.widgets.resizable_splitter',
-    'viz_components.widgets.stream_checkbox',
-    'viz_components.widgets.zoomable_graph',
-]
+import sys
+import os
+
+# Add current directory to path so PyInstaller can find viz_components
+sys.path.insert(0, os.path.abspath('.'))
 
 a = Analysis(
     ['viz.py'],
-    pathex=[],
+    pathex=[os.path.abspath('.')],  # Add viz dir to Python path
     binaries=[],
     datas=[
-        ('viz_components', 'viz_components'),
         ('stream_config.py', '.'),
         ('stream_config.yaml', '.'),
         ('../decoder/decodelog.py', '.'),
         ('../decoder/conversions.py', '.'),
     ],
-    hiddenimports=hiddenimports,
+    hiddenimports=[],  # Let PyInstaller discover everything from viz.py
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
