@@ -36,8 +36,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller PyQt6 pyqtgraph numpy pandas h5py
 
-      - name: Build with PyInstaller (Windows/Linux)
-        if: runner.os != 'macOS'
+      - name: Build with PyInstaller (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m PyInstaller --onefile --windowed `
+            --add-data "tools/logtools/viz/stream_config.py;." `
+            --add-data "tools/logtools/viz/stream_config.yaml;." `
+            --add-data "tools/logtools/viz/viz_components;viz_components" `
+            --add-data "tools/logtools/decoder/decodelog.py;." `
+            --add-data "tools/logtools/decoder/conversions.py;." `
+            --name "DataVisualizer" `
+            --clean `
+            tools/logtools/viz/viz.py
+
+      - name: Build with PyInstaller (Linux)
+        if: runner.os == 'Linux'
         run: |
           python -m PyInstaller --onefile --windowed \
             --add-data "tools/logtools/viz/stream_config.py:." \
