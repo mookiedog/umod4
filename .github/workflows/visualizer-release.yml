@@ -39,9 +39,21 @@ jobs:
       - name: Build with PyInstaller (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        working-directory: tools/logtools/viz
         run: |
-          python -m PyInstaller --clean DataVisualizer-Windows.spec
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+          # Run from the viz directory so the local viz_components package is on sys.path.
+          # Collect all submodules and add local data files. Use Windows-style --add-data separator (;).
+          python -m PyInstaller --onefile --windowed \
+            --paths . \
+            --collect-submodules viz_components \
+            --add-data "stream_config.py;." \
+            --add-data "stream_config.yaml;." \
+            --add-data "../decoder/decodelog.py;." \
+            --add-data "../decoder/conversions.py;." \
+            --name "DataVisualizer" \
+            --clean \
+            viz.py
 
       - name: Build with PyInstaller (Linux)
         if: runner.os == 'Linux'
