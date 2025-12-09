@@ -42,18 +42,28 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
-          # Run from the viz directory so the local viz_components package is on sys.path.
-          # Collect all submodules and add local data files. Use Windows-style --add-data separator (;).
-          python -m PyInstaller --onefile --windowed \
-            --paths . \
-            --collect-submodules viz_components \
-            --add-data "stream_config.py;." \
-            --add-data "stream_config.yaml;." \
-            --add-data "../decoder/decodelog.py;." \
-            --add-data "../decoder/conversions.py;." \
-            --name "DataVisualizer" \
-            --clean \
-            viz.py
+          # Use PowerShell argument splatting so we can list args on multiple lines
+          $pyArgs = @(
+            '--onefile'
+            '--windowed'
+            '--paths'
+            '.'
+            '--collect-submodules'
+            'viz_components'
+            '--add-data'
+            'stream_config.py;.'
+            '--add-data'
+            'stream_config.yaml;.'
+            '--add-data'
+            '../decoder/decodelog.py;.'
+            '--add-data'
+            '../decoder/conversions.py;.'
+            '--name'
+            'DataVisualizer'
+            '--clean'
+            'viz.py'
+          )
+          python -m PyInstaller @pyArgs
 
       - name: Build with PyInstaller (Linux)
         if: runner.os == 'Linux'
