@@ -210,8 +210,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Extracting Windows executable contents..."
-          pip install pyinstxtractor-ng
-          python -m pyinstxtractor dist/DataVisualizer.exe
+          pyinstxtractor dist/DataVisualizer.exe
 
           Write-Host "`nContents of extracted archive:"
           Get-ChildItem -Recurse "DataVisualizer.exe_extracted" | ForEach-Object {
@@ -241,12 +240,12 @@ jobs:
           # Save directory listing to file
           Get-ChildItem -Recurse "DataVisualizer.exe_extracted" | Out-File -FilePath extracted_contents_windows.txt
 
-      - name: Extract executable contents (Linux/macOS)
+      - name: Extract executable contents (Linux)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           echo "Extracting $RUNNER_OS executable contents..."
-          python -m pyinstxtractor dist/DataVisualizer
+          pyinstxtractor dist/DataVisualizer
 
           echo ""
           echo "Contents of extracted archive:"
