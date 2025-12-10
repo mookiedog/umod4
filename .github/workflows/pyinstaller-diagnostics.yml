@@ -140,10 +140,9 @@ jobs:
             --onefile --windowed \
             --add-data "tools/logtools/viz/stream_config.py${SEP}." \
             --add-data "tools/logtools/viz/stream_config.yaml${SEP}." \
-            --add-data "tools/logtools/viz/viz_components${SEP}viz_components" \
             --add-data "tools/logtools/decoder/decodelog.py${SEP}." \
             --add-data "tools/logtools/decoder/conversions.py${SEP}." \
-            --exclude-module viz_components \
+            --paths "tools/logtools/viz" \
             --name "DataVisualizer" \
             --clean \
             tools/logtools/viz/viz.py 2>&1 | tee pyinstaller_build.log

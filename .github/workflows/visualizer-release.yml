@@ -40,10 +40,9 @@ jobs:
           python -m PyInstaller --onefile --windowed \
             --add-data "tools/logtools/viz/stream_config.py:." \
             --add-data "tools/logtools/viz/stream_config.yaml:." \
-            --add-data "tools/logtools/viz/viz_components:viz_components" \
             --add-data "tools/logtools/decoder/decodelog.py:." \
             --add-data "tools/logtools/decoder/conversions.py:." \
-            --exclude-module viz_components \
+            --paths "tools/logtools/viz" \
             --name "DataVisualizer" \
             --clean \
             tools/logtools/viz/viz.py
