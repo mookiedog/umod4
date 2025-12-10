@@ -136,16 +136,18 @@ jobs:
             SEP=":"
           fi
 
+          cd tools/logtools/viz
           python -m PyInstaller --log-level DEBUG \
             --onefile --windowed \
-            --add-data "tools/logtools/viz/stream_config.py${SEP}." \
-            --add-data "tools/logtools/viz/stream_config.yaml${SEP}." \
-            --add-data "tools/logtools/decoder/decodelog.py${SEP}." \
-            --add-data "tools/logtools/decoder/conversions.py${SEP}." \
-            --paths "tools/logtools/viz" \
+            --add-data "stream_config.py${SEP}." \
+            --add-data "stream_config.yaml${SEP}." \
+            --add-data "viz_components${SEP}viz_components" \
+            --add-data "../decoder/decodelog.py${SEP}." \
+            --add-data "../decoder/conversions.py${SEP}." \
             --name "DataVisualizer" \
             --clean \
-            tools/logtools/viz/viz.py 2>&1 | tee pyinstaller_build.log
+            viz.py 2>&1 | tee ../../../pyinstaller_build.log
+          cp dist/DataVisualizer* ../../../dist/
 
       - name: Build diagnostic executable
         shell: bash

@@ -37,15 +37,17 @@ jobs:
       - name: Build with PyInstaller
         shell: bash
         run: |
+          cd tools/logtools/viz
           python -m PyInstaller --onefile --windowed \
-            --add-data "tools/logtools/viz/stream_config.py:." \
-            --add-data "tools/logtools/viz/stream_config.yaml:." \
-            --add-data "tools/logtools/decoder/decodelog.py:." \
-            --add-data "tools/logtools/decoder/conversions.py:." \
-            --paths "tools/logtools/viz" \
+            --add-data "stream_config.py:." \
+            --add-data "stream_config.yaml:." \
+            --add-data "viz_components:viz_components" \
+            --add-data "../decoder/decodelog.py:." \
+            --add-data "../decoder/conversions.py:." \
             --name "DataVisualizer" \
             --clean \
-            tools/logtools/viz/viz.py
+            viz.py
+          cp dist/DataVisualizer* ../../../dist/
 
       - name: Create release package
         shell: bash
