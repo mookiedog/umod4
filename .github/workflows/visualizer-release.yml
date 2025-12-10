@@ -70,7 +70,12 @@ jobs:
         shell: bash
         run: |
           # Extract version from tag (viz-v1.0.0 -> v1.0.0)
-          VERSION=${GITHUB_REF#refs/tags/viz-}
+          # If manually triggered (no tag), use "test" as version
+          if [[ "$GITHUB_REF" == refs/tags/viz-* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/viz-}
+          else
+            VERSION="test-$(date +%Y%m%d-%H%M%S)"
+          fi
 
           # Create release directory
           mkdir -p release
@@ -150,6 +155,7 @@ jobs:
           path: artifacts
 
       - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/viz-')
         uses: softprops/action-gh-release@v1
         with:
           draft: false
