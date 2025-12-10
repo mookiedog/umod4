@@ -102,12 +102,12 @@ jobs:
                   try:
                       spec = importlib.util.find_spec(mod)
                       if spec:
-                          print(f"✓ {mod:40s} -> {spec.origin}")
+                          print(f"[OK ] {mod:40s} -> {spec.origin}")
                       else:
-                          print(f"✗ {mod:40s} -> NOT FOUND (spec is None)")
+                          print(f"[ERR] {mod:40s} -> NOT FOUND (spec is None)")
                           missing.append(mod)
                   except (ImportError, ModuleNotFoundError) as e:
-                      print(f"✗ {mod:40s} -> ERROR: {e}")
+                      print(f"[ERR] {mod:40s} -> ERROR: {e}")
                       missing.append(mod)
 
               print("=" * 70)
