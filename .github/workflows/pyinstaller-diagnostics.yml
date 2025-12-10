@@ -22,9 +22,6 @@ jobs:
           - os: ubuntu-latest
             artifact_name: DataVisualizer
             shell: bash
-          - os: macos-latest
-            artifact_name: DataVisualizer
-            shell: bash
 
     steps:
       - name: Checkout code
@@ -38,12 +35,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller PyQt6 pyqtgraph numpy pandas h5py
-
-      - name: Install diagnostic tools
-        shell: bash
-        run: |
-          pip install pyinstxtractor-ng
+          python -m pip install pyinstaller PyQt6 pyqtgraph numpy pandas h5py
+          python -m pip install pyinstxtractor-ng
 
       - name: Create diagnostic startup wrapper
         shell: bash
@@ -372,7 +365,7 @@ jobs:
           # Cross-Platform PyInstaller Comparison
 
           ## Overview
-          This report compares the PyInstaller builds across Windows, Linux, and macOS
+          This report compares the PyInstaller builds across Windows and Linux
           to identify platform-specific issues.
 
           ## Artifacts Downloaded
@@ -399,18 +392,10 @@ jobs:
           fi
 
           echo "" >> comparison_report.md
-          echo "### macOS" >> comparison_report.md
-          if [ -f diagnostics/diagnostics-macOS/diagnostic_runtime.log ]; then
-            grep -A 20 "MODULE AVAILABILITY CHECK" diagnostics/diagnostics-macOS/diagnostic_runtime.log >> comparison_report.md || echo "No module check found" >> comparison_report.md
-          else
-            echo "macOS diagnostic log not found" >> comparison_report.md
-          fi
-
-          echo "" >> comparison_report.md
           echo "## Recommendations" >> comparison_report.md
           echo "" >> comparison_report.md
           echo "Compare the module availability sections above:" >> comparison_report.md
-          echo "- If Linux/macOS show ✓ but Windows shows ✗, the issue is Windows-specific" >> comparison_report.md
+          echo "- If Linux shows ✓ but Windows shows ✗, the issue is Windows-specific" >> comparison_report.md
           echo "- Check extracted_contents_*.txt files to see what was actually bundled" >> comparison_report.md
           echo "- Review spec files to ensure --add-data paths use correct separators" >> comparison_report.md
           echo "- Consider platform-specific fixes in the build workflow" >> comparison_report.md
