@@ -49,7 +49,7 @@ python3 -m pip show pyinstxtractor-ng >/dev/null 2>&1 || {
 
 # Extract
 echo "Extracting executable..."
-python3 -m pyinstxtractor "$EXECUTABLE"
+python3 -m pyinstxtractor_ng "$EXECUTABLE"
 
 # Find extracted directory
 EXTRACTED_DIR=$(find . -maxdepth 1 -name "${EXEC_NAME}_extracted" -type d | head -1)

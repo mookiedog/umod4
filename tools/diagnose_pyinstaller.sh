@@ -196,7 +196,7 @@ echo ""
 # Extract and analyze
 echo "4. Extracting executable contents..."
 echo "------------------------------------"
-python3 -m pyinstxtractor "$OUTPUT_DIR/dist/DataVisualizer"
+python3 -m pyinstxtractor_ng "$OUTPUT_DIR/dist/DataVisualizer"
 
 echo ""
 echo "Contents of extracted archive:"

@@ -210,7 +210,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Extracting Windows executable contents..."
-          pyinstxtractor dist/DataVisualizer.exe
+          python -m pyinstxtractor_ng dist/DataVisualizer.exe
 
           Write-Host "`nContents of extracted archive:"
           Get-ChildItem -Recurse "DataVisualizer.exe_extracted" | ForEach-Object {
@@ -245,7 +245,7 @@ jobs:
         shell: bash
         run: |
           echo "Extracting $RUNNER_OS executable contents..."
-          pyinstxtractor dist/DataVisualizer
+          python -m pyinstxtractor_ng dist/DataVisualizer
 
           echo ""
           echo "Contents of extracted archive:"
