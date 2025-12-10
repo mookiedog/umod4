@@ -39,6 +39,7 @@ jobs:
 
       - name: Build with PyInstaller (Windows/Linux)
         if: runner.os != 'macOS'
+        shell: bash
         run: |
           python -m PyInstaller --onefile --windowed \
             --add-data "tools/logtools/viz/stream_config.py:." \
