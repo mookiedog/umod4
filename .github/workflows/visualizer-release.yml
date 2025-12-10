@@ -174,7 +174,7 @@ jobs:
           files: artifacts/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```// filepath: .github/workflows/visualizer-release.yml
+```# filepath: .github/workflows/visualizer-release.yml
 name: Build and Release Visualizer
 
 on:
