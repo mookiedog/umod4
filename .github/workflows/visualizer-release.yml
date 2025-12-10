@@ -19,9 +19,6 @@ jobs:
           - os: ubuntu-latest
             artifact_name: DataVisualizer
             asset_name: DataVisualizer-Linux
-          - os: macos-latest
-            artifact_name: DataVisualizer
-            asset_name: DataVisualizer-macOS
 
     steps:
       - name: Checkout code
@@ -37,23 +34,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller PyQt6 pyqtgraph numpy pandas h5py
 
-      - name: Build with PyInstaller (Windows/Linux)
-        if: runner.os != 'macOS'
+      - name: Build with PyInstaller
         shell: bash
-        run: |
-          python -m PyInstaller --onefile --windowed \
-            --add-data "tools/logtools/viz/stream_config.py:." \
-            --add-data "tools/logtools/viz/stream_config.yaml:." \
-            --add-data "tools/logtools/viz/viz_components:viz_components" \
-            --add-data "tools/logtools/decoder/decodelog.py:." \
-            --add-data "tools/logtools/decoder/conversions.py:." \
-            --exclude-module viz_components \
-            --name "DataVisualizer" \
-            --clean \
-            tools/logtools/viz/viz.py
-
-      - name: Build with PyInstaller (macOS)
-        if: runner.os == 'macOS'
         run: |
           python -m PyInstaller --onefile --windowed \
             --add-data "tools/logtools/viz/stream_config.py:." \
