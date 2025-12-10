@@ -147,6 +147,7 @@ jobs:
             --name "DataVisualizer" \
             --clean \
             viz.py 2>&1 | tee ../../../pyinstaller_build.log
+          mkdir -p ../../../dist
           cp dist/DataVisualizer* ../../../dist/
 
       - name: Build diagnostic executable

@@ -47,6 +47,7 @@ jobs:
             --name "DataVisualizer" \
             --clean \
             viz.py
+          mkdir -p ../../../dist
           cp dist/DataVisualizer* ../../../dist/
 
       - name: Create release package
