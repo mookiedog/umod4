@@ -46,6 +46,7 @@ jobs:
             --add-data "tools/logtools/viz/viz_components:viz_components" \
             --add-data "tools/logtools/decoder/decodelog.py:." \
             --add-data "tools/logtools/decoder/conversions.py:." \
+            --exclude-module viz_components \
             --name "DataVisualizer" \
             --clean \
             tools/logtools/viz/viz.py
@@ -59,6 +60,7 @@ jobs:
             --add-data "tools/logtools/viz/viz_components:viz_components" \
             --add-data "tools/logtools/decoder/decodelog.py:." \
             --add-data "tools/logtools/decoder/conversions.py:." \
+            --exclude-module viz_components \
             --name "DataVisualizer" \
             --clean \
             tools/logtools/viz/viz.py
