@@ -3015,11 +3015,21 @@ tbl1__00:
         lsrD
         stD     *L0024                  ;save the right-aligned, unfiltered version of VTA in L0024
         
+#if 1
         cmpD    RAW_VTA_prev            ;only log good sensor readings that differ from the previous reading
         beq     3f
         stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
         stD     RAW_VTA_prev
         bra     3f
+#else
+; Combine every VTA reading with the upper 6 bits of TCNT so that the log decoder
+; can see time advance with more precision even when there are no crankshaft events.
+        ldaA    TCNT1
+        andA    #0xFC                   ;extract the MS 6 bits of TCNT1...
+        oraA    *L0024                  ;...and insert them into the unused upper 6 bits of the 10-bit VTA
+        ldaB    *L0025                  ;D now contains the combined time & VTA data
+        stD     LW_LOGID_ECU_VTA_MTS_TYPE_U16
+#endif
 
 1:      brclr   *L0010 #0b00100000 2f   ;if the sensor is not currently suspect, make it so
 
