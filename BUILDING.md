@@ -73,14 +73,11 @@ wsl --install
 wsl --install -d Ubuntu
 ```
 
-The first install installs WSL2 itself.
+The first install installs WSL2 itself, which is the virtual machine mechanism required to run any linux distro.
+The first install may require you to reboot your machine in order to enable the virtual machine features.
+If so, it will only be required this one time.
 The second install installs a generic Ubuntu distro.
-
-There are other distro choices, but the instructions that follow might have some very minor dependencies on you installing Ubuntu. To see the other choices available directly from Microsoft sources, type:
-
-```bash
-wsl --list --online
-```
+Unless you have some favorite distro and know what you are doing, just install Ubuntu.
 
 ## Windows Terminal App
 
@@ -100,6 +97,9 @@ Give it a name, like 'wsl-Ubuntu'.
 * Change the 'command line' option to be '%SystemRoot%\System32\wsl.exe -d Ubuntu'.
 * In the Starting Directory option, uncheck the 'Use Parent Process Directory' option.
 * Enter '~' as the starting directory.
+  On linux, '~' means your home directory.
+  You can use '~' as a shortcut when typing any pathname involving your home directory.
+  For example, 'cd ~' will change back to your home directory saving you from typing "/home/<username>".
 * Click 'save'
 
 There are other options you can play with (like fonts and colors), but those mentioned above are the required options to be changed.
@@ -112,8 +112,10 @@ You will be asked for a user name and password for your initial Ubuntu user acco
 You can use the same user name as your windows account, or create a different user name.
 The new user name is used by linux only.
 The new user name will automatically be given 'sudo' privileges.
+The "su" of "sudo" means 'Super User'.
+It's the equivalent of having system administrator privileges on a Windows machine.
 
-From this point on, when you type 'terminal' in the windows search box, you will have the option to directly select your new Ubuntu distro:
+From this point on, when you type 'terminal' in the windows search box (the green circle, below), you will have the option to directly select your new Ubuntu distro (the blue circle, below):
 
 ![image](doc/images/terminal-app.jpg)
 
@@ -125,6 +127,9 @@ sudo apt update
 sudo apt upgrade
 ```
 
+The update/upgrade sequence is basically the same as a Windows Update scan.
+You need to type 'sudo' because installing software can only be performed by the super user.
+Use your new linux password when sudo asks for it.
 The first time around, these commands may install a bunch of updates.
 You should run this command pair once in a while to keep your Linux distro up-to-date for application updates and security patches.
 
@@ -133,11 +138,15 @@ You should run this command pair once in a while to keep your Linux distro up-to
 Both WSL and Windows run simultaneously, but each has its own separate filesystem.
 Even so, WSL2 arranges for the two filesystems get cross-mounted so that each one is accessable from the other.
 
-From Windows, the root of all the distros that may be installed is located at '\\wsl$' or \\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
+From Windows, the root of all the distros that may be installed is located at '\\\\wsl$' or \\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
 
 ![image](doc/images/wsl-from-windows.jpg)
 
-Going the other way is just as easy.
+Windows 11 will show you the root of your new Ubuntu distribution on the left side of the explorer window, down at the bottom.
+Double click the Ubuntu folder like any other to see inside it.
+Your new linux home directory will be accessible by double clicking Ubuntu, then double clicking 'home', then double clicking your user name.
+
+Having Linux access the Windows machine is just as easy.
 In Ubuntu, each Windows drive letter automatically gets mounted under '/mnt'.
 Doing an 'ls -l /mnt/c' in a linux terminal window will show you the contents of your top-level directory on Windows drive 'C:'.
 
@@ -272,7 +281,7 @@ Remember to re-run your .bashrc so that the change you just made takes effect:
 
 #### Python
 
-The umod4 system uses Python3 for some utility programs.
+The umod4 system uses Python3 for some utility programs, as well as the visualizer if you choose to run the visualizer from inside the umod4 project tree.
 Python3 is typically part of Linux distributions, so you probably do not need to install it.
 The umod4 project does require using Python virtual enviroments so that it can install various libraries as the build process runs.
 To add that capablility, find out what version of python3 is on your system, then do the following, making sure that the version number for the install matches the first two numbers reported by the --version command ("3.10" in the example, below):
@@ -434,8 +443,8 @@ Pictorially, you are looking for this entry on the webpage:
 
 ![image](./doc/images/arm-tools.jpg)
 
-The version number in the example (14.2.rel1) may have changed since this document was last updated, so just locate the most recent version, whatever it is.
-Don't download the file though, just right click the link and select "copy link", then skip to [Downloading & Installing](#downloading--installing)
+The version number in the picture (above) may have changed since this document was last updated, so just locate the most recent version, whatever it is.
+__Don't download the file though__: right click the link and select "copy link" as shown above, then skip to [Downloading & Installing](#downloading--installing)
 
 #### Tools For ARM Raspberry Pi 5
 
