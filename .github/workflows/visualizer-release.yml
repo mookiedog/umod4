@@ -2,24 +2,28 @@ name: Build and Release Visualizer
 
 on:
   workflow_dispatch:  # Allow manual triggering for testing
+    inputs:
+      platform:
+        description: 'Platform to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - windows
+          - linux
   push:
     tags:
       - 'viz-v*'  # Triggers on viz-v1.0.0, viz-v2.1.0, etc.
 
 jobs:
-  build:
-    name: Build ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            artifact_name: DataVisualizer.exe
-            asset_name: DataVisualizer-Windows
-          - os: ubuntu-latest
-            artifact_name: DataVisualizer
-            asset_name: DataVisualizer-Linux
-
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.platform == 'all' ||
+      github.event.inputs.platform == 'windows'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -67,11 +71,7 @@ jobs:
           mkdir -p release
 
           # Copy executable from Nuitka build output
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            cp build/viz/viz.dist/viz.exe release/viz.exe
-          else
-            cp build/viz/viz.dist/viz.bin release/viz
-          fi
+          cp build/viz/viz.dist/viz.exe release/viz.exe
 
           # Copy sample log files
           cp tools/logtools/test_data/*.um4 release/ 2>/dev/null || true
@@ -112,21 +112,121 @@ jobs:
 
           # Create ZIP archive
           cd release
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            7z a ../${{ matrix.asset_name }}-${VERSION}.zip *
-          else
-            zip -r ../${{ matrix.asset_name }}-${VERSION}.zip *
-          fi
+          7z a ../DataVisualizer-Windows-${VERSION}.zip *
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}-${{ github.ref_name }}
-          path: ${{ matrix.asset_name }}-*.zip
+          name: DataVisualizer-Windows-${{ github.ref_name }}
+          path: DataVisualizer-Windows-*.zip
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.platform == 'all' ||
+      github.event.inputs.platform == 'linux'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install nuitka PyQt6 pyqtgraph numpy pandas h5py pyyaml
+
+      - name: Build with Nuitka
+        shell: bash
+        run: |
+          cd tools/logtools/viz
+          python -m nuitka \
+            --standalone \
+            --assume-yes-for-downloads \
+            --output-dir=../../../build/viz \
+            --enable-plugin=pyqt6 \
+            --include-qt-plugins=all \
+            --enable-plugin=numpy \
+            --enable-plugin=implicit-imports \
+            --include-package=h5py \
+            --include-data-file=stream_config.yaml=stream_config.yaml \
+            --nofollow-import-to=PyQt6.QtWebEngineWidgets \
+            --follow-imports \
+            viz.py
+
+      - name: Create release package
+        shell: bash
+        run: |
+          # Extract version from tag (viz-v1.0.0 -> v1.0.0)
+          # If manually triggered (no tag), use "test" as version
+          if [[ "$GITHUB_REF" == refs/tags/viz-* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/viz-}
+          else
+            VERSION="test-$(date +%Y%m%d-%H%M%S)"
+          fi
+
+          # Create release directory
+          mkdir -p release
+
+          # Copy executable from Nuitka build output
+          cp build/viz/viz.dist/viz.bin release/viz
+
+          # Copy sample log files
+          cp tools/logtools/test_data/*.um4 release/ 2>/dev/null || true
+          cp tools/logtools/test_data/*.log release/ 2>/dev/null || true
+
+          # Create README
+          cat > release/README.txt << 'EOF'
+          Data Visualizer $VERSION
+          =========================
+
+          QUICK START
+          -----------
+          1. Double-click viz to launch
+          2. Open one of the sample .um4 files to see example data
+          3. Use File > Open to load your own .h5 or .um4 log files
+
+          SYSTEM REQUIREMENTS
+          -------------------
+          - Windows 10 or later / Linux / macOS 10.13+
+          - No additional software needed
+
+          SAMPLE FILES
+          ------------
+          Included .um4 files are raw binary log files. When you open them,
+          the visualizer will automatically offer to convert them to HDF5 format.
+
+          GETTING YOUR OWN LOGS
+          ---------------------
+          1. Extract log files from your umod4 SD card (*.um4 or *.log files)
+          2. Open them directly in the visualizer
+          3. The visualizer will automatically convert them to HDF5 format
+
+          MORE INFORMATION
+          ----------------
+          Project: https://github.com/mookiedog/umod4
+          Issues: https://github.com/mookiedog/umod4/issues
+          EOF
+
+          # Create ZIP archive
+          cd release
+          zip -r ../DataVisualizer-Linux-${VERSION}.zip *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DataVisualizer-Linux-${{ github.ref_name }}
+          path: DataVisualizer-Linux-*.zip
 
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [build-windows, build-linux]
+    if: always() && (needs.build-windows.result == 'success' || needs.build-linux.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
