@@ -46,6 +46,15 @@ from viz_components.rendering import min_max_decimate, DataNormalizer
 from viz_components.data import HDF5DataLoader, DataManager
 from viz_components.navigation import ViewNavigationController, ViewHistory
 
+# Import decoder for .um4 file conversion
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../decoder'))
+try:
+    import decodelog
+    DECODER_AVAILABLE = True
+except ImportError:
+    DECODER_AVAILABLE = False
+    decodelog = None
+
 # Event visualization constants
 SPARK_LABEL_OFFSET = 0.025  # Vertical offset from RPM line for spark labels (2.5% of normalized range)
 CRANKREF_LINE_HEIGHT = 0.04  # Height of vertical line for crankref markers (4% of normalized range)
@@ -808,12 +817,17 @@ class DataVisualizationTool(QMainWindow):
             if not h5_filename:
                 return
 
-            # Run decodelog.py
+            # Run decoder to convert .um4 to .h5
             try:
-                # Find decodelog.py - now in ../decoder/ relative to this script
-                decodelog_path = os.path.join(os.path.dirname(__file__), '../decoder/decodelog.py')
-                decodelog_path = os.path.abspath(decodelog_path)
-                python_exe = sys.executable
+                if not DECODER_AVAILABLE or decodelog is None:
+                    QMessageBox.critical(
+                        self,
+                        "Decoder Not Available",
+                        "The decoder module is not available.\n\n"
+                        "Cannot convert .um4 files to HDF5 format.",
+                        QMessageBox.StandardButton.Ok
+                    )
+                    return
 
                 # Show progress message
                 QMessageBox.information(
@@ -824,15 +838,14 @@ class DataVisualizationTool(QMainWindow):
                     QMessageBox.StandardButton.Ok
                 )
 
-                # Run the conversion
-                result = subprocess.run(
-                    [python_exe, decodelog_path, filename, '--format', 'h5', '-o', h5_filename],
-                    capture_output=True,
-                    text=True,
-                    timeout=300  # 5 minute timeout
-                )
+                # Save original sys.argv and replace it with our arguments
+                original_argv = sys.argv
+                sys.argv = ['decodelog', filename, '--format', 'h5', '-o', h5_filename]
 
-                if result.returncode == 0:
+                try:
+                    # Call the decoder's main function directly
+                    decodelog.main()
+
                     # Success - load the converted file
                     QMessageBox.information(
                         self,
@@ -841,27 +854,16 @@ class DataVisualizationTool(QMainWindow):
                         QMessageBox.StandardButton.Ok
                     )
                     self.load_hdf5_file_internal(h5_filename)
-                else:
-                    # Error
-                    QMessageBox.critical(
-                        self,
-                        "Conversion Failed",
-                        f"Failed to convert file.\n\nError:\n{result.stderr}",
-                        QMessageBox.StandardButton.Ok
-                    )
 
-            except subprocess.TimeoutExpired:
-                QMessageBox.critical(
-                    self,
-                    "Conversion Timeout",
-                    "Conversion took too long (>5 minutes) and was cancelled.",
-                    QMessageBox.StandardButton.Ok
-                )
+                finally:
+                    # Restore original sys.argv
+                    sys.argv = original_argv
+
             except Exception as e:
                 QMessageBox.critical(
                     self,
                     "Conversion Error",
-                    f"Error running decodelog.py:\n\n{str(e)}",
+                    f"Error converting file:\n\n{str(e)}",
                     QMessageBox.StandardButton.Ok
                 )
         else:
