@@ -567,7 +567,7 @@ class DataVisualizationTool(QMainWindow):
                     display_order.append(stream)
             self.debug_print(f"Using stream order from .viz file")
         else:
-            # Fall back to global settings or default
+            # Fall back to global settings or YAML config order
             saved_order = self.config.get_stream_order()
             if saved_order:
                 # Filter to only include streams that exist in current file
@@ -576,8 +576,18 @@ class DataVisualizationTool(QMainWindow):
                 for stream in self.data_streams:
                     if stream not in display_order:
                         display_order.append(stream)
+                self.debug_print(f"Using stream order from global settings")
             else:
-                display_order = self.data_streams[:]
+                # Use order from stream_config.yaml
+                config_mgr = get_config_manager()
+                yaml_order = list(config_mgr.streams.keys())
+                # Filter to only include streams that exist in current file
+                display_order = [s for s in yaml_order if s in self.data_streams]
+                # Add any new streams not in YAML (shouldn't happen, but be safe)
+                for stream in self.data_streams:
+                    if stream not in display_order:
+                        display_order.append(stream)
+                self.debug_print(f"Using stream order from stream_config.yaml")
 
         # Create checkboxes for each stream in display order
         for i, stream in enumerate(display_order):

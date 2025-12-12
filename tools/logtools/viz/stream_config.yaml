@@ -32,6 +32,14 @@ streams:
     owns_axis: true
     normalize: true
 
+  ecu_throttle_adc:
+    type: graph_data
+    display_name: "Throttle Position"
+    units: adc
+    owns_axis: true
+    normalize: true
+    display_range_min_top: 300.0
+
   ecu_rpm_smoothed:
     type: graph_data
     display_name: "RPM (Smoothed)"
@@ -65,13 +73,13 @@ streams:
     normalize: true
     display_range_min_top: 14.0  # Minimum value for top of display
 
-  ecu_throttle_adc:
+  gps_velocity_mph:
     type: graph_data
-    display_name: "Throttle Position"
-    units: adc
+    display_name: "GPS Speed"
+    units: mph
     owns_axis: true
     normalize: true
-    display_range_min_top: 300.0
+    display_range_min_top: 30.0  # Minimum value for top of display (prevents over-scaling at low speeds)
 
   ecu_map_kpa:
     type: graph_data
@@ -104,14 +112,6 @@ streams:
     units: degrees
     owns_axis: true
     normalize: true
-
-  gps_velocity_mph:
-    type: graph_data
-    display_name: "GPS Speed"
-    units: mph
-    owns_axis: true
-    normalize: true
-    display_range_min_top: 30.0  # Minimum value for top of display (prevents over-scaling at low speeds)
 
   # ============================================================================
   # GRAPH MARKERS - Event markers attached to graph data
