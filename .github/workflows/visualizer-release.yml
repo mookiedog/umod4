@@ -70,8 +70,8 @@ jobs:
           # Create release directory
           mkdir -p release
 
-          # Copy executable from Nuitka build output
-          cp build/viz/viz.dist/viz.exe release/viz.exe
+          # Copy entire .dist folder contents (standalone mode needs all DLLs)
+          cp -r build/viz/viz.dist/* release/
 
           # Copy sample log files
           cp tools/logtools/test_data/*.um4 release/ 2>/dev/null || true
@@ -173,8 +173,8 @@ jobs:
           # Create release directory
           mkdir -p release
 
-          # Copy executable from Nuitka build output
-          cp build/viz/viz.dist/viz.bin release/viz
+          # Copy entire .dist folder contents (standalone mode needs all dependencies)
+          cp -r build/viz/viz.dist/* release/
 
           # Copy sample log files
           cp tools/logtools/test_data/*.um4 release/ 2>/dev/null || true
