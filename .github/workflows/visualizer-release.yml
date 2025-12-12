@@ -54,8 +54,6 @@ jobs:
             --include-package-data=viz_components \
             --include-data-files=stream_config.yaml=stream_config.yaml \
             --include-data-files=stream_config.py=stream_config.py \
-            --include-data-files=../decoder/decodelog.py=decodelog.py \
-            --include-data-files=../decoder/conversions.py=conversions.py \
             --nofollow-import-to=PyQt6.QtWebEngineWidgets \
             --nofollow-import-to=h5py.tests \
             --nofollow-import-to=numpy.conftest \
@@ -166,8 +164,6 @@ jobs:
             --include-package-data=viz_components \
             --include-data-files=stream_config.yaml=stream_config.yaml \
             --include-data-files=stream_config.py=stream_config.py \
-            --include-data-files=../decoder/decodelog.py=decodelog.py \
-            --include-data-files=../decoder/conversions.py=conversions.py \
             --nofollow-import-to=PyQt6.QtWebEngineWidgets \
             --nofollow-import-to=h5py.tests \
             --nofollow-import-to=numpy.conftest \

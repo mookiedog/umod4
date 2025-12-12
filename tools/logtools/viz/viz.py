@@ -47,13 +47,24 @@ from viz_components.data import HDF5DataLoader, DataManager
 from viz_components.navigation import ViewNavigationController, ViewHistory
 
 # Import decoder for .um4 file conversion
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../decoder'))
+# Try to import directly first (works in Nuitka onefile builds where modules are bundled)
 try:
     import decodelog
     DECODER_AVAILABLE = True
 except ImportError:
-    DECODER_AVAILABLE = False
-    decodelog = None
+    # Fallback: add decoder directory to path (works in development/source runs)
+    decoder_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../decoder')
+    if os.path.exists(decoder_path):
+        sys.path.insert(0, decoder_path)
+        try:
+            import decodelog
+            DECODER_AVAILABLE = True
+        except ImportError:
+            DECODER_AVAILABLE = False
+            decodelog = None
+    else:
+        DECODER_AVAILABLE = False
+        decodelog = None
 
 # Event visualization constants
 SPARK_LABEL_OFFSET = 0.025  # Vertical offset from RPM line for spark labels (2.5% of normalized range)
