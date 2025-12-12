@@ -48,10 +48,12 @@ from viz_components.navigation import ViewNavigationController, ViewHistory
 
 # Import decoder for .um4 file conversion
 # Try to import directly first (works in Nuitka onefile builds where modules are bundled)
+DECODER_IMPORT_ERROR = None
 try:
     import decodelog
     DECODER_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    DECODER_IMPORT_ERROR = str(e)
     # Fallback: add decoder directory to path (works in development/source runs)
     decoder_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../decoder')
     if os.path.exists(decoder_path):
@@ -59,12 +61,15 @@ except ImportError:
         try:
             import decodelog
             DECODER_AVAILABLE = True
-        except ImportError:
+            DECODER_IMPORT_ERROR = None
+        except ImportError as e2:
             DECODER_AVAILABLE = False
             decodelog = None
+            DECODER_IMPORT_ERROR = f"Path tried: {decoder_path}\nError: {str(e2)}"
     else:
         DECODER_AVAILABLE = False
         decodelog = None
+        DECODER_IMPORT_ERROR = f"Decoder path does not exist: {decoder_path}"
 
 # Event visualization constants
 SPARK_LABEL_OFFSET = 0.025  # Vertical offset from RPM line for spark labels (2.5% of normalized range)
@@ -841,11 +846,14 @@ class DataVisualizationTool(QMainWindow):
             # Run decoder to convert .um4 to .h5
             try:
                 if not DECODER_AVAILABLE or decodelog is None:
+                    error_msg = "The decoder module is not available.\n\n"
+                    if DECODER_IMPORT_ERROR:
+                        error_msg += f"Import error:\n{DECODER_IMPORT_ERROR}\n\n"
+                    error_msg += "Cannot convert .um4 files to HDF5 format."
                     QMessageBox.critical(
                         self,
                         "Decoder Not Available",
-                        "The decoder module is not available.\n\n"
-                        "Cannot convert .um4 files to HDF5 format.",
+                        error_msg,
                         QMessageBox.StandardButton.Ok
                     )
                     return
