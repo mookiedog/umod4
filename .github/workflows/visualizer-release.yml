@@ -43,16 +43,20 @@ jobs:
         run: |
           cd tools/logtools/viz
           python -m nuitka \
-            --standalone \
+            --onefile \
             --assume-yes-for-downloads \
             --output-dir=../../../build/viz \
             --enable-plugin=pyqt6 \
             --include-qt-plugins=all \
             --enable-plugin=numpy \
-            --enable-plugin=implicit-imports \
             --include-package=h5py \
-            --include-data-file=stream_config.yaml=stream_config.yaml \
+            --include-package=viz_components \
+            --include-package-data=viz_components \
+            --include-data-files=stream_config.yaml=stream_config.yaml \
+            --include-data-files=stream_config.py=stream_config.py \
             --nofollow-import-to=PyQt6.QtWebEngineWidgets \
+            --nofollow-import-to=h5py.tests \
+            --nofollow-import-to=numpy.conftest \
             --follow-imports \
             viz.py
 
@@ -70,8 +74,11 @@ jobs:
           # Create release directory
           mkdir -p release
 
-          # Copy entire .dist folder contents (standalone mode needs all DLLs)
-          cp -r build/viz/viz.dist/* release/
+          # Copy the onefile executable (Nuitka creates viz.exe for onefile mode on Windows)
+          if [ -f build/viz/viz.exe ]; then
+            cp build/viz/viz.exe release/viz.exe
+            chmod +x release/viz.exe
+          fi
 
           # Copy sample log files
           cp tools/logtools/test_data/*.um4 release/ 2>/dev/null || true
@@ -146,16 +153,20 @@ jobs:
         run: |
           cd tools/logtools/viz
           python -m nuitka \
-            --standalone \
+            --onefile \
             --assume-yes-for-downloads \
             --output-dir=../../../build/viz \
             --enable-plugin=pyqt6 \
             --include-qt-plugins=all \
             --enable-plugin=numpy \
-            --enable-plugin=implicit-imports \
             --include-package=h5py \
-            --include-data-file=stream_config.yaml=stream_config.yaml \
+            --include-package=viz_components \
+            --include-package-data=viz_components \
+            --include-data-files=stream_config.yaml=stream_config.yaml \
+            --include-data-files=stream_config.py=stream_config.py \
             --nofollow-import-to=PyQt6.QtWebEngineWidgets \
+            --nofollow-import-to=h5py.tests \
+            --nofollow-import-to=numpy.conftest \
             --follow-imports \
             viz.py
 
@@ -173,8 +184,14 @@ jobs:
           # Create release directory
           mkdir -p release
 
-          # Copy entire .dist folder contents (standalone mode needs all dependencies)
-          cp -r build/viz/viz.dist/* release/
+          # Copy the onefile executable (Nuitka creates viz.bin for onefile mode)
+          if [ -f build/viz/viz.bin ]; then
+            cp build/viz/viz.bin release/viz
+            chmod +x release/viz
+          elif [ -f build/viz/viz ]; then
+            cp build/viz/viz release/viz
+            chmod +x release/viz
+          fi
 
           # Copy sample log files
           cp tools/logtools/test_data/*.um4 release/ 2>/dev/null || true
