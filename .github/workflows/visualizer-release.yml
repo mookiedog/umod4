@@ -40,6 +40,8 @@ jobs:
 
       - name: Build with Nuitka
         shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tools/logtools/decoder
         run: |
           cd tools/logtools/viz
           python -m nuitka \
@@ -52,6 +54,8 @@ jobs:
             --include-package=h5py \
             --include-package=viz_components \
             --include-package-data=viz_components \
+            --include-module=decodelog \
+            --include-module=conversions \
             --include-data-files=stream_config.yaml=stream_config.yaml \
             --include-data-files=stream_config.py=stream_config.py \
             --nofollow-import-to=PyQt6.QtWebEngineWidgets \
@@ -150,6 +154,8 @@ jobs:
 
       - name: Build with Nuitka
         shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tools/logtools/decoder
         run: |
           cd tools/logtools/viz
           python -m nuitka \
@@ -162,6 +168,8 @@ jobs:
             --include-package=h5py \
             --include-package=viz_components \
             --include-package-data=viz_components \
+            --include-module=decodelog \
+            --include-module=conversions \
             --include-data-files=stream_config.yaml=stream_config.yaml \
             --include-data-files=stream_config.py=stream_config.py \
             --nofollow-import-to=PyQt6.QtWebEngineWidgets \
