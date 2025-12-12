@@ -40,6 +40,7 @@ jobs:
           cd tools/logtools/viz
           python -m nuitka \
             --standalone \
+            --assume-yes-for-downloads \
             --output-dir=../../../build/viz \
             --enable-plugin=pyqt6 \
             --include-qt-plugins=all \
