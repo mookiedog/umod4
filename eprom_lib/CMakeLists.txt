@@ -28,6 +28,7 @@ set(EPROM_NAMES
   8796505
   8796529
   8796539
+  8797512      # This one is explicitly added to test situations where I do not have the .bin file.
 )
 
 # Define how to construct the .bson and .c files from the .dsc & .bin files:
@@ -45,12 +46,26 @@ foreach(EPROM_ID ${EPROM_NAMES})
   set(DSC_PATH ${CMAKE_CURRENT_SOURCE_DIR}/src/${EPROM_ID}.dsc)
   set(BIN_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin_files/${EPROM_ID}.bin)
 
-  add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.bson ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.c
-    DEPENDS ${TOOLS_SOURCE_DIR}/bin-to-bson.py
-    DEPENDS ${DSC_PATH}
-    DEPENDS ${BIN_PATH}
-    VERBATIM
-    COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/bin-to-bson.py -d ${DSC_PATH} -b ${BIN_PATH} -o ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.bson -j ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.json -c ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.c
-  )
+  # Check if .bin file exists to decide whether to include it
+  if(EXISTS ${BIN_PATH})
+    # .bin file exists - include it in the build
+    add_custom_command(
+      OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.bson ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.c
+      DEPENDS ${TOOLS_SOURCE_DIR}/bin-to-bson.py
+      DEPENDS ${DSC_PATH}
+      DEPENDS ${BIN_PATH}
+      VERBATIM
+      COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/bin-to-bson.py -d ${DSC_PATH} -b ${BIN_PATH} -o ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.bson -j ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.json -c ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.c
+    )
+  else()
+    # .bin file doesn't exist - generate metadata-only BSON
+    message(STATUS "Note: ${EPROM_ID}.bin not found - generating metadata-only BSON")
+    add_custom_command(
+      OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.bson ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.c
+      DEPENDS ${TOOLS_SOURCE_DIR}/bin-to-bson.py
+      DEPENDS ${DSC_PATH}
+      VERBATIM
+      COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/bin-to-bson.py -d ${DSC_PATH} -o ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.bson -j ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.json -c ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.c
+    )
+  endif()
 endforeach()

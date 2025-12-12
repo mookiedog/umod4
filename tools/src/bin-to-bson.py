@@ -82,7 +82,7 @@ def parse_args():
     parser.add_argument("-d", "--descriptorfile", required=True, help="path to JSON binfile descriptor for the EPROM")
     #parser.add_argument('--image-file', type=argparse.FileType('r'), _StoreAction(option_strings=['--image-file'], dest='bin_file_path', nargs=None, const=None, default=None, type=FileType('r'), choices=None, help=None, metavar=None))
 
-    parser.add_argument("-b", "--binfile", required=True, help="path to EPROM .bin file")
+    parser.add_argument("-b", "--binfile", required=False, help="path to EPROM .bin file")
 
     parser.add_argument("-o", "--outfile", required=True, help="output path for generated BSON data")
 
@@ -94,7 +94,8 @@ def parse_args():
 
     if (args.verbose):
         print("Descriptor path:", args.descriptorfile)
-        print("Bin path:", args.binfile)
+        if (args.binfile != None):
+            print("Bin path:", args.binfile)
         print("BSON Output path:", args.outfile)
         print("Csource path:", args.csource)
         print("Json output path:", args.json)
@@ -227,8 +228,9 @@ def generate_json(d, filename):
     except:
         fatal(f"Unable to open JSON output file <{filename}>")
 
-    # Delete the binary data field before we convert it to JSON
-    d["eprom"]["mem"]["bin"] = {}
+    # Delete the binary data field before we convert it to JSON (if it exists)
+    if "mem" in d["eprom"]:
+        d["eprom"]["mem"]["bin"] = {}
 
     jstr = json.dumps(d, indent=4)
 
@@ -286,9 +288,13 @@ def generate_c_source(d, b, filename):
 
 args = parse_args()
 
-# Read the bin file into 'image' as a byte array
-image = read_bin_file(args.binfile)
-
+# Read the bin file into 'image' as a byte array.
+# read_bin_file() validates the proper size of the image.
+if (args.binfile != None):
+    image = read_bin_file(args.binfile)
+else:
+    image = None
+    
 # Read and process the JSON/descriptor file text into 'descriptor', a Python DICT object
 descriptor = process_descriptor(args.descriptorfile)
 
@@ -315,100 +321,101 @@ else:
             fatal(f'"daughterboard" value must be one of "N" (no daughterboard required), "A" (Standard Aprilia V1); saw "{db_style}"')
 
 # Error checking is complete.
-# Now we start merging the .bin file data into our data structure,
-# calculating some things as we go.
 
-# Calculate the M3 hash over the entire eprom image.
-# Store that M3 hash in the eprom's "mem" object.
-# The hash can be used to identify a specific EPROM, or to verify
-# that the binary contents have not been corrupted.
-eprom_m3hash = 0xFFFFFFFF & mmh3.hash(image, 0xFFFFFFFF, signed=False)
-if args.verbose:
-    print(f"M3 hash of the entire image: {hex(eprom_m3hash)}")
-
-# Add a "mem" object to the "eprom" section of the description.
-# It will represent the entire EPROM image.
-descriptor["eprom"]["mem"] = {}
-descriptor["eprom"]["mem"]["startOffset"] = 0x0000
-descriptor["eprom"]["mem"]["length"] = 0x8000
-descriptor["eprom"]["mem"]["m3"] = eprom_m3hash
-
-# Add the binary data taken from the .bin file to our descriptor object
-# as a binary byte array.
-# Note: EPROM .bin files for EPROMs that require a daughterboard are assumed to be
-# stored in their original, scrambled format as if the EPROM had been removed
-# from the daughterboard before being read on an EPROM reader.
-descriptor["eprom"]["mem"]["bin"] = image
-
-if args.verbose:
-    print("Testing to see if the image is RP58-compatible")
-
-# Check the first 3 bytes in the code area to see if this is a UM4 build
-if ((image[0x4000] == ord('U')) and (image[0x4001] == ord('M')) and (image[0x4002] == ord('4'))):
+# If a binfile exists, then  merge its binary data into our data structure,
+# calculating some things about it as we go.
+if (image != None):
+    # Calculate the M3 hash over the entire eprom image.
+    # Store that M3 hash in the eprom's "mem" object.
+    # The hash can be used to identify a specific EPROM, or to verify
+    # that the binary contents have not been corrupted.
+    eprom_m3hash = 0xFFFFFFFF & mmh3.hash(image, 0xFFFFFFFF, signed=False)
     if args.verbose:
-        print("This is a UM4 build")
-    rp58_compatible = True
-else:
+        print(f"M3 hash of the entire image: {hex(eprom_m3hash)}")
+
+    # Add a "mem" object to the "eprom" section of the description.
+    # It will represent the entire EPROM image.
+    descriptor["eprom"]["mem"] = {}
+    descriptor["eprom"]["mem"]["startOffset"] = 0x0000
+    descriptor["eprom"]["mem"]["length"] = 0x8000
+    descriptor["eprom"]["mem"]["m3"] = eprom_m3hash
+
+    # Add the binary data taken from the .bin file to our descriptor object
+    # as a binary byte array.
+    # Note: EPROM .bin files for EPROMs that require a daughterboard are assumed to be
+    # stored in their original, scrambled format as if the EPROM had been removed
+    # from the daughterboard before being read on an EPROM reader.
+    descriptor["eprom"]["mem"]["bin"] = image
+
     if args.verbose:
-        print("Not a UM4 build, testing to see if uses an RP58 codebase")
+        print("Testing to see if the image is RP58-compatible")
 
-    # If the image is not a UM4 build, we calculate the checksum of the code area $C003..$FFFF.
-    # If the checksum matches an RP58 build, then this image must be RP58-compatible.
-    code_m3hash=mmh3.hash(image[0x4003:], 0xFFFFFFFF, signed=False)
-    if args.verbose:
-        print("checksum of the code area (0x4003..0x7FFF): ", hex(code_m3hash))
-
-    # Check against the known M3 hash of the code area in an RP58 build:
-    rp58_compatible = (code_m3hash == 0x4CF503CB)
-
-if args.verbose:
-    if rp58_compatible:
-        print("RP58-compatible!")
-    else:
-        print("NOT RP58-compatible")
-
-if "RP58-compatible" in descriptor["eprom"]:
-    if daughterboard:
-        # fixme: There is no way to decode a scrambled bin file right now, so we will take the .dsc file at its word
-        # about being RP58-compatible!
-        fixme=True
-    else:
-        # The dsc file contains an entry for RP58 compatibility. We will verify that it is correct:
-        stated_compatibility = descriptor["eprom"]["RP58-compatible"]
-        print("stated_compatibility: ${stated_compatibility}")
-        if ((stated_compatibility == "Y") and not rp58_compatible):
-            fatal(f"{args.descriptorfile} states that it is RP58-compatible, but it is not")
-        elif ((stated_compatibility == "N") and rp58_compatible):
-            fatal(f"{args.descriptorfile} states that it is not RP58-compatible, but it is")
-        elif (not((stated_compatibility == "Y") or (stated_compatibility == "N"))):
-            fatal(f'{args.descriptorfile} has bad data in RP58-compatible field: must be "Y" or "N", saw "{stated_compatibility}"')
-else:
-    # The dsc file did not specify if it is RP58-compatible
-    # We add that field now based on our calculation:
-    if not rp58_compatible:
-        descriptor["eprom"]["RP58-compatible"] = "N"
-    else:
-        descriptor["eprom"]["RP58-compatible"] = "Y"
-
-if rp58_compatible:
-    # For eproms that are RP58-compatible, we add a "mem" object within the "maps" object.
-    # We don't need a maps.mem.bin object because the binary data can be extracted from the image.mem.bin object
-    descriptor["eprom"]["maps"]["mem"] = {}
-    descriptor["eprom"]["maps"]["mem"]["startOffset"] = mapStartOffset
-    descriptor["eprom"]["maps"]["mem"]["length"] = mapLength
-
-    # We can only calculate the checksum for unscrambled EPROMs
-    if daughterboard == 'N':
-        # We need to extract the monolithic map blob to calculate its checksum.
-        # We don't actually store the map blob
-        mapblob=image[mapStartOffset:mapStartOffset+mapLength]
-        # print(f"length of mapblob: {len(mapblob)}")
-
-        # Calculate the M3 hash of the map blob area
-        mapblob_m3hash = 0xFFFFFFFF & mmh3.hash(mapblob, ~0x0, signed=False)
+    # Check the first 3 bytes in the code area to see if this is a UM4 build
+    if ((image[0x4000] == ord('U')) and (image[0x4001] == ord('M')) and (image[0x4002] == ord('4'))):
         if args.verbose:
-            print(f"M3 hash of the mapblob: {hex(mapblob_m3hash)}")
-            descriptor["eprom"]["maps"]["mem"]["m3"] = mapblob_m3hash
+            print("This is a UM4 build")
+        rp58_compatible = True
+    else:
+        if args.verbose:
+            print("Not a UM4 build, testing to see if uses an RP58 codebase")
+
+        # If the image is not a UM4 build, we calculate the checksum of the code area $C003..$FFFF.
+        # If the checksum matches an RP58 build, then this image must be RP58-compatible.
+        code_m3hash=mmh3.hash(image[0x4003:], 0xFFFFFFFF, signed=False)
+        if args.verbose:
+            print("checksum of the code area (0x4003..0x7FFF): ", hex(code_m3hash))
+
+        # Check against the known M3 hash of the code area in an RP58 build:
+        rp58_compatible = (code_m3hash == 0x4CF503CB)
+
+    if args.verbose:
+        if rp58_compatible:
+            print("RP58-compatible!")
+        else:
+            print("NOT RP58-compatible")
+
+    if "RP58-compatible" in descriptor["eprom"]:
+        if daughterboard:
+            # fixme: There is no way to decode a scrambled bin file right now, so we will take the .dsc file at its word
+            # about being RP58-compatible!
+            fixme=True
+        else:
+            # The dsc file contains an entry for RP58 compatibility. We will verify that it is correct:
+            stated_compatibility = descriptor["eprom"]["RP58-compatible"]
+            print("stated_compatibility: ${stated_compatibility}")
+            if ((stated_compatibility == "Y") and not rp58_compatible):
+                fatal(f"{args.descriptorfile} states that it is RP58-compatible, but it is not")
+            elif ((stated_compatibility == "N") and rp58_compatible):
+                fatal(f"{args.descriptorfile} states that it is not RP58-compatible, but it is")
+            elif (not((stated_compatibility == "Y") or (stated_compatibility == "N"))):
+                fatal(f'{args.descriptorfile} has bad data in RP58-compatible field: must be "Y" or "N", saw "{stated_compatibility}"')
+    else:
+        # The dsc file did not specify if it is RP58-compatible
+        # We add that field now based on our calculation:
+        if not rp58_compatible:
+            descriptor["eprom"]["RP58-compatible"] = "N"
+        else:
+            descriptor["eprom"]["RP58-compatible"] = "Y"
+
+    if rp58_compatible:
+        # For eproms that are RP58-compatible, we add a "mem" object within the "maps" object.
+        # We don't need a maps.mem.bin object because the binary data can be extracted from the image.mem.bin object
+        descriptor["eprom"]["maps"]["mem"] = {}
+        descriptor["eprom"]["maps"]["mem"]["startOffset"] = mapStartOffset
+        descriptor["eprom"]["maps"]["mem"]["length"] = mapLength
+
+        # We can only calculate the checksum for unscrambled EPROMs
+        if daughterboard == 'N':
+            # We need to extract the monolithic map blob to calculate its checksum.
+            # We don't actually store the map blob
+            mapblob=image[mapStartOffset:mapStartOffset+mapLength]
+            # print(f"length of mapblob: {len(mapblob)}")
+
+            # Calculate the M3 hash of the map blob area
+            mapblob_m3hash = 0xFFFFFFFF & mmh3.hash(mapblob, ~0x0, signed=False)
+            if args.verbose:
+                print(f"M3 hash of the mapblob: {hex(mapblob_m3hash)}")
+                descriptor["eprom"]["maps"]["mem"]["m3"] = mapblob_m3hash
 
 # Write output files as requested:
 

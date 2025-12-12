@@ -409,8 +409,18 @@ void prepEpromImage()
     EpromLoader::bsonDoc_t bsonDoc;
     
     #if 1
+    // Test that if we try to load an EPROM image with no mem or bin data, we get a proper error result:
+    name = "8797512";
+    err = EpromLoader::loadImage(name);
+    if ((err == LOGID_EP_LOAD_ERR_VAL_NOBINKEY) || (err == LOGID_EP_LOAD_ERR_VAL_NOMEMKEY)) {
+        // All good!
+    }
+    else {
+        printf("%s: Expected loadImage(%s) to fail with NOBINKEY, got err=%02x!\n", __FUNCTION__, name, err);
+    }
+    
+    // Test that we can load a protected image. We will actually not use this image.
     if (hasDescrambler()){
-        // This initial load is just for testing that we can load a protected image
         name = "8796539";
         err = EpromLoader::loadImage(name);
         enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);

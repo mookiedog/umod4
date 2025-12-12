@@ -129,6 +129,7 @@ set(EPROM_SOURCE_LIST
   8796505.c
   8796529.c
   8796539.c
+  8797512.c
   PA59.c
   Edwards.c
 )
