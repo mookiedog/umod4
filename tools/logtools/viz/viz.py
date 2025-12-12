@@ -24,12 +24,15 @@ from PyQt6.QtGui import QPen, QColor, QFont, QAction, QPainter, QDrag
 import pyqtgraph as pg
 from pyqtgraph import QtWidgets
 
-try:
-    import h5py
-    HDF5_AVAILABLE = True
-except ImportError:
-    HDF5_AVAILABLE = False
-    h5py = None
+# Must have h5py for HDF5 file support
+import h5py
+HDF5_AVAILABLE = True
+#try:
+#    import h5py
+#    HDF5_AVAILABLE = True
+#except ImportError:
+#    HDF5_AVAILABLE = False
+#    h5py = None
 
 # Import stream configuration system
 from stream_config import get_config_manager, StreamType
