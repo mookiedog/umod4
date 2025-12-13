@@ -12,6 +12,7 @@ on:
           - all
           - windows
           - linux
+          - macos
   push:
     tags:
       - 'viz-v*'  # Triggers on viz-v1.0.0, viz-v2.1.0, etc.
@@ -248,10 +249,127 @@ jobs:
           name: DataVisualizer-Linux-${{ github.ref_name }}
           path: DataVisualizer-Linux-*.zip
 
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event.inputs.platform == 'all' ||
+      github.event.inputs.platform == 'macos'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install nuitka PyQt6 pyqtgraph numpy pandas h5py pyyaml
+
+      - name: Build with Nuitka
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/tools/logtools/decoder
+        run: |
+          cd tools/logtools/viz
+          python -m nuitka \
+            --onefile \
+            --assume-yes-for-downloads \
+            --output-dir=../../../build/viz \
+            --enable-plugin=pyqt6 \
+            --include-qt-plugins=all \
+            --enable-plugin=numpy \
+            --include-package=h5py \
+            --include-package=viz_components \
+            --include-package-data=viz_components \
+            --include-module=decodelog \
+            --include-module=conversions \
+            --include-data-files=stream_config.yaml=stream_config.yaml \
+            --include-data-files=stream_config.py=stream_config.py \
+            --nofollow-import-to=PyQt6.QtWebEngineWidgets \
+            --nofollow-import-to=h5py.tests \
+            --nofollow-import-to=numpy.conftest \
+            --follow-imports \
+            viz.py
+
+      - name: Create release package
+        shell: bash
+        run: |
+          # Extract version from tag (viz-v1.0.0 -> v1.0.0)
+          # If manually triggered (no tag), use "test" as version
+          if [[ "$GITHUB_REF" == refs/tags/viz-* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/viz-}
+          else
+            VERSION="test-$(date +%Y%m%d-%H%M%S)"
+          fi
+
+          # Create release directory
+          mkdir -p release
+
+          # Copy the onefile executable (Nuitka creates viz.bin for onefile mode)
+          if [ -f build/viz/viz.bin ]; then
+            cp build/viz/viz.bin release/viz
+            chmod +x release/viz
+          elif [ -f build/viz/viz ]; then
+            cp build/viz/viz release/viz
+            chmod +x release/viz
+          fi
+
+          # Copy sample log files
+          cp tools/logtools/test_data/*.um4 release/ 2>/dev/null || true
+          cp tools/logtools/test_data/*.log release/ 2>/dev/null || true
+
+          # Create README
+          cat > release/README.txt << 'EOF'
+          Data Visualizer $VERSION
+          =========================
+
+          QUICK START
+          -----------
+          1. Double-click viz to launch
+          2. Open one of the sample .um4 files to see example data
+          3. Use File > Open to load your own .h5 or .um4 log files
+
+          SYSTEM REQUIREMENTS
+          -------------------
+          - Windows 10 or later / Linux / macOS 10.13+
+          - No additional software needed
+
+          SAMPLE FILES
+          ------------
+          Included .um4 files are raw binary log files. When you open them,
+          the visualizer will automatically offer to convert them to HDF5 format.
+
+          GETTING YOUR OWN LOGS
+          ---------------------
+          1. Extract log files from your umod4 SD card (*.um4 or *.log files)
+          2. Open them directly in the visualizer
+          3. The visualizer will automatically convert them to HDF5 format
+
+          MORE INFORMATION
+          ----------------
+          Project: https://github.com/mookiedog/umod4
+          Issues: https://github.com/mookiedog/umod4/issues
+          EOF
+
+          # Create ZIP archive
+          cd release
+          zip -r ../DataVisualizer-macOS-${VERSION}.zip *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DataVisualizer-macOS-${{ github.ref_name }}
+          path: DataVisualizer-macOS-*.zip
+
   release:
     name: Create GitHub Release
-    needs: [build-windows, build-linux]
-    if: always() && (needs.build-windows.result == 'success' || needs.build-linux.result == 'success')
+    needs: [build-windows, build-linux, build-macos]
+    if: always() && (needs.build-windows.result == 'success' || needs.build-linux.result == 'success' || needs.build-macos.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
