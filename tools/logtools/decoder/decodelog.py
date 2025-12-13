@@ -1150,7 +1150,7 @@ def main():
     # Open output file or use stdout (for human-readable format)
     if args.format == 'hr' and args.output:
         try:
-            output_file = open(args.output, 'w')
+            output_file = open(args.output, 'w', encoding='utf-8')
             old_stdout = sys.stdout
             sys.stdout = output_file
         except Exception as e:
@@ -1158,7 +1158,7 @@ def main():
             return 1
     elif args.format == 'h5':
         # For HDF5 output, suppress all stdout output
-        output_file = open(os.devnull, 'w')
+        output_file = open(os.devnull, 'w', encoding='utf-8')
         old_stdout = sys.stdout
         sys.stdout = output_file
     else:

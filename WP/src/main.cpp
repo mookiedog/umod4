@@ -646,7 +646,9 @@ int main()
         sleep_us(100);
         gpio_put(EP_RUN_PIN, 1);
 
-        flashEp = new FlashEp(EP_SWCLK_PIN, EP_SWDAT_PIN, EP_RUN_PIN);
+        #if 0
+            flashEp = new FlashEp(EP_SWCLK_PIN, EP_SWDAT_PIN, EP_RUN_PIN);
+        #endif
         #if 0
         // While the EP is in a known state due to the reboot, test our ability to take control of it:
         flashEp->takeControl();

@@ -11,6 +11,17 @@ python viz.py [logfile.h5]
 
 import sys
 import os
+
+# Force UTF-8 encoding on Windows to handle Unicode characters in stream_config.yaml and output
+if sys.platform == 'win32':
+    import codecs
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    else:
+        # Fallback for older Python or Nuitka-compiled binaries
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, errors='replace')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, errors='replace')
 import argparse
 import numpy as np
 import pandas as pd
