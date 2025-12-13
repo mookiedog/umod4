@@ -1,5 +1,0 @@
-# umod4 Log Streaming Server Dependencies
-# Install with: pip install -r requirements_server.txt
-
-flask>=2.3.0
-flask-cors>=4.0.0
