@@ -47,7 +47,7 @@ jobs:
           # Generate Logsyms.py from log header files
           echo "Generating Logsyms.py..."
           python tools/src/h2py.py --class-name Logsyms -o Logsyms.py \
-            ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
+            lib/inc/log_base.h ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
 
           if [ ! -f Logsyms.py ]; then
             echo "ERROR: Logsyms.py was not generated!"
@@ -195,7 +195,7 @@ jobs:
           # Generate Logsyms.py from log header files
           echo "Generating Logsyms.py..."
           python tools/src/h2py.py --class-name Logsyms -o Logsyms.py \
-            ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
+            lib/inc/log_base.h ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
 
           if [ ! -f Logsyms.py ]; then
             echo "ERROR: Logsyms.py was not generated!"
@@ -346,7 +346,7 @@ jobs:
           # Generate Logsyms.py from log header files
           echo "Generating Logsyms.py..."
           python tools/src/h2py.py --class-name Logsyms -o Logsyms.py \
-            ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
+            lib/inc/log_base.h ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
 
           if [ ! -f Logsyms.py ]; then
             echo "ERROR: Logsyms.py was not generated!"
