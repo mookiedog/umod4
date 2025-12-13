@@ -51,7 +51,7 @@ jobs:
             --assume-yes-for-downloads \
             --output-dir=../../../build/viz \
             --enable-plugin=pyside6 \
-            --include-qt-plugins=iconengines,imageformats,platforms,platformthemes,tls \
+            --include-qt-plugins=iconengines,imageformats,platforms,styles,tls \
             --enable-plugin=numpy \
             --include-package=h5py \
             --include-package=viz_components \
@@ -294,7 +294,7 @@ jobs:
             --assume-yes-for-downloads \
             --output-dir=../../../build/viz \
             --enable-plugin=pyside6 \
-            --include-qt-plugins=iconengines,imageformats,platforms,platformthemes,tls \
+            --include-qt-plugins=iconengines,imageformats,platforms,styles,tls \
             --enable-plugin=numpy \
             --include-package=h5py \
             --include-package=viz_components \
