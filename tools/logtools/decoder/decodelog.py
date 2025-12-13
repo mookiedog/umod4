@@ -1060,8 +1060,11 @@ def read(f, readCount, showAddress=False, newLine=True):
 
     try:
         bytes = f.read(readCount)
-    except:
-        exit(0)
+    except Exception as e:
+        print(f"\nError reading from file at address {address:#x}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        exit(1)
 
     if (showBinData):
         if (showAddress):
@@ -1879,6 +1882,11 @@ def main():
                 else:
                     print(f"{fmt_record(recordCnt, timekeeper)} ERR:    Unknown LOGID 0x{byte:02X}")
                     #read(f, 1)
+
+        # End of file reached - print summary
+        final_time_sec = timekeeper.get_time_ns() / 1e9
+        file_size = f.tell()
+        print(f"\n# Decoding complete: {recordCnt} records processed, {file_size} bytes read, {final_time_sec:.2f} seconds of data", file=sys.stderr)
 
     except FileNotFoundError:
         print(f"Error: File '{args.logfile}' not found.")
