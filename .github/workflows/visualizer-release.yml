@@ -42,17 +42,32 @@ jobs:
       - name: Generate Logsyms package
         shell: bash
         run: |
+          set -e  # Exit on any error
+
           # Generate Logsyms.py from log header files
+          echo "Generating Logsyms.py..."
           python tools/src/h2py.py --class-name Logsyms -o Logsyms.py \
             ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
 
-          # Create Logsyms package directory
+          if [ ! -f Logsyms.py ]; then
+            echo "ERROR: Logsyms.py was not generated!"
+            exit 1
+          fi
+
+          # Find site-packages directory
           SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+          echo "Site-packages directory: $SITE_PACKAGES"
+
+          # Create Logsyms package directory
           mkdir -p "$SITE_PACKAGES/Logsyms"
-          mv Logsyms.py "$SITE_PACKAGES/Logsyms/"
+          cp Logsyms.py "$SITE_PACKAGES/Logsyms/"
 
           # Create __init__.py
           echo "from .Logsyms import *" > "$SITE_PACKAGES/Logsyms/__init__.py"
+
+          # Verify installation
+          echo "Verifying Logsyms installation..."
+          python -c "import Logsyms; print('Logsyms module imported successfully')"
 
       - name: Build with Nuitka
         shell: bash
@@ -70,7 +85,8 @@ jobs:
             --include-package=h5py \
             --include-package=viz_components \
             --include-package-data=viz_components \
-            --include-package=Logsyms \
+            --include-module=Logsyms \
+            --include-module=Logsyms.Logsyms \
             --include-module=decodelog \
             --include-module=conversions \
             --include-module=PySide6.QtOpenGL \
@@ -174,17 +190,32 @@ jobs:
       - name: Generate Logsyms package
         shell: bash
         run: |
+          set -e  # Exit on any error
+
           # Generate Logsyms.py from log header files
+          echo "Generating Logsyms.py..."
           python tools/src/h2py.py --class-name Logsyms -o Logsyms.py \
             ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
 
-          # Create Logsyms package directory
+          if [ ! -f Logsyms.py ]; then
+            echo "ERROR: Logsyms.py was not generated!"
+            exit 1
+          fi
+
+          # Find site-packages directory
           SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+          echo "Site-packages directory: $SITE_PACKAGES"
+
+          # Create Logsyms package directory
           mkdir -p "$SITE_PACKAGES/Logsyms"
-          mv Logsyms.py "$SITE_PACKAGES/Logsyms/"
+          cp Logsyms.py "$SITE_PACKAGES/Logsyms/"
 
           # Create __init__.py
           echo "from .Logsyms import *" > "$SITE_PACKAGES/Logsyms/__init__.py"
+
+          # Verify installation
+          echo "Verifying Logsyms installation..."
+          python -c "import Logsyms; print('Logsyms module imported successfully')"
 
       - name: Build with Nuitka
         shell: bash
@@ -202,7 +233,8 @@ jobs:
             --include-package=h5py \
             --include-package=viz_components \
             --include-package-data=viz_components \
-            --include-package=Logsyms \
+            --include-module=Logsyms \
+            --include-module=Logsyms.Logsyms \
             --include-module=decodelog \
             --include-module=conversions \
             --include-module=PySide6.QtOpenGL \
@@ -309,17 +341,32 @@ jobs:
       - name: Generate Logsyms package
         shell: bash
         run: |
+          set -e  # Exit on any error
+
           # Generate Logsyms.py from log header files
+          echo "Generating Logsyms.py..."
           python tools/src/h2py.py --class-name Logsyms -o Logsyms.py \
             ecu/src/ECU_log.h EP/src/EP_log.h WP/src/WP_log.h
 
-          # Create Logsyms package directory
+          if [ ! -f Logsyms.py ]; then
+            echo "ERROR: Logsyms.py was not generated!"
+            exit 1
+          fi
+
+          # Find site-packages directory
           SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+          echo "Site-packages directory: $SITE_PACKAGES"
+
+          # Create Logsyms package directory
           mkdir -p "$SITE_PACKAGES/Logsyms"
-          mv Logsyms.py "$SITE_PACKAGES/Logsyms/"
+          cp Logsyms.py "$SITE_PACKAGES/Logsyms/"
 
           # Create __init__.py
           echo "from .Logsyms import *" > "$SITE_PACKAGES/Logsyms/__init__.py"
+
+          # Verify installation
+          echo "Verifying Logsyms installation..."
+          python -c "import Logsyms; print('Logsyms module imported successfully')"
 
       - name: Build with Nuitka
         shell: bash
@@ -337,7 +384,8 @@ jobs:
             --include-package=h5py \
             --include-package=viz_components \
             --include-package-data=viz_components \
-            --include-package=Logsyms \
+            --include-module=Logsyms \
+            --include-module=Logsyms.Logsyms \
             --include-module=decodelog \
             --include-module=conversions \
             --include-module=PySide6.QtOpenGL \
