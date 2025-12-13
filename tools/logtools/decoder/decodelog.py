@@ -1167,29 +1167,53 @@ def main():
     else:
         output_file = None
     
-    # Add the umod4's venv site-packages to Python path
-    from pathlib import Path
+    # Import Logsyms - handle both Nuitka frozen binaries and normal Python execution
+    # Nuitka sets __compiled__ attribute on compiled modules/functions
+    # Check if this module itself is compiled, or if __nuitka__ exists in builtins
+    is_nuitka = hasattr(sys.modules[__name__], '__compiled__') or '__nuitka__' in dir(__builtins__)
+    is_frozen = getattr(sys, 'frozen', False)  # PyInstaller, py2exe, cx_freeze
 
-    if args.Logsyms:
-        # Use the path defined on the cmdline
-        site_packages = args.Logsyms
+    if is_nuitka or is_frozen:
+        # Running in a frozen/compiled binary
+        # Logsyms should already be bundled and directly importable
+        try:
+            import Logsyms as ls
+            L = ls.Logsyms
+            print(f"# Logsyms imported from compiled binary (nuitka={is_nuitka}, frozen={is_frozen})")
+        except ImportError as e:
+            print(f"FATAL ERROR: Logsyms module not found in compiled binary: {e}", file=sys.stderr)
+            print(f"This is a build error - Logsyms must be included during compilation", file=sys.stderr)
+            print(f"sys.path = {sys.path}", file=sys.stderr)
+            print(f"Available modules: {sorted([m for m in sys.modules.keys() if not m.startswith('_')])[:20]}", file=sys.stderr)
+            return 1
     else:
-        # Get the directory containing the current script
-        script_dir = Path(__file__).parent.absolute()
+        # Running as normal Python script - need to find Logsyms in venv
+        from pathlib import Path
 
-        # Get an absolute path to the .venv
-        venv_path = os.path.join(script_dir, "..", "..", "build", ".venv")
+        if args.Logsyms:
+            # Use the path defined on the cmdline
+            site_packages = args.Logsyms
+        else:
+            # Get the directory containing the current script
+            script_dir = Path(__file__).parent.absolute()
 
-        # Use that to find where the packages live
-        site_packages = os.path.join(venv_path, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages")
+            # Get an absolute path to the .venv
+            venv_path = os.path.join(script_dir, "..", "..", "build", ".venv")
 
-    sys.path.insert(0, site_packages)
-    print(f"# Logsyms imported from <${site_packages}>")
-    
-    # Finally: import the package containing all the log symbol definitions
-    # Create an alias so that the symbols defined in class Logsyms can be referenced as L.<symname>
-    import Logsyms as ls
-    L = ls.Logsyms
+            # Use that to find where the packages live
+            site_packages = os.path.join(venv_path, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages")
+
+        sys.path.insert(0, site_packages)
+        print(f"# Logsyms imported from <${site_packages}>")
+
+        # Import the package containing all the log symbol definitions
+        try:
+            import Logsyms as ls
+            L = ls.Logsyms
+        except ImportError as e:
+            print(f"FATAL ERROR: Could not import Logsyms from {site_packages}: {e}", file=sys.stderr)
+            print(f"Try building the project first with CMake to generate Logsyms", file=sys.stderr)
+            return 1
 
     # Create TimeKeeper for time tracking (used by both human-readable and HDF5 output)
     timekeeper = TimeKeeper(verbose=args.verbose)
