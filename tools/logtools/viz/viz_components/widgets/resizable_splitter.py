@@ -2,7 +2,7 @@
 Custom splitter widget with enhanced styling.
 """
 
-from PyQt6.QtWidgets import QSplitter
+from PySide6.QtWidgets import QSplitter
 
 
 class ResizableSplitter(QSplitter):

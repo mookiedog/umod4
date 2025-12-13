@@ -3,7 +3,7 @@ Graph widget with rubber band zoom capability.
 """
 
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, QPointF
 from pyqtgraph import QtWidgets
 
 

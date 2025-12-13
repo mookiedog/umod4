@@ -2,8 +2,8 @@
 Custom list widget that supports drag-and-drop reordering with visual feedback.
 """
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
-from PyQt6.QtGui import QPainter, QPen, QColor
+from PySide6.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtGui import QPainter, QPen, QColor
 
 from .stream_checkbox import StreamCheckbox
 

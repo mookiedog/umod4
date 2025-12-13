@@ -2,8 +2,8 @@
 Custom checkbox widget that fills with color when checked.
 """
 
-from PyQt6.QtWidgets import QCheckBox
-from PyQt6.QtGui import QPainter, QColor
+from PySide6.QtWidgets import QCheckBox
+from PySide6.QtGui import QPainter, QColor
 
 
 class ColorCheckbox(QCheckBox):

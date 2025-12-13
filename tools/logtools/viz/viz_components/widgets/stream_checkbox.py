@@ -2,10 +2,10 @@
 Custom stream selection widget with checkbox, label, and drag-drop support.
 """
 
-from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QLabel, QApplication,
+from PySide6.QtWidgets import (QWidget, QHBoxLayout, QLabel, QApplication,
                              QColorDialog, QMenu)
-from PyQt6.QtCore import Qt, QMimeData
-from PyQt6.QtGui import QFont, QColor, QAction, QDrag
+from PySide6.QtCore import Qt, QMimeData
+from PySide6.QtGui import QFont, QColor, QAction, QDrag
 
 from .color_checkbox import ColorCheckbox
 

@@ -4,14 +4,14 @@ View navigation controller for zoom and pan operations.
 Manages the current view window and provides methods for navigation.
 """
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 
 class ViewNavigationController(QObject):
     """Manages view navigation (zoom, pan, fit)"""
 
     # Signal emitted when view changes
-    view_changed = pyqtSignal(float, float, float, float)  # start, end, y_min, y_max
+    view_changed = Signal(float, float, float, float)  # start, end, y_min, y_max
 
     def __init__(self, time_min=0.0, time_max=100.0):
         """

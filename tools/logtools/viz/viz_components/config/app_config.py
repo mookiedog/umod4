@@ -10,7 +10,7 @@ Handles persistent storage of:
 """
 
 import os
-from PyQt6.QtCore import QSettings, QByteArray
+from PySide6.QtCore import QSettings, QByteArray
 
 
 class AppConfig:

@@ -109,8 +109,8 @@ execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install numpy)
 message(STATUS "   ---> Installing python lib: h5py")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install h5py)
 
-message(STATUS "   ---> Installing python lib: PyQt6")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install PyQt6)
+message(STATUS "   ---> Installing python lib: pyside6-essentials")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pyside6-essentials)
 
 message(STATUS "   ---> Installing python lib: pyqtgraph")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pyqtgraph)
@@ -126,6 +126,9 @@ execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask-cors)
 
 message(STATUS "   ---> Installing python lib: PyYAML")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install PyYAML)
+
+message(STATUS "   ---> Installing python lib: nuitka")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install nuitka)
 
 project(umod4)
 

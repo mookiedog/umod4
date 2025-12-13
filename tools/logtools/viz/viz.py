@@ -3,7 +3,7 @@ Data Visualization Tool - Complete Implementation
 Professional time-series data visualization with advanced features
 
 Requirements:
-pip install PyQt6 pyqtgraph numpy pandas h5py
+pip install pyside6-essentials pyqtgraph numpy pandas h5py
 
 Usage:
 python viz.py [logfile.h5]
@@ -14,13 +14,13 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QFileDialog, QCheckBox,
                              QScrollArea, QSplitter, QLabel, QFrame, QMenu,
                              QMenuBar, QToolBar, QLineEdit, QListWidget, QListWidgetItem,
                              QSpinBox)
-from PyQt6.QtCore import Qt, QPointF, QTimer, QRectF, QSettings, QByteArray, QMimeData, QPoint
-from PyQt6.QtGui import QPen, QColor, QFont, QAction, QPainter, QDrag
+from PySide6.QtCore import Qt, QPointF, QTimer, QRectF, QSettings, QByteArray, QMimeData, QPoint
+from PySide6.QtGui import QPen, QColor, QFont, QAction, QPainter, QDrag
 import pyqtgraph as pg
 from pyqtgraph import QtWidgets
 
@@ -784,7 +784,7 @@ class DataVisualizationTool(QMainWindow):
 
     def load_file_with_conversion(self, filename):
         """Load a file, offering to convert from .um4 to .h5 if needed."""
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
         import subprocess
 
         # Check if file is HDF5
@@ -1037,13 +1037,13 @@ class DataVisualizationTool(QMainWindow):
     def show_metadata_dialog(self):
         """Show HDF5 metadata in a popup dialog"""
         if not self.current_file or not os.path.exists(self.current_file):
-            from PyQt6.QtWidgets import QMessageBox
+            from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "No File Loaded", "Please load an HDF5 file first.")
             return
 
         try:
             import h5py
-            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox
 
             # Create dialog
             dialog = QDialog(self)
@@ -1135,7 +1135,7 @@ class DataVisualizationTool(QMainWindow):
             dialog.exec()
 
         except Exception as e:
-            from PyQt6.QtWidgets import QMessageBox
+            from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Failed to read metadata: {e}")
 
     def create_unified_dataframe(self, raw_data, stream_names):

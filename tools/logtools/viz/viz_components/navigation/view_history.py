@@ -4,14 +4,14 @@ View history management for undo/redo navigation.
 Maintains a stack of view states to support undo/redo operations.
 """
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 
 class ViewHistory(QObject):
     """Manages undo/redo history for view navigation"""
 
     # Signal emitted when history state changes (for updating UI buttons)
-    history_changed = pyqtSignal(bool, bool)  # can_undo, can_redo
+    history_changed = Signal(bool, bool)  # can_undo, can_redo
 
     def __init__(self, max_history=50):
         """
