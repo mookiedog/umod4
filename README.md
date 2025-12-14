@@ -148,31 +148,22 @@ I made the decision that OTA updates will take precedence.
 
 ## Getting the Visualizer
 
-The data visualizer is a GUI application for viewing log files. Two options:
-
-### Option 1: Download Pre-Built Executable (Recommended)
-
-Pre-built executables are available for Windows, Linux, and macOS:
+The data visualizer is a GUI application for viewing log files.
+If you do not want to go to the trouble of installing all of the project software and getting it to build, then pre-built executables are available for Windows, Linux, and macOS (ARM-only!):
 
 1. Go to [Releases](https://github.com/mookiedog/umod4/releases)
-2. Download the latest `viz-vX.Y.Z` release for your platform:
-   - `DataVisualizer-Windows-vX.Y.Z.zip` - Windows 10+
-   - `DataVisualizer-Linux-vX.Y.Z.zip` - Ubuntu 20.04+ or similar
-   - `DataVisualizer-macOS-vX.Y.Z.zip` - macOS 10.13+
-3. Extract and run the DataVisualizer executable
-4. No installation or Python setup needed!
+1. Download the latest `viz-vX.Y.Z` release for your platform:
+   * `DataVisualizer-Windows-vX.Y.Z.zip` - Windows 10+
+   * `DataVisualizer-Linux-vX.Y.Z.zip` - Ubuntu 20.04+ or similar
+   * `DataVisualizer-macOS-vX.Y.Z.zip` - macOS 10.13+ (ARM ONLY!)
+1. Extract the files from the zip into a directory. There is a README in there.
+1. Run the DataVisualizer executable
 
-Sample log files are included for testing.
+There is no installation to perform, or Python setup needed.
+If you don't want the program anymore, just delete the directory where you unzipped the files and it is all gone.
 
-### Option 2: Run from Source
+A sample log file is included for testing.
 
-```bash
-# Install dependencies
-pip install -r tools/logtools/viz/requirements.txt
-
-# Run visualizer
-python tools/logtools/viz/viz.py <logfile.h5>
-```
 
 See the [Visualizer documentation](tools/README_Visualizer.md) for detailed usage instructions.
 
