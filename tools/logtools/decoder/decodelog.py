@@ -28,6 +28,15 @@ except ImportError:
     np = None
     h5py = None
 
+# Logsyms - Try to import at module level for Nuitka bundling
+# If not available (during development before CMake build), will be imported later from venv
+try:
+    import Logsyms
+    LOGSYMS_PRELOADED = True
+except ImportError:
+    Logsyms = None
+    LOGSYMS_PRELOADED = False
+
 # ================================================================================================
 # Output Handler Classes
 # ================================================================================================
@@ -1168,52 +1177,54 @@ def main():
         output_file = None
     
     # Import Logsyms - handle both Nuitka frozen binaries and normal Python execution
-    # Nuitka sets __compiled__ attribute on compiled modules/functions
-    # Check if this module itself is compiled, or if __nuitka__ exists in builtins
-    is_nuitka = hasattr(sys.modules[__name__], '__compiled__') or '__nuitka__' in dir(__builtins__)
-    is_frozen = getattr(sys, 'frozen', False)  # PyInstaller, py2exe, cx_freeze
+    # First check if Logsyms was already imported at module level (for Nuitka bundling)
+    if LOGSYMS_PRELOADED:
+        # Logsyms was successfully imported at module level
+        ls = Logsyms
+        L = ls.Logsyms
+        print(f"# Logsyms preloaded at module level")
+    else:
+        # Logsyms not preloaded - detect runtime environment
+        # Nuitka sets __compiled__ attribute on compiled modules/functions
+        is_nuitka = hasattr(sys.modules[__name__], '__compiled__') or '__nuitka__' in dir(__builtins__)
+        is_frozen = getattr(sys, 'frozen', False)  # PyInstaller, py2exe, cx_freeze
 
-    if is_nuitka or is_frozen:
-        # Running in a frozen/compiled binary
-        # Logsyms should already be bundled and directly importable
-        try:
-            import Logsyms as ls
-            L = ls.Logsyms
-            print(f"# Logsyms imported from compiled binary (nuitka={is_nuitka}, frozen={is_frozen})")
-        except ImportError as e:
-            print(f"FATAL ERROR: Logsyms module not found in compiled binary: {e}", file=sys.stderr)
+        if is_nuitka or is_frozen:
+            # Running in a frozen/compiled binary but Logsyms wasn't preloaded
+            print(f"FATAL ERROR: Running in compiled binary but Logsyms was not bundled", file=sys.stderr)
             print(f"This is a build error - Logsyms must be included during compilation", file=sys.stderr)
+            print(f"Detection: nuitka={is_nuitka}, frozen={is_frozen}", file=sys.stderr)
             print(f"sys.path = {sys.path}", file=sys.stderr)
             print(f"Available modules: {sorted([m for m in sys.modules.keys() if not m.startswith('_')])[:20]}", file=sys.stderr)
             return 1
-    else:
-        # Running as normal Python script - need to find Logsyms in venv
-        from pathlib import Path
-
-        if args.Logsyms:
-            # Use the path defined on the cmdline
-            site_packages = args.Logsyms
         else:
-            # Get the directory containing the current script
-            script_dir = Path(__file__).parent.absolute()
+            # Running as normal Python script - need to find Logsyms in venv
+            from pathlib import Path
 
-            # Get an absolute path to the .venv
-            venv_path = os.path.join(script_dir, "..", "..", "build", ".venv")
+            if args.Logsyms:
+                # Use the path defined on the cmdline
+                site_packages = args.Logsyms
+            else:
+                # Get the directory containing the current script
+                script_dir = Path(__file__).parent.absolute()
 
-            # Use that to find where the packages live
-            site_packages = os.path.join(venv_path, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages")
+                # Get an absolute path to the .venv
+                venv_path = os.path.join(script_dir, "..", "..", "build", ".venv")
 
-        sys.path.insert(0, site_packages)
-        print(f"# Logsyms imported from <${site_packages}>")
+                # Use that to find where the packages live
+                site_packages = os.path.join(venv_path, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages")
 
-        # Import the package containing all the log symbol definitions
-        try:
-            import Logsyms as ls
-            L = ls.Logsyms
-        except ImportError as e:
-            print(f"FATAL ERROR: Could not import Logsyms from {site_packages}: {e}", file=sys.stderr)
-            print(f"Try building the project first with CMake to generate Logsyms", file=sys.stderr)
-            return 1
+            sys.path.insert(0, site_packages)
+            print(f"# Logsyms imported from <${site_packages}>")
+
+            # Import the package containing all the log symbol definitions
+            try:
+                import Logsyms as ls
+                L = ls.Logsyms
+            except ImportError as e:
+                print(f"FATAL ERROR: Could not import Logsyms from {site_packages}: {e}", file=sys.stderr)
+                print(f"Try building the project first with CMake to generate Logsyms", file=sys.stderr)
+                return 1
 
     # Create TimeKeeper for time tracking (used by both human-readable and HDF5 output)
     timekeeper = TimeKeeper(verbose=args.verbose)
