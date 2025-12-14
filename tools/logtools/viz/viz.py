@@ -244,13 +244,12 @@ class DataVisualizationTool(QMainWindow):
             self.redo_action.setEnabled(can_redo)
 
     def init_ui(self):
-        # Create main widget with grey border
+        # Create main widget (no border - only window border needed)
         central_widget = QWidget()
-        central_widget.setStyleSheet("QWidget { border: 2px solid grey; }")
         self.setCentralWidget(central_widget)
-        
+
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(2, 2, 2, 2)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         # Create menu bar
@@ -278,7 +277,11 @@ class DataVisualizationTool(QMainWindow):
         self.v_splitter.addWidget(self.nav_widget)
 
         # Set default sizes
-        self.v_splitter.setSizes([800, 50])
+        # Navigation height from config (fraction of max height 200px)
+        nav_height_fraction = self.stream_config.get_setting('ui.nav_height_fraction', 0.75)
+        nav_default_height = int(200 * nav_height_fraction)  # 200 is nav_widget max height
+        graph_default_height = 800 - nav_default_height
+        self.v_splitter.setSizes([graph_default_height, nav_default_height])
         self.v_splitter.splitterMoved.connect(self.on_splitter_moved)
 
         self.h_splitter.addWidget(self.v_splitter)
@@ -367,15 +370,27 @@ class DataVisualizationTool(QMainWindow):
         zoom_out_action.triggered.connect(self.zoom_out_2x)
         view_menu.addAction(zoom_out_action)
 
+        # Pan Left 90%
+        pan_left_90_action = QAction("Pan Left 90%", self)
+        pan_left_90_action.setShortcut("Shift+Left")
+        pan_left_90_action.triggered.connect(self.pan_left_90)
+        view_menu.addAction(pan_left_90_action)
+
+        # Pan Right 90%
+        pan_right_90_action = QAction("Pan Right 90%", self)
+        pan_right_90_action.setShortcut("Shift+Right")
+        pan_right_90_action.triggered.connect(self.pan_right_90)
+        view_menu.addAction(pan_right_90_action)
+
         # Pan Left 50%
         pan_left_action = QAction("Pan &Left 50%", self)
-        pan_left_action.setShortcut("Shift+Left")
+        pan_left_action.setShortcut("Left")
         pan_left_action.triggered.connect(self.pan_left_50)
         view_menu.addAction(pan_left_action)
 
         # Pan Right 50%
         pan_right_action = QAction("Pan Right 50%", self)
-        pan_right_action.setShortcut("Shift+Right")
+        pan_right_action.setShortcut("Right")
         pan_right_action.triggered.connect(self.pan_right_50)
         view_menu.addAction(pan_right_action)
 
@@ -617,9 +632,16 @@ class DataVisualizationTool(QMainWindow):
                 self.debug_print(f"Using stream order from stream_config.yaml")
 
         # Create checkboxes for each stream in display order
-        for i, stream in enumerate(display_order):
-            color = self.colors[i % len(self.colors)]
+        visible_index = 0  # Track color index for visible streams only
+        for stream in display_order:
+            # Skip streams that are marked as hidden in config
+            if self.stream_config.should_skip_in_selection(stream):
+                self.debug_print(f"Skipping hidden stream: {stream}")
+                continue
+
+            color = self.colors[visible_index % len(self.colors)]
             self.stream_colors[stream] = color
+            visible_index += 1
 
             # Get display name from config, fallback to stream name
             stream_config = self.stream_config.get_stream(stream)
@@ -650,10 +672,10 @@ class DataVisualizationTool(QMainWindow):
                 else:
                     # Check YAML default
                     stream_config = self.stream_config.get_stream(stream)
-                    if stream_config and hasattr(stream_config, 'color') and stream_config.color:
-                        stream_widget.color = stream_config.color
-                        stream_widget.checkbox.fill_color = stream_config.color
-                        self.stream_colors[stream] = stream_config.color
+                    if stream_config and stream_config.default_color:
+                        stream_widget.color = stream_config.default_color
+                        stream_widget.checkbox.fill_color = stream_config.default_color
+                        self.stream_colors[stream] = stream_config.default_color
 
             # Display mode precedence
             if per_file_settings and stream in per_file_settings.stream_display_modes:
@@ -2474,6 +2496,26 @@ class DataVisualizationTool(QMainWindow):
 
         self.update_graph_plot()
 
+    def pan_left_90(self):
+        """Pan left by 90% of current view duration"""
+        self.view_controller.pan_left(0.9)
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+        self.update_graph_plot()
+
+    def pan_right_90(self):
+        """Pan right by 90% of current view duration"""
+        self.view_controller.pan_right(0.9)
+        self.view_start, self.view_end, _, _ = self.view_controller.get_view_range()
+        self.view_history.push(self.view_start, self.view_end, 0, 1)
+        self.view_region.blockSignals(True)
+        self.view_region.setRegion([self.view_start, self.view_end])
+        self.view_region.blockSignals(False)
+        self.update_graph_plot()
+
     def pan_left_50(self):
         """Pan left by 50% of current view duration"""
         self.view_controller.pan_left(0.5)
@@ -2563,11 +2605,11 @@ class DataVisualizationTool(QMainWindow):
     def apply_window_border(self):
         """Apply window border based on theme"""
         if self.dark_theme:
-            # Light border for dark theme
-            self.setStyleSheet("QMainWindow { border: 2px solid #666666; }")
+            # Light border for dark theme (thin)
+            self.setStyleSheet("QMainWindow { border: 1px solid #666666; }")
         else:
-            # Dark border for light theme
-            self.setStyleSheet("QMainWindow { border: 2px solid #333333; }")
+            # Dark border for light theme (thin)
+            self.setStyleSheet("QMainWindow { border: 1px solid #333333; }")
 
     def set_theme(self, dark):
         """Set theme (True for dark, False for light)"""

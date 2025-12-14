@@ -33,8 +33,8 @@ The narrow strip at the bottom is called the Navigation View.
 The navigation view shows the entire log (timewise).
 You can click and drag a box in the navigation window (or in the graph window) to zoom in on any area you want.
 Clicking inside the blue box in the navigation window allows you to quickly pan the upper graph screen to anywhere in the log.
-The program suppports infinite "undo" that undoes the entire sequence of zoom or pan operations you might have performed before.
-In all, you can quickly move around the log, quickly take a detailed peek at something, then "undo" to pop back to the previous view you.
+The program supports infinite "undo" that undoes the entire sequence of zoom or pan operations you might have performed before.
+In all, you can quickly move around the log, quickly take a detailed peek at something, then "undo" to pop back to the previous view you were looking at.
 
 In this case, the navigation window shows you that I warmed the bike up for nearly 10 minutes (600 seconds) before heading out.
 The bike is clearly warming up as evidenced by the slowly rising blue line (coolant temp) in the navigation window.
@@ -44,10 +44,10 @@ Once the entire cooling system gets up to 75C, the coolant can begin getting hot
 
 You can see the revs rise twice as I left my driveway, then three more times as I drove down the road away from my house towards the main road.
 
-I had to wait for at idle for nearly 90 seconds before traffic opened up and I could turn left onto the main road.
+I had to sit there idling for nearly 90 seconds before traffic opened up and I could turn left onto the main road.
 After that, revs rise and fall as I drive around.
 As the bike gets some velocity under it and some cold air moving through its radiator, you can see the coolant temperatures drop right back to 75C again.
-The thermostat does its job though, and never lets the coolant temperature go below 75C.
+The thermostat did its job though, and never let the coolant temperature go below 75C.
 
 The ride was a short loop through the local neighborhood, just to test the latest logging software. And at end, the RPMs are back to idle as I get the bike parked in the garage.
 
@@ -59,18 +59,20 @@ To see the detail in a ride log, look for that narrow blue box in the navigation
 The data inside that blue box corresponds to what you see in the big graphic window.
 
 You can click and drag the blue box anywhere in the navigation window to quickly pan to any part of the log.
+Or, you can just click and drag an area in the navigation window, and the graph window will immediately snap to that view.
 
-If you click and drag in the navigation windown, you can select an area to look at in the main window.
-A bigger selection area zooms out, and smaller selection area zooms in.
-You can also click and drag in the main window to zoom in on an area.
+You can also click and drag in the main window as well.
+That is how to zoom in on a specific area of detail.
 Keyboard shortcuts also work to zoom in and out, and to pan the whole main window left or right:
 
 * "ctrl +" to zoom in by a factor of 2
 * "ctrl -" to zoom out by a factor of 2
-* "ctrl \<arrow-key\>" pans right or left by 15%
-* "shft \<arrow-key\>" pans right or left by 50%
+* Window movement:
+  * the right/left arrow keys pan the display by 50%
+  * "ctrl \<arrow-key\>" pans right or left by 15%
+  * "shft \<arrow-key\>" pans right or left by 90%
 
-Once zoomed into a particular level of detail, the arrow keys make it easy to see what came before or after without changing the zoom level.
+The arrow keys make it easy to pan the graph window left or right without changing the zoom level.
 
 Looking at that first graph in more detail:
 ![overview](images/viz-1a-annotated.jpg)
@@ -104,7 +106,7 @@ The important aspects of the Aprilia diagram show that the power stroke for the 
 For the rear, the power stroke starts on CR10 and runs through CR0.
 
 I'm proud of this next bit: one of the graphical ECU streams the log visualizer can display is the CRID.
-Not only that, it can be displayed in relation to the instantaneous RPM:
+Not only that, the CRID is what I call a "marker" stream because it is used to mark up the instantaneous RPM with additional detail:
 ![crid-detail](./images/viz-detail-crid.jpg)
 Those markers on the RPM data indicate the start of each CR event, as per the Aprilia doc.
 
@@ -157,14 +159,14 @@ There are plenty of reasons why a coil could fire, but result in no spark at the
 * Fouled sparkplug tip
 
 But assuming that those abnormal situations above were not happening, the spark sensor circuit really does indicate that a spark occurred.
-The standard ECU firmware uses these "coil fired" signals to verify that sparks are happending.
+The standard ECU firmware uses these "coil fired" signals to verify that sparks are happening.
 If it failes to see them, it will blink the EFI light on the dash.
 For the purposes of the umod4 datalogger, it gets even better.
 The ECU's processor actually captures the precise time that the coil fired.
-That allows the UM4 logging firmware to logs the precise time of every single coil/spark.
+That allows the UM4 logging firmware to log the precise time of every single coil/spark.
 
-The visualizer allows this "spark occurred" data stream to be graphed.
-Enabling the spark data stream yields some interesting results:
+The visualizer can attach the "spark occurred" marker data stream to the instantaneous RPM graph.
+Enabling that stream yields some interesting observations:
 ![operation](./images/viz-detail-3.jpg)
 
 The tags marked 'S2' indicate when plug #2 fired.
@@ -172,10 +174,11 @@ The ECU also tracks when plug 1 fires.
 Typically, the time difference between S1 and S2 events is a very small number of microseconds.
 For simplicity, the graph above only enables plug #2.
 
-Looking at the first 3 spark firing events, it can be seen that they line up almost exactly with the start of CR10 or CR5, meaning that they are firing when the piston basically right at TDC (Top Dead Center).
+Looking at the first 3 spark firing events, it can be seen that they line up almost exactly with the start of CR10 or CR5.
 
 But if you look at the problem event, you see something different.
-In short, CR4 takes unusually long to complete, which has the side effect that the spark occurs significantly in advance of TDC.
+CR4 takes unusually long to complete.
+As a result, the spark that the ECU wanted to occur right around CR5 actually occurred significantly in advance of CR5.
 
 And _that_ means that pressures in that cylinder are going to be extra high before the piston has even got to the top yet.
 The extra high pressure will slow the crank down more than normal as it tries to get over the top to begin the power stroke.
@@ -185,8 +188,16 @@ The final spark event in that view is right where it should be.
 
 The net result is that that the "misses" were not actually misses, but the result of a spark that fired a bit too early.
 
-Why _that_ happened, I do not know yet.
+Why CR4 was so slow, I do not know yet.
 There will always be mysteries.
+What is certain though is that the ECU expects the crank to have a reasonably predictable rotation speed through CR4.
+The ECU makes its spark calculations and then schedules the spark to occur at some precise delay after CR4.
+In a perfect world, this means that the spark occurs at some precise time in advance of CR5, which is why they call it a spark "advance".
+But the log clearly shows that if CR4 goes slower than the ECU expects, the spark will occur sooner than the ECU wanted it.
+This is a side effect of the ECU only being able to track the crank 6 times per rotation.
+A more modern ECU might track the gear teeth on the camshaft giving it significantly more rotational information.
+But that would have required a significantly faster CPU in the ECU to deal with all that data.
+So the Gen 1 ECU is what it is.
 
 There are plenty more ECU data streams, too.
 Here is an example showing the cam sensor signal.
@@ -209,7 +220,7 @@ The basic issue is getting GPS data on the screen.
 For that, I added a visualizer view menu option that would display all the GPS info from a ride as data points on a Google Map webpage.
 Clicking on view/"Show Ride On Maps" will cause a browser window to open, with a Google Map view showing an overview of the entire ride.
 
-This is what I got from my test ride:
+This is what I got from my very first test ride:
 
 ![ride-1-overview](images/ride-1-overview.jpg)
 
@@ -224,10 +235,10 @@ But, it was my first GPS-tagged ride log ever!
 I even got to use GPS data as a debug aid.
 Case in point: to get another log test file, I went for another ride the next day.
 It was equally cold, and I nearly froze my hands off.
-The bike started up without the peculiar engine misses like the day before.
+The bike started up without the peculiar engine misses like the day before, so that was good.
 
 It was a mostly uneventful test ride, except for one thing.
-At one point, I was turning right by a local grocery store.
+At one point, I was turning right by our local grocery store.
 As I started accelerating through the turn, the engine missed.
 I made a mental note of that.
 After getting home, I looked up my ride visualization.
@@ -237,7 +248,7 @@ It was a longer trip, hence the frozen fingers.
 I used Google Maps to zoom in and find that right turn by the grocery store:
 ![ride-2-safeways](images/ride-2-safeways.jpg)
 
-Clicking on any of the blue dots gives me time information for that dot.
+Clicking on any of the blue dots gives me the timestamp information for that dot.
 The map tag indicates that I was turning the corner approximately 1889.7 seconds into the ride.
 In the navigation view, I panned to that time area in the log, then zoomed in:
 ![ride-2-safeways](images/ride-2-safeways-detail.jpg)
@@ -250,8 +261,8 @@ Zooming in on that event makes things clear:
 ![ride-2-safeways](images/ride-2-safeways-detail-3.jpg)
 
 Check out CR6 in the circled area: that is where the crank would normally be speeding up during a front cyl power stroke.
-Instead, the crank slows down!
-You can see that the spark occured just before CR5, and the width of CR5 generally matches CR2/3/4, so this is not the same problem as the misses after starting in the ride the day before.
+Instead, the crank is clearly slowing down!
+You can see that the spark occurred just before CR5, and the width of CR5 generally matches CR2/3/4, so this is not the same problem as the misses after starting in the ride the day before.
 My interpretation is that this specific event was an engine miss, pure and simple: the spark happened, but there was no bang!
 Given that the Rotax engine has dual plugs, and therefore two chances to get the charge lit off, it feels more like something weird happened with the fueling.
 
@@ -259,6 +270,8 @@ Or not.
 
 I have a good friend who spent his entire career as a professional mechanic.
 His sage advice was that "90% of fueling problems are ignition related."
+
+So who knows.
 
 ## Higher Engine Speeds
 
@@ -268,9 +281,9 @@ At one point in the ride below, I pinned the throttle for a few seconds to get a
 
 There are some interesting things to see there.
 
-First off, the spark advance at appoximately 6000 RPM is clearly visible.
+First off, the spark advance at approximately 6000 RPM is clearly visible.
 Instead of firing the sparks roughly coincidental with CR5 and CR10 like they do at idle, the ECU is firing them earlier.
-This allows time for the flamefront to propagate through the mixture, so that peak pressures will occur when the piston is where the ECU wants it.
+This allows time for the flame front to propagate through the mixture, so that peak pressures will occur when the piston is where the ECU wants it.
 
 Secondly, unlike the idle situation where the crankshaft only showed an increase in rotational speed during one CR period, the crankshaft clearly speeds up during two of them now: CR6 & CR7, CR10 & CR11.
 
@@ -290,13 +303,13 @@ This next screen shows the bike at a bit over 7K RPM with the throttle fairly wi
 ![injectors-squirting-even-more](./images/viz-detail-injectors-2.jpg)
 
 Hovering over an injector event will light up a tooltip telling you the pulse duration in microseconds.
-You can see that the duration is a lot longer then when the bike was warming up in the previous image.
+You can see that the duration is a lot longer than when the bike was warming up in the previous image.
 It makes sense: the engine is making serious power at this point!
 
 ## Wrap
 
 So there it is.
-After 20-some years of off and on development, I am finally getting some big pieces that I have wished for for years. Creating a log visualizer was a **huge** step forward.
+After 20-some years of off and on development, I am finally getting some big pieces that I have wished about for years. Creating a log visualizer was a **huge** step forward.
 
 Since day 1, I had always dreamed of getting a system like this out for a track day.
 Truthfully, it's taken so long to get all this working that I think my track days are over.
@@ -327,7 +340,7 @@ They just don't _like_ to.
 As mentioned earlier, I have imagined having a graphical log visualizer for years.
 What held me back was the prospect of spending many months figuring out how to learn to work with all the graphics systems.
 It was not something that I want to spend my limited brainpower on.
-The big breakthrough occurred when I decided to treat the vizualizer as an experiment.
+The big breakthrough occurred when I decided to treat the visualizer as an experiment.
 Specifically, to see if I could get a visualizer built in conjunction with the AI service, Claude Code.
 
 I will say this: the great AI experiment was certainly not without its problems and false starts.

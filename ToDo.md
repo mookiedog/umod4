@@ -19,6 +19,13 @@
 
 ## Visualizer
 
+* Small Potatoes List
+  * Right now, all the graphs tend to get drawn at 85% of height of graph window. That puts them all on top of each other, especially if they are not changing much. Like throttle and GPS velocity lines tend to sit on top of each other.
+  * create a mechanism to set preferred stream/marker order in yaml
+  * Split the stream selector window into groups
+    * Graph streams
+    * Marker streams
+
 * Build a Log Viewer into visualizer
   * Right click on any event in the graph window to view it in the log
 * Get viz packaged up for others to play with
@@ -28,8 +35,6 @@
 Features to add:
 
 * Coil dwell bars
-* Get rid of undisplyable streams from selection list
-* Get time markers events drawn
   * GPS
   * CPU events
   * EPROM load events

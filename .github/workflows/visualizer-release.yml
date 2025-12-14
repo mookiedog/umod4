@@ -276,19 +276,32 @@ jobs:
 
           # Create README
           cat > release/README.txt << 'EOF'
-          Data Visualizer $VERSION
-          =========================
+          Data Visualizer $VERSION (Linux)
+          =================================
 
           QUICK START
           -----------
-          1. Double-click viz to launch
+          1. Run ./viz from terminal to launch the visualizer
           2. Open one of the sample .um4 files to see example data
           3. Use File > Open to load your own .h5 or .um4 log files
 
           SYSTEM REQUIREMENTS
           -------------------
-          - Windows 10 or later / Linux / macOS 10.13+
-          - No additional software needed
+          - Linux with X11 or Wayland display server
+          - Required system library: libxcb-cursor0
+
+          INSTALLING DEPENDENCIES
+          -----------------------
+          If you get an error about "Qt platform plugin xcb", install libxcb-cursor0:
+
+          Debian/Ubuntu:
+            sudo apt-get install libxcb-cursor0
+
+          Fedora/RHEL:
+            sudo dnf install xcb-util-cursor
+
+          Arch Linux:
+            sudo pacman -S xcb-util-cursor
 
           SAMPLE FILES
           ------------

@@ -28,6 +28,7 @@ streams:
   ecu_rpm_instantaneous:
     type: graph_data
     display_name: "RPM (Instantaneous)"
+    default_color: "#d70000"
     units: rpm
     owns_axis: true
     normalize: true
@@ -35,6 +36,7 @@ streams:
   ecu_throttle_adc:
     type: graph_data
     display_name: "Throttle Position"
+    default_color: "#00aa00"
     units: adc
     owns_axis: true
     normalize: true
@@ -49,7 +51,8 @@ streams:
 
   ecu_air_temp_c:
     type: graph_data
-    display_name: "Air Temperature"
+    display_name: "Air Temperature (C)"
+    default_color: "#005500"
     units: celsius
     owns_axis: true
     normalize: true
@@ -58,7 +61,8 @@ streams:
 
   ecu_coolant_temp_c:
     type: graph_data
-    display_name: "Coolant Temperature"
+    display_name: "Coolant Temperature (C)"
+    default_color: "#0000FF"
     units: celsius
     owns_axis: true
     normalize: true
@@ -67,7 +71,7 @@ streams:
 
   ecu_battery_voltage_v:
     type: graph_data
-    display_name: "Battery Voltage"
+    display_name: "Battery Voltage (V)"
     units: volts
     owns_axis: true
     normalize: true
@@ -75,7 +79,8 @@ streams:
 
   gps_velocity_mph:
     type: graph_data
-    display_name: "GPS Speed"
+    display_name: "GPS Speed (MPH)"
+    default_color: "#0080FF"
     units: mph
     owns_axis: true
     normalize: true
@@ -98,13 +103,14 @@ streams:
     normalize: true
     display_range_min_top: 120.0       # Minimum value for top of display
     display_range_max_bottom: 80.0     # Maximum value for bottom of display
-    
+
   ecu_front_ign_delay:
     type: graph_data
     display_name: "Front Ignition Delay"
     units: degrees
     owns_axis: true
     normalize: true
+    hidden: true    # Temporary until we get this data working properly
 
   ecu_rear_ign_delay:
     type: graph_data
@@ -112,6 +118,7 @@ streams:
     units: degrees
     owns_axis: true
     normalize: true
+    hidden: true    # Temporary until we get this data working properly
 
   # ============================================================================
   # GRAPH MARKERS - Event markers attached to graph data
@@ -133,7 +140,7 @@ streams:
     offset: -0.025
     label: "S2"
     max_visible: 100
-    default_color: "#FF6600"
+    default_color: "#FF0000"
 
   ecu_crankref_id:
     type: graph_marker
@@ -142,7 +149,7 @@ streams:
     line_height: 0.04
     label_format: "CR{value}"
     max_visible: 100
-    default_color: "#00FF00"
+    default_color: "#000000"
 
   ecu_camshaft_timestamp:
     type: graph_marker
@@ -151,7 +158,7 @@ streams:
     line_height: -0.04
     label: "CAM"
     max_visible: 100
-    default_color: "#00FFFF"
+    default_color: "#00ABAB"
 
   ecu_crankref_timestamp:
     type: graph_data
@@ -200,6 +207,7 @@ streams:
     # Combined format: single dataset with [time_ns, duration_ns]
     combined_format: true
     duration_units: "nanoseconds"
+    hidden: true    # Temporary until we get this data working properly
 
   ecu_front_coil_manual_bar:
     type: bar_data
@@ -212,6 +220,7 @@ streams:
     # Combined format: single dataset with [time_ns, duration_ns]
     combined_format: true
     duration_units: "nanoseconds"
+    hidden: true    # Temporary until we get this data working properly
 
   ecu_rear_coil_bar:
     type: bar_data
@@ -224,6 +233,7 @@ streams:
     # Combined format: single dataset with [time_ns, duration_ns]
     combined_format: true
     duration_units: "nanoseconds"
+    hidden: true    # Temporary until we get this data working properly
 
   ecu_rear_coil_manual_bar:
     type: bar_data
@@ -236,6 +246,7 @@ streams:
     # Combined format: single dataset with [time_ns, duration_ns]
     combined_format: true
     duration_units: "nanoseconds"
+    hidden: true    # Temporary until we get this data working properly
 
   # Coil bars - legacy format (fallback for old HDF5 files)
   ecu_front_coil_on_actual:
@@ -248,6 +259,7 @@ streams:
     tooltip: "Front Coil #1"
     off_stream: ecu_front_coil_off_actual
     legacy_format: true
+    hidden: true    # Temporary until we get this data working properly
 
   ecu_front_coil_manual_on_actual:
     type: bar_data
@@ -259,6 +271,7 @@ streams:
     tooltip: "Front Coil #2"
     off_stream: ecu_front_coil_manual_off_actual
     legacy_format: true
+    hidden: true    # Temporary until we get this data working properly
 
   ecu_rear_coil_on_actual:
     type: bar_data
@@ -270,6 +283,7 @@ streams:
     tooltip: "Rear Coil #1"
     off_stream: ecu_rear_coil_off_actual
     legacy_format: true
+    hidden: true    # Temporary until we get this data working properly
 
   ecu_rear_coil_manual_on_actual:
     type: bar_data
@@ -281,6 +295,28 @@ streams:
     tooltip: "Rear Coil #2"
     off_stream: ecu_rear_coil_manual_off_actual
     legacy_format: true
+    hidden: true    # Temporary until we get this data working properly
+
+  # Calculated "off" timestamps for coils (intermediate data, not for display)
+  ecu_front_coil_off_calc:
+    type: graph_data
+    display_name: "Front Coil #1 Off (calc)"
+    hidden: true
+
+  ecu_front_coil_manual_off_calc:
+    type: graph_data
+    display_name: "Front Coil #2 Off (calc)"
+    hidden: true
+
+  ecu_rear_coil_off_calc:
+    type: graph_data
+    display_name: "Rear Coil #1 Off (calc)"
+    hidden: true
+
+  ecu_rear_coil_manual_off_calc:
+    type: graph_data
+    display_name: "Rear Coil #2 Off (calc)"
+    hidden: true
 
   # ============================================================================
   # TIME MARKERS - Markers on the time axis
@@ -359,6 +395,12 @@ settings:
   nav_initial_anchor: "first_cam"  # Options: "first_cam", "data_start"
   nav_offset_before: 1.0  # Seconds before anchor point (default: 1.0)
   nav_offset_after: 5.0   # Seconds after anchor point (default: 5.0)
+
+  # UI layout settings
+  ui:
+    # Navigation window height as fraction of max height (0.0 to 1.0)
+    # Max height is 200px, so 0.75 = 150px default height
+    nav_height_fraction: 0.75
 
   performance:
     max_injector_bars_visible: 5000
