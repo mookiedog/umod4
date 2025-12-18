@@ -1817,16 +1817,22 @@ class DataVisualizationTool(QMainWindow):
             self.debug_print(f"  Tick spacing: {tick_spacing_real:.1f}")
             self.debug_print(f"  Real ticks: {real_ticks}")
 
-            # Convert tick positions to DATA's normalized 0-1 space (where 0=axis_min, 1=axis_max)
-            # This is where the ticks will actually be drawn since data is normalized to this range
-            data_normalized_ticks = [(t - axis_min) / axis_range for t in real_ticks]
-            self.debug_print(f"  Normalized tick positions: {data_normalized_ticks}")
+            # Convert tick positions to DATA's normalized space
+            # Data is normalized to [bar_offset, bar_offset + normalize_max] range
+            # So ticks must be placed in the same range to align with the data
+            normalize_max = getattr(self, 'dynamic_normalize_max',
+                                   self.stream_config.get_setting('data_normalize_max', 0.85))
+            bar_offset = getattr(self, 'bar_space_offset', 0.0)
+
+            # Normalize ticks: first to 0-1, then scale to normalize_max and add bar_offset
+            data_normalized_ticks = [((t - axis_min) / axis_range) * normalize_max + bar_offset for t in real_ticks]
+            self.debug_print(f"  Normalized tick positions (with normalize_max={normalize_max}, bar_offset={bar_offset}): {data_normalized_ticks}")
 
             right_axis = self.graph_plot.getAxis('right')
 
-            # Filter ticks to only those within the 0-1 range (visible area)
+            # Filter ticks to only those within the visible area (bar_offset to bar_offset + normalize_max)
             visible_ticks_right = [(norm_pos, real_val) for norm_pos, real_val in zip(data_normalized_ticks, real_ticks)
-                           if 0 <= norm_pos <= 1]
+                           if bar_offset <= norm_pos <= bar_offset + normalize_max]
 
             self.debug_print(f"  Visible ticks: {visible_ticks_right}")
 
@@ -2135,10 +2141,60 @@ class DataVisualizationTool(QMainWindow):
                 # No label
                 continue
 
-            # Draw text
+            # Draw the marker label (S1, S2, or formatted value)
             text_item = pg.TextItem(text=label_text, color=color, anchor=text_anchor)
             text_item.setPos(marker_time, label_y)
             self.graph_plot.addItem(text_item)
+
+            # Check if this is a spark stream with corresponding advance data
+            # New format: ecu_spark_front_x1_advance, ecu_spark_rear_x1_advance, etc.
+            # Try both front and rear advance streams
+            advance_deg = None
+            for cyl in ['front', 'rear']:
+                if stream_name == 'ecu_spark_x1':
+                    advance_stream_name = f'ecu_spark_{cyl}_x1_advance'
+                elif stream_name == 'ecu_spark_x2':
+                    advance_stream_name = f'ecu_spark_{cyl}_x2_advance'
+                else:
+                    continue
+
+                if advance_stream_name in self.raw_data:
+                    # Get spark advance data
+                    advance_data = self.raw_data[advance_stream_name]
+                    advance_times = advance_data['time']
+                    advance_values = advance_data['values']
+
+                    # Find advance value at this marker time (should be exact match)
+                    # Use a small tolerance for floating point comparison
+                    time_tolerance = 0.001  # 1ms tolerance
+                    time_matches = np.abs(advance_times - marker_time) < time_tolerance
+
+                    if np.any(time_matches):
+                        # Found matching advance value
+                        advance_deg = advance_values[time_matches][0]
+                        break  # Found it, no need to check other cylinder
+
+            if advance_deg is not None:
+                advance_text = f"{advance_deg:.1f}°"
+
+                # Position advance text above/below the marker label
+                # S1 (ecu_spark_x1) has positive offset - put advance above the label
+                # S2 (ecu_spark_x2) has negative offset - put advance below the label
+                if offset > 0:
+                    # S1: advance goes above the label
+                    # Use bottom anchor so text extends upward from this point
+                    advance_y = label_y + 0.005  # Small gap above label
+                    advance_anchor = (0.5, 1.0)  # Bottom center (text extends up from this point)
+                else:
+                    # S2: advance goes below the label
+                    # Use top anchor so text extends downward from this point
+                    advance_y = label_y - 0.005  # Small gap below label
+                    advance_anchor = (0.5, 0.0)  # Top center (text extends down from this point)
+
+                # Draw advance value
+                advance_item = pg.TextItem(text=advance_text, color=color, anchor=advance_anchor)
+                advance_item.setPos(marker_time, advance_y)
+                self.graph_plot.addItem(advance_item)
 
     def draw_injector_bars(self):
         """Draw all bar streams (injectors, coils) on the graph."""
@@ -2813,14 +2869,20 @@ class DataVisualizationTool(QMainWindow):
             if shutil.which('wslview'):
                 subprocess.Popen(['wslview', html_file])
             elif shutil.which('powershell.exe'):
+                from pathlib import PureWindowsPath
                 result = subprocess.run(['wslpath', '-w', html_file],
                                       capture_output=True, text=True)
                 windows_path = result.stdout.strip()
-                self.debug_print(f"Opening GPS track map at: {windows_path}")
-                subprocess.Popen(['powershell.exe', '-Command', 'Start-Process', f'"{windows_path}"'])
+                # Convert Windows path to file:// URL for better cross-browser compatibility
+                file_url = PureWindowsPath(windows_path).as_uri()
+                self.debug_print(f"Opening GPS track map: {file_url}")
+                subprocess.Popen(['powershell.exe', '-Command', 'Start-Process', f'"{file_url}"'])
             else:
                 import webbrowser
-                file_url = f'file:///{html_file.replace(os.sep, "/")}'
+                from pathlib import Path
+                # Use pathlib to convert to proper file URL (handles Windows paths correctly)
+                file_url = Path(html_file).as_uri()
+                self.debug_print(f"Opening GPS track map: {file_url}")
                 webbrowser.open(file_url, new=2)
         except Exception as e:
             self.debug_print(f"Error opening browser: {e}")

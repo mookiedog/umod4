@@ -25,6 +25,10 @@
 
 ; Define build options here
 
+; If defined, use explicit IC3 and IC4 SPARK ISR routines to report spark events instead of checking during crankshaft reporting
+#define SPARK_ISR       1
+#define VTA_INCLUDES_TS 1
+
 ; Set RELOCATED_STACK to '1' to relocate the stack inside the EPROM address space. Only available if
 ; this firmware is running on a umod4 PCB. If this firmware is to be burned into
 ; an EPROM, this must be '0'
@@ -95,19 +99,24 @@ STACK_TOP    = 0x01FF
 
 
 ; -----------------------------------------------------------------
-; Conjecture:
-
-; The Rotax shop manual p 2-6 says that when the bike is being
-; started, the ignition spark occurs at 5 degrees BTDC.  An
-; examination of the ECU firmware shows that when the engine is
-; turning very slowly (as would happen when cranking it with the
-; starter) the trailing edge of the CR5 protrusion is used to fire the
-; front cylinder sparkplug.  This means that the rising edge of the
-; low-going pulse on CR5 must be 5 degrees BTDC.  The width of the CR5
-; protrusion was measured to be 7.0 degrees wide, so this tells us
-; that the leading edge of CR5 must be at 12 degrees BTDC for the
-; front cylinder.  The manual also states that the ign timing at 2800
-; RPM is 21.8 degrees, +- 2 degrees.
+; CRID and Ignition Timing
+;
+; Facts: the Rotax V990 Shop Manual p 2-6 (Aprilia PN 8140587) states:
+;    1. When the bike is being started, ignition advance is 5 degrees BTDC
+;    2. At 2800 RPM, ignition advance is 21.8 degrees, +-2 degrees
+;
+; Measurements:
+;    1. Diameter of rotor at top of protrusions: 150.7mm
+;    2. width of protrusions at top face: 9.15mm
+;
+; Calculations:
+;    1. Circumference at top of protrusions: Pi*150.7mm = 473.44mm
+;    2. Width of protrusion in degrees: (9.15mm * 360deg)/473.44mm = 6.96 degrees
+;       I would bet that the protrusions are designed to be 7 degrees wide.
+;
+; Putting it together:
+;    If the protrusions are 7 degrees wide, and the trailing edge of CR5 is fixed at 5 degrees BTDC,
+;    the leading edge of CR5 must be 12 degrees BTDC.
 
 ; The relationship of TDC to CR events:
 ; CR0
@@ -778,6 +787,9 @@ RAW_AAP_U8_prev               = 0x0181
 FUEL_PUMP_B_prev              = 0x0182
 RAW_VTA_prev                  = 0x0183          ; 16-bits: 0x0183 & 0x0184
 half_overflow                 = 0x0185
+#if defined SPARK_ISR
+FAKE_TFLG1                    = 0x0186          ; a fake copy of TFLG1 for use by crankshaft spark detection processing
+#endif
 
 ;*****************************************************************
 ;68HC11G IO Register Map
@@ -2277,14 +2289,20 @@ reset:
         staA    LW+LOGID_ECU_FUEL_PUMP_TYPE_B
         staA    FUEL_PUMP_B_prev
 
-        ldaA    #0x0F                   ;flush any outstanding IC events
+        ldaA    #0x0F                   ;flush any outstanding IC events: IC1..IC4 crank, cam, spark events
         staA    TFLG1
 
-        ldaA    #0x06                   ;disable OC interrupts (spark generation), enable IC1,IC2 interrupts (crank and cam sense)
+#if !defined SPARK_ISR
+        ldaA    #0x06                   ;disable IC1/IC4 ints (spark generation), enable IC1/IC2 interrupts (crank and cam sensors)
         staA    TMSK1
+#else
+        clr     FAKE_TFLG1              ;flush IC1/IC4 spark IC events in the fake copy of TFLG1
+        ldaA    #0x0F                   ;enable IC1/IC4 ints (spark generation), enable IC1/IC2 ints (crank and cam sensors)
+        staA    TMSK1
+#endif
 
-        ldaA    #0x08                   ;enable IC4 events (disables OC5 events).  The spark-watcher uses this input.
-        staA    PACTL
+        ldaA    #0x08                   ;Timer O5I4 can be input capture or output compare, but not both at the same time.
+        staA    PACTL                   ;Configure it to operate as Input Capture 4 where it will watch for spark-watcher events.
         cli
 
 ;*****************************************************************
@@ -2704,7 +2722,7 @@ LC46F:  ldaA    ADCTL
 0:      rts
 
 ;A/D Conversion is complete.
-1:      
+1:
 
 ; The OFLO ISR will have set 'half_overflow' non-zero to indicate we should check for TCNT being >0x8000
         ldaA    half_overflow           ; Are we allowed to check yet?
@@ -3014,8 +3032,8 @@ tbl1__00:
         lsrD
         lsrD
         stD     *L0024                  ;save the right-aligned, unfiltered version of VTA in L0024
-        
-#if 1
+
+#if !defined VTA_INCLUDES_TS
         cmpD    RAW_VTA_prev            ;only log good sensor readings that differ from the previous reading
         beq     3f
         stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
@@ -3024,11 +3042,12 @@ tbl1__00:
 #else
 ; Combine every VTA reading with the upper 6 bits of TCNT so that the log decoder
 ; can see time advance with more precision even when there are no crankshaft events.
-        ldaA    TCNT1
+        ldaA    TCNT
         andA    #0xFC                   ;extract the MS 6 bits of TCNT1...
         oraA    *L0024                  ;...and insert them into the unused upper 6 bits of the 10-bit VTA
-        ldaB    *L0025                  ;D now contains the combined time & VTA data
-        stD     LW_LOGID_ECU_VTA_MTS_TYPE_U16
+        ldaB    *(L0024+1)              ;D now contains the combined time & VTA data
+        stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
+        bra     3f
 #endif
 
 1:      brclr   *L0010 #0b00100000 2f   ;if the sensor is not currently suspect, make it so
@@ -8398,7 +8417,11 @@ IC2F_ISR_35:
         bclr    *L0005 #0b00010000      ;there was, but now indicate that TOC1 'start charging' event is NOT activated
 
 ;CR6 Front Cyl Part 1: Test if coil #1 fired (front or rear):
+#if !defined SPARK_ISR
         ldaA    TFLG1
+#else
+        ldaA    FAKE_TFLG1
+#endif
         bitA    #0b00000001             ;tests IC3F: if set, we saw a rising edge (coil IGX1 fired: must have been the front one)
         bne     IC2F_ISR_36             ;br if IC3F==1
 
@@ -8423,8 +8446,10 @@ IC2F_ISR_35:
 
 ; If we get here, we saw a spark on the front cyl plug #1 prior to this active period CR6:
 IC2F_ISR_36:
+#if !defined SPARK_ISR
          ldD    TIC3                    ; log the timestamp when coil #1 fired
          stD    LW+LOGID_ECU_SPRK_X1_TYPE_PTS
+#endif
         ldaA    L0147                   ;had we seen an error previously?
         bne     IC2F_ISR_37             ;if so, then don't clear the error indicator just yet
 
@@ -8437,7 +8462,11 @@ IC2F_ISR_37:
 
 ;CR6 Front Cyl Part 2: Test coil IGX2:
 IC2F_ISR_38:
+#if !defined SPARK_ISR
         ldaA    TFLG1
+#else
+        ldaA    FAKE_TFLG1
+#endif
         bitA    #0b00001000             ;test IC4: if set, we saw a rising edge (coil IGX2 fired: must have been the front one)
         bne     IC2F_ISR_39             ;br if it is a '1'
 
@@ -8445,7 +8474,7 @@ IC2F_ISR_38:
         addA    #0x01
         sbcA    #0x00
         staA    L0148
-        
+
          cmpA   #0x01
          bne    1f
          ldaB   #12                     ; we didn't see front coil #2 fire
@@ -8461,8 +8490,10 @@ IC2F_ISR_38:
 
 ; If we get here, we saw a spark on the front cyl plug #2 prior to this active period CR6:
 IC2F_ISR_39:
+#if !defined SPARK_ISR
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
          stD    LW+LOGID_ECU_SPRK_X2_TYPE_PTS
+#endif
         ldaA    L0148                   ;had we seen an error previously?
         bne     IC2F_ISR_40             ;if so, then don't clear the error indicator just yet
 
@@ -8485,7 +8516,11 @@ IC2F_ISR_42:
         bclr    *L0006 #0b00000100      ;clear the last charge event
 
 ;CR11 Rear Cyl Part 1: Test coil IG21:
+#if !defined SPARK_ISR
         ldaA    TFLG1
+#else
+        ldaA    FAKE_TFLG1
+#endif
         bitA    #0b00000001             ;tests IC3F: if set, we saw a rising edge (coil IGX1 fired: must have been the rear one)
         bne     IC2F_ISR_43             ;br if it is a '1'
 
@@ -8509,8 +8544,10 @@ IC2F_ISR_42:
 
 ; If we get here, we saw a spark on the rear cyl plug #1 prior to this active period CR11:
 IC2F_ISR_43:
+#if !defined SPARK_ISR
          ldD    TIC3                    ; log the timestamp when coil #1 fired
          stD    LW+LOGID_ECU_SPRK_X1_TYPE_PTS
+#endif
         ldaA    L0149                   ;had we seen an error previously?
         bne     IC2F_ISR_44             ;if so, then don't clear the error indicator just yet
 
@@ -8522,7 +8559,11 @@ IC2F_ISR_44:
 
 ;CR11 Rear Cyl Part 2: Test coil IG22:
 IC2F_ISR_45:
+#if !defined SPARK_ISR
         ldaA    TFLG1
+#else
+        ldaA    FAKE_TFLG1
+#endif
         bitA    #0b00001000             ;test IC4: if set, we saw a rising edge (coil IGX2 fired: must have been the rear one)
         bne     IC2F_ISR_46             ;br if it is a '1'
 
@@ -8545,8 +8586,10 @@ IC2F_ISR_45:
 
 ; If we get here, we saw a spark on the rear cyl plug #2 prior to this active period CR11:
 IC2F_ISR_46:
+#if !defined SPARK_ISR
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
          stD    LW+LOGID_ECU_SPRK_X2_TYPE_PTS
+#endif
         ldaA    L014A                   ;had we seen an error previously?
         bne     IC2F_ISR_47             ;if so, then don't clear the error indicator just yet
 
@@ -8557,8 +8600,12 @@ IC2F_ISR_47:
         clr     L014A
 
 IC2F_ISR_48:
+#if !defined SPARK_ISR
         ldaA    #0x09
         staA    TFLG1                   ;clear the IC3F and IC4F interrupt request bits.
+#else
+        clr     FAKE_TFLG1
+#endif
         jmp     IC2F_ISR_64
 
 ;-----------------------------------------------------------------
@@ -10697,7 +10744,7 @@ LF48C:  ldaA    TCTL1
         ldaA    TMSK1
         andA    #0b11011111             ;disable OC3 interrupts
         staA    TMSK1
-        
+
 #if 1
         ldD     TCNT
         addD    #0x0005
@@ -10759,7 +10806,7 @@ LF4D1:  ldaA    TCTL1
         ldD     TCNT                    ; mark time T0
         addD    #0x0005                 ; 4E [ 4]  +2.0 uSec: 10 uSec from T0, an OC4 match event will occur...
         stD     TOC4                    ; 5E [ 9]  +4.5 uSec: ...that that enables the REAR fuel injector
-        
+
         ldD     TCNT                    ; 5E [14]  +7.0 uSec: these two instrs are NOPs since we never use D
         addD    TOC4                    ; 6E [20] +10.0 uSec: OC4 should match during this instruction, driving PA4=0
 #endif
@@ -11323,16 +11370,39 @@ LF734:  ldaA    *L00C7
 ;-----------------------------------------------------------------
 ; Put in some handlers to notify the UltraMod log if bad things happen to the ECU
 
-_oc5f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC5F
+#if !defined SPARK_ISR
+_oc5ic4f:
+        ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC5F
         bra     _log
+
+_ic3:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_IC3
+        bra     _log
+#else
+; IC4: Coil #2 event
+_oc5ic4f:
+        ldD     TO5I4
+        stD     LW+LOGID_ECU_SPRK_X2_TYPE_PTS   ; log when coil #2 spark occurred
+        ldaA    #0x08                           ; clear interrupt request for bit O5I4
+        staA    TFLG1
+        oraA    FAKE_TFLG1                      ; crankshaft processing needs to see this bit
+        staA    FAKE_TFLG1
+        rti
+
+; IC3: Coil #1 event
+_ic3:
+        ldD     TIC3
+        stD     LW+LOGID_ECU_SPRK_X1_TYPE_PTS   ; log when coil #1 spark occurred
+        ldaA    #0x01                           ; clear interrupt request for bit IC3
+        staA    TFLG1
+        oraA    FAKE_TFLG1                      ; crankshaft processing needs to see this bit
+        staA    FAKE_TFLG1
+        rti
+#endif
 
 _oc4f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC4F
         bra     _log
 
 _oc3f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC3F
-        bra     _log
-
-_ic3:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_IC3
         bra     _log
 
 _rti:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_RTI
@@ -11373,10 +11443,10 @@ _log:   ldaB    #LOGID_GEN_ECU_LOG_VER_VAL_V0
 ; both of the input capture ISRs have higher priority than this overflow ISR.
 T1_OFLO_ISR:
 #if 1
-        ldaA    #0x80                                   ; ACK this overflow interrupt 
+        ldaA    #0x80                                   ; ACK this overflow interrupt
         staA    TFLG2
         staA    half_overflow                           ; this value just needs to be non-zero
-        
+
         clrA
         clrB
         stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; The overflow event occurred at timer count 0x0000
@@ -11385,10 +11455,10 @@ T1_OFLO_ISR:
 ; If we see a pending capture ISR in this routine, it MUST have happened after the overflow.
 ; That means we don't even have to log this rollover event.
 
-        ldaA    #0x80                                   ; ACK the overflow interrupt 
+        ldaA    #0x80                                   ; ACK the overflow interrupt
         staA    TFLG2
         staA    half_overflow                           ; this value just needs to be non-zero
-        
+
         ldaA    TFLG1                                   ; check if either IC1 (cam) or IC2 (crank) has become pending
         andA    #0x06                                   ; between the time that the counter rolled over and the time we got here
         bne     99f                                     ; yes: there is no need to even emit this marker
@@ -11401,7 +11471,7 @@ T1_OFLO_ISR:
         ldD     TCNT
         stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; log the overflow event
 
-        ldaA    #0x80                                   ; ACK the overflow interrupt 
+        ldaA    #0x80                                   ; ACK the overflow interrupt
         staA    TFLG2
         staA    half_overflow                           ; just needs to be non-zero
         rti
@@ -11438,7 +11508,7 @@ LFFC0:      .word   reset               ;reserved FFC0/FFC1
             .word   reset               ;Pulse Accumulator Input Edge
             .word   reset               ;Pulse Accumulator Overflow
             .word   T1_OFLO_ISR         ;Timer Overflow 1
-OC5F:       .word   _oc5f               ;Timer Output Compare 5 / Input Capture 4
+OC5IC4F:    .word   _oc5ic4f            ;Timer Output Compare 5 / Input Capture 4
 OC4F:       .word   _oc4f               ;Timer Output Compare 4
 OC3F:       .word   _oc3f               ;Timer Output Compare 3
 OC2F:       .word   OC2F_ISR            ;Timer Output Compare 2

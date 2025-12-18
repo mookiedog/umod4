@@ -435,6 +435,12 @@ class HDF5Writer:
         self.datasets['ecu_spark_x2'] = self.h5file.create_dataset('ecu_spark_x2', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_nospark'] = self.h5file.create_dataset('ecu_nospark', (0, 2), dtype='uint64', **ds_opts)
 
+        # Spark advance (degrees BTDC) - separate streams per cylinder
+        self.datasets['ecu_spark_front_x1_advance'] = self.h5file.create_dataset('ecu_spark_front_x1_advance', (0, 2), dtype='float32', **ds_opts)
+        self.datasets['ecu_spark_front_x2_advance'] = self.h5file.create_dataset('ecu_spark_front_x2_advance', (0, 2), dtype='float32', **ds_opts)
+        self.datasets['ecu_spark_rear_x1_advance'] = self.h5file.create_dataset('ecu_spark_rear_x1_advance', (0, 2), dtype='float32', **ds_opts)
+        self.datasets['ecu_spark_rear_x2_advance'] = self.h5file.create_dataset('ecu_spark_rear_x2_advance', (0, 2), dtype='float32', **ds_opts)
+
         # Sensors
         self.datasets['ecu_throttle_adc'] = self.h5file.create_dataset('ecu_throttle_adc', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_map_kpa'] = self.h5file.create_dataset('ecu_map_kpa', (0, 2), dtype='float32', **ds_opts)
@@ -700,6 +706,11 @@ class TimeKeeper:
     TICKS_TO_NS = 2000              # 2µs per tick
     TIMER_MAX = 65536               # 16-bit wraparound point
 
+    # CRID timestamp offset from true TDC
+    # The CRID markers are offset by 12° from true crankshaft TDC
+    # This value should be added to calculated advance to get true advance
+    CRID_TDC_OFFSET_DEGREES = 12.0  # degrees BTDC offset
+
     def __init__(self, verbose=False):
         """Initialize time tracking.
 
@@ -712,6 +723,25 @@ class TimeKeeper:
 
         # State tracking
         self.crankref_id = None  # Current CRANKREF_ID value
+        self.crid_changed = False  # Flag to track when CRID changes
+
+        # CR timestamp tracking for spark advance calculation
+        # Stores the raw timestamp for each CRID (0-11)
+        self.cr_timestamps = [None] * 12  # Array indexed by CRID
+        # Validity flags for each CRID timestamp (invalidated after use)
+        self.cr_timestamps_valid = [False] * 12
+        # Track which CRID was last seen before each CRID (for sequence validation)
+        self.cr_prev_crid = [None] * 12  # cr_prev_crid[5] = CRID seen before CRID 5
+
+        # Spark detection filtering - only process first spark after CRID change
+        self.spark_x1_seen_this_crid = False
+        self.spark_x2_seen_this_crid = False
+
+        # Store spark timestamps for advance calculation (populated during CR4-5 or CR9-10)
+        self.pending_spark1_ts = None
+        self.pending_spark1_time_ns = None
+        self.pending_spark2_ts = None
+        self.pending_spark2_time_ns = None
 
         # GPS PPS tracking for timer accuracy verification
         self.first_pps_time_ns = None    # Time of first PPS event
@@ -808,9 +838,52 @@ class TimeKeeper:
         """Get current absolute time in seconds."""
         return self.time_ns / 1e9
 
+    def set_time_ns(self, time_ns):
+        """Set absolute time in nanoseconds (used to revert time on backwards adjustment)."""
+        self.time_ns = time_ns
+
+    def try_update_timer_bits(self, upper_6_bits):
+        """Try to update time using upper 6 bits of 16-bit timer.
+
+        Args:
+            upper_6_bits: Upper 6 bits of the 16-bit timer (bits 10-15)
+
+        Returns:
+            True if time was advanced, False if update would cause time to go backwards
+        """
+        # Construct the target timer value using the upper 6 bits and current prev_ts lower 10 bits
+        target_timer = (upper_6_bits << 10) | (self.prev_ts & 0x3FF)
+
+        # Calculate delta from current prev_ts
+        delta_ticks = target_timer - self.prev_ts
+
+        # Handle potential wraparound
+        if delta_ticks < 0:
+            delta_ticks += self.TIMER_MAX
+
+        # Only advance if delta is positive and reasonable (not backwards in time)
+        if delta_ticks > 0 and delta_ticks < self.TIMER_MAX // 2:
+            # This looks like a forward time advancement
+            self.time_ns += delta_ticks * self.TICKS_TO_NS
+            self.prev_ts = target_timer
+            return True
+
+        # Would go backwards or delta is unreasonable, ignore
+        return False
+
     def set_crankref_id(self, crid):
-        """Update CRANKREF_ID state."""
+        """Update CRANKREF_ID state and reset spark detection flags."""
         self.crankref_id = crid
+        # Reset spark flags when entering a spark window (CR4 for front, CR9 for rear)
+        # This allows first SPRK1 and first SPRK2 to be logged in each window
+        if crid == 4:
+            # Entering front cylinder spark window (CR4-CR5)
+            self.spark_x1_seen_this_crid = False
+            self.spark_x2_seen_this_crid = False
+        elif crid == 9:
+            # Entering rear cylinder spark window (CR9-CR10)
+            self.spark_x1_seen_this_crid = False
+            self.spark_x2_seen_this_crid = False
 
     def process_pps_event(self):
         """Process GPS PPS (Pulse Per Second) event.
@@ -864,6 +937,261 @@ class TimeKeeper:
     def get_crankref_id(self):
         """Get current CRANKREF_ID value."""
         return self.crankref_id
+
+    def set_cr_timestamp(self, crid, raw_ts):
+        """Store the raw timestamp for a CRID and mark it as valid.
+
+        Args:
+            crid: Crankref ID (0-11)
+            raw_ts: Raw 16-bit timestamp value
+        """
+        if 0 <= crid < 12:
+            self.cr_timestamps[crid] = raw_ts
+            self.cr_timestamps_valid[crid] = True
+            # Track what the previous CRID was before this one
+            self.cr_prev_crid[crid] = self.crankref_id
+
+    def is_spark_in_valid_crid(self):
+        """Check if current CRID is valid for spark events.
+
+        Both SPRK1 and SPRK2 fire in the same CRID windows (dual-plug per cylinder):
+        - Front cylinder: CR4-CR5 (60° BTDC to TDC)
+        - Rear cylinder: CR9-CR10 (60° BTDC to TDC)
+
+        Returns:
+            Tuple of (is_valid, is_front_cylinder):
+            - is_valid: True if CRID is in a valid spark window
+            - is_front_cylinder: True if in front cylinder window (CR4-5),
+                                 False if in rear cylinder window (CR9-10),
+                                 None if not in any valid window
+        """
+        if self.crankref_id is None:
+            return (False, None)
+
+        if 4 <= self.crankref_id <= 5:
+            # Front cylinder window - both SPRK1 and SPRK2 fire here
+            return (True, True)
+        elif 9 <= self.crankref_id <= 10:
+            # Rear cylinder window - both SPRK1 and SPRK2 fire here
+            return (True, False)
+        else:
+            # Not in a valid spark window
+            return (False, None)
+
+    def calculate_spark_advance(self, spark_pts, is_front_cylinder):
+        """Calculate spark advance in degrees BTDC.
+
+        Formula:
+        - Front cylinder (X1): CR5 is TDC, CR4 is 60° BTDC
+            advance = (CR5_TS - SPARK_PTS) * 60 / (CR5_TS - CR4_TS)
+        - Rear cylinder (X2): CR10 is TDC, CR9 is 60° BTDC
+            advance = (CR10_TS - SPARK_PTS) * 60 / (CR10_TS - CR9_TS)
+
+        Args:
+            spark_pts: Raw spark timestamp (PTS)
+            is_front_cylinder: True for X1 (front), False for X2 (rear)
+
+        Returns:
+            Spark advance in degrees BTDC, or None if cannot be calculated
+        """
+        if is_front_cylinder:
+            # Front cylinder: CR5 is TDC (0° BTDC), CR4 is 60° BTDC
+            ref_crid = 5  # TDC (0°)
+            prev_crid = 4  # 60° BTDC
+        else:
+            # Rear cylinder: CR10 is TDC (0° BTDC), CR9 is 60° BTDC
+            ref_crid = 10  # TDC (0°)
+            prev_crid = 9  # 60° BTDC
+
+        # Check if we have the required CR timestamps
+        ref_ts = self.cr_timestamps[ref_crid]
+        prev_ts = self.cr_timestamps[prev_crid]
+
+        if ref_ts is None or prev_ts is None:
+            return None
+
+        # Validate CRID sequence: CR4 must come before CR5, CR10 before CR11
+        # CRIDs count sequentially: 0->1->2->...->11->0 (wrapping)
+        crid_before_ref = self.cr_prev_crid[ref_crid]
+        if crid_before_ref != prev_crid:
+            # CRID sequence error - cannot trust the CR interval for calculation
+            return None
+
+        # Validate spark occurs within the CR interval: prev_ts <= spark_pts <= ref_ts
+        # Calculate deltas with wraparound handling
+        delta_ref_spark = ref_ts - spark_pts  # Distance from spark to reference CR
+        delta_ref_prev = ref_ts - prev_ts     # Distance from previous to reference CR
+        delta_spark_prev = spark_pts - prev_ts  # Distance from previous CR to spark
+
+        # Handle timestamp wraparound (16-bit counter)
+        if delta_ref_spark < 0:
+            delta_ref_spark += 65536
+        if delta_ref_prev <= 0:
+            delta_ref_prev += 65536
+        if delta_spark_prev < 0:
+            delta_spark_prev += 65536
+
+        # Sanity check on CR interval
+        if delta_ref_prev == 0:
+            return None
+
+        # Verify spark is within the interval: prev_ts <= spark_pts <= ref_ts
+        # This is true when both:
+        # 1. (spark_pts - prev_ts) >= 0 and <= (ref_ts - prev_ts)
+        # 2. (ref_ts - spark_pts) >= 0 and <= (ref_ts - prev_ts)
+        if delta_spark_prev > delta_ref_prev:
+            # Spark is before prev_ts - wrong interval
+            return None
+        if delta_ref_spark > delta_ref_prev:
+            # Spark is after ref_ts - wrong interval
+            return None
+
+        # Calculate advance in degrees BTDC
+        #
+        # CR5 for front (CR10 for rear) is at TDC (0° BTDC)
+        # CR4 for front (CR9 for rear) is 60° BTDC
+        #
+        # If spark occurs at CR5/CR10 time, advance = 0° BTDC (no advance - spark at TDC)
+        # If spark occurs at CR4/CR9 time, advance = 60° BTDC (maximum advance - early spark)
+        # If spark is halfway between, advance = 30° BTDC
+        #
+        # Formula: advance = (SPARK_PTS - CR4/CR9_TS) * 60 / (CR5/CR10_TS - CR4/CR9_TS)
+        # This gives how far spark is AFTER CR4/CR9 (60° BTDC), scaled to degrees
+        # Then we invert: 60 - value = degrees BTDC
+        numerator = delta_spark_prev  # Distance from CR4/CR9 to spark
+        denominator = delta_ref_prev  # Total interval (60°)
+
+        # Calculate how far past CR4 the spark occurred, then convert to degrees BTDC
+        advance = 60.0 - ((numerator * 60.0) / denominator)
+
+        # Sanity check: typical motorcycle spark advance is 0-60° BTDC
+        # Values above 60° are possible but unusual, values above 120° are almost certainly errors
+        if advance < 0 or advance > 120:
+            return None
+
+        return advance
+
+    def store_pending_spark(self, spark_pts, actual_time_ns, is_sprk1):
+        """Store a spark timestamp for later advance calculation.
+
+        Args:
+            spark_pts: Raw spark timestamp
+            actual_time_ns: Actual nanosecond time when spark occurred
+            is_sprk1: True for SPRK1, False for SPRK2
+        """
+        if is_sprk1:
+            self.pending_spark1_ts = spark_pts
+            self.pending_spark1_time_ns = actual_time_ns
+        else:
+            self.pending_spark2_ts = spark_pts
+            self.pending_spark2_time_ns = actual_time_ns
+
+    def calculate_and_write_spark_advance(self, current_crid, h5_writer):
+        """Calculate spark advance when CRID N+2 arrives.
+
+        When CRID N+2 is detected:
+        - If CRID N and N+1 timestamps are both valid, calculate spark advance
+        - Invalidate CRID N and N+1 timestamps after use
+
+        For front cylinder: N=4, so calculate at CR6
+        For rear cylinder: N=9, so calculate at CR11
+
+        Args:
+            current_crid: The CRID that just arrived
+            h5_writer: HDF5 writer for advance data (or None)
+
+        Returns:
+            Dictionary with 'spark1_advance' and 'spark2_advance' (or None if not calculated)
+        """
+        result = {'spark1_advance': None, 'spark2_advance': None}
+
+        # Determine if this is CRID N+2 for either cylinder
+        if current_crid == 6:
+            # Front cylinder: CR6 = CR4+2
+            n = 4
+            n_plus_1 = 5
+        elif current_crid == 11:
+            # Rear cylinder: CR11 = CR9+2
+            n = 9
+            n_plus_1 = 10
+        else:
+            # Not a CRID N+2, nothing to calculate
+            return result
+
+        # Check if both CRID N and N+1 timestamps are valid
+        if not (self.cr_timestamps_valid[n] and self.cr_timestamps_valid[n_plus_1]):
+            # Can't calculate - invalidate and return
+            self.cr_timestamps_valid[n] = False
+            self.cr_timestamps_valid[n_plus_1] = False
+            return result
+
+        # Get timestamps
+        cr_n_ts = self.cr_timestamps[n]
+        cr_n_plus_1_ts = self.cr_timestamps[n_plus_1]
+
+        # Calculate deltas with wraparound
+        delta_interval = cr_n_plus_1_ts - cr_n_ts
+        if delta_interval <= 0:
+            delta_interval += 65536
+
+        if delta_interval == 0:
+            # Invalid interval
+            self.cr_timestamps_valid[n] = False
+            self.cr_timestamps_valid[n_plus_1] = False
+            return result
+
+        # Determine cylinder name for HDF5 stream names
+        cyl_name_lower = 'front' if n == 4 else 'rear'
+
+        # Calculate SPRK1 advance if we have it
+        if self.pending_spark1_ts is not None:
+            delta_spark = self.pending_spark1_ts - cr_n_ts
+            if delta_spark < 0:
+                delta_spark += 65536
+
+            # Calculate base advance: 60 - (distance from N / interval) * 60
+            advance = 60.0 - ((delta_spark * 60.0) / delta_interval)
+            # Add TDC offset correction
+            advance += self.CRID_TDC_OFFSET_DEGREES
+
+            # Sanity check
+            if 0 <= advance <= 120:
+                result['spark1_advance'] = advance
+                # Write to HDF5 with cylinder-specific stream name
+                if h5_writer and self.pending_spark1_time_ns is not None:
+                    stream_name = f'ecu_spark_{cyl_name_lower}_x1_advance'
+                    h5_writer.append_data(stream_name, [self.pending_spark1_time_ns, advance])
+
+        # Calculate SPRK2 advance if we have it
+        if self.pending_spark2_ts is not None:
+            delta_spark = self.pending_spark2_ts - cr_n_ts
+            if delta_spark < 0:
+                delta_spark += 65536
+
+            # Calculate base advance: 60 - (distance from N / interval) * 60
+            advance = 60.0 - ((delta_spark * 60.0) / delta_interval)
+            # Add TDC offset correction
+            advance += self.CRID_TDC_OFFSET_DEGREES
+
+            # Sanity check
+            if 0 <= advance <= 120:
+                result['spark2_advance'] = advance
+                # Write to HDF5 with cylinder-specific stream name
+                if h5_writer and self.pending_spark2_time_ns is not None:
+                    stream_name = f'ecu_spark_{cyl_name_lower}_x2_advance'
+                    h5_writer.append_data(stream_name, [self.pending_spark2_time_ns, advance])
+
+        # Invalidate CRID N and N+1 timestamps
+        self.cr_timestamps_valid[n] = False
+        self.cr_timestamps_valid[n_plus_1] = False
+
+        # Clear pending sparks
+        self.pending_spark1_ts = None
+        self.pending_spark1_time_ns = None
+        self.pending_spark2_ts = None
+        self.pending_spark2_time_ns = None
+
+        return result
 
 
 # Global time tracking for human-readable output (OLD - to be replaced)
@@ -1141,10 +1469,15 @@ def main():
 
     # Auto-generate output filename if not specified
     if not args.output:
+        # Replace .um4 extension if present, otherwise append
+        base_name = args.logfile
+        if base_name.lower().endswith('.um4'):
+            base_name = base_name[:-4]  # Remove .um4
+
         if args.format == 'hr':
-            args.output = args.logfile + '.hr'
+            args.output = base_name + '.hr'
         else:  # h5
-            args.output = args.logfile + '.h5'
+            args.output = base_name + '.h5'
 
     # Validate arguments
     if args.format == 'h5':
@@ -1500,15 +1833,28 @@ def main():
                         h5_writer.append_data('ecu_error_L000F', [timekeeper.get_time_ns(), L000F])
 
                 elif byte == L.LOGID_ECU_RAW_VTA_TYPE_U16:
-                    vta = int.from_bytes(read(f, L.LOGID_ECU_RAW_VTA_DLEN), byteorder='little', signed=False)
+                    vta_raw = int.from_bytes(read(f, L.LOGID_ECU_RAW_VTA_DLEN), byteorder='little', signed=False)
+
+                    # Extract VTA value (lower 10 bits) and timer bits (upper 6 bits)
+                    vta = vta_raw & 0x3FF  # Lower 10 bits
+                    timer_bits = (vta_raw >> 10) & 0x3F  # Upper 6 bits
+
+                    # If upper 6 bits are non-zero, use them to update time
+                    if timer_bits != 0:
+                        # Timer bits provide upper 6 bits of the 16-bit timer
+                        # Try to update time, but ignore if it would go backwards
+                        current_time = timekeeper.get_time_ns()
+                        if timekeeper.try_update_timer_bits(timer_bits):
+                            # Time was successfully advanced
+                            pass
+                        else:
+                            # Time would have gone backwards, ignore the update
+                            timekeeper.set_time_ns(current_time)
+
                     timekeeper.advance_time_by_ns(1)
-                    if (vta >= 1024):
-                        # Trouble: the VTA is only a 10-bit value. This reading is out of range!
-                        print(f"ERR: At byte {(f.tell()-L.LOGID_ECU_RAW_VTA_DLEN):08X}: LOGID_ECU_RAW_VTA_TYPE_U16 is out of range 0x000..0x3FF: 0x{vta:04X}, ignoring!", file=sys.stderr)
-                    else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta} ADC")
-                        if h5_writer:
-                            h5_writer.append_data('ecu_throttle_adc', [timekeeper.get_time_ns(), vta])
+                    print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta} ADC{f' (timer={timer_bits:02X})' if timer_bits != 0 else ''}")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_throttle_adc', [timekeeper.get_time_ns(), vta])
 
                 elif byte == L.LOGID_ECU_RAW_MAP_TYPE_U8:
                     map_adc = read(f, L.LOGID_ECU_RAW_MAP_DLEN)[0]
@@ -1571,6 +1917,11 @@ def main():
                             elapsed += 65536
 
                     cr_ts_prev = cr_ts
+
+                    # Calculate spark advance if this is the right CRID (will be determined in CRID handler)
+                    # Store for potential printing below
+                    spark_advance_data = None
+
                     if (elapsed < 0):
                         print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts}")
                     else:
@@ -1590,9 +1941,37 @@ def main():
 
                 elif byte == L.LOGID_ECU_CRANKREF_ID_TYPE_U8:
                     crid = read(f, L.LOGID_ECU_CRANKREF_ID_DLEN)[0]
-                    print(f"{fmt_record(recordCnt, timekeeper)} CRID:   {crid}")
+
+                    # Store CR timestamp for spark advance calculation
+                    # The CRID event is associated with the CRANK_TS that just arrived (cr_ts)
+                    # So CRID N began at time cr_ts
+                    if cr_ts >= 0:
+                        timekeeper.set_cr_timestamp(crid, cr_ts)
+
+                    # Update current CRID state (must be AFTER set_cr_timestamp to track previous correctly)
+                    timekeeper.set_crankref_id(crid)
+
+                    # Calculate spark advance if this is CRID N+2 (CR6 or CR11)
+                    # Print on CRID line with advance values
+                    if crid == 6 or crid == 11:
+                        spark_results = timekeeper.calculate_and_write_spark_advance(crid, h5_writer)
+                        cyl_name = "Front" if crid == 6 else "Rear"
+                        advance_strs = []
+                        if spark_results['spark1_advance'] is not None:
+                            advance_strs.append(f"S1:{spark_results['spark1_advance']:.1f}°")
+                        if spark_results['spark2_advance'] is not None:
+                            advance_strs.append(f"S2:{spark_results['spark2_advance']:.1f}°")
+                        if advance_strs:
+                            advance_info = f" ({cyl_name}: {', '.join(advance_strs)})"
+                        else:
+                            advance_info = ""
+                        print(f"{fmt_record(recordCnt, timekeeper)} CRID:   {crid}{advance_info}")
+                    else:
+                        print(f"{fmt_record(recordCnt, timekeeper)} CRID:   {crid}")
+
                     if h5_writer:
                         h5_writer.append_data('ecu_crankref_id', [timekeeper.get_time_ns(), crid])
+
                     if (elapsed > 0):
                         fco = rco = 0
                         if crid == 5:
@@ -1604,12 +1983,24 @@ def main():
                         if (ri_dur != 0):
                             ri_dur = 0
 
+                    # CRID sequence validation
                     if (cridPrev >= 0):
-                        expectedId = cridPrev+1
-                        if (expectedId>11):
+                        expectedId = cridPrev + 1
+                        if (expectedId > 11):
                             expectedId = 0
                         if (crid != expectedId):
+                            time_str = f"{timekeeper.get_time_ns() / 1e9:.6f}s"
+                            sys.stderr.write(f"CRID ERROR at {time_str}: expected CRID={expectedId}, observed CRID={crid}\n")
                             print(f"{fmt_record(recordCnt, timekeeper)} ERROR: expected CRID {expectedId}, saw {crid}")
+                    elif cridPrev == -1:
+                        # First CRID after CAM (or start of log) should be 0
+                        if crid != 0:
+                            time_str = f"{timekeeper.get_time_ns() / 1e9:.6f}s"
+                            sys.stderr.write(f"CRID ERROR at {time_str}: first CRID after CAM should be 0, observed CRID={crid}\n")
+                            print(f"{fmt_record(recordCnt, timekeeper)} ERROR: first CRID after CAM should be 0, saw {crid}")
+
+                    # Update previous CRID for next comparison
+                    cridPrev = crid
 
                 elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_TS:
                     time_marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_TYPE_DLEN), byteorder='little', signed=False)
@@ -1626,6 +2017,14 @@ def main():
                     if h5_writer:
                         h5_writer.append_data('ecu_camshaft_timestamp', [timekeeper.get_time_ns(), cam_ts])
 
+                    # CAM event should reset CRID sequence - next CRID should be 0
+                    # Check if previous CRID was 11 (expected before CAM)
+                    if cridPrev >= 0 and cridPrev != 11:
+                        time_str = f"{timekeeper.get_time_ns() / 1e9:.6f}s"
+                        sys.stderr.write(f"CRID ERROR at {time_str}: CAM event but previous CRID={cridPrev} (expected 11)\n")
+                    # Reset CRID tracking - next CRID should be 0
+                    cridPrev = -1
+
                 elif byte == L.LOGID_ECU_CAM_ERR_TYPE_U8:
                     camErr = read(f, L.LOGID_ECU_CAM_ERR_DLEN)[0]
                     print(f"{fmt_record(recordCnt, timekeeper)} CAM ERR: {camErr:02X}")
@@ -1638,9 +2037,31 @@ def main():
                     # Convert raw timestamp to actual time when spark occurred
                     actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx1_ts)
                     actual_spark_time_secs = actual_spark_time_ns / 1000000000.0
-                    print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts} (actual: {actual_spark_time_secs})")
-                    if h5_writer:
-                        h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_ts])
+
+                    # Check if this spark is in a valid CRID range
+                    # Both SPRK1 and SPRK2 fire in same window (dual-plug per cylinder)
+                    is_valid_crid, is_front_cylinder = timekeeper.is_spark_in_valid_crid()
+
+                    # Check if this is the first SPRK1 after CRID change (filter out bounces)
+                    is_first_spark = not timekeeper.spark_x1_seen_this_crid
+                    timekeeper.spark_x1_seen_this_crid = True
+
+                    # Print to human-readable output (advance will be calculated later when CRID arrives)
+                    cyl_name = "Front" if is_front_cylinder else "Rear" if is_front_cylinder is not None else "Unknown"
+                    if not is_valid_crid:
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts} (actual: {actual_spark_time_secs}) [IGNORED - wrong CRID]")
+                    elif is_first_spark:
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts} (actual: {actual_spark_time_secs}, {cyl_name} cyl) [advance pending]")
+                    else:
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts} (actual: {actual_spark_time_secs}) [IGNORED - bounce]")
+
+                    # Store spark for advance calculation and write to HDF5
+                    if is_first_spark and is_valid_crid:
+                        # Store spark - advance will be calculated when CRID N+2 arrives
+                        timekeeper.store_pending_spark(spx1_ts, actual_spark_time_ns, is_sprk1=True)
+                        # Write to HDF5 if enabled
+                        if h5_writer:
+                            h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_ts])
 
                 elif byte == L.LOGID_ECU_SPRK_X2_TYPE_PTS:
                     spx2_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
@@ -1648,9 +2069,31 @@ def main():
                     # Convert raw timestamp to actual time when spark occurred
                     actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx2_ts)
                     actual_spark_time_secs = actual_spark_time_ns / 1000000000.0
-                    print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts} (actual: {actual_spark_time_secs})")
-                    if h5_writer:
-                        h5_writer.append_data('ecu_spark_x2', [actual_spark_time_ns, spx2_ts])
+
+                    # Check if this spark is in a valid CRID range
+                    # Both SPRK1 and SPRK2 fire in same window (dual-plug per cylinder)
+                    is_valid_crid, is_front_cylinder = timekeeper.is_spark_in_valid_crid()
+
+                    # Check if this is the first SPRK2 after CRID change (filter out bounces)
+                    is_first_spark = not timekeeper.spark_x2_seen_this_crid
+                    timekeeper.spark_x2_seen_this_crid = True
+
+                    # Print to human-readable output (advance will be calculated later when CRID arrives)
+                    cyl_name = "Front" if is_front_cylinder else "Rear" if is_front_cylinder is not None else "Unknown"
+                    if not is_valid_crid:
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts} (actual: {actual_spark_time_secs}) [IGNORED - wrong CRID]")
+                    elif is_first_spark:
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts} (actual: {actual_spark_time_secs}, {cyl_name} cyl) [advance pending]")
+                    else:
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts} (actual: {actual_spark_time_secs}) [IGNORED - bounce]")
+
+                    # Store spark for advance calculation and write to HDF5
+                    if is_first_spark and is_valid_crid:
+                        # Store spark - advance will be calculated when CRID N+2 arrives
+                        timekeeper.store_pending_spark(spx2_ts, actual_spark_time_ns, is_sprk1=False)
+                        # Write to HDF5 if enabled
+                        if h5_writer:
+                            h5_writer.append_data('ecu_spark_x2', [actual_spark_time_ns, spx2_ts])
 
                 elif byte == L.LOGID_ECU_NOSPARK_TYPE_U8:
                     sparkErr = read(f, L.LOGID_ECU_NOSPARK_DLEN)[0]
@@ -1918,10 +2361,10 @@ def main():
                     print(f"{fmt_record(recordCnt, timekeeper)} ERR:    Unknown LOGID 0x{byte:02X}")
                     #read(f, 1)
 
-        # End of file reached - print summary
-        final_time_sec = timekeeper.get_time_ns() / 1e9
-        file_size = f.tell()
-        print(f"\n# Decoding complete: {recordCnt} records processed, {file_size} bytes read, {final_time_sec:.2f} seconds of data", file=sys.stderr)
+            # End of file reached - print summary
+            final_time_sec = timekeeper.get_time_ns() / 1e9
+            file_size = f.tell()
+            print(f"\n# Decoding complete: {recordCnt} records processed, {file_size} bytes read, {final_time_sec:.2f} seconds of data", file=sys.stderr)
 
     except FileNotFoundError:
         print(f"Error: File '{args.logfile}' not found.")

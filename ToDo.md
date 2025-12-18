@@ -17,6 +17,9 @@
 
 ### Bugs
 
+* Data is getting lost in the log. It looks like certain write operations are failing or getting lost, or a buffer is overflowing.
+* looks like time is going backwards with the new VTA/time reports
+
 ## Visualizer
 
 * Small Potatoes List
