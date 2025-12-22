@@ -5488,12 +5488,14 @@ LD60B_1:
 LD60B_2:
         brset   *L0002 #0b00000001 LD60B_4      ;'1' when we have seen the start of CR8
 
+; Derestricted cylinder 1 (Front) calculations:
 LD60B_3:
         ldX     #L95F9-3                ;L95F9: Ignition map 18x29 Derestricted ALPHA/N cyl 1
         jsr     LF57B
         staA    *L00DE                  ;store result of Alpha/N cyl 1 Ignition map processing
         bra     LD60B_8
 
+; Derestricted cylinder 2 (Rear) calculations:
 LD60B_4:
         ldX     #L9803-3                ;L9803: Ignition map 18x29 Derestricted ALPHA/N cyl 2
         jsr     LF57B
@@ -5505,20 +5507,23 @@ LD60B_4:
 LD60B_5:
         brset   *L0002 #0b00000001 LD60B_7      ;'1' when we have seen the start of CR8
 
+; Restricted cylinder 1 (Front) calculations:
 LD60B_6:
         ldX     #L91E5-3                ;L91E5: Ignition map 18x29 Restricted ALPHA/N cyl 1
         jsr     LF57B
         staA    *L00DE                  ;store result of Alpha/N cyl 1 Ignition map processing
         bra     LD60B_8
 
+; Restricted cylinder 2 (Rear) calculations:
 LD60B_7:
         ldX     #L93EF-3                ;L93EF: Ignition map 18x29 Restricted ALPHA/N cyl 2
         jsr     LF57B
         staA    *L00E1                  ;store result of Alpha/N cyl 2 Ignition map processing
         brset   *L0002 #0b00000010 LD60B_6      ;will be '1' when we see start of CR3
 
+; All calculations (front/rear/restricted/derestricted) end up here:
 LD60B_8:
-        ldaA    *L004D                  ;8.8 RPM50
+        ldaA    *L004D                  ;8.8 RPM50 (RPM50 means 8.8 RPM in units of 50 RPMs, so 100.0 means 5000 RPM)
 
         ldaB    *L0049_PORTG_debounced
         andB    #0b00101000
@@ -10900,11 +10905,11 @@ LF54B:  ldaA    PORTA
 ; One param:
 ;  reg X: pointer to a table (front or rear cyl, Ign or ALPHA/N map)
 
-LF57B:  ldaA    *L0044                  ;holds the left-aligned VTA
+LF57B:  ldaA    *L0044                  ;Get the upper 8 bits of the left-aligned 10-bit VTA A/D reading
 
         brclr   *L000C #0b00001000 1f   ;branch if the VTA (throttle) sensor is GOOD (ie. not reporting as 'broken')
 
-; We get here if the throttle position sensor is broken:
+; The throttle position sensor is reporting as broken:
         xgDX
         cmpD    #L91E5-3                ;L91e5: Ignition map 18x29 Restricted ALPHA/N cyl 1
         xgDX
@@ -10927,136 +10932,187 @@ LF57B:  ldaA    *L0044                  ;holds the left-aligned VTA
 
         bra     1f                      ;X is not pointing at any of the ignition maps: therfore, X must point at a fuel map
 
-
 0:
         ldaA    #0xD0                   ;This would have to be the default throttle angle for when
                                         ;the throttle position sensor is broken
 
 1:
-        clrB                            ;VTA is now trimmed to 8 bits, in A (upper half of D)
+        clrB                            ;D now holds VTA in the form of an 8-bit left aligned value
 
-; TBD: this appears to be massaging the throttle angle so that it can be used to index the
+; We now massage the throttle angle data so that it can be used to index the ALPHA/N ignition tables.
 ; tables based on throttle angle.
-; Examining my logs show that VTA (as a 10-bit value) is around 140 counts at idle,
-; meaning throttle completely closed.  Dividing by 4 to get an 8-bit value would be 35, or 0x25 hex.
+; Remember that the throttle sensor does not span the entire ADC range.
+; The ADC reading when the throttle is completely closed will be above 0.
+; Similarly, the ADC reading when the throttle is wide open will be less than the max ADC count.
+; This allows the ECU to detect things like open or shorted throttle sensors because those situations
+; would result in extreme ADC readings.
+; The process of using diag mode to calibrate the throttle position sensor to read '0' on the dash
+; is what ensures that the throttle-closed ADC reading matches what these tables expect.
+; There is no point in calibrating at the high end of throttle openings because small
+; differences in throttle openings make almost no difference to the airflow when the throttle
+; is almost completely open.
+;
+; Sensor ranges:
+;
+; The lowest 10-bit right-aligned raw throttle ADC reading I have ever seen in a log is 129 ADC counts.
+; Most are in the very low 130 counts.
+; In 10-bit left-shifted ADC terms, 129 counts would be 0x2040
+;
+; The highest 10-bit right-aligned raw throttle ADC reading I have seen in a log is 801 ADC counts.
+; In 10-bit left-shifted ADC terms, 801 counts would be 0xC840.
+;
+; This next section biases the 8-bit left-aligned VTA downwards by 0x2000,
+; then clips the biased VTA to the range: [0000..B000].
+; This lines up perfectly with a fully-closed throttle being calibrated to
+; have a value right around 0x2000, as per above.
+; After subtracting 0x2000, the value 0x0000 means 'throttle closed'.
+; One would have to expect that 0xB000 must mean wide open.
+; After subtracting 0x2000, my 801 ADC counts at WOT would have a value of 0xA840.
+; That is well within the upper limit of 0xB000 table limit.
+; It does give some indication though of how sloppy the table is at the upper throttle opening ranges.
 
-; This next section biases VTA downwards by 0x2000, then clips the biased VTA to the range: [0000..B000]
-; The bias by 0x2000 is effectively defining that 0000 means throttle closed.
-; One would have to expect that 0xB000 must mean wide open.  Actually, it would make a bit
-; more sense if wide open generated a bit more that 0xB000 so that even if the TPS was a bit off,
-; the sensor would be able to generate a wide-open signal.
+        subA    #0x20                   ;Bias VTA downwards by 0x2000
+        bhs     2f                      ; all good if D >= 0
 
-        subA    #0x20                   ;A = A-32
-        bhs     2f                      ; br if A >= 0
-
-        ldD     #0x0000                 ;if A went negative, clip it to 0
+        ldD     #0x0000                 ; else D went negative so clip it to 0
 
 2:
-        subA    #0xB0
-        blo     3f
+        subA    #0xB0                   ;After subtracting 0x2000 (above), make sure that A is <= 0xB000
+        blo     3f                      ; all good
 
         ldD     #0x0000
 3:
-        addA    #0xB0                   ; if (A>0xB0) A = 0xB0
+        addA    #0xB0                   ; else clip D to a max value of 0xB000
 
 ; D is now known to be in the range [0x0000..0xB000].
-; For now, I am assuming that 0x0000 means 0% open, and 0xB000 means 100% open.
-; I will also make a leap of faith that the response is linear, but that seems
-; reasonable from looking at the dplot logs I have captured.
+
+; Assumptions:
+;   0x0000 means 0% open (this is a safe assumption)
+;   0xB000 means 100% open (this is a reasonably safe assumption)
+;
+; The ADC response of the TPS appears to be linear, but the table indexing is most certainly not linear.
+; At small throttle openings, changes in throttle position matter significantly more than at large throttle openings.
+; This means that the tables will be biased towards having more entries devoted to small throttle openings.
+;
+; We now need to convert our biased, clipped VTA into a value suitable of indexing the ALPHA/N tables.
+; There are 18 table column entries. We will be interpolating between them.
+; This means that we need to convert our biased, clipped VTA into a fixed point value ranging from 0.00 to 17.00 (for our 18 columns)
+; The following code breaks the throttle response into 5 basic ranges:
+;    0xB000  45056  100.00% open
+;    0x7000  31744   70.45% open
+;    0x3000  12288   27.27% open
+;    0x1000   4096    9.09% open
+;    0x0400   1024    2.27% open
+;    0x0000      0    0.00% open
+; Note: "% open" is defined in a rotational aspect (assuming a linear TPS response),
+; meaning 0% means throttle butterflies are fully closed, and 100% means wide-open throttle butterflies.
+
         cmpA    #0x70
         blo     4f                      ; branch if D < 0x7000
 
-; We check for some ranges here.
-;  B000  45056  100.00%
-;  7000  31744   70.45%
-;  3000  12288   27.27%
-;  1000   4096    9.09%
-;  0400   1024    2.27%
-;  0000      0    0.00%
-
-; if ((D >= 0x7000) && (D < 0xB001)) D = 0x0B80 + (D/32)
+; Large throttle openings don't matter much.
+; The ADC range from 0x7000 to 0xB000 gets compressed into the table range 15.0 to 17.0
+; if ((D >= 0x7000) && (D <= 0xB000)) D = 0x0B80 + (D/32)
         lsrD
         lsrD
         lsrD
         lsrD
         lsrD                            ; 0x7000 turns into 0x380, 0xB000 turns into 0x580
-        addD    #0x0B80                 ; 0x7000 turns into 0x0F00, 0xB000 turns into 0x1100
+        addD    #0x0B80                 ; 0x7000 turns into 0x0F00 (15.0), 0xB000 turns into 0x1100 (17.0)
         bra     7f
 
-; if ((D >= 0x3000) && (D < 0x7000) D = 0x0800 + (D/16)
 4:
         cmpA    #0x30
         blo     5f
 
+; The ADC range from 0x3000 to 0x6FFF gets compressed into the table range 11.0 to 14.99
+; if ((D >= 0x3000) && (D < 0x7000)) D = 0x0800 + (D/16)
         lsrD
         lsrD
         lsrD
         lsrD                            ; 0x3000 turns into 0x300, 0x6FFF turns into 0x6FF
-        addD    #0x0800                 ; 0x3000 turns into 0xB00, 0x6FFF turns into 0xEFF
+        addD    #0x0800                 ; 0x3000 turns into 0xB00 (11.0), 0x6FFF turns into 0xEFF (14.99)
         bra     7f
 
-; if ((D >= 0x1000) && (D < 0x3000) D = 0x0500 + (D/8)
 5:
         cmpA    #0x10
         blo     6f
 
+; The ADC range from 0x1000 to 0x2FFF gets compressed into the table range 7.0 to 10.99
+; if ((D >= 0x1000) && (D < 0x3000)) D = 0x0500 + (D/8)
         lsrD
         lsrD
         lsrD                            ; 0x1000 turns into 0x200, 0x2FFF turns into 0x5FF
         addD    #0x0500                 ; 0x1000 turns into 0x700, 0x2FFF turns into 0xAFF
         bra     7f
 
-; if ((D >= 0x0400) && (D < 0x1000) D = 0x0300 + (D/4)
 6:
         cmpA    #0x04
         blo     7f
 
+; The ADC range from 0x0400 to 0x1000 gets compressed into the table range 4.0 to 6.99
+; if ((D >= 0x0400) && (D < 0x1000)) D = 0x0300 + (D/4)
         lsrD
         lsrD                            ; 0x400 turns into 0x100, 0x1000 turns into 0x3FF
         addD    #0x0300                 ; 0x400 turns into 0x400, 0x1000 turns into 0x6FF
 
+; The ADC range from 0x0000 to 0x0FFF gets compressed into the table range 0.0 to 3.99
 ; if (D <0x0400) then leave it alone
 
                                         ; 0x0000 is still 0x0000, 0x03FF is still 0x03FF
 
-; So: My current theory is that the throttle position has been turned into an 8.8 table index,
-; much like the RPM is now an 8.8 interpolation table index.  Those tables are 18 entries wide.
+; Conversion of raw VTA Throttle angle to an interpolation table column index.
+; "% open" is defined as a linear relationship between the min and max raw VTA ADC readings
+; corresponding to when the butterflies are fully closed and fully opened.
+;
+; Table    Massaged 8P8       Throttle Opening
+; Column                      (rotational sense)
+;   0:     00.00 .. 00.FF     0.00% to  0.57% open \
+;   1:     01.00 .. 01.FF     0.57% to  1.14% open  \  linear across the range of 0.00 to 2.27%
+;   2:     02.00 .. 02.FF     1.14% to  1.70% open  /  Column step size is 0.57%
+;   3:     03.00 .. 03.FF     1.70% to  2.27% open /
 
-; Conversion of raw VTA Throttle angle to an interpolation table index.
-;  0: 00.00 .. 00.FF     0.00% to  0.57% open \
-;  1: 01.00 .. 01.FF     0.57% to  1.14% open  \  linear across the range of 0.00 to 2.27%
-;  2: 02.00 .. 02.FF     1.14% to  1.70% open  /  Step size is 0.57%
-;  3: 03.00 .. 03.FF     1.70% to  2.27% open /
+;   4:     04.00 .. 04.FF     2.27% to  4.54% open \
+;   5:     05.00 .. 05.FF     4.54% to  6.81% open  |  linear across the range of 2.27 to 9.09%
+;   6:     06.00 .. 06.FF     6.81% to  9.09% open /   Column step size is 2.27%
 
-;  4: 04.00 .. 04.FF     2.27% to  4.54% open \
-;  5: 05.00 .. 05.FF     4.54% to  6.81% open  |  linear across the range of 2.27 to 9.09%
-;  6: 06.00 .. 06.FF     6.81% to  9.09% open /   step size is 2.27%
+;   7:     07.00 .. 07.FF     9.09% to 12.73% open \
+;   8:     08.00 .. 08.FF    12.73% to 16.37% open  \
+;   9:     09.00 .. 09.FF    16.37% to 20.00% open   | linear across the range of 9.09 to 27.27%
+;  10:     0a.00 .. 0a.FF    20.00% to 23.64% open  /  Column step size is 3.64%
+;  11:     0b.00 .. 0b.FF    23.64% to 27.27% open /
 
-;  7: 07.00 .. 07.FF     9.09% to 12.73% open \
-;  8: 08.00 .. 08.FF    12.73% to 16.37% open  \
-;  9: 09.00 .. 09.FF    16.37% to 20.00% open   | linear across the range of 9.09 to 27.27%
-; 10: 0a.00 .. 0a.FF    20.00% to 23.64% open  /  step size is 3.64%
-; 11: 0b.00 .. 0b.FF    23.64% to 27.27% open /
+;  12:     0c.00 .. 0c.FF    27.27% to 41.66% open \
+;  13:     0d.00 .. 0d.FF    41.66% to 56.06% open  |  linear across the range of 27.27% to 70.45%
+;  14:     0e.00 .. 0e.FF    56.06% to 70.45% open /   Column step size is 14.39%
 
-; 12: 0c.00 .. 0c.FF    27.27% to 41.66% open \
-; 13: 0d.00 .. 0d.FF    41.66% to 56.06% open  |  linear across the range of 27.27% to 70.45%
-; 14: 0e.00 .. 0e.FF    56.06% to 70.45% open /   step size is 14.39%
-
-; 15: 0f.00 .. 0f.FF    70.45% to 80.30% open \
-; 16: 10.00 .. 10.FF    80.30% to 90.15% open  |  linear across the range of 70.45% to 100%
-; 17: 11.00 .. 11.FF    90.15% to 100.0% open /   step size is 9.85%
+;  15:     0f.00 .. 0f.FF    70.45% to 80.30% open \
+;  16:     10.00 .. 10.FF    80.30% to 90.15% open  |  linear across the range of 70.45% to 100%
+;  17:     11.00 .. 11.FF    90.15% to 100.0% open /   Column step size is 9.85%
 ;
 
-; Finally!  VTA, massaged into an 8.8 value suitable for indexing an 18-entry interpolation table.
+; Finally!  VTA, massaged into an 8.8 value suitable for indexing into the columns for an 18-entry interpolation table.
+
+; The integer part of the massaged VTA value is used to select a table column for the lower interpolation value.
+; The upper interpolation value always comes from the next table column.
+; The fractional part of the massaged VTA value is used to interpolate between the two interpolation column values.
+; For example, assume that the massaged VTA was 4.25, that the value in table column 4 was 10,
+; and the table value in column 5 was 18.
+; The integer part of 4.25 means we will interpolate between the entries in column 4 and 5.
+; In this case, we need to interpolate 0.25 of the distance between the column 4 value (10) and the column 5 value (18).
+; The interpolation calculation result would be ((upper_value - lower_value) * distance) + lower_value:
+;       ((18-10) * .25) + 10
+;       12
+
 7:
-        stD     L0153
+        stD     L0153                   ; store our column interpolation parameter value where the interpolation routine expects it
 
         stD     L016E                   ;never used: must be for debugging
 
         ldD     *L004F                  ; 8.8 RPM in units of 400 RPM
-        stD     L0155
+        stD     L0155                   ; store the RPM parameter value where the interpolation routine expects it
 
-        ldaB    #18                     ;length of the ALPHA/N fuel table row
+        ldaB    #18                     ;tell the interpolation routine the length of the ALPHA/N fuel table row
         ldaA    #0x0E
         jsr     LF436
 

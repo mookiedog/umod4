@@ -315,6 +315,19 @@ class DataVisualizationTool(QMainWindow):
 
         file_menu.addSeparator()
 
+        # Convert UM4 submenu
+        convert_menu = file_menu.addMenu("Convert UM4")
+
+        convert_h5_action = QAction("Convert to H5", self)
+        convert_h5_action.triggered.connect(self.convert_um4_to_h5)
+        convert_menu.addAction(convert_h5_action)
+
+        convert_hr_action = QAction("Convert to Human-Readable", self)
+        convert_hr_action.triggered.connect(self.convert_um4_to_hr)
+        convert_menu.addAction(convert_hr_action)
+
+        file_menu.addSeparator()
+
         # Save Layout action
         save_layout_action = QAction("&Save Layout", self)
         save_layout_action.setShortcut("Ctrl+S")
@@ -937,6 +950,190 @@ class DataVisualizationTool(QMainWindow):
                 QMessageBox.StandardButton.Ok
             )
 
+    def convert_um4_to_h5(self):
+        """Convert a .um4 file to HDF5 format."""
+        from PySide6.QtWidgets import QMessageBox
+
+        # Ask user to select .um4 file
+        um4_filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select UM4 File to Convert",
+            self.config.get("default_file_location"),
+            "Binary Log Files (*.um4);;All Files (*)"
+        )
+
+        if not um4_filename:
+            return
+
+        # Check if file exists
+        if not os.path.exists(um4_filename):
+            QMessageBox.critical(
+                self,
+                "File Not Found",
+                f"File does not exist:\n{um4_filename}",
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
+        # Suggest output filename (same directory, .h5 extension)
+        suggested_output = os.path.splitext(um4_filename)[0] + '.h5'
+
+        # Ask user where to save the converted file
+        h5_filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Converted HDF5 File",
+            suggested_output,
+            "HDF5 Files (*.h5);;All Files (*)"
+        )
+
+        if not h5_filename:
+            return
+
+        # Check if decoder is available
+        if not DECODER_AVAILABLE or decodelog is None:
+            error_msg = "The decoder module is not available.\n\n"
+            if DECODER_IMPORT_ERROR:
+                error_msg += f"Import error:\n{DECODER_IMPORT_ERROR}\n\n"
+            error_msg += "Cannot convert .um4 files to HDF5 format."
+            QMessageBox.critical(
+                self,
+                "Decoder Not Available",
+                error_msg,
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
+        # Perform conversion
+        try:
+            # Show progress message
+            QMessageBox.information(
+                self,
+                "Converting...",
+                f"Converting {os.path.basename(um4_filename)} to HDF5...\n\n"
+                f"This may take a moment. Click OK to continue.",
+                QMessageBox.StandardButton.Ok
+            )
+
+            # Save original sys.argv and replace it with our arguments
+            original_argv = sys.argv
+            sys.argv = ['decodelog', um4_filename, '--format', 'h5', '-o', h5_filename]
+
+            try:
+                # Call the decoder's main function directly
+                decodelog.main()
+
+                # Success
+                QMessageBox.information(
+                    self,
+                    "Conversion Complete",
+                    f"Successfully converted to:\n{h5_filename}",
+                    QMessageBox.StandardButton.Ok
+                )
+
+            finally:
+                # Restore original sys.argv
+                sys.argv = original_argv
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Conversion Error",
+                f"Error converting file:\n\n{str(e)}",
+                QMessageBox.StandardButton.Ok
+            )
+
+    def convert_um4_to_hr(self):
+        """Convert a .um4 file to human-readable format."""
+        from PySide6.QtWidgets import QMessageBox
+
+        # Ask user to select .um4 file
+        um4_filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select UM4 File to Convert",
+            self.config.get("default_file_location"),
+            "Binary Log Files (*.um4);;All Files (*)"
+        )
+
+        if not um4_filename:
+            return
+
+        # Check if file exists
+        if not os.path.exists(um4_filename):
+            QMessageBox.critical(
+                self,
+                "File Not Found",
+                f"File does not exist:\n{um4_filename}",
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
+        # Suggest output filename (same directory, .hr extension)
+        suggested_output = os.path.splitext(um4_filename)[0] + '.hr'
+
+        # Ask user where to save the converted file
+        hr_filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Human-Readable File",
+            suggested_output,
+            "Human-Readable Files (*.hr *.txt);;All Files (*)"
+        )
+
+        if not hr_filename:
+            return
+
+        # Check if decoder is available
+        if not DECODER_AVAILABLE or decodelog is None:
+            error_msg = "The decoder module is not available.\n\n"
+            if DECODER_IMPORT_ERROR:
+                error_msg += f"Import error:\n{DECODER_IMPORT_ERROR}\n\n"
+            error_msg += "Cannot convert .um4 files."
+            QMessageBox.critical(
+                self,
+                "Decoder Not Available",
+                error_msg,
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
+        # Perform conversion
+        try:
+            # Show progress message
+            QMessageBox.information(
+                self,
+                "Converting...",
+                f"Converting {os.path.basename(um4_filename)} to human-readable format...\n\n"
+                f"This may take a moment. Click OK to continue.",
+                QMessageBox.StandardButton.Ok
+            )
+
+            # Save original sys.argv and replace it with our arguments
+            original_argv = sys.argv
+            sys.argv = ['decodelog', um4_filename, '--format', 'hr', '-o', hr_filename]
+
+            try:
+                # Call the decoder's main function directly
+                decodelog.main()
+
+                # Success
+                QMessageBox.information(
+                    self,
+                    "Conversion Complete",
+                    f"Successfully converted to:\n{hr_filename}",
+                    QMessageBox.StandardButton.Ok
+                )
+
+            finally:
+                # Restore original sys.argv
+                sys.argv = original_argv
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Conversion Error",
+                f"Error converting file:\n\n{str(e)}",
+                QMessageBox.StandardButton.Ok
+            )
+
 
     def load_hdf5_file_internal(self, filename):
         """Internal method to load HDF5 file (used by both file picker and recent files)."""
@@ -1236,8 +1433,16 @@ class DataVisualizationTool(QMainWindow):
             # Enable stream
             self.enabled_streams.append(stream)
 
-            # Event streams don't own axes - they're just visual markers
-            if self.stream_config.is_event_only_stream(stream):
+            # Get stream config to check if it should own an axis
+            stream_cfg = self.stream_config.get_stream(stream)
+            stream_owns_axis = stream_cfg.owns_axis if stream_cfg else True
+
+            # Event streams and non-axis-owning streams don't own axes
+            # Exception: smoothed RPM can own an axis when instantaneous RPM is not enabled
+            if self.stream_config.is_event_only_stream(stream) or (not stream_owns_axis and stream != 'ecu_rpm_smoothed'):
+                self.update_graph_plot()
+            # Special case: If enabling smoothed RPM and instantaneous RPM is already the axis owner, don't take over
+            elif stream == 'ecu_rpm_smoothed' and self.axis_owner == 'ecu_rpm_instantaneous':
                 self.update_graph_plot()
             # Assign ownership - but don't change the axis owner yet
             elif self.axis_owner is None:
@@ -1259,7 +1464,12 @@ class DataVisualizationTool(QMainWindow):
             # Handle ownership reassignment
             if stream == self.axis_owner:
                 # Disabling left axis owner
-                if self.right_axis_owner and self.right_axis_owner in self.enabled_streams:
+                # Special case: If disabling instantaneous RPM and smoothed RPM is enabled,
+                # smoothed RPM should take over axis ownership (even though owns_axis=false)
+                if stream == 'ecu_rpm_instantaneous' and 'ecu_rpm_smoothed' in self.enabled_streams:
+                    self.axis_owner = 'ecu_rpm_smoothed'
+                    self.update_graph_plot()
+                elif self.right_axis_owner and self.right_axis_owner in self.enabled_streams:
                     # Promote right axis owner to left
                     self.axis_owner = self.right_axis_owner
                     self.right_axis_owner = None
@@ -1273,16 +1483,24 @@ class DataVisualizationTool(QMainWindow):
                     for i in range(stream_idx + 1, len(self.data_streams)):
                         candidate = self.data_streams[i]
                         if candidate in self.enabled_streams and not self.stream_config.is_event_only_stream(candidate):
-                            next_owner = candidate
-                            break
+                            # Allow smoothed RPM to become owner if instantaneous RPM was just disabled
+                            candidate_cfg = self.stream_config.get_stream(candidate)
+                            candidate_owns_axis = candidate_cfg.owns_axis if candidate_cfg else True
+                            if candidate_owns_axis or candidate == 'ecu_rpm_smoothed':
+                                next_owner = candidate
+                                break
 
                     # Wrap around if needed
                     if next_owner is None:
                         for i in range(0, stream_idx):
                             candidate = self.data_streams[i]
                             if candidate in self.enabled_streams and not self.stream_config.is_event_only_stream(candidate):
-                                next_owner = candidate
-                                break
+                                # Allow smoothed RPM to become owner if instantaneous RPM was just disabled
+                                candidate_cfg = self.stream_config.get_stream(candidate)
+                                candidate_owns_axis = candidate_cfg.owns_axis if candidate_cfg else True
+                                if candidate_owns_axis or candidate == 'ecu_rpm_smoothed':
+                                    next_owner = candidate
+                                    break
 
                     self.axis_owner = next_owner
                     if self.axis_owner:
@@ -1301,6 +1519,12 @@ class DataVisualizationTool(QMainWindow):
         """Handle clicking on stream name to change axis ownership"""
         # Event marker streams can't own axes
         if self.stream_config.is_event_only_stream(stream):
+            return
+
+        # Check if stream should own an axis (allow smoothed RPM as special case)
+        stream_cfg = self.stream_config.get_stream(stream)
+        stream_owns_axis = stream_cfg.owns_axis if stream_cfg else True
+        if not stream_owns_axis and stream != 'ecu_rpm_smoothed':
             return
 
         if stream in self.enabled_streams:
@@ -1359,6 +1583,19 @@ class DataVisualizationTool(QMainWindow):
                 self.view_start,
                 self.view_end
             )
+
+        # Calculate range for instantaneous RPM if it's enabled (for use by smoothed RPM)
+        # This ensures smoothed RPM uses the same range as instantaneous RPM
+        rpm_inst_range = None
+        if 'ecu_rpm_instantaneous' in self.enabled_streams and 'ecu_rpm_instantaneous' in self.raw_data:
+            rpm_inst_range = self.normalizer.calculate_stream_range(
+                'ecu_rpm_instantaneous',
+                self.raw_data,
+                self.view_start,
+                self.view_end,
+                axis_owner_visible_range if 'ecu_rpm_instantaneous' == self.axis_owner else None
+            )
+            self.debug_print(f"RPM instantaneous range: {rpm_inst_range}")
 
         # Plot each enabled stream with dynamic decimation
         for stream in self.enabled_streams:
@@ -1434,13 +1671,28 @@ class DataVisualizationTool(QMainWindow):
                 plot_values = visible_values
 
             # Get normalization range using DataNormalizer (Phase 4 refactoring)
-            stream_min, stream_max = self.normalizer.calculate_stream_range(
-                stream,
-                self.raw_data,
-                self.view_start,
-                self.view_end,
-                axis_owner_visible_range if stream == self.axis_owner else None
-            )
+            # Streams that don't own an axis should use the axis owner's range for consistent scaling
+            stream_cfg = self.stream_config.get_stream(stream)
+            stream_owns_axis = stream_cfg and stream_cfg.owns_axis if stream_cfg else True
+
+            # Special case: Smoothed RPM uses instantaneous RPM's range for consistent scaling
+            if stream == 'ecu_rpm_smoothed' and rpm_inst_range is not None:
+                stream_min, stream_max = rpm_inst_range
+            # If this stream doesn't own an axis and there's an axis owner, use the axis owner's range
+            elif not stream_owns_axis and axis_owner_visible_range is not None:
+                stream_min, stream_max = axis_owner_visible_range
+            elif stream == self.axis_owner:
+                # This is the axis owner, use pre-calculated range
+                stream_min, stream_max = axis_owner_visible_range
+            else:
+                # Stream owns its own axis or no axis owner exists, calculate its own range
+                stream_min, stream_max = self.normalizer.calculate_stream_range(
+                    stream,
+                    self.raw_data,
+                    self.view_start,
+                    self.view_end,
+                    None
+                )
 
             # Normalize the data using DataNormalizer (Phase 4 refactoring)
             normalize_max = getattr(self, 'dynamic_normalize_max',
@@ -1726,40 +1978,45 @@ class DataVisualizationTool(QMainWindow):
             # Get stream configuration for display range constraints
             right_stream_cfg = self.stream_config.get_stream(self.right_axis_owner)
 
-            # Get visible data for right axis stream
-            full_min, full_max = self.stream_ranges.get(self.right_axis_owner, (0, 1))
-
-            # Check for fixed display range or constraints
-            if right_stream_cfg and right_stream_cfg.display_range_min is not None and right_stream_cfg.display_range_max is not None:
-                # Fixed range - no dynamic scaling
-                axis_min = right_stream_cfg.display_range_min
-                axis_max = right_stream_cfg.display_range_max
+            # Special case: If right axis owner is smoothed RPM, use instantaneous RPM's range
+            if self.right_axis_owner == 'ecu_rpm_smoothed' and rpm_inst_range is not None:
+                axis_min, axis_max = rpm_inst_range
+                self.debug_print(f"Right axis (smoothed RPM) using instantaneous RPM range: {rpm_inst_range}")
             else:
-                # Dynamic scaling with optional constraints
-                if self.right_axis_owner in self.raw_data:
-                    stream_data = self.raw_data[self.right_axis_owner]
-                    all_time = stream_data['time']
-                    all_values = stream_data['values']
-                    mask = (all_time >= self.view_start) & (all_time <= self.view_end)
-                    visible_values = all_values[mask]
+                # Get visible data for right axis stream
+                full_min, full_max = self.stream_ranges.get(self.right_axis_owner, (0, 1))
 
-                    if len(visible_values) > 0:
-                        visible_max = float(visible_values.max())
-                        axis_min = full_min
+                # Check for fixed display range or constraints
+                if right_stream_cfg and right_stream_cfg.display_range_min is not None and right_stream_cfg.display_range_max is not None:
+                    # Fixed range - no dynamic scaling
+                    axis_min = right_stream_cfg.display_range_min
+                    axis_max = right_stream_cfg.display_range_max
+                else:
+                    # Dynamic scaling with optional constraints
+                    if self.right_axis_owner in self.raw_data:
+                        stream_data = self.raw_data[self.right_axis_owner]
+                        all_time = stream_data['time']
+                        all_values = stream_data['values']
+                        mask = (all_time >= self.view_start) & (all_time <= self.view_end)
+                        visible_values = all_values[mask]
 
-                        # Check for minimum top constraint
-                        if right_stream_cfg and right_stream_cfg.display_range_min_top is not None:
-                            min_top = right_stream_cfg.display_range_min_top
-                            if visible_max < min_top:
-                                visible_max = min_top
+                        if len(visible_values) > 0:
+                            visible_max = float(visible_values.max())
+                            axis_min = full_min
 
-                        axis_max = visible_max
+                            # Check for minimum top constraint
+                            if right_stream_cfg and right_stream_cfg.display_range_min_top is not None:
+                                min_top = right_stream_cfg.display_range_min_top
+                                if visible_max < min_top:
+                                    visible_max = min_top
+
+                            axis_max = visible_max
+                        else:
+                            axis_min = full_min
+                            axis_max = full_max
                     else:
                         axis_min = full_min
                         axis_max = full_max
-                else:
-                    axis_min = full_min
-                    axis_max = full_max
 
             axis_range = axis_max - axis_min
 
@@ -1991,6 +2248,12 @@ class DataVisualizationTool(QMainWindow):
         attach_to = config.attach_to
         if not attach_to or attach_to not in self.raw_data:
             self.debug_print(f"DEBUG: {stream_name} - attach_to stream '{attach_to}' not found in raw_data")
+            return
+
+        # Don't draw markers if the attach_to stream is not enabled
+        # (e.g., don't draw spark/crank/cam markers if RPM instantaneous is disabled)
+        if attach_to not in self.enabled_streams:
+            self.debug_print(f"DEBUG: {stream_name} - attach_to stream '{attach_to}' not enabled, skipping markers")
             return
 
         if stream_name not in self.raw_data:

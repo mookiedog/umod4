@@ -1,5 +1,6 @@
 # To Do
 
+* Figure out what the target ADC reading is for DIAG mode when setting the TPS position
 * Work on Getting the EP flashed from the WP
   * Convert the low-level SWD stuff to use the code from [Raspberry Pi Picoprobe](https://github.com/raspberrypi/debugprobe/tree/master)
     * Uses PIO instead of bit-banging

@@ -27,7 +27,7 @@ streams:
 
   ecu_rpm_instantaneous:
     type: graph_data
-    display_name: "RPM (Instantaneous)"
+    display_name: "RPM"
     default_color: "#d70000"
     units: rpm
     owns_axis: true
@@ -83,7 +83,7 @@ streams:
     type: graph_data
     display_name: "RPM (Smoothed)"
     units: rpm
-    owns_axis: true
+    owns_axis: false  # Share axis with RPM (Instantaneous) for consistent scaling
     normalize: true
 
   ecu_air_temp_c:

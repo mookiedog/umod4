@@ -16,7 +16,6 @@ import math
 import argparse
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-import array as arr
 
 # HDF5 support - only imported if needed
 try:
@@ -75,7 +74,6 @@ class OutputHandler(ABC):
         self.tha_C = -1
         self.thw_C = -1
         self.rpm_avg = 0.0
-        self.rpm_hist = arr.array('d', [])
 
         # EPROM load tracking
         self.epromIdString = ""
@@ -685,8 +683,10 @@ current_record_address = 0
 # Track the max difference between the two methods of converting thermistor readings to temperatures
 maxDiff = 0.0
 
-import array as arr
-rpm_hist = arr.array('d', [])
+from collections import deque
+# Store last 13 crank timestamps (64-bit ns) for smoothed RPM calculation
+# 12 intervals = 2 full rotations (360°). Using ns timestamps avoids 16-bit overflow at low RPM.
+crank_ts_history = deque(maxlen=13)
 
 # ================================================================================================
 # TimeKeeper Class - Simplified time tracking system
@@ -710,6 +710,13 @@ class TimeKeeper:
     # The CRID markers are offset by 12° from true crankshaft TDC
     # This value should be added to calculated advance to get true advance
     CRID_TDC_OFFSET_DEGREES = 12.0  # degrees BTDC offset
+
+    # Spark timing correction
+    # There is a delay between when the spark is scheduled by the firmware and when
+    # it is observed/logged. We need to account for this delay to determine when the
+    # firmware actually scheduled the spark event.
+    SPARK_DELAY_X1_TICKS = 7   # Timer ticks delay for SPRK1 (7 * 2μs = 14μs)
+    SPARK_DELAY_X2_TICKS = 15  # Timer ticks delay for SPRK2 (15 * 2μs = 30μs)
 
     def __init__(self, verbose=False):
         """Initialize time tracking.
@@ -1292,7 +1299,7 @@ def decodeL000C(byte):
         print(f"Bad AAP", end="")
     print()
 
-# Decoding L000D and L000F are identical. 
+# Decoding L000D and L000F are identical.
 # L000D events can get "better" if the sensor comes back on-line,
 # but L000F events are "sticky" until the ECU powers down again.
 def decodeL000D(byte):
@@ -1356,13 +1363,13 @@ def convertApriliaTempSensorAdcToDegC(adc):
     C = -0.5305974726e-7        #  249 Ohms at 90C
     logR = math.log(Rntc)
     degC_SH = (1/(A + (B * logR) + (C * (logR**3)))) - 273.15
-    
+
     global maxDiff
     diff = abs((degC_Beta - degC_SH))
     if diff > maxDiff:
         maxDiff = diff
     # print(f"beta: {degC_Beta:.1f}, SH: {degC_SH:.1f}")
-    
+
     # Experiments show that S_H and Beta differ by about 1 degree at most, so it probably does not matter which
     # one to use. Nonetheless, the S-H method is known to be more accurate so we use it.
     return degC_SH
@@ -1508,7 +1515,7 @@ def main():
         sys.stdout = output_file
     else:
         output_file = None
-    
+
     # Import Logsyms - handle both Nuitka frozen binaries and normal Python execution
     # First check if Logsyms was already imported at module level (for Nuitka bundling)
     if LOGSYMS_PRELOADED:
@@ -1774,17 +1781,17 @@ def main():
 
                 elif byte == L.LOGID_ECU_F_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_F_IGN_DLY_DLEN)[0]
-                    dly= (b/256)*90.0
-                    print(f"{fmt_record(recordCnt, timekeeper)} FID:    {dly:.1f}")
+                    advance = ((b/256)*90.0) - 18
+                    print(f"{fmt_record(recordCnt, timekeeper)} FIA:    {advance:.1f}")
                     if h5_writer:
-                        h5_writer.append_data('ecu_front_ign_delay', [timekeeper.get_time_ns(), dly])
+                        h5_writer.append_data('ecu_front_ign_delay', [timekeeper.get_time_ns(), advance])
 
                 elif byte == L.LOGID_ECU_R_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_R_IGN_DLY_DLEN)[0]
-                    dly= (b/256)*90.0
-                    print(f"{fmt_record(recordCnt, timekeeper)} RID:    {dly:.1f}")
+                    advance = ((b/256)*90.0) - 18
+                    print(f"{fmt_record(recordCnt, timekeeper)} RIA:    {advance:.1f}")
                     if h5_writer:
-                        h5_writer.append_data('ecu_rear_ign_delay', [timekeeper.get_time_ns(), dly])
+                        h5_writer.append_data('ecu_rear_ign_delay', [timekeeper.get_time_ns(), advance])
 
                 elif byte == L.LOGID_ECU_5MILLISEC_EVENT_TYPE_V:
                     ignore = read(f, L.LOGID_ECU_5MILLISEC_EVENT_DLEN)
@@ -1925,12 +1932,30 @@ def main():
                     if (elapsed < 0):
                         print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts}")
                     else:
+                        # Calculate instantaneous RPM from single interval (30 degrees)
+                        # elapsed is in 2μs ticks for one 30° interval
+                        # RPM = (60 sec/min * 1000000 μs/sec) / (elapsed * 2 μs/tick * 2 intervals/tooth * 6 teeth/rev)
                         rpm = 60000000 / (elapsed * 2 * 6)
 
-                        rpm_hist.append(rpm)
-                        if (len(rpm_hist) == 7):
-                            rpm_hist.pop(0)
-                        rpm_avg = sum(rpm_hist) / len(rpm_hist)
+                        # Store 64-bit nanosecond timestamp for smoothed RPM calculation
+                        # Using ns timestamps instead of 16-bit ticks avoids overflow at low RPM
+                        crank_ts_history.append(rpm_timestamp_ns)
+
+                        # Calculate smoothed RPM over last 12 intervals (2 full rotations = 360°)
+                        # Need 13 timestamps to have 12 intervals
+                        if len(crank_ts_history) >= 13:
+                            # Calculate elapsed time over 12 intervals (no wraparound issues with 64-bit ns)
+                            oldest_ts_ns = crank_ts_history[0]
+                            newest_ts_ns = crank_ts_history[12]  # 13th timestamp (index 12)
+                            total_elapsed_ns = newest_ts_ns - oldest_ts_ns
+
+                            # RPM from 12 intervals (360 degrees = 1 full rotation)
+                            # total_elapsed_ns is in nanoseconds for 12 intervals (360°)
+                            # RPM = (60 sec/min * 1000000000 ns/sec) / total_elapsed_ns
+                            rpm_avg = 60000000000 / total_elapsed_ns
+                        else:
+                            # Not enough history yet, use instantaneous RPM
+                            rpm_avg = rpm
 
                         print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
 
@@ -2032,10 +2057,17 @@ def main():
                         h5_writer.append_data('ecu_cam_error', [timekeeper.get_time_ns(), camErr])
 
                 elif byte == L.LOGID_ECU_SPRK_X1_TYPE_PTS:
-                    spx1_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
+                    spx1_ts_raw = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
+
+                    # Apply spark delay correction
+                    # There is a delay between when the spark is scheduled and when it is observed
+                    spx1_ts_corrected = spx1_ts_raw - TimeKeeper.SPARK_DELAY_X1_TICKS
+                    if spx1_ts_corrected < 0:
+                        spx1_ts_corrected += TimeKeeper.TIMER_MAX
+
                     # RETROSPECTIVE timestamp - spark HAS fired
                     # Convert raw timestamp to actual time when spark occurred
-                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx1_ts)
+                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx1_ts_raw)
                     actual_spark_time_secs = actual_spark_time_ns / 1000000000.0
 
                     # Check if this spark is in a valid CRID range
@@ -2049,25 +2081,32 @@ def main():
                     # Print to human-readable output (advance will be calculated later when CRID arrives)
                     cyl_name = "Front" if is_front_cylinder else "Rear" if is_front_cylinder is not None else "Unknown"
                     if not is_valid_crid:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts} (actual: {actual_spark_time_secs}) [IGNORED - wrong CRID]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw} - {TimeKeeper.SPARK_DELAY_X1_TICKS} = {spx1_ts_corrected} (actual: {actual_spark_time_secs}) [IGNORED - wrong CRID]")
                     elif is_first_spark:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts} (actual: {actual_spark_time_secs}, {cyl_name} cyl) [advance pending]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw} - {TimeKeeper.SPARK_DELAY_X1_TICKS} = {spx1_ts_corrected} (actual: {actual_spark_time_secs}, {cyl_name} cyl) [advance pending]")
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts} (actual: {actual_spark_time_secs}) [IGNORED - bounce]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw} - {TimeKeeper.SPARK_DELAY_X1_TICKS} = {spx1_ts_corrected} (actual: {actual_spark_time_secs}) [IGNORED - bounce]")
 
                     # Store spark for advance calculation and write to HDF5
                     if is_first_spark and is_valid_crid:
-                        # Store spark - advance will be calculated when CRID N+2 arrives
-                        timekeeper.store_pending_spark(spx1_ts, actual_spark_time_ns, is_sprk1=True)
+                        # Store corrected spark timestamp - advance will be calculated when CRID N+2 arrives
+                        timekeeper.store_pending_spark(spx1_ts_corrected, actual_spark_time_ns, is_sprk1=True)
                         # Write to HDF5 if enabled
                         if h5_writer:
-                            h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_ts])
+                            h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_ts_raw])
 
                 elif byte == L.LOGID_ECU_SPRK_X2_TYPE_PTS:
-                    spx2_ts = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
+                    spx2_ts_raw = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
+
+                    # Apply spark delay correction
+                    # There is a delay between when the spark is scheduled and when it is observed
+                    spx2_ts_corrected = spx2_ts_raw - TimeKeeper.SPARK_DELAY_X2_TICKS
+                    if spx2_ts_corrected < 0:
+                        spx2_ts_corrected += TimeKeeper.TIMER_MAX
+
                     # RETROSPECTIVE timestamp - spark HAS fired
                     # Convert raw timestamp to actual time when spark occurred
-                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx2_ts)
+                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx2_ts_raw)
                     actual_spark_time_secs = actual_spark_time_ns / 1000000000.0
 
                     # Check if this spark is in a valid CRID range
@@ -2081,19 +2120,19 @@ def main():
                     # Print to human-readable output (advance will be calculated later when CRID arrives)
                     cyl_name = "Front" if is_front_cylinder else "Rear" if is_front_cylinder is not None else "Unknown"
                     if not is_valid_crid:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts} (actual: {actual_spark_time_secs}) [IGNORED - wrong CRID]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw} - {TimeKeeper.SPARK_DELAY_X2_TICKS} = {spx2_ts_corrected} (actual: {actual_spark_time_secs}) [IGNORED - wrong CRID]")
                     elif is_first_spark:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts} (actual: {actual_spark_time_secs}, {cyl_name} cyl) [advance pending]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw} - {TimeKeeper.SPARK_DELAY_X2_TICKS} = {spx2_ts_corrected} (actual: {actual_spark_time_secs}, {cyl_name} cyl) [advance pending]")
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts} (actual: {actual_spark_time_secs}) [IGNORED - bounce]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw} - {TimeKeeper.SPARK_DELAY_X2_TICKS} = {spx2_ts_corrected} (actual: {actual_spark_time_secs}) [IGNORED - bounce]")
 
                     # Store spark for advance calculation and write to HDF5
                     if is_first_spark and is_valid_crid:
-                        # Store spark - advance will be calculated when CRID N+2 arrives
-                        timekeeper.store_pending_spark(spx2_ts, actual_spark_time_ns, is_sprk1=False)
+                        # Store corrected spark timestamp - advance will be calculated when CRID N+2 arrives
+                        timekeeper.store_pending_spark(spx2_ts_corrected, actual_spark_time_ns, is_sprk1=False)
                         # Write to HDF5 if enabled
                         if h5_writer:
-                            h5_writer.append_data('ecu_spark_x2', [actual_spark_time_ns, spx2_ts])
+                            h5_writer.append_data('ecu_spark_x2', [actual_spark_time_ns, spx2_ts_raw])
 
                 elif byte == L.LOGID_ECU_NOSPARK_TYPE_U8:
                     sparkErr = read(f, L.LOGID_ECU_NOSPARK_DLEN)[0]
