@@ -1,5 +1,6 @@
 # To Do
 
+* Figure out what the target ADC reading is for DIAG mode when setting the TPS position
 * Work on Getting the EP flashed from the WP
   * Convert the low-level SWD stuff to use the code from [Raspberry Pi Picoprobe](https://github.com/raspberrypi/debugprobe/tree/master)
     * Uses PIO instead of bit-banging
@@ -16,6 +17,9 @@
   * provide a shell so that I could connect in from my desktop
 
 ### Bugs
+
+* Data is getting lost in the log. It looks like certain write operations are failing or getting lost, or a buffer is overflowing.
+* looks like time is going backwards with the new VTA/time reports
 
 ## Visualizer
 

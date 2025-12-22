@@ -27,11 +27,48 @@ streams:
 
   ecu_rpm_instantaneous:
     type: graph_data
-    display_name: "RPM (Instantaneous)"
+    display_name: "RPM"
     default_color: "#d70000"
     units: rpm
     owns_axis: true
     normalize: true
+
+  # Marker streams attached to RPM (Instantaneous)
+  ecu_spark_x1:
+    type: graph_marker
+    display_name: "  Spark X1"
+    attach_to: ecu_rpm_instantaneous
+    offset: 0.025
+    label: "S1"
+    max_visible: 100
+    default_color: "#FF0000"
+
+  ecu_spark_x2:
+    type: graph_marker
+    display_name: "  Spark X2"
+    attach_to: ecu_rpm_instantaneous
+    offset: -0.025
+    label: "S2"
+    max_visible: 100
+    default_color: "#FF0000"
+
+  ecu_crankref_id:
+    type: graph_marker
+    display_name: "  Crank Sensor"
+    attach_to: ecu_rpm_instantaneous
+    line_height: 0.04
+    label_format: "CR{value}"
+    max_visible: 100
+    default_color: "#000000"
+
+  ecu_camshaft_timestamp:
+    type: graph_marker
+    display_name: "  Cam Sensor"
+    attach_to: ecu_rpm_instantaneous
+    line_height: -0.04
+    label: "CAM"
+    max_visible: 100
+    default_color: "#00ABAB"
 
   ecu_throttle_adc:
     type: graph_data
@@ -46,7 +83,7 @@ streams:
     type: graph_data
     display_name: "RPM (Smoothed)"
     units: rpm
-    owns_axis: true
+    owns_axis: false  # Share axis with RPM (Instantaneous) for consistent scaling
     normalize: true
 
   ecu_air_temp_c:
@@ -120,45 +157,50 @@ streams:
     normalize: true
     hidden: true    # Temporary until we get this data working properly
 
+  ecu_spark_front_x1_advance:
+    type: graph_data
+    display_name: "Front Spark #1 Advance"
+    default_color: "#FF0000"
+    units: degrees
+    owns_axis: true
+    normalize: true
+    display_range_min: 0.0
+    display_range_max: 60.0
+
+  ecu_spark_front_x2_advance:
+    type: graph_data
+    display_name: "Front Spark #2 Advance"
+    default_color: "#CC0000"
+    units: degrees
+    owns_axis: true
+    normalize: true
+    display_range_min: 0.0
+    display_range_max: 60.0
+
+  ecu_spark_rear_x1_advance:
+    type: graph_data
+    display_name: "Rear Spark #1 Advance"
+    default_color: "#0000FF"
+    units: degrees
+    owns_axis: true
+    normalize: true
+    display_range_min: 0.0
+    display_range_max: 60.0
+
+  ecu_spark_rear_x2_advance:
+    type: graph_data
+    display_name: "Rear Spark #2 Advance"
+    default_color: "#0000CC"
+    units: degrees
+    owns_axis: true
+    normalize: true
+    display_range_min: 0.0
+    display_range_max: 60.0
+
   # ============================================================================
   # GRAPH MARKERS - Event markers attached to graph data
   # ============================================================================
-
-  ecu_spark_x1:
-    type: graph_marker
-    display_name: "Spark X1"
-    attach_to: ecu_rpm_instantaneous
-    offset: 0.025
-    label: "S1"
-    max_visible: 100
-    default_color: "#FF0000"
-
-  ecu_spark_x2:
-    type: graph_marker
-    display_name: "Spark X2"
-    attach_to: ecu_rpm_instantaneous
-    offset: -0.025
-    label: "S2"
-    max_visible: 100
-    default_color: "#FF0000"
-
-  ecu_crankref_id:
-    type: graph_marker
-    display_name: "ecu_crank_sensor"
-    attach_to: ecu_rpm_instantaneous
-    line_height: 0.04
-    label_format: "CR{value}"
-    max_visible: 100
-    default_color: "#000000"
-
-  ecu_camshaft_timestamp:
-    type: graph_marker
-    display_name: "ecu_cam_sensor"
-    attach_to: ecu_rpm_instantaneous
-    line_height: -0.04
-    label: "CAM"
-    max_visible: 100
-    default_color: "#00ABAB"
+  # (Marker streams have been moved next to their parent streams above)
 
   ecu_crankref_timestamp:
     type: graph_data

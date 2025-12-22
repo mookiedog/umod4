@@ -25,6 +25,10 @@
 
 ; Define build options here
 
+; If defined, use explicit IC3 and IC4 SPARK ISR routines to report spark events instead of checking during crankshaft reporting
+#define SPARK_ISR       1
+#define VTA_INCLUDES_TS 1
+
 ; Set RELOCATED_STACK to '1' to relocate the stack inside the EPROM address space. Only available if
 ; this firmware is running on a umod4 PCB. If this firmware is to be burned into
 ; an EPROM, this must be '0'
@@ -95,19 +99,24 @@ STACK_TOP    = 0x01FF
 
 
 ; -----------------------------------------------------------------
-; Conjecture:
-
-; The Rotax shop manual p 2-6 says that when the bike is being
-; started, the ignition spark occurs at 5 degrees BTDC.  An
-; examination of the ECU firmware shows that when the engine is
-; turning very slowly (as would happen when cranking it with the
-; starter) the trailing edge of the CR5 protrusion is used to fire the
-; front cylinder sparkplug.  This means that the rising edge of the
-; low-going pulse on CR5 must be 5 degrees BTDC.  The width of the CR5
-; protrusion was measured to be 7.0 degrees wide, so this tells us
-; that the leading edge of CR5 must be at 12 degrees BTDC for the
-; front cylinder.  The manual also states that the ign timing at 2800
-; RPM is 21.8 degrees, +- 2 degrees.
+; CRID and Ignition Timing
+;
+; Facts: the Rotax V990 Shop Manual p 2-6 (Aprilia PN 8140587) states:
+;    1. When the bike is being started, ignition advance is 5 degrees BTDC
+;    2. At 2800 RPM, ignition advance is 21.8 degrees, +-2 degrees
+;
+; Measurements:
+;    1. Diameter of rotor at top of protrusions: 150.7mm
+;    2. width of protrusions at top face: 9.15mm
+;
+; Calculations:
+;    1. Circumference at top of protrusions: Pi*150.7mm = 473.44mm
+;    2. Width of protrusion in degrees: (9.15mm * 360deg)/473.44mm = 6.96 degrees
+;       I would bet that the protrusions are designed to be 7 degrees wide.
+;
+; Putting it together:
+;    If the protrusions are 7 degrees wide, and the trailing edge of CR5 is fixed at 5 degrees BTDC,
+;    the leading edge of CR5 must be 12 degrees BTDC.
 
 ; The relationship of TDC to CR events:
 ; CR0
@@ -778,6 +787,9 @@ RAW_AAP_U8_prev               = 0x0181
 FUEL_PUMP_B_prev              = 0x0182
 RAW_VTA_prev                  = 0x0183          ; 16-bits: 0x0183 & 0x0184
 half_overflow                 = 0x0185
+#if defined SPARK_ISR
+FAKE_TFLG1                    = 0x0186          ; a fake copy of TFLG1 for use by crankshaft spark detection processing
+#endif
 
 ;*****************************************************************
 ;68HC11G IO Register Map
@@ -2277,14 +2289,20 @@ reset:
         staA    LW+LOGID_ECU_FUEL_PUMP_TYPE_B
         staA    FUEL_PUMP_B_prev
 
-        ldaA    #0x0F                   ;flush any outstanding IC events
+        ldaA    #0x0F                   ;flush any outstanding IC events: IC1..IC4 crank, cam, spark events
         staA    TFLG1
 
-        ldaA    #0x06                   ;disable OC interrupts (spark generation), enable IC1,IC2 interrupts (crank and cam sense)
+#if !defined SPARK_ISR
+        ldaA    #0x06                   ;disable IC1/IC4 ints (spark generation), enable IC1/IC2 interrupts (crank and cam sensors)
         staA    TMSK1
+#else
+        clr     FAKE_TFLG1              ;flush IC1/IC4 spark IC events in the fake copy of TFLG1
+        ldaA    #0x0F                   ;enable IC1/IC4 ints (spark generation), enable IC1/IC2 ints (crank and cam sensors)
+        staA    TMSK1
+#endif
 
-        ldaA    #0x08                   ;enable IC4 events (disables OC5 events).  The spark-watcher uses this input.
-        staA    PACTL
+        ldaA    #0x08                   ;Timer O5I4 can be input capture or output compare, but not both at the same time.
+        staA    PACTL                   ;Configure it to operate as Input Capture 4 where it will watch for spark-watcher events.
         cli
 
 ;*****************************************************************
@@ -2704,7 +2722,7 @@ LC46F:  ldaA    ADCTL
 0:      rts
 
 ;A/D Conversion is complete.
-1:      
+1:
 
 ; The OFLO ISR will have set 'half_overflow' non-zero to indicate we should check for TCNT being >0x8000
         ldaA    half_overflow           ; Are we allowed to check yet?
@@ -3014,8 +3032,8 @@ tbl1__00:
         lsrD
         lsrD
         stD     *L0024                  ;save the right-aligned, unfiltered version of VTA in L0024
-        
-#if 1
+
+#if !defined VTA_INCLUDES_TS
         cmpD    RAW_VTA_prev            ;only log good sensor readings that differ from the previous reading
         beq     3f
         stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
@@ -3024,11 +3042,12 @@ tbl1__00:
 #else
 ; Combine every VTA reading with the upper 6 bits of TCNT so that the log decoder
 ; can see time advance with more precision even when there are no crankshaft events.
-        ldaA    TCNT1
+        ldaA    TCNT
         andA    #0xFC                   ;extract the MS 6 bits of TCNT1...
         oraA    *L0024                  ;...and insert them into the unused upper 6 bits of the 10-bit VTA
-        ldaB    *L0025                  ;D now contains the combined time & VTA data
-        stD     LW_LOGID_ECU_VTA_MTS_TYPE_U16
+        ldaB    *(L0024+1)              ;D now contains the combined time & VTA data
+        stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
+        bra     3f
 #endif
 
 1:      brclr   *L0010 #0b00100000 2f   ;if the sensor is not currently suspect, make it so
@@ -5469,12 +5488,14 @@ LD60B_1:
 LD60B_2:
         brset   *L0002 #0b00000001 LD60B_4      ;'1' when we have seen the start of CR8
 
+; Derestricted cylinder 1 (Front) calculations:
 LD60B_3:
         ldX     #L95F9-3                ;L95F9: Ignition map 18x29 Derestricted ALPHA/N cyl 1
         jsr     LF57B
         staA    *L00DE                  ;store result of Alpha/N cyl 1 Ignition map processing
         bra     LD60B_8
 
+; Derestricted cylinder 2 (Rear) calculations:
 LD60B_4:
         ldX     #L9803-3                ;L9803: Ignition map 18x29 Derestricted ALPHA/N cyl 2
         jsr     LF57B
@@ -5486,20 +5507,23 @@ LD60B_4:
 LD60B_5:
         brset   *L0002 #0b00000001 LD60B_7      ;'1' when we have seen the start of CR8
 
+; Restricted cylinder 1 (Front) calculations:
 LD60B_6:
         ldX     #L91E5-3                ;L91E5: Ignition map 18x29 Restricted ALPHA/N cyl 1
         jsr     LF57B
         staA    *L00DE                  ;store result of Alpha/N cyl 1 Ignition map processing
         bra     LD60B_8
 
+; Restricted cylinder 2 (Rear) calculations:
 LD60B_7:
         ldX     #L93EF-3                ;L93EF: Ignition map 18x29 Restricted ALPHA/N cyl 2
         jsr     LF57B
         staA    *L00E1                  ;store result of Alpha/N cyl 2 Ignition map processing
         brset   *L0002 #0b00000010 LD60B_6      ;will be '1' when we see start of CR3
 
+; All calculations (front/rear/restricted/derestricted) end up here:
 LD60B_8:
-        ldaA    *L004D                  ;8.8 RPM50
+        ldaA    *L004D                  ;8.8 RPM50 (RPM50 means 8.8 RPM in units of 50 RPMs, so 100.0 means 5000 RPM)
 
         ldaB    *L0049_PORTG_debounced
         andB    #0b00101000
@@ -8398,7 +8422,11 @@ IC2F_ISR_35:
         bclr    *L0005 #0b00010000      ;there was, but now indicate that TOC1 'start charging' event is NOT activated
 
 ;CR6 Front Cyl Part 1: Test if coil #1 fired (front or rear):
+#if !defined SPARK_ISR
         ldaA    TFLG1
+#else
+        ldaA    FAKE_TFLG1
+#endif
         bitA    #0b00000001             ;tests IC3F: if set, we saw a rising edge (coil IGX1 fired: must have been the front one)
         bne     IC2F_ISR_36             ;br if IC3F==1
 
@@ -8423,8 +8451,10 @@ IC2F_ISR_35:
 
 ; If we get here, we saw a spark on the front cyl plug #1 prior to this active period CR6:
 IC2F_ISR_36:
+#if !defined SPARK_ISR
          ldD    TIC3                    ; log the timestamp when coil #1 fired
          stD    LW+LOGID_ECU_SPRK_X1_TYPE_PTS
+#endif
         ldaA    L0147                   ;had we seen an error previously?
         bne     IC2F_ISR_37             ;if so, then don't clear the error indicator just yet
 
@@ -8437,7 +8467,11 @@ IC2F_ISR_37:
 
 ;CR6 Front Cyl Part 2: Test coil IGX2:
 IC2F_ISR_38:
+#if !defined SPARK_ISR
         ldaA    TFLG1
+#else
+        ldaA    FAKE_TFLG1
+#endif
         bitA    #0b00001000             ;test IC4: if set, we saw a rising edge (coil IGX2 fired: must have been the front one)
         bne     IC2F_ISR_39             ;br if it is a '1'
 
@@ -8445,7 +8479,7 @@ IC2F_ISR_38:
         addA    #0x01
         sbcA    #0x00
         staA    L0148
-        
+
          cmpA   #0x01
          bne    1f
          ldaB   #12                     ; we didn't see front coil #2 fire
@@ -8461,8 +8495,10 @@ IC2F_ISR_38:
 
 ; If we get here, we saw a spark on the front cyl plug #2 prior to this active period CR6:
 IC2F_ISR_39:
+#if !defined SPARK_ISR
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
          stD    LW+LOGID_ECU_SPRK_X2_TYPE_PTS
+#endif
         ldaA    L0148                   ;had we seen an error previously?
         bne     IC2F_ISR_40             ;if so, then don't clear the error indicator just yet
 
@@ -8485,7 +8521,11 @@ IC2F_ISR_42:
         bclr    *L0006 #0b00000100      ;clear the last charge event
 
 ;CR11 Rear Cyl Part 1: Test coil IG21:
+#if !defined SPARK_ISR
         ldaA    TFLG1
+#else
+        ldaA    FAKE_TFLG1
+#endif
         bitA    #0b00000001             ;tests IC3F: if set, we saw a rising edge (coil IGX1 fired: must have been the rear one)
         bne     IC2F_ISR_43             ;br if it is a '1'
 
@@ -8509,8 +8549,10 @@ IC2F_ISR_42:
 
 ; If we get here, we saw a spark on the rear cyl plug #1 prior to this active period CR11:
 IC2F_ISR_43:
+#if !defined SPARK_ISR
          ldD    TIC3                    ; log the timestamp when coil #1 fired
          stD    LW+LOGID_ECU_SPRK_X1_TYPE_PTS
+#endif
         ldaA    L0149                   ;had we seen an error previously?
         bne     IC2F_ISR_44             ;if so, then don't clear the error indicator just yet
 
@@ -8522,7 +8564,11 @@ IC2F_ISR_44:
 
 ;CR11 Rear Cyl Part 2: Test coil IG22:
 IC2F_ISR_45:
+#if !defined SPARK_ISR
         ldaA    TFLG1
+#else
+        ldaA    FAKE_TFLG1
+#endif
         bitA    #0b00001000             ;test IC4: if set, we saw a rising edge (coil IGX2 fired: must have been the rear one)
         bne     IC2F_ISR_46             ;br if it is a '1'
 
@@ -8545,8 +8591,10 @@ IC2F_ISR_45:
 
 ; If we get here, we saw a spark on the rear cyl plug #2 prior to this active period CR11:
 IC2F_ISR_46:
+#if !defined SPARK_ISR
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
          stD    LW+LOGID_ECU_SPRK_X2_TYPE_PTS
+#endif
         ldaA    L014A                   ;had we seen an error previously?
         bne     IC2F_ISR_47             ;if so, then don't clear the error indicator just yet
 
@@ -8557,8 +8605,12 @@ IC2F_ISR_47:
         clr     L014A
 
 IC2F_ISR_48:
+#if !defined SPARK_ISR
         ldaA    #0x09
         staA    TFLG1                   ;clear the IC3F and IC4F interrupt request bits.
+#else
+        clr     FAKE_TFLG1
+#endif
         jmp     IC2F_ISR_64
 
 ;-----------------------------------------------------------------
@@ -10697,7 +10749,7 @@ LF48C:  ldaA    TCTL1
         ldaA    TMSK1
         andA    #0b11011111             ;disable OC3 interrupts
         staA    TMSK1
-        
+
 #if 1
         ldD     TCNT
         addD    #0x0005
@@ -10759,7 +10811,7 @@ LF4D1:  ldaA    TCTL1
         ldD     TCNT                    ; mark time T0
         addD    #0x0005                 ; 4E [ 4]  +2.0 uSec: 10 uSec from T0, an OC4 match event will occur...
         stD     TOC4                    ; 5E [ 9]  +4.5 uSec: ...that that enables the REAR fuel injector
-        
+
         ldD     TCNT                    ; 5E [14]  +7.0 uSec: these two instrs are NOPs since we never use D
         addD    TOC4                    ; 6E [20] +10.0 uSec: OC4 should match during this instruction, driving PA4=0
 #endif
@@ -10853,11 +10905,11 @@ LF54B:  ldaA    PORTA
 ; One param:
 ;  reg X: pointer to a table (front or rear cyl, Ign or ALPHA/N map)
 
-LF57B:  ldaA    *L0044                  ;holds the left-aligned VTA
+LF57B:  ldaA    *L0044                  ;Get the upper 8 bits of the left-aligned 10-bit VTA A/D reading
 
         brclr   *L000C #0b00001000 1f   ;branch if the VTA (throttle) sensor is GOOD (ie. not reporting as 'broken')
 
-; We get here if the throttle position sensor is broken:
+; The throttle position sensor is reporting as broken:
         xgDX
         cmpD    #L91E5-3                ;L91e5: Ignition map 18x29 Restricted ALPHA/N cyl 1
         xgDX
@@ -10880,136 +10932,187 @@ LF57B:  ldaA    *L0044                  ;holds the left-aligned VTA
 
         bra     1f                      ;X is not pointing at any of the ignition maps: therfore, X must point at a fuel map
 
-
 0:
         ldaA    #0xD0                   ;This would have to be the default throttle angle for when
                                         ;the throttle position sensor is broken
 
 1:
-        clrB                            ;VTA is now trimmed to 8 bits, in A (upper half of D)
+        clrB                            ;D now holds VTA in the form of an 8-bit left aligned value
 
-; TBD: this appears to be massaging the throttle angle so that it can be used to index the
+; We now massage the throttle angle data so that it can be used to index the ALPHA/N ignition tables.
 ; tables based on throttle angle.
-; Examining my logs show that VTA (as a 10-bit value) is around 140 counts at idle,
-; meaning throttle completely closed.  Dividing by 4 to get an 8-bit value would be 35, or 0x25 hex.
+; Remember that the throttle sensor does not span the entire ADC range.
+; The ADC reading when the throttle is completely closed will be above 0.
+; Similarly, the ADC reading when the throttle is wide open will be less than the max ADC count.
+; This allows the ECU to detect things like open or shorted throttle sensors because those situations
+; would result in extreme ADC readings.
+; The process of using diag mode to calibrate the throttle position sensor to read '0' on the dash
+; is what ensures that the throttle-closed ADC reading matches what these tables expect.
+; There is no point in calibrating at the high end of throttle openings because small
+; differences in throttle openings make almost no difference to the airflow when the throttle
+; is almost completely open.
+;
+; Sensor ranges:
+;
+; The lowest 10-bit right-aligned raw throttle ADC reading I have ever seen in a log is 129 ADC counts.
+; Most are in the very low 130 counts.
+; In 10-bit left-shifted ADC terms, 129 counts would be 0x2040
+;
+; The highest 10-bit right-aligned raw throttle ADC reading I have seen in a log is 801 ADC counts.
+; In 10-bit left-shifted ADC terms, 801 counts would be 0xC840.
+;
+; This next section biases the 8-bit left-aligned VTA downwards by 0x2000,
+; then clips the biased VTA to the range: [0000..B000].
+; This lines up perfectly with a fully-closed throttle being calibrated to
+; have a value right around 0x2000, as per above.
+; After subtracting 0x2000, the value 0x0000 means 'throttle closed'.
+; One would have to expect that 0xB000 must mean wide open.
+; After subtracting 0x2000, my 801 ADC counts at WOT would have a value of 0xA840.
+; That is well within the upper limit of 0xB000 table limit.
+; It does give some indication though of how sloppy the table is at the upper throttle opening ranges.
 
-; This next section biases VTA downwards by 0x2000, then clips the biased VTA to the range: [0000..B000]
-; The bias by 0x2000 is effectively defining that 0000 means throttle closed.
-; One would have to expect that 0xB000 must mean wide open.  Actually, it would make a bit
-; more sense if wide open generated a bit more that 0xB000 so that even if the TPS was a bit off,
-; the sensor would be able to generate a wide-open signal.
+        subA    #0x20                   ;Bias VTA downwards by 0x2000
+        bhs     2f                      ; all good if D >= 0
 
-        subA    #0x20                   ;A = A-32
-        bhs     2f                      ; br if A >= 0
-
-        ldD     #0x0000                 ;if A went negative, clip it to 0
+        ldD     #0x0000                 ; else D went negative so clip it to 0
 
 2:
-        subA    #0xB0
-        blo     3f
+        subA    #0xB0                   ;After subtracting 0x2000 (above), make sure that A is <= 0xB000
+        blo     3f                      ; all good
 
         ldD     #0x0000
 3:
-        addA    #0xB0                   ; if (A>0xB0) A = 0xB0
+        addA    #0xB0                   ; else clip D to a max value of 0xB000
 
 ; D is now known to be in the range [0x0000..0xB000].
-; For now, I am assuming that 0x0000 means 0% open, and 0xB000 means 100% open.
-; I will also make a leap of faith that the response is linear, but that seems
-; reasonable from looking at the dplot logs I have captured.
+
+; Assumptions:
+;   0x0000 means 0% open (this is a safe assumption)
+;   0xB000 means 100% open (this is a reasonably safe assumption)
+;
+; The ADC response of the TPS appears to be linear, but the table indexing is most certainly not linear.
+; At small throttle openings, changes in throttle position matter significantly more than at large throttle openings.
+; This means that the tables will be biased towards having more entries devoted to small throttle openings.
+;
+; We now need to convert our biased, clipped VTA into a value suitable of indexing the ALPHA/N tables.
+; There are 18 table column entries. We will be interpolating between them.
+; This means that we need to convert our biased, clipped VTA into a fixed point value ranging from 0.00 to 17.00 (for our 18 columns)
+; The following code breaks the throttle response into 5 basic ranges:
+;    0xB000  45056  100.00% open
+;    0x7000  31744   70.45% open
+;    0x3000  12288   27.27% open
+;    0x1000   4096    9.09% open
+;    0x0400   1024    2.27% open
+;    0x0000      0    0.00% open
+; Note: "% open" is defined in a rotational aspect (assuming a linear TPS response),
+; meaning 0% means throttle butterflies are fully closed, and 100% means wide-open throttle butterflies.
+
         cmpA    #0x70
         blo     4f                      ; branch if D < 0x7000
 
-; We check for some ranges here.
-;  B000  45056  100.00%
-;  7000  31744   70.45%
-;  3000  12288   27.27%
-;  1000   4096    9.09%
-;  0400   1024    2.27%
-;  0000      0    0.00%
-
-; if ((D >= 0x7000) && (D < 0xB001)) D = 0x0B80 + (D/32)
+; Large throttle openings don't matter much.
+; The ADC range from 0x7000 to 0xB000 gets compressed into the table range 15.0 to 17.0
+; if ((D >= 0x7000) && (D <= 0xB000)) D = 0x0B80 + (D/32)
         lsrD
         lsrD
         lsrD
         lsrD
         lsrD                            ; 0x7000 turns into 0x380, 0xB000 turns into 0x580
-        addD    #0x0B80                 ; 0x7000 turns into 0x0F00, 0xB000 turns into 0x1100
+        addD    #0x0B80                 ; 0x7000 turns into 0x0F00 (15.0), 0xB000 turns into 0x1100 (17.0)
         bra     7f
 
-; if ((D >= 0x3000) && (D < 0x7000) D = 0x0800 + (D/16)
 4:
         cmpA    #0x30
         blo     5f
 
+; The ADC range from 0x3000 to 0x6FFF gets compressed into the table range 11.0 to 14.99
+; if ((D >= 0x3000) && (D < 0x7000)) D = 0x0800 + (D/16)
         lsrD
         lsrD
         lsrD
         lsrD                            ; 0x3000 turns into 0x300, 0x6FFF turns into 0x6FF
-        addD    #0x0800                 ; 0x3000 turns into 0xB00, 0x6FFF turns into 0xEFF
+        addD    #0x0800                 ; 0x3000 turns into 0xB00 (11.0), 0x6FFF turns into 0xEFF (14.99)
         bra     7f
 
-; if ((D >= 0x1000) && (D < 0x3000) D = 0x0500 + (D/8)
 5:
         cmpA    #0x10
         blo     6f
 
+; The ADC range from 0x1000 to 0x2FFF gets compressed into the table range 7.0 to 10.99
+; if ((D >= 0x1000) && (D < 0x3000)) D = 0x0500 + (D/8)
         lsrD
         lsrD
         lsrD                            ; 0x1000 turns into 0x200, 0x2FFF turns into 0x5FF
         addD    #0x0500                 ; 0x1000 turns into 0x700, 0x2FFF turns into 0xAFF
         bra     7f
 
-; if ((D >= 0x0400) && (D < 0x1000) D = 0x0300 + (D/4)
 6:
         cmpA    #0x04
         blo     7f
 
+; The ADC range from 0x0400 to 0x1000 gets compressed into the table range 4.0 to 6.99
+; if ((D >= 0x0400) && (D < 0x1000)) D = 0x0300 + (D/4)
         lsrD
         lsrD                            ; 0x400 turns into 0x100, 0x1000 turns into 0x3FF
         addD    #0x0300                 ; 0x400 turns into 0x400, 0x1000 turns into 0x6FF
 
+; The ADC range from 0x0000 to 0x0FFF gets compressed into the table range 0.0 to 3.99
 ; if (D <0x0400) then leave it alone
 
                                         ; 0x0000 is still 0x0000, 0x03FF is still 0x03FF
 
-; So: My current theory is that the throttle position has been turned into an 8.8 table index,
-; much like the RPM is now an 8.8 interpolation table index.  Those tables are 18 entries wide.
+; Conversion of raw VTA Throttle angle to an interpolation table column index.
+; "% open" is defined as a linear relationship between the min and max raw VTA ADC readings
+; corresponding to when the butterflies are fully closed and fully opened.
+;
+; Table    Massaged 8P8       Throttle Opening
+; Column                      (rotational sense)
+;   0:     00.00 .. 00.FF     0.00% to  0.57% open \
+;   1:     01.00 .. 01.FF     0.57% to  1.14% open  \  linear across the range of 0.00 to 2.27%
+;   2:     02.00 .. 02.FF     1.14% to  1.70% open  /  Column step size is 0.57%
+;   3:     03.00 .. 03.FF     1.70% to  2.27% open /
 
-; Conversion of raw VTA Throttle angle to an interpolation table index.
-;  0: 00.00 .. 00.FF     0.00% to  0.57% open \
-;  1: 01.00 .. 01.FF     0.57% to  1.14% open  \  linear across the range of 0.00 to 2.27%
-;  2: 02.00 .. 02.FF     1.14% to  1.70% open  /  Step size is 0.57%
-;  3: 03.00 .. 03.FF     1.70% to  2.27% open /
+;   4:     04.00 .. 04.FF     2.27% to  4.54% open \
+;   5:     05.00 .. 05.FF     4.54% to  6.81% open  |  linear across the range of 2.27 to 9.09%
+;   6:     06.00 .. 06.FF     6.81% to  9.09% open /   Column step size is 2.27%
 
-;  4: 04.00 .. 04.FF     2.27% to  4.54% open \
-;  5: 05.00 .. 05.FF     4.54% to  6.81% open  |  linear across the range of 2.27 to 9.09%
-;  6: 06.00 .. 06.FF     6.81% to  9.09% open /   step size is 2.27%
+;   7:     07.00 .. 07.FF     9.09% to 12.73% open \
+;   8:     08.00 .. 08.FF    12.73% to 16.37% open  \
+;   9:     09.00 .. 09.FF    16.37% to 20.00% open   | linear across the range of 9.09 to 27.27%
+;  10:     0a.00 .. 0a.FF    20.00% to 23.64% open  /  Column step size is 3.64%
+;  11:     0b.00 .. 0b.FF    23.64% to 27.27% open /
 
-;  7: 07.00 .. 07.FF     9.09% to 12.73% open \
-;  8: 08.00 .. 08.FF    12.73% to 16.37% open  \
-;  9: 09.00 .. 09.FF    16.37% to 20.00% open   | linear across the range of 9.09 to 27.27%
-; 10: 0a.00 .. 0a.FF    20.00% to 23.64% open  /  step size is 3.64%
-; 11: 0b.00 .. 0b.FF    23.64% to 27.27% open /
+;  12:     0c.00 .. 0c.FF    27.27% to 41.66% open \
+;  13:     0d.00 .. 0d.FF    41.66% to 56.06% open  |  linear across the range of 27.27% to 70.45%
+;  14:     0e.00 .. 0e.FF    56.06% to 70.45% open /   Column step size is 14.39%
 
-; 12: 0c.00 .. 0c.FF    27.27% to 41.66% open \
-; 13: 0d.00 .. 0d.FF    41.66% to 56.06% open  |  linear across the range of 27.27% to 70.45%
-; 14: 0e.00 .. 0e.FF    56.06% to 70.45% open /   step size is 14.39%
-
-; 15: 0f.00 .. 0f.FF    70.45% to 80.30% open \
-; 16: 10.00 .. 10.FF    80.30% to 90.15% open  |  linear across the range of 70.45% to 100%
-; 17: 11.00 .. 11.FF    90.15% to 100.0% open /   step size is 9.85%
+;  15:     0f.00 .. 0f.FF    70.45% to 80.30% open \
+;  16:     10.00 .. 10.FF    80.30% to 90.15% open  |  linear across the range of 70.45% to 100%
+;  17:     11.00 .. 11.FF    90.15% to 100.0% open /   Column step size is 9.85%
 ;
 
-; Finally!  VTA, massaged into an 8.8 value suitable for indexing an 18-entry interpolation table.
+; Finally!  VTA, massaged into an 8.8 value suitable for indexing into the columns for an 18-entry interpolation table.
+
+; The integer part of the massaged VTA value is used to select a table column for the lower interpolation value.
+; The upper interpolation value always comes from the next table column.
+; The fractional part of the massaged VTA value is used to interpolate between the two interpolation column values.
+; For example, assume that the massaged VTA was 4.25, that the value in table column 4 was 10,
+; and the table value in column 5 was 18.
+; The integer part of 4.25 means we will interpolate between the entries in column 4 and 5.
+; In this case, we need to interpolate 0.25 of the distance between the column 4 value (10) and the column 5 value (18).
+; The interpolation calculation result would be ((upper_value - lower_value) * distance) + lower_value:
+;       ((18-10) * .25) + 10
+;       12
+
 7:
-        stD     L0153
+        stD     L0153                   ; store our column interpolation parameter value where the interpolation routine expects it
 
         stD     L016E                   ;never used: must be for debugging
 
         ldD     *L004F                  ; 8.8 RPM in units of 400 RPM
-        stD     L0155
+        stD     L0155                   ; store the RPM parameter value where the interpolation routine expects it
 
-        ldaB    #18                     ;length of the ALPHA/N fuel table row
+        ldaB    #18                     ;tell the interpolation routine the length of the ALPHA/N fuel table row
         ldaA    #0x0E
         jsr     LF436
 
@@ -11323,16 +11426,39 @@ LF734:  ldaA    *L00C7
 ;-----------------------------------------------------------------
 ; Put in some handlers to notify the UltraMod log if bad things happen to the ECU
 
-_oc5f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC5F
+#if !defined SPARK_ISR
+_oc5ic4f:
+        ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC5F
         bra     _log
+
+_ic3:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_IC3
+        bra     _log
+#else
+; IC4: Coil #2 event
+_oc5ic4f:
+        ldD     TO5I4
+        stD     LW+LOGID_ECU_SPRK_X2_TYPE_PTS   ; log when coil #2 spark occurred
+        ldaA    #0x08                           ; clear interrupt request for bit O5I4
+        staA    TFLG1
+        oraA    FAKE_TFLG1                      ; crankshaft processing needs to see this bit
+        staA    FAKE_TFLG1
+        rti
+
+; IC3: Coil #1 event
+_ic3:
+        ldD     TIC3
+        stD     LW+LOGID_ECU_SPRK_X1_TYPE_PTS   ; log when coil #1 spark occurred
+        ldaA    #0x01                           ; clear interrupt request for bit IC3
+        staA    TFLG1
+        oraA    FAKE_TFLG1                      ; crankshaft processing needs to see this bit
+        staA    FAKE_TFLG1
+        rti
+#endif
 
 _oc4f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC4F
         bra     _log
 
 _oc3f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC3F
-        bra     _log
-
-_ic3:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_IC3
         bra     _log
 
 _rti:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_RTI
@@ -11373,10 +11499,10 @@ _log:   ldaB    #LOGID_GEN_ECU_LOG_VER_VAL_V0
 ; both of the input capture ISRs have higher priority than this overflow ISR.
 T1_OFLO_ISR:
 #if 1
-        ldaA    #0x80                                   ; ACK this overflow interrupt 
+        ldaA    #0x80                                   ; ACK this overflow interrupt
         staA    TFLG2
         staA    half_overflow                           ; this value just needs to be non-zero
-        
+
         clrA
         clrB
         stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; The overflow event occurred at timer count 0x0000
@@ -11385,10 +11511,10 @@ T1_OFLO_ISR:
 ; If we see a pending capture ISR in this routine, it MUST have happened after the overflow.
 ; That means we don't even have to log this rollover event.
 
-        ldaA    #0x80                                   ; ACK the overflow interrupt 
+        ldaA    #0x80                                   ; ACK the overflow interrupt
         staA    TFLG2
         staA    half_overflow                           ; this value just needs to be non-zero
-        
+
         ldaA    TFLG1                                   ; check if either IC1 (cam) or IC2 (crank) has become pending
         andA    #0x06                                   ; between the time that the counter rolled over and the time we got here
         bne     99f                                     ; yes: there is no need to even emit this marker
@@ -11401,7 +11527,7 @@ T1_OFLO_ISR:
         ldD     TCNT
         stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; log the overflow event
 
-        ldaA    #0x80                                   ; ACK the overflow interrupt 
+        ldaA    #0x80                                   ; ACK the overflow interrupt
         staA    TFLG2
         staA    half_overflow                           ; just needs to be non-zero
         rti
@@ -11438,7 +11564,7 @@ LFFC0:      .word   reset               ;reserved FFC0/FFC1
             .word   reset               ;Pulse Accumulator Input Edge
             .word   reset               ;Pulse Accumulator Overflow
             .word   T1_OFLO_ISR         ;Timer Overflow 1
-OC5F:       .word   _oc5f               ;Timer Output Compare 5 / Input Capture 4
+OC5IC4F:    .word   _oc5ic4f            ;Timer Output Compare 5 / Input Capture 4
 OC4F:       .word   _oc4f               ;Timer Output Compare 4
 OC3F:       .word   _oc3f               ;Timer Output Compare 3
 OC2F:       .word   OC2F_ISR            ;Timer Output Compare 2

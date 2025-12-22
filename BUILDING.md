@@ -96,10 +96,10 @@ Click that.
 Give it a name, like 'wsl-Ubuntu'.
 * Change the 'command line' option to be '%SystemRoot%\System32\wsl.exe -d Ubuntu'.
 * In the Starting Directory option, uncheck the 'Use Parent Process Directory' option.
-* Enter '~' as the starting directory.
-  On linux, '~' means your home directory.
-  You can use '~' as a shortcut when typing any pathname involving your home directory.
-  For example, 'cd ~' will change back to your home directory saving you from typing "/home/<username>".
+* Enter '\~' as the starting directory.
+  On linux, '\~' means your home directory.
+  You can use '\~' as a shortcut when typing any pathname involving your home directory.
+  For example, 'cd \~' will change back to your home directory saving you from typing "/home/<username>".
 * Click 'save'
 
 There are other options you can play with (like fonts and colors), but those mentioned above are the required options to be changed.
@@ -254,7 +254,7 @@ if [ -d "$HOME/.local/bin" ] ; then
 fi
 ```
 
-Log out and log in again (or type 'source ~/.profile'), and verify that '~/.local.bin' is on your PATH.
+Log out and log in again (or type 'source \~/.profile'), and verify that '\~/.local.bin' is on your PATH.
 
 ### Install Linux Host Tools
 
@@ -645,7 +645,7 @@ Finally, we need to create an environment variable used by various parts of the 
 echo "export PICO_SDK_PATH=/home/$(id -u -n)/projects/pico-sdk/2.1.1" >> ~/.bashrc
 ```
 
-Either close the terminal and reopen it, or execute ". ~/.bashrc" to make sure that the variable is defined in your current shell.
+Either close the terminal and reopen it, or execute ". \~/.bashrc" to make sure that the variable is defined in your current shell.
 
 ## Picotool
 
