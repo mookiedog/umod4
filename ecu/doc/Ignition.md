@@ -89,7 +89,7 @@ In between, things are not so simple.
 The issue is that the TPS measures an angle, and it measures it in a linear fashion.
 The tough part is that the engine is much more susceptable to throttle changes at small throttle openings.
 Consider that if the throttle is at idle (flowing minimal air), and it is cracked ever so slightly open, a tiny change in the rotation angle could easily double the amount of air flowing in.
-Conversely, if the throttle is already 95% open, that same amount of rotational change that cause the amount of air to double at idle will have almost no effect on anything.
+Conversely, if the throttle is already 95% open, that same amount of rotational change that caused the amount of air to double at idle will have almost no effect on anything.
 
 What this all means is that the tables will be biased so that they contain lots of data at small throttle angles, and much less information about large throttle angles where the changes don't matter so much.
 
@@ -211,7 +211,7 @@ It does this by calculating the desired advance time in front of the reference p
 There is an inherent assumption here though: the ECU can't possibly know the exact time that the crank will pass through the reference point.
 Instead, the firmware makes an assumption that the time it will take the crank to turn the 90 degrees from CR4 though the reference point will be the same amount of time as it took the crank to turn the previous 90 degrees.
 In fact, sharp-eyed readers will note that the firmware doesn't actually measure the time for the last 90 degrees.
-Instead, it measures the time for the last 60 degrees then it multilpies that by 1.5 to get an estimated time for 90 degrees.
+Instead, it measures the time for the last 60 degrees then it multiplies that by 1.5 to get an estimated time for 90 degrees.
 
 In any case, the estimation that the next 90 degrees will be proportionally accurate based on the previous 60 degrees of rotation, is just that, an estimation.
 
