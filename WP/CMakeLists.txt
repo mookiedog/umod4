@@ -132,6 +132,8 @@ add_executable(${PROJECT_NAME}
     src/NeoPixelConnect.cpp
     src/Psm.cpp
     src/SdCard.cpp
+    src/SdCardSDIO.cpp
+    src/sdio/sdio_rp2350.cpp
     src/Shell.cpp
     src/Spi.cpp
     src/TimeUtils.cpp
@@ -147,11 +149,13 @@ set_source_files_properties(
     src/Logger.cpp
     src/main.cpp
     src/SdCard.cpp
+    src/SdCardSDIO.cpp
     PROPERTIES COMPILE_FLAGS "-Wno-volatile"
 )
 
 # Include the PIO program header files:
 pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_rx32.pio)
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/sdio/sdio_rp2350.pio)
 pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/ws2812/ws2812.pio)
 
 # Override the standard Segger definitions for these symbols:

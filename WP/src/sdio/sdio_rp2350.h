@@ -30,15 +30,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#if defined __has_include
-# if __has_include (<sdio_rp2350_config.h>)
-#  include <sdio_rp2350_config.h>
-#else
-#  include <sdio_rp2350_config_example.h>
-# endif
-#else
-# include <sdio_rp2350_config.h>
-#endif
+// Always use our custom config
+#include "sdio_rp2350_config.h"
 
 #ifdef __cplusplus
 extern "C" {
