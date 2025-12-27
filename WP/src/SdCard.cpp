@@ -164,26 +164,29 @@ SdErr_t SdCard::testCard()
   }
 
   uint32_t blkCount = getCardCapacity_blocks();
-  
+
   uint32_t t0 = time_us_32();
 
-  // Read the first block on the device
-  err = read(0, 0, buffer, sizeof(buffer));
-  if (err != SD_ERR_NOERR) {
-    BREAKPT();
-    return err;
-  }
+  const uint32_t blockCount = 32;
+  for (int i=0; i<blockCount; i++) {
+    // Read forwards starting from the first block on the device
+    err = read(i, 0, buffer, sizeof(buffer));
+    if (err != SD_ERR_NOERR) {
+      BREAKPT();
+      return err;
+    }
 
-  // Read the final block on the device.
-  // There should be no problems
-  err = read(blkCount-1, 0, buffer, sizeof(buffer));
-  if (err != SD_ERR_NOERR) {
-    BREAKPT();
-    return err;
+    // Read backwards starting from the final block on the device.
+    // There should be no problems
+    err = read(blkCount-1-i, 0, buffer, sizeof(buffer));
+    if (err != SD_ERR_NOERR) {
+      BREAKPT();
+      return err;
+    }
   }
 
   uint32_t elapsed_usec = time_us_32() - t0;
-  printf("%s: Elapsed time to read blk 0, then blk %d: %d uSec\n", __FUNCTION__, blkCount, elapsed_usec);
+  printf("%s: Elapsed time to read %d blocks: %d uSec\n", __FUNCTION__, blockCount*2, elapsed_usec);
   #if 0
   // Well, this turned into a real shit show.
   // It would appear that a variety of cards deal with errors very poorly.
