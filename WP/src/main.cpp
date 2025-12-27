@@ -21,13 +21,19 @@
 #include "Logger.h"
 #include "NeoPixelConnect.h"
 #include "FlashEp.h"
+#include "SdCardBase.h"
 #include "SdCard.h"
+#include "SdCardSDIO.h"
 #include "Shell.h"
 #include "Spi.h"
 #include "Uart.h"
 #include "umod4_WP.h"
 #include "uart_rx32.pio.h"
 #include "WP_log.h"
+
+// SD Card Interface Selection
+// Uncomment to use SDIO 4-bit mode (~20-25 MB/s) instead of SPI mode (~3 MB/s)
+#define USE_SDIO_MODE 1
 
 #ifdef CYW43_WL_GPIO_LED_PIN
 #include "pico/cyw43_arch.h"
@@ -67,9 +73,9 @@ bool lfs_mounted = false;  // Track whether filesystem is successfully mounted
 int lfs_read(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, void *buffer, lfs_size_t size_bytes)
 {
     SdErr_t err;
-    
-    // The context is a pointer to the SdCard instance that will process the operation
-    SdCard* sd = static_cast<SdCard*>(c->context);
+
+    // The context is a pointer to the SdCardBase instance that will process the operation
+    SdCardBase* sd = static_cast<SdCardBase*>(c->context);
     
     err = sd->read(block_num, off, buffer, size_bytes);
     if (err != SD_ERR_NOERR) {
@@ -84,9 +90,9 @@ int lfs_read(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, v
 int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const void *buffer, lfs_size_t size)
 {
     SdErr_t err;
-    
-    // The context is a pointer to the SdCard instance that will process the operation
-    SdCard* sd = static_cast<SdCard*>(c->context);
+
+    // The context is a pointer to the SdCardBase instance that will process the operation
+    SdCardBase* sd = static_cast<SdCardBase*>(c->context);
     
     
     if ((size & 0xFF) != 0) {
@@ -183,14 +189,17 @@ int32_t lfs_bytes_until_fsync(const struct lfs_config *lfs_cfg, lfs_file_t* fp)
 // The SdCard is initialized and ready for access.
 // We will mount the card's filesystem.
 // If no filesystem exists, we will format the card and create one.
-bool comingOnline(SdCard* sdCard)
+bool comingOnline(SdCardBase* sdCard)
 {
     uint32_t t0, t1;
     static uint32_t mountTime_us;
     static uint32_t formatTime_us;
     int32_t mount_err;
-    
+
     printf("%s: Bringing SD card online\n", __FUNCTION__);
+    printf("  Interface: %s at %.1f MHz\n",
+           sdCard->getInterfaceMode(),
+           sdCard->getClockFrequency_Hz() / 1000000.0);
 
     // Default all fields to zero
     memset((void*)&lfs, 0, sizeof(lfs));
@@ -324,7 +333,7 @@ bool comingOnline(SdCard* sdCard)
 
 
 // ----------------------------------------------------------------------------------
-void goingOffline(SdCard* sdCard)
+void goingOffline(SdCardBase* sdCard)
 {
     if (logger) {
         logger->deinit();
@@ -335,23 +344,33 @@ void goingOffline(SdCard* sdCard)
 // ----------------------------------------------------------------------------------
 void startFileSystem(void)
 {
-    static Spi* spiSd;
-    static SdCard* sdCard;
+    static SdCardBase* sdCard;
     static hotPlugMgrCfg_t cfg;
-    
+
+#ifdef USE_SDIO_MODE
+    printf("%s: Using SDIO 4-bit mode\n", __FUNCTION__);
+
+    // Create the SdCardSDIO object for 4-bit SDIO access
+    sdCard = new SdCardSDIO(SD_CARD_PIN);
+#else
+    printf("%s: Using SPI mode\n", __FUNCTION__);
+
+    static Spi* spiSd;
+
     // Init the SPI port that is associated with the SD card socket
     spiSd  = new Spi(SD_SPI_PORT, SD_SCK_PIN, SD_MOSI_PIN, SD_MISO_PIN);
-    
+
     // Create the SdCard object to be associated with the SD card socket
     sdCard = new SdCard(spiSd, SD_CARD_PIN, SD_CS_PIN);
-    
+#endif
+
     // Set up a configuration object required by the hotPlugManager so that it knows what SdCard instance to
     // use, and what callback routines to call when that SdCard instance is coming up or going down.
     // The comingUp() callback would typically mount a filesystem that it found on the SdCard.
     cfg.sdCard = sdCard;
     cfg.comingUp = comingOnline;
     cfg.goingDown = goingOffline;
-    
+
     // Start a hot plug manager task to control the new SdCard instance
     printf("%s: Starting hotPlugManager task\n", __FUNCTION__);
     BaseType_t err = xTaskCreate(SdCard::hotPlugManager, "HotPlugMgr", HOTPLUG_MGR_STACK_SIZE_WORDS, &cfg, 1, NULL);

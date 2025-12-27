@@ -253,7 +253,7 @@ SdErr_t SdCard::testCard()
 void SdCard::hotPlugManager(void* arg)
 {
   hotPlugMgrCfg_t* hotPlug_cfg;
-  SdCard* sdCard;
+  SdCardBase* sdCard;
 
   int32_t verifyPresenceCount;
   SdErr_t sdErr;
