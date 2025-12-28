@@ -31,7 +31,7 @@ class SdCardSDIO : public SdCardBase {
 
     /// @brief Get the SD card interface clock frequency in Hz
     /// @return Clock frequency in Hz
-    uint32_t getClockFrequency_Hz() const override { return 20000000; }  // 20 MHz SDIO_MMC mode
+    uint32_t getClockFrequency_Hz() const override { return 25000000; }  // 25 MHz SDIO_STANDARD mode
 
   private:
     int32_t cardPresentPad;
@@ -44,6 +44,7 @@ class SdCardSDIO : public SdCardBase {
     uint32_t rca;  // Relative Card Address assigned during init
 
     SdErr_t testCard() override;
+    SdErr_t speedTest();
     SdErr_t resetCard();
     SdErr_t checkVoltage();
     SdErr_t initializeCard();

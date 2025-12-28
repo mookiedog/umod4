@@ -689,6 +689,67 @@ void Shell::cmd_validate(char* pathToUf2File)
     flashEp->flashUF2(pathToUf2File, skipProgramming);
 }
 
+// Performance stats structure (defined in main.cpp)
+typedef struct {
+    uint32_t read_count;
+    uint64_t read_bytes;      // Use 64-bit to prevent overflow
+    uint64_t read_time_us;    // Use 64-bit to prevent overflow
+    uint32_t read_min_us;
+    uint32_t read_max_us;
+    uint32_t write_count;
+    uint64_t write_bytes;     // Use 64-bit to prevent overflow
+    uint64_t write_time_us;   // Use 64-bit to prevent overflow
+    uint32_t write_min_us;
+    uint32_t write_max_us;
+} sd_perf_stats_t;
+
+extern sd_perf_stats_t sd_perf_stats;
+
+// ----------------------------------------------------------------------------------
+void Shell::cmd_sdperf(char* args)
+{
+
+    // Check if reset requested
+    if (args && strcmp(args, "reset") == 0) {
+        memset(&sd_perf_stats, 0, sizeof(sd_perf_stats));
+        printf("SD performance statistics reset\n");
+        return;
+    }
+
+    printf("\n=== SD Card Performance Statistics ===\n\n");
+
+    // Read statistics
+    printf("READ Operations:\n");
+    printf("  Count:     %lu\n", sd_perf_stats.read_count);
+    printf("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.read_bytes, sd_perf_stats.read_bytes / 1024.0);
+    if (sd_perf_stats.read_count > 0) {
+        uint64_t avg_us = sd_perf_stats.read_time_us / sd_perf_stats.read_count;
+        double avg_bytes = (double)sd_perf_stats.read_bytes / sd_perf_stats.read_count;
+        double throughput_kbps = (sd_perf_stats.read_bytes / 1024.0) / (sd_perf_stats.read_time_us / 1000000.0);
+        printf("  Min time:  %lu us\n", sd_perf_stats.read_min_us);
+        printf("  Max time:  %lu us\n", sd_perf_stats.read_max_us);
+        printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
+        printf("  Throughput: %.2f KB/s\n", throughput_kbps);
+    }
+
+    printf("\nWRITE Operations:\n");
+    printf("  Count:     %lu\n", sd_perf_stats.write_count);
+    printf("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.write_bytes, sd_perf_stats.write_bytes / 1024.0);
+    if (sd_perf_stats.write_count > 0) {
+        uint64_t avg_us = sd_perf_stats.write_time_us / sd_perf_stats.write_count;
+        double avg_bytes = (double)sd_perf_stats.write_bytes / sd_perf_stats.write_count;
+        double throughput_kbps = (sd_perf_stats.write_bytes / 1024.0) / (sd_perf_stats.write_time_us / 1000000.0);
+        printf("  Min time:  %lu us\n", sd_perf_stats.write_min_us);
+        printf("  Max time:  %lu us\n", sd_perf_stats.write_max_us);
+        printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
+        printf("  Throughput: %.2f KB/s\n", throughput_kbps);
+    }
+
+    printf("\nUsage: sdperf [reset]\n");
+    printf("  sdperf       - Display statistics\n");
+    printf("  sdperf reset - Reset statistics to zero\n\n");
+}
+
 // ----------------------------------------------------------------------------------
 void Shell::shell_task()
 {
@@ -729,6 +790,9 @@ void Shell::shell_task()
                     }
                     else if (strcmp(cmd, "validate") == 0) {
                         cmd_validate(args);
+                    }
+                    else if (strcmp(cmd, "sdperf") == 0) {
+                        cmd_sdperf(args);
                     }
                     #if 0
                     else if (strcmp(cmd, "cp") == 0) {

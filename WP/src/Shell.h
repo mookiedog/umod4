@@ -34,6 +34,7 @@ class Shell {
     void cmd_pwd(char* args);
     void cmd_flashEp(char* pathToUf2File);
     void cmd_validate(char* pathToUf2File);
+    void cmd_sdperf(char* args);
 
     const char* cwd;
 

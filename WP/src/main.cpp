@@ -69,6 +69,23 @@ lfs_t lfs;
 mutex_t lfs_mutex;
 bool lfs_mounted = false;  // Track whether filesystem is successfully mounted
 
+// Performance tracking for SD card operations
+typedef struct {
+    uint32_t read_count;
+    uint64_t read_bytes;      // Use 64-bit to prevent overflow
+    uint64_t read_time_us;    // Use 64-bit to prevent overflow
+    uint32_t read_min_us;
+    uint32_t read_max_us;
+
+    uint32_t write_count;
+    uint64_t write_bytes;     // Use 64-bit to prevent overflow
+    uint64_t write_time_us;   // Use 64-bit to prevent overflow
+    uint32_t write_min_us;
+    uint32_t write_max_us;
+} sd_perf_stats_t;
+
+sd_perf_stats_t sd_perf_stats = {0};
+
 // --------------------------------------------------------------------------------------------
 int lfs_read(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, void *buffer, lfs_size_t size_bytes)
 {
@@ -76,13 +93,27 @@ int lfs_read(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, v
 
     // The context is a pointer to the SdCardBase instance that will process the operation
     SdCardBase* sd = static_cast<SdCardBase*>(c->context);
-    
+
+    uint32_t t0 = time_us_32();
     err = sd->read(block_num, off, buffer, size_bytes);
+    uint32_t elapsed = time_us_32() - t0;
+
     if (err != SD_ERR_NOERR) {
         // Any errors at the SdCard level are called IO errors
         return LFS_ERR_IO;
     }
-    
+
+    // Update performance statistics
+    sd_perf_stats.read_count++;
+    sd_perf_stats.read_bytes += size_bytes;
+    sd_perf_stats.read_time_us += elapsed;
+    if (sd_perf_stats.read_min_us == 0 || elapsed < sd_perf_stats.read_min_us) {
+        sd_perf_stats.read_min_us = elapsed;
+    }
+    if (elapsed > sd_perf_stats.read_max_us) {
+        sd_perf_stats.read_max_us = elapsed;
+    }
+
     return LFS_ERR_OK;
 }
 
@@ -93,19 +124,32 @@ int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const
 
     // The context is a pointer to the SdCardBase instance that will process the operation
     SdCardBase* sd = static_cast<SdCardBase*>(c->context);
-    
-    
+
+
     if ((size & 0xFF) != 0) {
         return LFS_ERR_INVAL;
     }
-    
+
+    uint32_t t0 = time_us_32();
     err = sd->prog(block, off, buffer, size);
-    
+    uint32_t elapsed = time_us_32() - t0;
+
     if (err != SD_ERR_NOERR) {
         // Any errors at the SdCard level are called IO errors
         return LFS_ERR_IO;
     }
-    
+
+    // Update performance statistics
+    sd_perf_stats.write_count++;
+    sd_perf_stats.write_bytes += size;
+    sd_perf_stats.write_time_us += elapsed;
+    if (sd_perf_stats.write_min_us == 0 || elapsed < sd_perf_stats.write_min_us) {
+        sd_perf_stats.write_min_us = elapsed;
+    }
+    if (elapsed > sd_perf_stats.write_max_us) {
+        sd_perf_stats.write_max_us = elapsed;
+    }
+
     return LFS_ERR_OK;
 }
 

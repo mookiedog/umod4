@@ -6,12 +6,12 @@
 #include "umod4_WP.h"  // Get pin definitions and PIO assignments
 
 // Debug/error logging macros
-// All messages disabled to prevent printf from interrupt context
-// #define SDIO_DBGMSG(txt, arg1, arg2) printf(txt " %lu %lu\n", (uint32_t)(arg1), (uint32_t)(arg2))
-// #define SDIO_ERRMSG(txt, arg1, arg2) printf(txt " %lu %lu\n", (uint32_t)(arg1), (uint32_t)(arg2))
-// #define SDIO_CRITMSG(txt, arg1, arg2) printf(txt " %lu %lu\n", (uint32_t)(arg1), (uint32_t)(arg2))
-#define SDIO_ERRMSG(txt, arg1, arg2)   // Disabled
-#define SDIO_CRITMSG(txt, arg1, arg2)  // Disabled
+// IMPORTANT: These call printf from DMA interrupt context!
+// Only enable for debugging - can cause hangs if used during normal operation
+// DISABLED: Causes false timeouts due to printf blocking in interrupt context
+#define SDIO_DBGMSG(txt, arg1, arg2)
+#define SDIO_ERRMSG(txt, arg1, arg2)
+#define SDIO_CRITMSG(txt, arg1, arg2)
 
 // PIO block assignment (WP uses pio2 for SDIO)
 #define SDIO_PIO pio2
@@ -28,10 +28,14 @@
 #define SDIO_DMAIRQ_IDX 1
 #define SDIO_DMAIRQ DMA_IRQ_1
 
-// Default speed: Use MMC mode (20 MHz)
-// SDIO_STANDARD (25 MHz) causes CRC errors after ~10 transfers
-#define SDIO_DEFAULT_SPEED SDIO_MMC
+// Default speed: Use STANDARD mode (25 MHz)
+// Previously SDIO_MMC (20 MHz) was used due to CRC errors, but retesting at 25 MHz
+#define SDIO_DEFAULT_SPEED SDIO_STANDARD
 #define SDIO_MAX_CLOCK_RATE_EXCEED_PERCENT 15
+
+// Increase command timeout for slow init speed (300 kHz)
+// At 300 kHz, a full command/response cycle can take 500+ μs
+#define SDIO_CMD_TIMEOUT_US 1000
 
 // Disable SdFat integration (we use LittleFS)
 #define SDIO_USE_SDFAT 0
