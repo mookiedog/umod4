@@ -2,7 +2,6 @@
 #define SDCARDBASE_H
 
 #include <stdint.h>
-#include "lfs.h"
 
 // SD errors are broadly defined as 0 means OK, negative numbers are errors
 typedef int32_t SdErr_t;
@@ -35,12 +34,13 @@ typedef int32_t SdErr_t;
 
 /// @brief Abstract base class for SD card access
 /// Provides common interface for both SPI and SDIO implementations
+/// Interface is filesystem-agnostic - works with 512-byte sectors
 class SdCardBase {
-  public:
+    public:
     // State machine for hotplug manager
     typedef enum {
-      NO_CARD, MAYBE_CARD, POWER_UP, INIT_CARD,
-      VERIFYING, OPERATIONAL
+        NO_CARD, MAYBE_CARD, POWER_UP, INIT_CARD,
+        VERIFYING, OPERATIONAL
     } state_t;
 
     state_t state;
@@ -50,15 +50,14 @@ class SdCardBase {
     virtual SdErr_t init() = 0;
     virtual SdErr_t testCard() = 0;
 
-    // LittleFS interface
-    virtual SdErr_t read(lfs_block_t block_num, lfs_off_t off, void *buffer, lfs_size_t size) = 0;
-    virtual SdErr_t prog(lfs_block_t block_num, lfs_off_t off, const void *buffer, lfs_size_t size_bytes) = 0;
-    virtual SdErr_t erase(lfs_block_t block_num) = 0;
+    // Pure sector-based interface (512-byte sectors)
+    virtual SdErr_t readSectors(uint32_t sector_num, uint32_t num_sectors, void *buffer) = 0;
+    virtual SdErr_t writeSectors(uint32_t sector_num, uint32_t num_sectors, const void *buffer) = 0;
     virtual SdErr_t sync() = 0;
 
     virtual bool cardPresent() = 0;
-    virtual uint32_t getBlockSize_bytes() = 0;
-    virtual uint32_t getCardCapacity_blocks() = 0;
+    virtual uint32_t getSectorSize() = 0;      // Always returns 512
+    virtual uint32_t getSectorCount() = 0;     // Total sectors on card
 
     /// @brief Get the SD card interface mode name
     /// @return String describing the interface mode

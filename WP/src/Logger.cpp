@@ -16,7 +16,7 @@ void start_logger_task(void *pvParameters)
 {
     // The task parameter is the specific Logger object whose task needs to be started
     Logger* l = static_cast<Logger*>(pvParameters);
-    
+
     l->logTask();
     panic("Should never get here!");
 }
@@ -49,7 +49,7 @@ void Logger::deinit()
     lfs = nullptr;
     memset(logName, 0, sizeof(logName));
     memset(&logf, 0, sizeof(logf));
-    
+
     if (dbg) printf("%s: Logging is disabled\n", __FUNCTION__);
 }
 
@@ -59,13 +59,13 @@ bool Logger::init(lfs_t* _lfs)
     if (!_lfs) {
         return false;
     }
-    
+
     int32_t err = getDiskInfo(_lfs);
     bool ok = (err == 0);
     if (ok) {
         lfs = _lfs;
     }
-    
+
     return ok;
 }
 
@@ -88,7 +88,7 @@ int32_t Logger::getDiskInfo(lfs_t* _lfs)
         printf("  Max file name length: %d bytes\n", fsinfo.name_max);
         printf("  Max file length: %d bytes\n", fsinfo.file_max);
     }
-    
+
     return err;
 }
 
@@ -137,7 +137,7 @@ bool Logger::openNewLog()
                             value = (value*10) + (*p-'0');
                             p++;
                         }
-                        
+
                         // Pointer p is now pointing at the first non-digit char of the file name
                         // We are expecting that it should point at the suffix
                         if ((digitCount >= 1) && (digitCount<=5) && (strncmp(p, suffix, suffixLen)==0)) {
@@ -155,11 +155,11 @@ bool Logger::openNewLog()
             }
         } while (lfs_err > 0);
         lfs_dir_close(lfs, &dir);
-        
+
         if (!found) {
             maxValue = 0;
         }
-        
+
         snprintf(logName, sizeof(logName), "%s%d%s", prefix, maxValue+1, suffix);
         printf("%s: Creating logfile with temporary name \"%s\"\n", __FUNCTION__, logName);
         lfs_err = lfs_file_open(lfs, &logf, logName, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR);
@@ -167,7 +167,7 @@ bool Logger::openNewLog()
             printf("%sw: Unable to open new logfile\"%s\": err=%d\n", __FUNCTION__, logName, lfs_err);
         }
     }
-    
+
     return (lfs_err == LFS_ERR_OK);
 }
 
@@ -202,7 +202,7 @@ bool Logger::logData_fromISR(uint32_t dataWord)
 
     // Update the new headP exactly once after doing the copy
     //uint8_t* hP = headP;
-    
+
     uint32_t len = dataWord & 0xFF;
     int32_t spaceRemaining = bufferLen - inUse();
     if ((len < 1) || (len > 3) || (spaceRemaining < len)) {
@@ -284,7 +284,7 @@ int32_t Logger::inUse()
     if (inUse<0) {
         inUse += bufferLen;
     }
-    
+
     if (inUse<0) {
         __breakpoint();
     }
@@ -298,12 +298,13 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
     int32_t bytesWritten = lfs_file_write(lfs, &logf, buf, len);
     absolute_time_t elapsed = get_absolute_time() - t0;
     static uint32_t writeCount;
-    
+
     writeCount++;
-    #if 0
-    printf("%s: %d: Write time: %lld uSec, bytes written: %d\n", __FUNCTION__, writeCount, elapsed, bytesWritten);
+    #if 1
+    printf("%s: %d: lfs_file_write() time: %lld uSec, bytes written: %d (%.1f KB/sec)\n",
+           __FUNCTION__, writeCount, elapsed, bytesWritten, ((1000000.0f / elapsed) * bytesWritten) / 1024.0f);
     #endif
-    
+
     totalWriteEvents += 1;
     totalTimeWriting += elapsed;
     if (elapsed < minTimeWriting) {
@@ -326,7 +327,7 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
             //logData(LOG_WR_TIME, mSecs);
         }
     }
-    
+
     return bytesWritten;
 }
 
@@ -336,7 +337,8 @@ int32_t Logger::syncLog()
     absolute_time_t t0 = get_absolute_time();
     int32_t err = lfs_file_sync(lfs, &logf);
     absolute_time_t elapsed = get_absolute_time() - t0;
-    
+    printf("%s: lfs_file_sync() time: %lld uSec\n", __FUNCTION__, elapsed);
+
     totalSyncEvents += 1;
     totalTimeSyncing += elapsed;
     if (elapsed < minTimeSyncing) {
@@ -359,7 +361,7 @@ int32_t Logger::syncLog()
             //logData(LOG_SYNC_TIME, mSecs);
         }
     }
-    
+
     return err;
 }
 
@@ -374,20 +376,20 @@ extern struct lfs_config lfs_cfg;
 void Logger::logTask()
 {
     static uint32_t totalByteCount;
-    
+
     enum {UNUSED, UNMOUNTED, OPEN_LOG, RENAME_TMPLOG, CALC_WR_SIZE, WAIT_FOR_DATA, WRITE_DATA, WRITE_FAILURE} state, state_prev;
     const char* decodeState[]={
         "UNUSED", "UNMOUNTED", "OPEN_LOG", "RENAME_TMPLOG", "CALC_WR_SIZE", "WAIT_FOR_DATA", "WRITE_DATA", "WRITE_FAILURE"
     };
-    
+
     uint32_t bytesToWriteBeforeSyncing;
     int32_t logLength = 0;
-    
+
     state_prev = UNUSED;
     state = UNMOUNTED;
-    
+
     deinit();
-    
+
     // Clear our stats
     totalTimeWriting = maxTimeWriting = 0;
     minTimeWriting = ~0;
@@ -395,17 +397,17 @@ void Logger::logTask()
     totalTimeSyncing = maxTimeSyncing = 0;
     minTimeSyncing = ~0;
     totalSyncEvents = 0;
-    
+
     while (1) {
         if (!lfs) {
             // There are no files to close or anything like that because the filesystem disappeared on us and is already gone
             state = UNMOUNTED;
         }
-        
+
         if (state != state_prev) {
             state_prev = state;
         }
-        
+
         switch (state) {
         case UNMOUNTED:
             // Our lfs pointer will become non-NULL if an SD card is detected, and a filesystem gets mounted
@@ -418,7 +420,7 @@ void Logger::logTask()
                 vTaskDelay(pdMS_TO_TICKS(1000));
             }
             break;
-            
+
         case OPEN_LOG:
             // Create a new logfile, either with a tmp-name or a timestamp-name
             {
@@ -434,16 +436,16 @@ void Logger::logTask()
                     state = UNMOUNTED;
                 }
             }
-            
+
             break;
-            
+
         case CALC_WR_SIZE:
             // Do the calculation that tells us how many bytes we should write before sync'ing
             bytesToWriteBeforeSyncing = lfs_bytes_until_fsync(&lfs_cfg, &logf);
             //printf("%s: bytes to write before next sync: %d\n", __FUNCTION__, bytesToWriteBeforeSyncing);
             state = WAIT_FOR_DATA;
             break;
-            
+
         case WAIT_FOR_DATA:
             logLength = inUse();
             #if 0
@@ -456,19 +458,19 @@ void Logger::logTask()
                 vTaskDelay(pdMS_TO_TICKS(250));
             }
             break;
-            
+
         case WRITE_DATA: {
                 // If the block to be written extends past the end of the circular buffer
                 // we will need to write it in two pieces
-                
-                
+
+
                 // This loop gets executed once or twice, depending if the write needs to be broken
                 // in two because it extends past the end of the circular buffer
                 int32_t totalToWrite = bytesToWriteBeforeSyncing;
                 char c='A';
                 bool err = false;
                 pico_set_led(1);
-                
+
                 uint8_t* tP = tailP;
                 do {
                     int32_t bytesToEndOfBuffer = (lastBufferP - tP + 1);
@@ -488,16 +490,16 @@ void Logger::logTask()
                         totalToWrite -= bytesWritten;
                     }
                 } while (!err && (totalToWrite > 0));
-                
+
                 if (!err) {
                     // The write[s] succeeded, but the way LittleFS works, the data that got written
                     // is not actually committed to flash until a sync succeeds (or the file gets closed):
                     int32_t lfs_err = syncLog();
-                    
+
                     if (lfs_err == LFS_ERR_OK) {
                         // Now that the log data is written & committed, we can finally remove it from the queue!
                         tailP = tP;
-                        
+
                         // Print some stats every megabyte written
                         totalByteCount += bytesToWriteBeforeSyncing;
                         if (totalByteCount > (1024*1024)) {
@@ -513,11 +515,11 @@ void Logger::logTask()
                         state = WRITE_FAILURE;
                     }
                 }
-                
+
                 pico_set_led(0);
                 break;
             }
-            
+
         case WRITE_FAILURE:
             // ignore all errors
             lfs_file_close(lfs, &logf);

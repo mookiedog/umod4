@@ -243,6 +243,10 @@ Cannot select debug targets normally due to ExternalProject_Add() preventing VS 
 
 ## Coding Conventions
 
+**Editing:**
+- do not leave trailing whitespace when editing
+- tab spacing is 4
+
 **Assembly (ECU):**
 - 68HC11 assembly syntax
 - Heavy use of comments for reverse-engineered sections

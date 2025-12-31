@@ -46,14 +46,14 @@ extern "C" void hotPlugManager(void* arg);
 /// comingUp: a function pointer callback to a routine that gets invoked after a card is inserted and initialized. It should mount a filesystem.
 /// goingDown: a function pointer callback to a routine that gets invoked if a card is removed
 typedef struct {
-  class SdCardBase* sdCard;
-  bool (*comingUp)(class SdCardBase*);
-  void (*goingDown)(class SdCardBase*);
+    class SdCardBase* sdCard;
+    bool (*comingUp)(class SdCardBase*);
+    void (*goingDown)(class SdCardBase*);
 } hotPlugMgrCfg_t;
 
 
 class SdCard : public SdCardBase {
-  public:
+    public:
     /// @brief Create an object that provides an interface to an SD flash card. The card will be operated in SPI mode.
     /// @param spiSd A pointer to the Spi object connected to the SD card socket
     /// @param cardPresentPad The pad/pin number of a GPIO used to detect if a card is present. The specified GPIO pad will be configured with a pullup.
@@ -63,24 +63,22 @@ class SdCard : public SdCardBase {
 
     SdErr_t init() override;
 
-    // These next four routines are needed to support littlefs operations.
-    // We don't need to pass around the lfs_cfg structure because the SdCard class always contains a copy.
-    SdErr_t read(lfs_block_t block_num, lfs_off_t off, void *buffer, lfs_size_t size) override;
-    SdErr_t prog(lfs_block_t block_num, lfs_off_t off, const void *buffer, lfs_size_t size_bytes) override;
-    SdErr_t erase(lfs_block_t block_num) override;
+    // Sector-based interface (512-byte sectors)
+    SdErr_t readSectors(uint32_t sector_num, uint32_t num_sectors, void *buffer) override;
+    SdErr_t writeSectors(uint32_t sector_num, uint32_t num_sectors, const void *buffer) override;
     SdErr_t sync() override;
 
     /// @brief Detect if a card is physically inserted in the socket.
     /// @return 'true' if a card is physically present, else 'false'
     bool cardPresent() override;
 
-    /// @brief Determine the block size of the inserted card's capacity in bytes
-    /// @return Block size in bytes. If no card is present, returns 0.
-    uint32_t getBlockSize_bytes() override;
+    /// @brief Get sector size (always 512 bytes for SD cards)
+    /// @return Sector size in bytes (always 512)
+    uint32_t getSectorSize() override { return 512; }
 
-    /// @brief Determine the overall storage capacity of the inserted card measured in blocks
-    /// @return Returns size of the card in blocks (1 block == 512 bytes). If no card is present, returns 0.
-    uint32_t getCardCapacity_blocks() override;
+    /// @brief Get total number of sectors on the card
+    /// @return Number of 512-byte sectors, or 0 if no card present
+    uint32_t getSectorCount() override { return capacity_blocks; }
 
     /// @brief Get the SD card interface mode name
     /// @return String describing the interface mode (e.g., "SPI")
@@ -96,7 +94,7 @@ class SdCard : public SdCardBase {
     /// @param arg Points at the specific SdCard instance to be managed.
     static void hotPlugManager(void* arg);
 
-  private:
+    private:
     Spi* spi;
     int32_t csPad;
     int32_t cardPresentPad;

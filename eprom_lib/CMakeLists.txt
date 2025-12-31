@@ -40,7 +40,6 @@ foreach(EPROM_ID ${EPROM_NAMES})
   add_custom_target(${EPROM_ID}--wrapper ALL
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.bson
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${EPROM_ID}.c
-    DEPENDS ${TOOLS_SOURCE_DIR}/bin-to-bson.py
   )
 
   set(DSC_PATH ${CMAKE_CURRENT_SOURCE_DIR}/src/${EPROM_ID}.dsc)

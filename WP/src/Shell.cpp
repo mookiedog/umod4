@@ -3,6 +3,7 @@
 #include "ctype.h"
 
 #include "FlashEp.h"
+#include "SdCardBase.h"
 
 // The tiny_regex_c interface library:
 #include "re.h"
@@ -15,12 +16,12 @@ extern "C" void start_shell_task(void *pvParameters);
 
 void start_shell_task(void *pvParameters)
 {
-  // The task parameter is the specific object instance we should be using in the ISR
-  Shell* s = static_cast<Shell*>(pvParameters);
+    // The task parameter is the specific object instance we should be using in the ISR
+    Shell* s = static_cast<Shell*>(pvParameters);
 
-  // This allows us to invoke the task method on the correct instance
-  s->shell_task();
-  panic(LOCATION("Task should never return"));
+    // This allows us to invoke the task method on the correct instance
+    s->shell_task();
+    panic(LOCATION("Task should never return"));
 }
 
 
@@ -59,21 +60,21 @@ const char* lfs_err_decode(int32_t err)
         case -61: return "No data/attr available";
         case -36: return "File name too long";
         default:
-            snprintf(buf, sizeof(buf), "Unknown error %d", err);
-            return buf;
+        snprintf(buf, sizeof(buf), "Unknown error %d", err);
+        return buf;
     }
 }
 
 // ----------------------------------------------------------------------------------
 char* Shell::skipWhite(char* s)
 {
-	if (s) {
-		while (isblank(*s)) {
-			s++;
-		}
-	}
+    if (s) {
+        while (isblank(*s)) {
+            s++;
+        }
+    }
 
-	return(s);
+    return(s);
 }
 
 // ----------------------------------------------------------------------------------
@@ -115,62 +116,62 @@ char* Shell::decompose(char** theString, const char* separatorList)
 
     while (stringP && *stringP) {
         if (state == PLAIN_TEXT) {
-        // We are processing plain text.
+            // We are processing plain text.
 
-        // We are done if the next char matches something in the separator list
-        if (strchr(separatorList, *stringP)) {
-            separatorFound = true;
+            // We are done if the next char matches something in the separator list
+            if (strchr(separatorList, *stringP)) {
+                separatorFound = true;
 
-            // Replace the separator char with a NULL char. This terminates the token.
-            *stringP = 0;
+                // Replace the separator char with a NULL char. This terminates the token.
+                *stringP = 0;
+                stringP++;
+                break;
+            }
+
+            // If the next character is a double-quote, enter quoted-text processing mode.
+            if (*stringP == '"') {
+                state = QUOTED_TEXT;
+            }
+
             stringP++;
-            break;
-        }
-
-        // If the next character is a double-quote, enter quoted-text processing mode.
-        if (*stringP == '"') {
-            state = QUOTED_TEXT;
-        }
-
-        stringP++;
         }
         else if (state == QUOTED_TEXT) {
-        if (*stringP == '\\') {
-            // A back-whack tells us to ignore the next non-NULL char.
-            state = LITERAL_CHAR;
+            if (*stringP == '\\') {
+                // A back-whack tells us to ignore the next non-NULL char.
+                state = LITERAL_CHAR;
 
-            // We destroy the \ char.
-            // Copying by the original string's length copies the terminating NULL too.
-            memmove(stringP, stringP+1, strlen(stringP));
-        }
-        else if (*stringP == '"') {
-            // Found a closing double-quote.
-            state = PLAIN_TEXT;
-            stringP++;
-        }
-        else {
-            // A regular char within the string
-            stringP++;
-        }
+                // We destroy the \ char.
+                // Copying by the original string's length copies the terminating NULL too.
+                memmove(stringP, stringP+1, strlen(stringP));
+            }
+            else if (*stringP == '"') {
+                // Found a closing double-quote.
+                state = PLAIN_TEXT;
+                stringP++;
+            }
+            else {
+                // A regular char within the string
+                stringP++;
+            }
         }
         else if (state == LITERAL_CHAR) {
-        // In literal mode, we also perform special replacements for \n and \r sequences
-        if (*stringP) {
-            if (*stringP == 'n') {
-            *stringP = '\n';
+            // In literal mode, we also perform special replacements for \n and \r sequences
+            if (*stringP) {
+                if (*stringP == 'n') {
+                    *stringP = '\n';
+                }
+                else if (*stringP == 'r') {
+                    *stringP = '\r';
+                }
+                stringP++;
+                // Literals are only recognized within a string.  Therefore, go back to the normal un-quoted state:
+                state = QUOTED_TEXT;
             }
-            else if (*stringP == 'r') {
-            *stringP = '\r';
-            }
-            stringP++;
-            // Literals are only recognized within a string.  Therefore, go back to the normal un-quoted state:
-            state = QUOTED_TEXT;
-        }
         }
         else {
-        // illegal state.  Should never happen.  Abort further processing:
-        stringP = NULL;
-        token = NULL;
+            // illegal state.  Should never happen.  Abort further processing:
+            stringP = NULL;
+            token = NULL;
         }
     }
 
@@ -179,36 +180,36 @@ char* Shell::decompose(char** theString, const char* separatorList)
     *theString = (separatorFound) ? stringP : NULL;
 
     return token;
+}
+
+
+// ----------------------------------------------------------------------------------
+// Decompose an argument of the form argname[=[value]].
+// Note that whitespace is not allowed around the '=' character!
+//
+// Returns the value (if any) as a string, and modifies the originalArg to be just the argument name.
+// Examples:
+// 1) For args of the form "foo=bar":
+//      originalArg becomes "foo"
+//      return value is "bar"
+// 2) For args of the form "foo=":
+//      originalArg becomes "foo"
+//      return value is ""
+// 3) For args of the form "foo":
+//      originalArg becomes "foo"
+//      return value is nullptr
+char* Shell::decomposeArg(char* originalArg)
+{
+    if (!originalArg) {
+        return 0;
     }
 
+    char* argValue = strchr(originalArg, '=');
+    if (argValue) {
+        *argValue++ = 0;
+    }
 
-    // ----------------------------------------------------------------------------------
-    // Decompose an argument of the form argname[=[value]].
-    // Note that whitespace is not allowed around the '=' character!
-    //
-    // Returns the value (if any) as a string, and modifies the originalArg to be just the argument name.
-    // Examples:
-    // 1) For args of the form "foo=bar":
-    //      originalArg becomes "foo"
-    //      return value is "bar"
-    // 2) For args of the form "foo=":
-    //      originalArg becomes "foo"
-    //      return value is ""
-    // 3) For args of the form "foo":
-    //      originalArg becomes "foo"
-    //      return value is nullptr
-    char* Shell::decomposeArg(char* originalArg)
-    {
-        if (!originalArg) {
-            return 0;
-        }
-
-        char* argValue = strchr(originalArg, '=');
-        if (argValue) {
-            *argValue++ = 0;
-        }
-
-        return argValue;
+    return argValue;
 }
 
 
@@ -705,6 +706,12 @@ typedef struct {
 
 extern sd_perf_stats_t sd_perf_stats;
 
+// SD card object (defined in main.cpp)
+extern SdCardBase* sdCard;
+
+// LittleFS configuration (defined in main.cpp)
+extern struct lfs_config lfs_cfg;
+
 // ----------------------------------------------------------------------------------
 void Shell::cmd_sdperf(char* args)
 {
@@ -712,103 +719,128 @@ void Shell::cmd_sdperf(char* args)
     // Check if reset requested
     if (args && strcmp(args, "reset") == 0) {
         memset(&sd_perf_stats, 0, sizeof(sd_perf_stats));
-        printf("SD performance statistics reset\n");
+        printf("LFS performance statistics reset\n");
         return;
     }
 
-    printf("\n=== SD Card Performance Statistics ===\n\n");
+    printf("\n=== LFS Performance Statistics ===\n\n");
 
-    // Read statistics
-    printf("READ Operations:\n");
-    printf("  Count:     %lu\n", sd_perf_stats.read_count);
-    printf("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.read_bytes, sd_perf_stats.read_bytes / 1024.0);
-    if (sd_perf_stats.read_count > 0) {
-        uint64_t avg_us = sd_perf_stats.read_time_us / sd_perf_stats.read_count;
-        double avg_bytes = (double)sd_perf_stats.read_bytes / sd_perf_stats.read_count;
-        double throughput_kbps = (sd_perf_stats.read_bytes / 1024.0) / (sd_perf_stats.read_time_us / 1000000.0);
-        printf("  Min time:  %lu us\n", sd_perf_stats.read_min_us);
-        printf("  Max time:  %lu us\n", sd_perf_stats.read_max_us);
-        printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
-        printf("  Throughput: %.2f KB/s\n", throughput_kbps);
-    }
+    // Display interface and LFS configuration
+    if (sdCard && sdCard->operational()) {
+        printf("Interface: %s @ %.1f MHz\n",
+            sdCard->getInterfaceMode(),
+            sdCard->getClockFrequency_Hz() / 1000000.0);
 
-    printf("\nWRITE Operations:\n");
-    printf("  Count:     %lu\n", sd_perf_stats.write_count);
-    printf("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.write_bytes, sd_perf_stats.write_bytes / 1024.0);
-    if (sd_perf_stats.write_count > 0) {
-        uint64_t avg_us = sd_perf_stats.write_time_us / sd_perf_stats.write_count;
-        double avg_bytes = (double)sd_perf_stats.write_bytes / sd_perf_stats.write_count;
-        double throughput_kbps = (sd_perf_stats.write_bytes / 1024.0) / (sd_perf_stats.write_time_us / 1000000.0);
-        printf("  Min time:  %lu us\n", sd_perf_stats.write_min_us);
-        printf("  Max time:  %lu us\n", sd_perf_stats.write_max_us);
-        printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
-        printf("  Throughput: %.2f KB/s\n", throughput_kbps);
-    }
+            // Check if running at reduced speed (for SDIO, full speed is 50 MHz)
+            const char* mode = sdCard->getInterfaceMode();
+            if (strstr(mode, "SDIO") && sdCard->getClockFrequency_Hz() < 50000000) {
+                printf("  ** NOTE: Speed downgraded from 50 MHz to %u MHz **\n",
+                    sdCard->getClockFrequency_Hz() / 1000000);
+                }
+            }
 
-    printf("\nUsage: sdperf [reset]\n");
-    printf("  sdperf       - Display statistics\n");
-    printf("  sdperf reset - Reset statistics to zero\n\n");
-}
+            // Display LittleFS block size
+            printf("LFS block size: %u bytes", lfs_cfg.block_size);
+            if (lfs_cfg.block_size == 512) {
+                printf(" (1 sector/block)\n");
+            } else if (lfs_cfg.block_size % 512 == 0) {
+                printf(" (%u sectors/block)\n", lfs_cfg.block_size / 512);
+            } else {
+                printf("\n");
+            }
+            printf("\n");
 
-// ----------------------------------------------------------------------------------
-void Shell::shell_task()
-{
-    bool done;
-    char* cmdP;
-    const char* lastCharP = &cmdBuf[sizeof(cmdBuf)]-1;
-    const char* promptString = "$ ";
+            // Read statistics
+            printf("LFS READ Operations:\n");
+            printf("  Count:     %lu\n", sd_perf_stats.read_count);
+            printf("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.read_bytes, sd_perf_stats.read_bytes / 1024.0);
+            if (sd_perf_stats.read_count > 0) {
+                uint64_t avg_us = sd_perf_stats.read_time_us / sd_perf_stats.read_count;
+                double avg_bytes = (double)sd_perf_stats.read_bytes / sd_perf_stats.read_count;
+                double throughput_kbps = (sd_perf_stats.read_bytes / 1024.0) / (sd_perf_stats.read_time_us / 1000000.0);
+                printf("  Min time:  %lu us\n", sd_perf_stats.read_min_us);
+                printf("  Max time:  %lu us\n", sd_perf_stats.read_max_us);
+                printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
+                printf("  Throughput: %.2f KB/s\n", throughput_kbps);
+            }
 
-    while (1) {
-        printf("%s%s", cwd, promptString);
-        if (fgets(cmdBuf, sizeof(cmdBuf), stdin)) {
-            char* p = strrchr(cmdBuf, '\n');
-            if (p) {
-                *p = 0;
+            printf("\nLFS WRITE Operations:\n");
+            printf("  Count:     %lu\n", sd_perf_stats.write_count);
+            printf("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.write_bytes, sd_perf_stats.write_bytes / 1024.0);
+            if (sd_perf_stats.write_count > 0) {
+                uint64_t avg_us = sd_perf_stats.write_time_us / sd_perf_stats.write_count;
+                double avg_bytes = (double)sd_perf_stats.write_bytes / sd_perf_stats.write_count;
+                double throughput_kbps = (sd_perf_stats.write_bytes / 1024.0) / (sd_perf_stats.write_time_us / 1000000.0);
+                printf("  Min time:  %lu us\n", sd_perf_stats.write_min_us);
+                printf("  Max time:  %lu us\n", sd_perf_stats.write_max_us);
+                printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
+                printf("  Throughput: %.2f KB/s\n", throughput_kbps);
+            }
 
-                args = cmdBuf;
-                //if (dbg) printf("processing <%s>\n", cmdBuf);
-                cmd = decompose(&args, " ");
+            printf("\nUsage: sdperf [reset]\n");
+            printf("  sdperf       - Display statistics\n");
+            printf("  sdperf reset - Reset statistics to zero\n\n");
+        }
 
-                if (cmd) {
-                    if ((strcmp(cmd, "ls") == 0) || (strcmp(cmd, "ll") == 0)) {
-                        cmd_ls(args);
-                    }
-                    else if (strcmp(cmd, "touch") == 0) {
-                        cmd_touch(args);
-                    }
-                    else if (strcmp(cmd, "rm") == 0) {
-                        cmd_rm(args);
-                    }
-                    else if (strcmp(cmd, "hd") == 0) {
-                        cmd_hd(args);
-                    }
-                    else if (strcmp(cmd, "pwd") == 0) {
-                        cmd_pwd(args);
-                    }
-                    else if (strcmp(cmd, "flashEp") == 0) {
-                        cmd_flashEp(args);
-                    }
-                    else if (strcmp(cmd, "validate") == 0) {
-                        cmd_validate(args);
-                    }
-                    else if (strcmp(cmd, "sdperf") == 0) {
-                        cmd_sdperf(args);
-                    }
-                    #if 0
-                    else if (strcmp(cmd, "cp") == 0) {
-                        printf("cp!\n");
-                    }
-                    else if (strcmp(cmd, "mv") == 0) {
-                        printf("mv!\n");
-                    }
-                    #endif
-                    else if (strcmp(cmd, "") == 0) {
-                    }
-                    else {
-                        printf("Unknown cmd: %s\n", cmd);
+        // ----------------------------------------------------------------------------------
+        void Shell::shell_task()
+        {
+            bool done;
+            char* cmdP;
+            const char* lastCharP = &cmdBuf[sizeof(cmdBuf)]-1;
+            const char* promptString = "$ ";
+
+            while (1) {
+                printf("%s%s", cwd, promptString);
+                if (fgets(cmdBuf, sizeof(cmdBuf), stdin)) {
+                    char* p = strrchr(cmdBuf, '\n');
+                    if (p) {
+                        *p = 0;
+
+                        args = cmdBuf;
+                        //if (dbg) printf("processing <%s>\n", cmdBuf);
+                        cmd = decompose(&args, " ");
+
+                        if (cmd) {
+                            if ((strcmp(cmd, "ls") == 0) || (strcmp(cmd, "ll") == 0)) {
+                                cmd_ls(args);
+                            }
+                            else if (strcmp(cmd, "touch") == 0) {
+                                cmd_touch(args);
+                            }
+                            else if (strcmp(cmd, "rm") == 0) {
+                                cmd_rm(args);
+                            }
+                            else if (strcmp(cmd, "hd") == 0) {
+                                cmd_hd(args);
+                            }
+                            else if (strcmp(cmd, "pwd") == 0) {
+                                cmd_pwd(args);
+                            }
+                            else if (strcmp(cmd, "flashEp") == 0) {
+                                cmd_flashEp(args);
+                            }
+                            else if (strcmp(cmd, "validate") == 0) {
+                                cmd_validate(args);
+                            }
+                            else if (strcmp(cmd, "sdperf") == 0) {
+                                cmd_sdperf(args);
+                            }
+                            #if 0
+                            else if (strcmp(cmd, "cp") == 0) {
+                                printf("cp!\n");
+                            }
+                            else if (strcmp(cmd, "mv") == 0) {
+                                printf("mv!\n");
+                            }
+                            #endif
+                            else if (strcmp(cmd, "") == 0) {
+                            }
+                            else {
+                                printf("Unknown cmd: %s\n", cmd);
+                            }
+                        }
                     }
                 }
             }
         }
-    }
-}

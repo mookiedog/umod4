@@ -1,6 +1,9 @@
 # Hmmm needs to be 3.24 to be able to use DOWNLOAD_EXTRACT_TIMESTAMP
 cmake_minimum_required(VERSION 3.22)
 
+# Force Ninja generator for all builds (superbuild and external projects)
+set(CMAKE_GENERATOR "Ninja" CACHE INTERNAL "Generator" FORCE)
+
 # set (CMAKE_VERBOSE_MAKEFILE ON)
 
 include(FetchContent)
@@ -132,10 +135,13 @@ execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install nuitka)
 
 project(umod4)
 
+# Set generator for external projects
+set(generator "Ninja")
+
 # Littlefs is a small enough project that we just pull it into our superbuild's build tree
 FetchContent_Declare(littlefs
     GIT_REPOSITORY https://github.com/littlefs-project/littlefs
-    GIT_TAG v2.11.0
+    GIT_TAG v2.11.2
 )
 
 # We use FetchContent_populate, not _add(), because _populate() does not perform an

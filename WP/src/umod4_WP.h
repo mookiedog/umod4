@@ -22,7 +22,7 @@
 #define PIO_WS2812_SM       0
 #define PIO_UART            pio1
 #define PIO_UART_SM         0
-//#define <future-use>      pio2
+#define PIO_SD              pio2
 
 #define PIO_UART_RX_IRQ     PIO1_IRQ_0
 

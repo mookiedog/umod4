@@ -71,6 +71,16 @@ message(STATUS "Fetching the 'tiny-regex-c' project")
 FetchContent_populate(tiny-regex-c)
 set(TINY_REGEX_C_SRC_DIR ${CMAKE_BINARY_DIR}/_deps/tiny-regex-c-src)
 
+FetchContent_Declare(sdio_rp2350
+    GIT_REPOSITORY https://github.com/rabbitholecomputing/SDIO_RP2350
+    GIT_TAG        1.0.6
+)
+
+# We use FetchContent_populate for the SDIO library to add it as an INTERFACE library
+message(STATUS "Fetching the 'SDIO_RP2350' project")
+FetchContent_Populate(sdio_rp2350)
+set(SDIO_RP2350_SRC_DIR ${CMAKE_BINARY_DIR}/_deps/sdio_rp2350-src)
+
 # This is required to avoid a linker error: undefined reference to '__cxa_guard_acquire'
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-threadsafe-statics")
 
@@ -133,7 +143,6 @@ add_executable(${PROJECT_NAME}
     src/Psm.cpp
     src/SdCard.cpp
     src/SdCardSDIO.cpp
-    src/sdio/sdio_rp2350.cpp
     src/Shell.cpp
     src/Spi.cpp
     src/TimeUtils.cpp
@@ -155,7 +164,7 @@ set_source_files_properties(
 
 # Include the PIO program header files:
 pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_rx32.pio)
-pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/sdio/sdio_rp2350.pio)
+pico_generate_pio_header(${PROJECT_NAME}  ${SDIO_RP2350_SRC_DIR}/src/sdio_rp2350.pio)
 pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/ws2812/ws2812.pio)
 
 # Override the standard Segger definitions for these symbols:
@@ -217,6 +226,15 @@ target_sources(tiny_regex_c INTERFACE
 )
 target_include_directories(tiny_regex_c INTERFACE "${TINY_REGEX_C_SRC_DIR}")
 
+# Pull in the SDIO_RP2350 library (low-level SDIO functions only, not SdFat integration)
+add_library(sdio_rp2350 INTERFACE)
+target_sources(sdio_rp2350 INTERFACE
+    "${SDIO_RP2350_SRC_DIR}/src/sdio_rp2350.cpp"
+)
+target_include_directories(sdio_rp2350 INTERFACE
+    "${SDIO_RP2350_SRC_DIR}/include"
+)
+
 # Possibly temp: allow WP to include 'hardware.h' from the EP directory to access certain shared info
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../EP/src)
 
@@ -252,6 +270,7 @@ target_link_libraries(${PROJECT_NAME}
     littlefs
     swd_reflash
     tiny_regex_c
+    sdio_rp2350
     pico_cyw43_arch_none
     #pico_cyw43_arch_lwip_sys_freertos
 )
