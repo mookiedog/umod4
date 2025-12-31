@@ -11067,29 +11067,28 @@ LF57B:  ldaA    *L0044                  ;Get the upper 8 bits of the left-aligne
 ;
 ; Table    Massaged 8P8       Throttle Opening
 ; Column                      (rotational sense)
-;   0:     00.00 .. 00.FF     0.00% to  0.57% open \
-;   1:     01.00 .. 01.FF     0.57% to  1.14% open  \  linear across the range of 0.00 to 2.27%
-;   2:     02.00 .. 02.FF     1.14% to  1.70% open  /  Column step size is 0.57%
-;   3:     03.00 .. 03.FF     1.70% to  2.27% open /
+;   0:     00.00 .. 00.FF     0.00% to  0.56% open \
+;   1:     01.00 .. 01.FF     0.57% to  1.13% open  \  linear across the range of 0.00 to 2.26%
+;   2:     02.00 .. 02.FF     1.14% to  1.69% open  /  Column step size is 0.57%
+;   3:     03.00 .. 03.FF     1.70% to  2.26% open /
 
-;   4:     04.00 .. 04.FF     2.27% to  4.54% open \
-;   5:     05.00 .. 05.FF     4.54% to  6.81% open  |  linear across the range of 2.27 to 9.09%
-;   6:     06.00 .. 06.FF     6.81% to  9.09% open /   Column step size is 2.27%
+;   4:     04.00 .. 04.FF     2.27% to  4.53% open \
+;   5:     05.00 .. 05.FF     4.54% to  6.80% open  |  linear across the range of 2.27 to 9.08%
+;   6:     06.00 .. 06.FF     6.81% to  9.08% open /   Column step size is 2.27%
 
-;   7:     07.00 .. 07.FF     9.09% to 12.73% open \
-;   8:     08.00 .. 08.FF    12.73% to 16.37% open  \
-;   9:     09.00 .. 09.FF    16.37% to 20.00% open   | linear across the range of 9.09 to 27.27%
-;  10:     0a.00 .. 0a.FF    20.00% to 23.64% open  /  Column step size is 3.64%
-;  11:     0b.00 .. 0b.FF    23.64% to 27.27% open /
+;   7:     07.00 .. 07.FF     9.09% to 12.72% open \
+;   8:     08.00 .. 08.FF    12.73% to 16.36% open  \
+;   9:     09.00 .. 09.FF    16.37% to 19.99% open   | linear across the range of 9.09 to 27.26%
+;  10:     0a.00 .. 0a.FF    20.00% to 23.63% open  /  Column step size is 3.64%
+;  11:     0b.00 .. 0b.FF    23.64% to 27.26% open /
 
-;  12:     0c.00 .. 0c.FF    27.27% to 41.66% open \
-;  13:     0d.00 .. 0d.FF    41.66% to 56.06% open  |  linear across the range of 27.27% to 70.45%
-;  14:     0e.00 .. 0e.FF    56.06% to 70.45% open /   Column step size is 14.39%
+;  12:     0c.00 .. 0c.FF    27.27% to 41.65% open \
+;  13:     0d.00 .. 0d.FF    41.66% to 56.05% open  |  linear across the range of 27.27% to 70.44%
+;  14:     0e.00 .. 0e.FF    56.06% to 70.44% open /   Column step size is 14.39%
 
-;  15:     0f.00 .. 0f.FF    70.45% to 80.30% open \
-;  16:     10.00 .. 10.FF    80.30% to 90.15% open  |  linear across the range of 70.45% to 100%
+;  15:     0f.00 .. 0f.FF    70.45% to 80.29% open \
+;  16:     10.00 .. 10.FF    80.30% to 90.14% open  |  linear across the range of 70.45% to 100%
 ;  17:     11.00 .. 11.FF    90.15% to 100.0% open /   Column step size is 9.85%
-;
 
 ; Finally!  VTA, massaged into an 8.8 value suitable for indexing into the columns for an 18-entry interpolation table.
 

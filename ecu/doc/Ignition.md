@@ -43,20 +43,27 @@ That is so close to 7.0 that it would be reasonable to assume that the protrusio
 
 ### Relationship of Protrusions to Crankshaft Position
 
-Facts:
+Documented Facts:
 
 * The Rotax V990 Shop Manual (Aprilia PN 8140587) page 2-6 states that when the bike is being started, ignition advance is 5 degrees BTDC
-* Examination of the RP58 firmware shows that when the engine is being started, the ignition coils will be fired at the trailing edge of CR5 (front cylinder) or the trailing edge of CR10 (rear cylinder).
+* Examination of the RP58 firmware shows that:
+  * When the engine is being started, the ignition coils will be fired at the trailing edge of CR5 (front cylinder) or the trailing edge of CR10 (rear cylinder)
+  * Under normal operating conditions, the spark advance is calculated from an arbitrary crankshaft rotational reference point defined to be 90 degrees after the start of CR4
 
-Adding those two facts to the measurement calculations allows us to make the following statements:
+Measurements:
+
+* the CR protrusions are 7 degrees in width
+
+Putting it all together:
 
 * the trailing edge of CR5 must be located at 5 degrees BTDC
-* the leading edge of CR5 must be at (5+7) or 12 degrees BTDC
-* the leading edge of CR4 must be 60 degrees ahead of CR5, or 72 degrees BTDC
+* the leading edge of CR5 must be at (5 + 7) or 12 degrees BTDC
+* the leading edge of CR4 is 60 degrees ahead of CR5, or at 72 degrees BTDC
+* the ignition advance crankshaft position reference must be 18 degrees **after** TDC (72 degrees BTDC - 90 degrees)
 
-A picture can be generated showing the complete relationship between the crank protrusions and the crankshaft position in regards to front cylinder TDC. Apologies for the hand drawing - I might make a better one some day:
+The following diagram shows these relationships in regards to front cylinder TDC.
 
-![aprilia crank to rotor relationship](images/crank-relationship.jpg)
+![aprilia crank to rotor relationship](images/crank-timing-relationship.png)
 
 ## Ignition Tables
 
@@ -69,59 +76,84 @@ These tables are:
 * L9803: Ignition map 18x29 Derestricted ALPHA/N cyl 2 (Rear)
 
 In general terms, these tables allow the ECU to decide what spark advance it should be using on the next firing cycle.
+The ignition advance is based on two things: how fast the engine is turning and how far open the throttle is.
+In very general terms, the faster the engine is spinning, the sooner a spark needs to be fired so that proper cylinder pressures can be achieved when the piston is where the computer wants it.
+But the more the throttle is open, the less aggressive the ECU can be about firing the spark early.
+
+The ignition map tables define the spark advance that should be used based on this relationship between throttle position and engine speed.
 The columns in the table are based on how far open the throttle is.
 The rows in the table are based on how fast the engine is currently turning.
+In overly simple terms, the ECU finds out how fast the engine is spinning, looks up the proper row of the table corresponding to that speed, then looks up the proper column corresponding to how far the throttle is open.
+The data at that specific row and column tells the ECU what spark advance to use.
 
-The Lxxxx numbers represent the precise starting address of the tables in the EPROM's actual location in the address space.
-The EPROM sits in the HC11 address space from 0x8000 to 0xFFFF.
-In terms of an EPROM programmer, you would need to subtract 0x8000 to get the table starting offsets.
-For example, table L9803 would be at EPROM offset 0x9803 - 0x8000, or 0x1803.
+These tables would be gigantic if they contained information for every possible RPM and throttle angle.
+To fit into the available memory, the table are compressed.
+Instead of a row for every possible RPM, the first row of RPM information starts at 800 RPM.
+Subsequent rows are spaced 400 RPM apart.
+This means that to cover an engine operating span from 800 RPM to 12000 RPM, only 29 rows are required.
+Engine speeds below 800 RPM are handled specially by the ECU firmware and do not use the tables.
 
-The tables are 18x29, where each table entry is a single byte.
-The precise meaning of that byte will be covered below.
-For now, just know that it can be used to specify a spark advance.
+The throttle measurements are compressed even more than the RPM: only 18 columns are used to cover the range from 0% open to 100% open.
 
 ### Columns: Throttle Angle
 
-The throttle opening is used to select the columns used for interpolation.
-A fully closed throttle would interpolate between the first two columns, and a fully open throttle would interpolate between the last two columns.
-In between, things are not so simple.
-The issue is that the TPS measures an angle, and it measures it in a linear fashion.
-The tough part is that the engine is much more susceptable to throttle changes at small throttle openings.
-Consider that if the throttle is at idle (flowing minimal air), and it is cracked ever so slightly open, a tiny change in the rotation angle could easily double the amount of air flowing in.
-Conversely, if the throttle is already 95% open, that same amount of rotational change that caused the amount of air to double at idle will have almost no effect on anything.
+Unlike the RPM row information that is evenly spaced precisely 400 RPM apart, the spacing between throttle angle columns is far more complicated.
 
-What this all means is that the tables will be biased so that they contain lots of data at small throttle angles, and much less information about large throttle angles where the changes don't matter so much.
+Things start off simple: the TPS (Throttle Position Sensor) measures the angle of the throttle butterflies and outputs a voltage proportional to how far the butterflies have been rotated open.
+When the throttle is completly closed, the TPS outputs a minimum voltage.
+When the throttle is wide open, the TPS outputs a maximum voltage.
+The TPS is linear in response, meaning that if the throttle is 50% open (a 45 degree angle), the output voltage will be 1/2 way between the fully closed and the fully open voltages.
+
+Even though the TPS sensor has a linear response, the engine's response to changes in throttle angle is extremely non-linear.
+Consider a rider standing by their bike while it idles in neutral.
+The throttle that is almost entirely closed at idle, so it is flowing minimal air into the engine.
+If the rider cracks that throttle ever so slightly more open, that tiny change in the rotation angle could easily double the amount of air flowing into the engine, and it speeds up significantly.
+Now consider the same rider flying down the road with their throttle 95% open.
+If they then increase their throttle angle by the same amount as they did in the idle situation, it is obvious that the amount of air going into the engine is almost completely unchanged.
+
+What this all means is that the throttle columns in the tables will be compressed in a fashion that favors lots of data entries for small throttle angles where small changes matter a lot.
+They can contain much less information about large throttle angles where the changes don't matter near as much.
+
+The goal is to take the throttle angle (measured in A/D counts, porportional to how open it was in terms of degrees or percent), and mathematically convert it to a value that can be used to select the appropriate column of the ignition map.
+In other words, the span of possible A/D readings will be mathematically squashed into a range of 0.0 to 17.99, allowing it to address the 18 columns in the table.
+The conversion occurs in a fashion that enables the table to contain way more information regarding small throttle openings.
+
+The short version of this conversion process means that the A/D counts representing "closed" to "fully open" will be converted into a number that has a value ranging from 0.0 to 17.999.
+The integer part of that number selects the column (18 columns, numbered 0 to 17).
+The fractional part of that number (.000 to .999) is used to interpolate between the spark value in the column
+selected by the integer part, and the next higher column.
+For example, if the conversion converted some A/D reading into the value 2.33, it would mean that the spark table would use columns 2 and 3, then interpolate 0.33 of the way between the spark value at column 2 and the spark value at column 3.
 
 The following is taken from the UM4 source code, describing how the rotation of VTA gets massaged into table column numbers:
 
-```; Conversion of raw VTA Throttle angle to an interpolation table column index.
+```asm
+; Conversion of raw VTA Throttle angle to an interpolation table column index.
 ; "% open" is defined as a linear relationship between the min and max raw VTA ADC readings
 ; corresponding to when the butterflies are fully closed and fully opened.
 ;
 ; Table    Massaged 8P8       Throttle Opening
 ; Column                      (rotational sense)
-;   0:     00.00 .. 00.FF     0.00% to  0.57% open \
-;   1:     01.00 .. 01.FF     0.57% to  1.14% open  \  linear across the range of 0.00 to 2.27%
-;   2:     02.00 .. 02.FF     1.14% to  1.70% open  /  Column step size is 0.57%
-;   3:     03.00 .. 03.FF     1.70% to  2.27% open /
+;   0:     00.00 .. 00.FF     0.00% to  0.56% open \
+;   1:     01.00 .. 01.FF     0.57% to  1.13% open  \  linear across the range of 0.00 to 2.26%
+;   2:     02.00 .. 02.FF     1.14% to  1.69% open  /  Column step size is 0.57%
+;   3:     03.00 .. 03.FF     1.70% to  2.26% open /
 
-;   4:     04.00 .. 04.FF     2.27% to  4.54% open \
-;   5:     05.00 .. 05.FF     4.54% to  6.81% open  |  linear across the range of 2.27 to 9.09%
-;   6:     06.00 .. 06.FF     6.81% to  9.09% open /   Column step size is 2.27%
+;   4:     04.00 .. 04.FF     2.27% to  4.53% open \
+;   5:     05.00 .. 05.FF     4.54% to  6.80% open  |  linear across the range of 2.27 to 9.08%
+;   6:     06.00 .. 06.FF     6.81% to  9.08% open /   Column step size is 2.27%
 
-;   7:     07.00 .. 07.FF     9.09% to 12.73% open \
-;   8:     08.00 .. 08.FF    12.73% to 16.37% open  \
-;   9:     09.00 .. 09.FF    16.37% to 20.00% open   | linear across the range of 9.09 to 27.27%
-;  10:     0a.00 .. 0a.FF    20.00% to 23.64% open  /  Column step size is 3.64%
-;  11:     0b.00 .. 0b.FF    23.64% to 27.27% open /
+;   7:     07.00 .. 07.FF     9.09% to 12.72% open \
+;   8:     08.00 .. 08.FF    12.73% to 16.36% open  \
+;   9:     09.00 .. 09.FF    16.37% to 19.99% open   | linear across the range of 9.09 to 27.26%
+;  10:     0a.00 .. 0a.FF    20.00% to 23.63% open  /  Column step size is 3.64%
+;  11:     0b.00 .. 0b.FF    23.64% to 27.26% open /
 
-;  12:     0c.00 .. 0c.FF    27.27% to 41.66% open \
-;  13:     0d.00 .. 0d.FF    41.66% to 56.06% open  |  linear across the range of 27.27% to 70.45%
-;  14:     0e.00 .. 0e.FF    56.06% to 70.45% open /   Column step size is 14.39%
+;  12:     0c.00 .. 0c.FF    27.27% to 41.65% open \
+;  13:     0d.00 .. 0d.FF    41.66% to 56.05% open  |  linear across the range of 27.27% to 70.44%
+;  14:     0e.00 .. 0e.FF    56.06% to 70.44% open /   Column step size is 14.39%
 
-;  15:     0f.00 .. 0f.FF    70.45% to 80.30% open \
-;  16:     10.00 .. 10.FF    80.30% to 90.15% open  |  linear across the range of 70.45% to 100%
+;  15:     0f.00 .. 0f.FF    70.45% to 80.29% open \
+;  16:     10.00 .. 10.FF    80.30% to 90.14% open  |  linear across the range of 70.45% to 100%
 ;  17:     11.00 .. 11.FF    90.15% to 100.0% open /   Column step size is 9.85%
 ```
 
@@ -132,7 +164,7 @@ The important takeaways:
 
 It's all about managing the small throttle openings!!
 This is also why the TPS sensor only needs to be calibrated for its fully-closed ADC value.
-Inaccurate determination of a fully closed throttle due to TPS calibration problems matter _far_ more than the same amount of error around wide open throttle.
+Inaccurate determination of a fully closed throttle due to TPS calibration problems matters _far_ more than the same amount of error around wide open throttle.
 
 ### Rows: Engine RPM
 
@@ -142,9 +174,11 @@ _The tables are only used for situations where the engine is running at at least
 The ECU processes spark events completely differently when the engine is operating below 800 RPM._
 
 The first row represents 800 RPM, and subsequent rows increase the RPM amount by 400.
+A table length 29 rows means the max RPM the tables can handle is 12000 RPM, or well above engine redline.
 
 ### Table Values
 
+Now that the rows and columns are understood, it is time to look at the data stored in the tables.
 Each table entry defines a fixed point number in 0P8 format.
 The 0P8 fixed-point format can represent values from a minimum of 0.0 (0/256) to maximum of 0.996 (255/256).
 The resolution of the 0P8 format is 1/256, or 0.00391.
@@ -170,7 +204,7 @@ An examination of the ignition calculation firmware shows that the spark advance
 
 We know that CR4 starts at 72 degrees BTDC, so the ignition reference point will be 90 degrees later at 18 degrees __after__ TDC.
 The table values specify how far ahead of the _reference point_ that the spark should be fired, not how far ahead of TDC.
-The table entries represent a 0P8 fixed point fraction, meaning that it will always have a value >= 0.0, and < 1.0.
+The table entries represent a 0P8 fixed point fraction, meaning that it will always have a value >= 0.0, and =< 0.996.
 Multiplying this fraction against the 90 degree span starting at CR4 and extending to the reference point, tells the ECU where to fire the spark.
 
 Some examples might help clarify how these table values work:
