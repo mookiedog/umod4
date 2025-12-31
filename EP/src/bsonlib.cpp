@@ -100,7 +100,7 @@ int32_t Bson::elementLength_bytes(uint8_t* elementP)
                 int32_t stringLen = (int32_t)read_unaligned_uint32(elementValueP);
                 size += stringLen;
             }
-            
+
             // account for the 12 bytes of DB Pointer data
             size += 12;
             break;
@@ -157,7 +157,7 @@ bool Bson::findElement(uint8_t* docP, const char* elementName, element_t &e)
             e.name = (char*)(elementListP+1);
             e.data = elementListP + 1 + strlen(e.name) + 1;
             e.elementLength = elementLength_bytes(e.elementP);
-            
+
             if (dbg) printf("%s: Checking '%s' against e_name '%s', type %d\n", __FUNCTION__, elementName, e.name, e.elementType);
 
             if (0 == strcmp(elementName, e.name)) {

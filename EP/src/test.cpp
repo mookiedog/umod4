@@ -40,25 +40,25 @@ const char* progname;
 // BSON data type:
 uint8_t bson_type_test_data[] = {
     TOTAL_DOC_SIZE & 0xFF, TOTAL_DOC_SIZE>>8, 0x00, 0x00,
-    
+
     // Type -1: minkey (no value field)
     // len 5
     0xFF,
     'm', 'i', 'n', 0x00,
-    
+
     // Type 1: BSON double: "a" : 1.0, little-endian
     // len 11
     1,
     'a', 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x3f,
-    
+
     // Type 2: UTF-8 string: "b" : "Hello", string length only includes string bytes, not length-field bytes
     // len 13
     2,
     'b', 0x00,
     0x06, 0x00, 0x00, 0x00,             // string length including null byte
     'H', 'e', 'l', 'l', 'o', 0x00,
-    
+
     // Type 3: Embedded Doc: "c" : {"a" : "World"}
     // len 21
     3,
@@ -66,7 +66,7 @@ uint8_t bson_type_test_data[] = {
     18, 0x00, 0x00, 0x00,     // total doc length, includes these length bytes and end-of-doc byte
     0x02,  'a', 0x00,  0x06, 0x00, 0x00, 0x00, 'W', 'o', 'r', 'l', 'd', 0x00,
     0x00,                     // end-of-doc byte
-    
+
     // Type 4: Array: "d": ["zero", "one"]
     // len 31
     4,
@@ -75,7 +75,7 @@ uint8_t bson_type_test_data[] = {
     2, '0', 0x00,  0x04, 0x00, 0x00, 0x00,  'z', 'e', 'r', 'o', 0x00,   // array elements start at 0
     2, '1', 0x00,  0x03, 0x00, 0x00, 0x00,  'o', 'n', 'e', 0x00,
     0x00,
-    
+
     // Type 5: Binary Data:
     // len 11
     5,
@@ -83,42 +83,42 @@ uint8_t bson_type_test_data[] = {
     0x03, 0x00, 0x00, 0x00,     // int32 length of binary byte array
     0x00,                       // binary subtype
     0x00, 0x01, 0x02,           // binary byte array
-    
+
     // Type 6: Undefined (value) deprecated
     // len 3
     6,
     'f', 0x00,
-    
+
     // Type 7: ObjectID, always has 12 bytes of data
     // len 15
     7,
     'g', 0x00,
     1, 2, 3, 4, 5 ,6, 7, 8, 9, 10, 11, 12,
-    
+
     // type 8: Boolean: "bool": true
     // len 7
     8,
     'b', 'o', 'o', 'l', 0x00,
     0x01,
-    
+
     // Type 9: UTC DateTime (int64)
     // len 11
     9,
     'i', 0x00,
     0, 1, 2, 3, 4, 5, 6, 7,
-    
+
     // Type 10: Null value
     // len 3
     10,
     'j', 0x00,
-    
+
     // Type 11: Regular Expression
     // len 9
     11,
     'k', 0x00,
     's', '1', 0x00,         // C-string 1
     's', '2', 0x00,         // C-string 2
-    
+
     // Type 12: DB Pointer (deprecated)
     // len 23
     12,
@@ -126,58 +126,58 @@ uint8_t bson_type_test_data[] = {
     0x04, 0x00, 0x00, 0x00,               // string length, including null byte
     's', 't', 'r', 0x00,
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, // 12 bytes of DB pointer data
-    
+
     // Type 13: JavaScript code (String)
     // len 14
     13,
     'm', 0x00,
     0x07, 0x00, 0x00, 0x00,             // string length including null byte
     'J', 'S', 'c', 'o', 'd', 'e', 0x00,
-    
+
     // Type 14: Symbol (deprecated)
     // len 14
     14,
     'n', 0x00,
     0x07, 0x00, 0x00, 0x00,             // string length including null byte
     'S', 'y', 'm', 'b', 'o', 'l', 0x00,
-    
+
     // Type 15: Javescript code with scope (deprecated)
-    
-    
+
+
     // Type 16: int32
     // len 7
     16,
     'p', 0x00,
     0x78, 0x56, 0x34, 0x12,
-    
+
     // Type 17: Timestamp (uint64)
     // len 11
     17,
     'q', 0x00,
     0, 1, 2, 3, 4, 5, 6, 7,
-    
+
     // Type 18: int64
     // len 11
     18,
     'r', 0x00,
     0, 1, 2, 3, 4, 5, 6, 7,
-    
+
     // Type 19: 128 bit float
     // len 19
     19,
     's', 0x00,
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-    
+
     // Type 127: maxkey (has no value field)
     // len 5
     127,
     'm', 'a', 'x', 0x00,
-    
+
     // Define a sentinel as a NULL VALUE type. We will be unable to find this sentinel unless we
     // properly account for the sizes of all the items that preceed this one:
     // len 3
     10, 'z', 0x00,
-    
+
     // End-of-document
     // len 1
     0x00
@@ -192,33 +192,33 @@ bool findEprom(const char* epromName, doc_t &doc)
 {
     //uint8_t* doc = (uint8_t*)&__BSON_IMAGE_PARTITION_START_ADDR;
     uint8_t* docP = &eprom_UM4_bson[0];
-    
+
     while (1) {
         // Docs are placed in the image partition starting on a word alignment.
         // This adjustment of the docPtr makes sure that we skip over the padding
         // before starting to look inside the doc
         doc.length = (int32_t)Bson::read_unaligned_uint32(docP);
         doc.contents = docP + sizeof(doc.length);
-        
+
         if (doc.length == 0xFFFFFFFF) {
             // No more docs to scan
             printf("reached end-of-all-documents\n");
             return false;
         }
-        
+
         element_t e;
         e.name = "foo";
         e.data = nullptr;
-        
+
         bool found = Bson::findElement(docP, "eprom", e);
-        
+
         if (!found) {
             printf("This doc is not an eprom\n");
         }
         else {
             // We found an element named "eprom"
             printf("%s: Found element 'eprom', type: %d, name=%s:\n", __FUNCTION__, e.elementType, e.name);
-            
+
             // Make sure that element type associated with "eprom" is 'embedded document':
             if (e.elementType == 3) {
                 // Yes, it's an embedded doc
@@ -226,11 +226,11 @@ bool findEprom(const char* epromName, doc_t &doc)
                 doc.contents = e.data;
                 doc.length = (int32_t)Bson::read_unaligned_uint32(doc.contents);
                 printf("%s: contents are at offset %ld, length is %d\n", __FUNCTION__, doc.contents-docP, doc.length);
-                
+
                 return true;
             }
         }
-        
+
         // We didn't find what we wanted in this doc.
         // Try the next one in the BSON partition
         docP += doc.length;
@@ -243,7 +243,7 @@ uint8_t* findEprom(const char* epromName)
 {
     //uint8_t* doc = (uint8_t*)&__BSON_IMAGE_PARTITION_START_ADDR;
     uint8_t* doc = &eprom_UM4_bson[0];
-    
+
     while (1) {
         // Docs are placed in the image partition starting on a word alignment.
         // This adjustment of the docPtr makes sure that we skip over the padding
@@ -257,11 +257,11 @@ uint8_t* findEprom(const char* epromName)
             // We have reached the end of the documents in the bson document partition
             return nullptr;
         }
-        
+
         printf("%s: Checking a doc\n", __FUNCTION__);
         // Check inside the doc to find an top-level element named "eprom"
         uint8_t* element = Bson::findElement(doc, "eprom");
-        
+
         if (!element) {
             printf("This doc is not an eprom\n");
         }
@@ -271,14 +271,14 @@ uint8_t* findEprom(const char* epromName)
             char* elementName = (char*)element+1;
             void* elementValue = element + 1 + strlen(elementName) + 1;
             printf("%s: Found element 'eprom', type: %d, name=%s:\n", __FUNCTION__, elementType, elementName);
-            
+
             // Make sure that element type associated with "eprom" is 'embedded document':
             if (elementType == 3) {
                 // Yes, it's an embedded doc
                 return (uint8_t*)elementValue;
             }
         }
-        
+
         // We didn't find what we wanted in this doc.
         // Try the next one in the BSON partition
         doc += docLength;
@@ -290,7 +290,7 @@ void typeTest()
 {
     element_t e;
     const char* sentinelName = "z";
-    
+
     if (TOTAL_DOC_SIZE != sizeof(bson_type_test_data)) {
         fprintf(stderr, "%s: Inconsistency in size of test data struct: TOTAL_DOC_SIZE=%d, sizeof(bson_type_test_data)=%lu\n",
             progname,
@@ -304,7 +304,7 @@ void typeTest()
         fprintf(stderr, "%s: fail: unable to find sentinel '%s'\n", __FUNCTION__, sentinelName);
         exit(1);
     }
-    
+
     printf("%s: Test passed\n\n", __FUNCTION__);
 }
 
@@ -314,11 +314,11 @@ int main(int argc, char** argv)
     // Scan our library of BSON images to find something to run
     doc_t epromDoc;
     bool found;
-    
+
     progname = argv[0];
-    
+
     typeTest();
-    
+
     found = findEprom("UM4", epromDoc);
     if (!found) {
         printf("Eprom not found!\n");
@@ -326,21 +326,21 @@ int main(int argc, char** argv)
     else {
         printf("%s: checking if eprom is RP58-compatible\n", __FUNCTION__);
         element_t e_rp58compatible, e_daughterboard;
-        
+
         printf("%s: epromDoc.contents: %p, epromDoc.length: %d\n",
             __FUNCTION__, epromDoc.contents, epromDoc.length);
             found = Bson::findElement(epromDoc.contents, "RP58-compatible", e_rp58compatible);
-            
+
             printf("%s: Looking for daughterboard setting\n", __FUNCTION__);
             found = Bson::findElement(epromDoc.contents, "daughterboard", e_daughterboard);
-            
+
             element_t e_junk;
             printf("%s: Looking for non-existant key 'foobar'\n", __FUNCTION__);
             found = Bson::findElement(epromDoc.contents, "foobar", e_junk);
         }
-        
+
     }
-    
+
     #if 0
     uint8_t eprom_UM4_bson[194] __attribute__((section(".bsonStore"))) = {
         /* 0000 */ 0xc2,0x00,0x00,0x00,0x03,0x65,0x70,0x72,0x6f,0x6d,0x00,0xb6,0x00,0x00,0x00,0x02,    /* .....eprom...... */

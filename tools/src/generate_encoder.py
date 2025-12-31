@@ -10,34 +10,34 @@ def parse_line(line):
     # We're looking for lines with '=' and '#'
     if '=' not in line or '#' not in line:
         return None, None
-    
+
     # Split by '#' to separate the value part
     parts = line.split('#')
     if len(parts) < 2:
         return None, None
-    
+
     # Get the left side (symbol_name = expression_string)
     left_side = parts[0]
     # Get the right side (value)
     right_side = parts[1]
-    
+
     # Extract symbol name from left side (before '=')
     if '=' not in left_side:
         return None, None
-    
+
     symbol_name = left_side.split('=')[0].strip()
-    
+
     # Only process symbols that start with LOGID_EP or LOGID_ECU
     if not (symbol_name.startswith('LOGID_EP') or symbol_name.startswith('LOGID_ECU') or symbol_name.startswith('LOGID_GEN_ECU') or symbol_name.startswith('LOGID_GEN_EP')):
         return None, None
-    
+
     # Only process symbols with _TYPE_ in the name
     if '_TYPE_' not in symbol_name:
         return None, None
-    
+
     # Extract value from right side
     value_str = right_side.strip().split()[0] if right_side.strip() else ""
-    
+
     return symbol_name, value_str
 
 def parse_hex_value(value_str):
@@ -46,13 +46,13 @@ def parse_hex_value(value_str):
         # Check if it starts with 0x or 0X
         if not value_str.lower().startswith('0x'):
             return None
-        
+
         value = int(value_str, 16)
-        
+
         # Check range
         if value < 0x00 or value > 0xFF:
             return None
-        
+
         return value
     except ValueError:
         return None
@@ -99,36 +99,36 @@ def main():
     parser = argparse.ArgumentParser(description='Generate C array from symbol definitions')
     parser.add_argument('-i', '--input', required=True, help='Input file')
     parser.add_argument('-o', '--output', help='Output file (default: stdout)')
-    
+
     args = parser.parse_args()
-    
+
     # Read and parse input file
     symbols = []
     errors = []
-    
+
     try:
         with open(args.input, 'r') as f:
             for line_num, line in enumerate(f, 1):
                 symbol_name, value_str = parse_line(line)
-                
+
                 if symbol_name is None:
                     continue  # Ignore this line
-                
+
                 value = parse_hex_value(value_str)
-                
+
                 if value is None:
                     errors.append(f"Line {line_num}: Invalid hex value '{value_str}' for symbol '{symbol_name}'")
                     continue
-                
+
                 symbols.append((symbol_name, value))
-    
+
     except FileNotFoundError:
         print(f"Error: Input file '{args.input}' not found", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error reading input file: {e}", file=sys.stderr)
         sys.exit(1)
-    
+
     # Check for type-specific constraints
     for symbol_name, value in symbols:
         if (symbol_name.endswith('_TYPE_I16') or
@@ -137,16 +137,16 @@ def main():
             symbol_name.endswith('_TYPE_PTS')):
             if value % 2 != 0:
                 errors.append(f"Error: Symbol '{symbol_name}' has odd value 0x{value:02X}, but must be even")
-    
+
     # Report all errors
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
         sys.exit(1)
-    
+
     # Generate output entries
     entries = []
-    
+
     for symbol_name, value in symbols:
         if (symbol_name.endswith('_TYPE_I16') or
             symbol_name.endswith('_TYPE_U16') or
@@ -158,10 +158,10 @@ def main():
         else:
             # Single-byte types (anything else with _TYPE_ in the name)
             entries.append((value, f"[0x{value:02X}] = D_BYTE,", symbol_name))
-    
+
     # Sort entries by value
     entries.sort(key=lambda x: x[0])
-    
+
     # Determine header file path and name
     if args.output:
         # Get directory and base name of output file
@@ -169,10 +169,10 @@ def main():
         output_base = os.path.splitext(os.path.basename(args.output))[0]
         header_path = os.path.join(output_dir, output_base + '.h')
         header_include = output_base + '.h'
-        
+
         # Write header file
         write_header_file(header_path)
-        
+
         # Open output file
         output_file = open(args.output, 'w')
     else:
@@ -180,7 +180,7 @@ def main():
         write_header_to_stdout()
         output_file = sys.stdout
         header_include = "log_encoder.h"
-    
+
     try:
         # Write C source file
         output_file.write("// *************************************************************************************\n")
@@ -189,17 +189,17 @@ def main():
         output_file.write(f'#include "{header_include}"\n')
         output_file.write("\n")
         output_file.write("uint8_t logEncoder [256] = {\n")
-        
+
         # Write array entries with comments aligned at column 25
         for _, code, comment in entries:
             # 4 spaces indent + code
             line_start = "    " + code
             padding = max(1, 25 - len(line_start))
             output_file.write(f"{line_start}{' ' * padding}// {comment}\n")
-        
+
         # Write closing brace
         output_file.write("};\n")
-    
+
     finally:
         if args.output:
             output_file.close()

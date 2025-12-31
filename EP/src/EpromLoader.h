@@ -6,38 +6,38 @@
 #include "bsonlib.h"
 
 class EpromLoader {
-    
+
     typedef struct{
         uint32_t startOffset;
         uint32_t length;
         uint32_t m3;
         uint8_t* binData;
     } meminfo_t;
-    
+
     public:
     typedef uint8_t* bsonDoc_t;
-    
+
     // Load a sequential range of bytes from an eprom image. Bytes are always loaded to
     // the same offset in the SRAM eprom image array.
     // startOffset: the starting EPROM offset (0x0000..0x7FFF)
     // length: the number of bytes to load
     // Note: (startOffset+length) must be <= 32768 (0x8000)
     static uint8_t loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_t length);
-    
+
     // Returns a pointer to the BSON epromDoc corresponding to the named EPROM from within the BSON document partition
     // Returns nullptr if the BSON doc cannot be located
     static bsonDoc_t findEprom(const char* epromName);
-    
+
     // Load an EPROM image, from a specific EPROM document or by searching the BSON partition by name.
     static uint8_t loadImage(const char* imageName);
     static uint8_t loadImage(bsonDoc_t epromDoc);
-    
+
     // Load a map blob, either from a specific EPROM document or by searching the BSON partition by name.
     // The mapblob is the complete set of map data extracted from the EPROM binary image.
     // Only works for RP58-compatible EPROMs!
     static uint8_t loadMapblob(const char* imageName);
     static uint8_t loadMapblob(bsonDoc_t epromDoc);
-    
+
     // Search a BSON doc to find a top-level element named "mem"
     // with a value of type BSON_TYPE_EMBEDDED_DOC. The embedded doc
     // must contain elements named:

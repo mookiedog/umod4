@@ -58,7 +58,7 @@ int32_t FlashEp::takeControl()
     gpio_init(swd_clk_pin);
     gpio_init(swd_dat_pin);
     swd->init();
-    
+
     int32_t result = swd->connect();
     if (result != 0) {
         if (dbg) printf("swd->connect() failed: err %d\n", result);
@@ -99,7 +99,7 @@ void FlashEp::releaseControl()
 // --------------------------------------------------------------------------------
 int32_t FlashEp::init_function_table()
 {
-    // Move VTOR to SRAM in preparation 
+    // Move VTOR to SRAM in preparation
     if (const auto r = swd->writeWordViaAP(0xe000ed08, 0x20000000); r != 0)
         return -12;
 
@@ -128,8 +128,8 @@ int32_t FlashEp::init_function_table()
     rom_debug_trampoline_end_func = 0;
 
     // Iterate through the table until we find a null function code
-    // Each entry word is two 8-bit codes and a 16-bit 
-    // address.  
+    // Each entry word is two 8-bit codes and a 16-bit
+    // address.
 
     while (true) {
 
@@ -164,9 +164,9 @@ int32_t FlashEp::init_function_table()
             rom_flash_enter_cmd_xip_func = func_addr;
         else if (func_code == rom_table_code('D', 'T'))
             rom_debug_trampoline_func = func_addr;
-        else if (func_code == rom_table_code('D', 'E')) 
+        else if (func_code == rom_table_code('D', 'E'))
             rom_debug_trampoline_end_func = func_addr;
-        
+
         tab_ptr += 4;
     }
 
@@ -206,7 +206,7 @@ int32_t FlashEp::readBlk(uint32_t flashStartAddr, uint32_t* readBuffer)
     if (const auto r = kc1fsz::call_function(*swd, rom_debug_trampoline_func, rom_flash_flush_cache_func, 0, 0, 0, 0); !r.has_value()) {
         return -20;
     }
-    
+
     if (const auto r = kc1fsz::call_function(*swd, rom_debug_trampoline_func, rom_flash_enter_cmd_xip_func, 0, 0, 0, 0); !r.has_value()) {
         return -21;
     }
@@ -230,18 +230,18 @@ int32_t FlashEp::readBlk(uint32_t flashStartAddr, uint32_t* readBuffer)
 int32_t FlashEp::readBlk(uint32_t flash_addr, uint32_t* readBuffer)
 {
     const uint32_t BLOCK_SIZE_WORDS = 1024;  // 1K words = 4KB
-    
+
     // First, ensure flash is in XIP (execute-in-place) mode so we can read it
     // Flush the cache to ensure we're reading current flash contents
-    if (const auto r = kc1fsz::call_function(*swd, rom_debug_trampoline_func, 
+    if (const auto r = kc1fsz::call_function(*swd, rom_debug_trampoline_func,
         rom_flash_flush_cache_func, 0, 0, 0, 0); !r.has_value())
         return -1;
-    
+
     // Enter XIP mode for normal flash reading
-    if (const auto r = kc1fsz::call_function(*swd, rom_debug_trampoline_func, 
+    if (const auto r = kc1fsz::call_function(*swd, rom_debug_trampoline_func,
         rom_flash_enter_cmd_xip_func, 0, 0, 0, 0); !r.has_value())
         return -2;
-    
+
     // Read each word from the target's flash memory into our local buffer
     for (uint32_t i = 0; i < BLOCK_SIZE_WORDS; i++) {
         // Read one 32-bit word from the target processor's flash via SWD
@@ -251,11 +251,11 @@ int32_t FlashEp::readBlk(uint32_t flash_addr, uint32_t* readBuffer)
             // Store the read word in our local buffer
             readBuffer[i] = *r;
         }
-        
+
         // Move to the next word (4 bytes)
         flash_addr += 4;
     }
-    
+
     return 0;  // Success
 }
 #endif
@@ -551,7 +551,7 @@ int32_t FlashEp::eraseAllRegions()
 int32_t FlashEp::programAllBlocks(lfs_file_t* file)
 {
     uint8_t uf2_block[UF2_BLOCK_SIZE];
-    
+
     uint32_t chunk_start_offset = 0;
     uint32_t chunk_bytes = 0;
     uint32_t total_bytes_written = 0;

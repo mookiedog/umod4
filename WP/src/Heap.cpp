@@ -5,7 +5,7 @@
 // In a newlib-based system like this one, the heap is defined to start right after the
 // RAM BSS section ends. Specifically, the linker .ld file will define a global symbol
 // called 'end' which marks the end of BSS RAM.
-// In normal circumstances, the heap will use all the RAM between the end of BSS and 
+// In normal circumstances, the heap will use all the RAM between the end of BSS and
 // the bottom of the stack. However, the stack used at startup starts at the end of RAM
 // and goes downwards, meaning that it is using the heap area.
 // In a FreeRTOS system, this is a minor and temporary problem since that initial stack
@@ -19,7 +19,7 @@
 // The FreeRTOS enterCriticalSection() call disables interrupts. This has the desirable
 // effect of preventing a task switch while inside a critical section because task switching
 // only occurs inside an interrupt.
-// But it only disables interrupts on the calling core. A second core could 
+// But it only disables interrupts on the calling core. A second core could
 
 
 #include "pico.h"
@@ -51,7 +51,7 @@ void *_sbrk(ptrdiff_t incr)
   }
 
   taskENTER_CRITICAL();
-  
+
   // All requests > 0 bytes get their length rounded up so that the brk pointer remains double-word aligned.
   ptrdiff_t aligned_incr = (incr+7) & ~0x7;
 

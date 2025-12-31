@@ -294,7 +294,7 @@ if (args.binfile != None):
     image = read_bin_file(args.binfile)
 else:
     image = None
-    
+
 # Read and process the JSON/descriptor file text into 'descriptor', a Python DICT object
 descriptor = process_descriptor(args.descriptorfile)
 

@@ -292,7 +292,7 @@ class DataVisualizationTool(QMainWindow):
         # Restore splitter states after creation
         self.config.restore_splitter_state("horizontal", self.h_splitter)
         self.config.restore_splitter_state("vertical", self.v_splitter)
-        
+
     def create_menu_bar(self):
         """Create the menu bar to replace the ribbon"""
         menu_bar = self.menuBar()
@@ -515,7 +515,7 @@ class DataVisualizationTool(QMainWindow):
 
         scroll.setWidget(self.stream_list_widget)
         layout.addWidget(scroll)
-        
+
     def create_graph_window(self):
         """Create the main graph window"""
         self.graph_plot = ZoomableGraphWidget()
@@ -561,7 +561,7 @@ class DataVisualizationTool(QMainWindow):
         self.gps_markers.sigClicked.connect(self.on_gps_marker_clicked)
 
         self.graph_plot.addItem(self.gps_markers)
-        
+
     def create_navigation_window(self):
         """Create the navigation window"""
         self.nav_widget = QWidget()
@@ -603,7 +603,7 @@ class DataVisualizationTool(QMainWindow):
         self.nav_plot.exclude_region = self.view_region
 
         nav_layout.addWidget(self.nav_plot)
-        
+
     def populate_stream_selection(self):
         """Populate the stream selection window"""
         # Clear existing
@@ -1330,7 +1330,7 @@ class DataVisualizationTool(QMainWindow):
                             else:
                                 metadata_text.append(f"  Status:  Error (0x{error_status:02X})\n")
                     metadata_text.append("\n")
-                
+
                 # List all groups and datasets
                 metadata_text.append("STRUCTURE:\n")
                 metadata_text.append("-" * 70 + "\n")
@@ -1455,12 +1455,12 @@ class DataVisualizationTool(QMainWindow):
                 self.right_axis_owner = self.axis_owner
                 self.axis_owner = stream
                 self.update_graph_plot()
-            
+
         else:
             # Disable stream
             if stream in self.enabled_streams:
                 self.enabled_streams.remove(stream)
-            
+
             # Handle ownership reassignment
             if stream == self.axis_owner:
                 # Disabling left axis owner
@@ -1512,7 +1512,7 @@ class DataVisualizationTool(QMainWindow):
             elif stream == self.right_axis_owner:
                 # Disabling right axis owner, just clear it
                 self.right_axis_owner = None
-            
+
         self.request_update()
 
     def on_stream_name_clicked(self, stream, event):
@@ -1542,7 +1542,7 @@ class DataVisualizationTool(QMainWindow):
         self.pending_update = True
         if not self.update_timer.isActive():
             self.update_timer.start()
-    
+
     def perform_pending_update(self):
         """Perform the actual update"""
         if self.pending_update:
@@ -1551,7 +1551,7 @@ class DataVisualizationTool(QMainWindow):
             self.pending_update = False
         else:
             self.update_timer.stop()
-    
+
     def update_graph_plot(self):
         """Update the main graph plot with dynamic level-of-detail"""
         import math  # For temperature range calculations
@@ -1728,26 +1728,26 @@ class DataVisualizationTool(QMainWindow):
                 # Display as line (default)
                 pen = pg.mkPen(color=color, width=2)
                 self.graph_plot.plot(plot_time, normalized_data, pen=pen)
-        
+
         # Set axis properties based on owner (for display purposes only)
         if self.axis_owner and self.axis_owner in self.enabled_streams:
             color = self.stream_colors[self.axis_owner]
             self.graph_plot.getAxis('left').setPen(pg.mkPen(color=color, width=2))
             self.graph_plot.getAxis('left').setTextPen(pg.mkPen(color=color))
-            
+
             # Set the y-axis label to the axis owner's name with larger font
             display_units = self.stream_metadata.get(self.axis_owner, {}).get('display_units', 'value')
-            display_name = UnitConverter.get_display_name(self.axis_owner, 
-                                                        self.stream_metadata.get(self.axis_owner, {}).get('native_units', 'value'), 
+            display_name = UnitConverter.get_display_name(self.axis_owner,
+                                                        self.stream_metadata.get(self.axis_owner, {}).get('native_units', 'value'),
                                                         display_units)
-            
+
             # Create font with configured size
             label_font = QFont()
             label_font.setPointSize(self.axis_font_size)
-            
+
             # For pyqtgraph labels, we need to use the setLabel method properly
             self.graph_plot.setLabel('left', display_name)
-            
+
             # Apply font to the axis label text
             self.graph_plot.getAxis('left').label.setFont(label_font)
 
@@ -1806,7 +1806,7 @@ class DataVisualizationTool(QMainWindow):
         x_label_font.setPointSize(self.axis_font_size)
         self.graph_plot.setLabel('bottom', 'Time (s)')
         self.graph_plot.getAxis('bottom').label.setFont(x_label_font)
-        
+
         # Set x-axis tick labels with configured font size
         x_tick_font = QFont()
         x_tick_font.setPointSize(self.axis_font_size)
@@ -2677,7 +2677,7 @@ class DataVisualizationTool(QMainWindow):
             color = self.stream_colors[stream]
             pen = pg.mkPen(color=color, width=1)
             self.nav_plot.plot(nav_time, normalized_values, pen=pen)
-        
+
         # Apply theme
         if self.dark_theme:
             self.nav_plot.setBackground('#2b2b2b')
@@ -2687,7 +2687,7 @@ class DataVisualizationTool(QMainWindow):
             self.nav_plot.setBackground('w')
             self.nav_plot.getAxis('bottom').setPen('k')
             self.nav_plot.getAxis('bottom').setTextPen('k')
-    
+
     def on_region_changed(self):
         """Handle navigation region changes (real-time)"""
         region = self.view_region.getRegion()
@@ -2777,7 +2777,7 @@ class DataVisualizationTool(QMainWindow):
         self.view_region.blockSignals(False)
 
         self.update_graph_plot()
-    
+
 
     def zoom_in_2x(self):
         """Zoom in by 2x (halve the time shown), centered on current view"""
@@ -3346,7 +3346,7 @@ class DataVisualizationTool(QMainWindow):
 
         # Accept the close event
         super().closeEvent(event)
-    
+
     def on_splitter_moved(self, pos, index):
         """Handle splitter movement"""
         if self.raw_data:

@@ -8,12 +8,12 @@
 #include "lfs.h"
 
 /**
- * Makes a 16-bit RP2040 ROM table code from the two 
- * ASCII characters. 
+ * Makes a 16-bit RP2040 ROM table code from the two
+ * ASCII characters.
  */
 static uint16_t rom_table_code(char c1, char c2) {
     return (c2 << 8) | c1;
-}      
+}
 
 // Region tracking for two-phase UF2 flashing
 struct FlashRegion {
