@@ -49,42 +49,71 @@ class Umod4Server:
                 if not mac_address:
                     return jsonify({'error': 'mac_address required'}), 400
 
-                # Get or create device
-                device, is_new = self.database.get_or_create_device(mac_address)
-
-                # Update device info
                 session = self.database.get_session()
                 try:
+                    # Get or create device within the same session
+                    device = session.query(Device).filter_by(mac_address=mac_address).first()
+                    is_new = False
+
+                    if not device:
+                        # Create new device
+                        if os.name == 'nt':
+                            base_path = os.path.join(os.environ.get('APPDATA', ''), 'umod4_server', 'logs')
+                        else:
+                            base_path = os.path.expanduser('~/.umod4_server/logs')
+
+                        mac_clean = mac_address.replace(':', '-')
+                        log_path = os.path.join(base_path, mac_clean)
+
+                        device = Device(
+                            mac_address=mac_address,
+                            display_name=mac_address,  # Default to MAC, user can rename
+                            log_storage_path=log_path,
+                            first_seen=datetime.utcnow(),
+                            last_seen=datetime.utcnow()
+                        )
+                        session.add(device)
+                        is_new = True
+
+                        # Create log storage directory
+                        os.makedirs(log_path, exist_ok=True)
+
+                    # Update device info
                     if 'wp_version' in data:
                         device.wp_version = data['wp_version']
                     if 'ep_version' in data:
                         device.ep_version = data['ep_version']
                     device.last_seen = datetime.utcnow()
-                    session.add(device)
+
                     session.commit()
+
+                    # Get values before closing session
+                    device_mac = device.mac_address
+                    device_name = device.display_name
+
+                    # Notify GUI
+                    if self.on_device_registered and is_new:
+                        self.on_device_registered(device)
+
+                    # Record connection event
+                    ip_address = data.get('ip_address', request.remote_addr)
+                    connection = self.database.add_connection(device_mac, ip_address)
+
+                    if self.on_connection_event:
+                        self.on_connection_event(connection)
+
+                    # Return device configuration
+                    response = {
+                        'device_id': device_mac,
+                        'display_name': device_name,
+                        'log_upload_path': f'/logs/upload/{device_mac}',
+                        'firmware_check_url': f'/firmware/latest/{device_mac}'
+                    }
+
+                    return jsonify(response), 200
+
                 finally:
                     session.close()
-
-                # Notify GUI
-                if self.on_device_registered and is_new:
-                    self.on_device_registered(device)
-
-                # Record connection event
-                ip_address = data.get('ip_address', request.remote_addr)
-                connection = self.database.add_connection(mac_address, ip_address)
-
-                if self.on_connection_event:
-                    self.on_connection_event(connection)
-
-                # Return device configuration
-                response = {
-                    'device_id': device.mac_address,
-                    'display_name': device.display_name,
-                    'log_upload_path': f'/logs/upload/{mac_address}',
-                    'firmware_check_url': f'/firmware/latest/{mac_address}'
-                }
-
-                return jsonify(response), 200
 
             except Exception as e:
                 return jsonify({'error': str(e)}), 500

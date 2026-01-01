@@ -61,7 +61,13 @@ class DeviceListWidget(QWidget):
 
             for row, device in enumerate(devices):
                 # Store MAC address in row data
-                self.device_table.setItem(row, 0, QTableWidgetItem(device.display_name))
+                # Display format: "Name (MAC)" or just "MAC" if not renamed
+                if device.display_name == device.mac_address:
+                    display_text = device.mac_address
+                else:
+                    display_text = f"{device.display_name} ({device.mac_address})"
+
+                self.device_table.setItem(row, 0, QTableWidgetItem(display_text))
                 self.device_table.item(row, 0).setData(Qt.ItemDataRole.UserRole, device.mac_address)
 
                 # Determine status (online if last_seen within 30 seconds)
