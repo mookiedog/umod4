@@ -144,6 +144,7 @@ class Umod4Server:
         @self.app.route('/logs/upload/<device_mac>', methods=['POST'])
         def upload_log(device_mac):
             """Upload a log file from a device."""
+            transfer_id = None
             try:
                 # Get filename from header or use default
                 filename = request.headers.get('X-Filename', 'unknown.um4')
@@ -152,9 +153,17 @@ class Umod4Server:
                 if not filename.endswith('.um4'):
                     filename += '.um4'
 
-                # Get device
-                device, _ = self.database.get_or_create_device(device_mac)
-                log_path = device.log_storage_path
+                # Get device and log path within session
+                session = self.database.get_session()
+                try:
+                    device = session.query(Device).filter_by(mac_address=device_mac).first()
+                    if not device:
+                        return jsonify({'error': 'Device not found'}), 404
+
+                    log_path = device.log_storage_path
+                finally:
+                    session.close()
+
                 os.makedirs(log_path, exist_ok=True)
 
                 # Full path for file
@@ -170,6 +179,7 @@ class Umod4Server:
                     size_bytes=content_length,
                     status='in_progress'
                 )
+                transfer_id = transfer.id
 
                 # Notify GUI
                 if self.on_transfer_started:
@@ -198,7 +208,7 @@ class Umod4Server:
 
                 # Update transfer record
                 self.database.update_transfer(
-                    transfer.id,
+                    transfer_id,
                     status='success',
                     end_time=end_time,
                     transfer_speed_mbps=speed_mbps
@@ -206,7 +216,7 @@ class Umod4Server:
 
                 # Notify GUI
                 if self.on_transfer_completed:
-                    self.on_transfer_completed(transfer.id)
+                    self.on_transfer_completed(transfer_id)
 
                 response = {
                     'status': 'ok',
@@ -220,15 +230,15 @@ class Umod4Server:
 
             except Exception as e:
                 # Update transfer as failed
-                if 'transfer' in locals():
+                if transfer_id:
                     self.database.update_transfer(
-                        transfer.id,
+                        transfer_id,
                         status='failed',
                         end_time=datetime.utcnow(),
                         error_message=str(e)
                     )
                     if self.on_transfer_completed:
-                        self.on_transfer_completed(transfer.id)
+                        self.on_transfer_completed(transfer_id)
 
                 return jsonify({'error': str(e)}), 500
 
