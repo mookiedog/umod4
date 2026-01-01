@@ -1,5 +1,26 @@
 # To Do
 
+## Goals for 2026
+
+* WiFi
+  * offload logs when powered in the garage
+  * OTA updates
+    * EP/ECU
+    * WP
+
+* Logging data streams
+  * log enough info for viz to be able to display what part of the maps are being used on every engine cycle
+  * Ignition
+    * Figure out how to tell when the coil dwell cycle starts
+    * bonus points for figuring out the calculation for length of dwell and start time
+  * Figure out the fuel injection maps
+    * Not just the maps, but the post processing for things like
+      * cold starts
+      * "acceleration pump"
+
+* Get PCB 4V2 designed & fabricated
+
+## Short Term
 * Figure out what the target ADC reading is for DIAG mode when setting the TPS position
 * Work on Getting the EP flashed from the WP
   * Convert the low-level SWD stuff to use the code from [Raspberry Pi Picoprobe](https://github.com/raspberrypi/debugprobe/tree/master)
@@ -7,10 +28,6 @@
     * 100% sure it works instead of the reflasher code
   * Extract what I need from the reflasher code
     * send data, verify data, issue programming commands, release control, etc.
-* 4-bit SD Card accesses
-  * Would speed writes when logging, reads when reflashing EP
-  * THere is a pi pico version in examples
-  * There is another example at zuluscsi, GPL-3 under continuous development too
 
 * Add wifi to WP
   * auto-connect to wifi at boot
