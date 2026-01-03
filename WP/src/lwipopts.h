@@ -23,12 +23,13 @@
 // Provide errno from newlib
 #define LWIP_PROVIDE_ERRNO          0
 
-#if PICO_CYW43_ARCH_POLL
+// Since we have implemented a thread-safe __malloc_lock,
+// we can safely use the standard libc malloc for lwIP.
 #define MEM_LIBC_MALLOC             1
-#else
-// MEM_LIBC_MALLOC is incompatible with non polling versions
-#define MEM_LIBC_MALLOC             0
-#endif
+
+// Use mem_malloc/mem_free instead of the lwip pool allocator.
+// May make the system run slower, but simplifies memory management.
+#define MEMP_MEM_MALLOC             1
 
 #define MEM_ALIGNMENT               4
 #define MEM_SIZE                    4000

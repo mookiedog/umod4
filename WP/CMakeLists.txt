@@ -305,6 +305,7 @@ target_link_libraries(${PROJECT_NAME}
     pico_stdlib
     pico_multicore
     pico_sync
+    pico_malloc
     hardware_flash
     hardware_timer
     cmsis_core
@@ -313,7 +314,7 @@ target_link_libraries(${PROJECT_NAME}
     hardware_uart
     hardware_spi
     FreeRTOS-Kernel
-    FreeRTOS-Kernel-Heap4  # Required for WiFi async context
+    FreeRTOS-Kernel-Heap3  # Required for WiFi async context
     littlefs
     swd_reflash
     tiny_regex_c

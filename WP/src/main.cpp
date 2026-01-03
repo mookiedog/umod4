@@ -1,5 +1,6 @@
-#include "stdio.h"
+#include <stdio.h>
 #include <string.h>
+#include <malloc.h>
 
 #include "pico/stdlib.h"
 #include "pico/mutex.h"
@@ -802,11 +803,53 @@ void vWiFiTask(void* arg)
 }
 
 // ----------------------------------------------------------------------------------
+// A heap monitoring task that periodically prints out heap usage statistics.
+//
+// The Pico SDK/Newlib internal function is _sbrk
+extern "C" {
+    extern char __bss_end__;
+    extern char __StackLimit;
+    extern char __StackTop;
+    void* _sbrk(ptrdiff_t incr);
+}
+
+void heap_monitor_task(void *pvParameters)
+{
+    uintptr_t heap_start = (uintptr_t)&__bss_end__;
+    uintptr_t heap_limit = (uintptr_t)&__StackLimit;
+    uintptr_t stack_top  = (uintptr_t)&__StackTop;
+
+    const uint32_t max_heap_potential = heap_limit - heap_start;
+
+    while (true) {
+        // Use the older mallinfo struct
+        struct mallinfo mi = mallinfo();
+
+        // Get the current "top" of the heap from the system
+        char* heap_top = (char*)_sbrk(0);
+
+        printf("%s: Heap [max/remaining/inuse/free]: [%d/%d/%d/%d]\n",
+            __FUNCTION__,
+            max_heap_potential,
+            max_heap_potential - mi.arena,
+            mi.arena,
+            mi.uordblks,
+            mi.fordblks,
+            (void*)heap_top
+        );
+
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
+// ----------------------------------------------------------------------------------
 // This function is used to perform the FreeRTOS task initialization.
 // FreeRTOS is known to be running when this routine is called so it is free
 // to use any FreeRTOS constructs and call any FreeRTOS routines.
 void bootSystem()
 {
+    BaseType_t err;
+
     initEpUart();
 
     // The logger may be started early since it has a big buffer to handle extremely long LittleFS write times.
@@ -816,6 +859,9 @@ void bootSystem()
     // First thing we log is what version of the log we are generating:
     uint8_t v = LOGID_GEN_WP_LOG_VER_VAL_V0;
     logger->logData(LOGID_GEN_WP_LOG_VER_TYPE_U8, LOGID_GEN_WP_LOG_VER_DLEN, &v);
+
+    TaskHandle_t heap_monitor_task_handle;
+    err = xTaskCreate(heap_monitor_task, "Heap Monitor", 1024, NULL, 1, &heap_monitor_task_handle);
 
     printf("%s: Starting the filesystem\n", __FUNCTION__);
     startFileSystem();
@@ -831,7 +877,7 @@ void bootSystem()
 
     printf("%s: Starting WiFi task\n", __FUNCTION__);
     TaskHandle_t wifi_task = NULL;
-    BaseType_t err = xTaskCreate(vWiFiTask, "WiFi Task", 4096, NULL, 1, &wifi_task);
+    err = xTaskCreate(vWiFiTask, "WiFi Task", 4096, NULL, 1, &wifi_task);
     if (err != pdPASS) {
         printf("%s: WARNING - Failed to create WiFi task\n", __FUNCTION__);
     }
