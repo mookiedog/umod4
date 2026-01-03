@@ -436,6 +436,12 @@ class MainWindow(QMainWindow):
         # Settings menu
         settings_menu = menu_bar.addMenu("Settings")
 
+        manage_devices_action = QAction("Manage Devices", self)
+        manage_devices_action.triggered.connect(self._manage_devices)
+        settings_menu.addAction(manage_devices_action)
+
+        settings_menu.addSeparator()
+
         server_settings_action = QAction("Server Settings", self)
         server_settings_action.triggered.connect(self._show_server_settings)
         settings_menu.addAction(server_settings_action)
@@ -463,6 +469,56 @@ class MainWindow(QMainWindow):
     def _on_device_selected(self, device_mac):
         """Handle device selection."""
         self.transfer_history.set_device_filter(device_mac)
+
+    def configure_new_device(self, device_mac):
+        """Show configuration dialog for newly registered device.
+
+        Args:
+            device_mac: MAC address of new device
+        """
+        from gui.device_config_dialog import DeviceConfigDialog
+        from models.database import Device
+
+        session = self.database.get_session()
+        try:
+            device = session.query(Device).filter_by(mac_address=device_mac).first()
+            if not device:
+                return
+
+            # Show configuration dialog
+            dialog = DeviceConfigDialog(
+                device_mac=device.mac_address,
+                default_name=device.display_name,
+                default_path=device.log_storage_path,
+                parent=self
+            )
+
+            if dialog.exec() == DeviceConfigDialog.DialogCode.Accepted:
+                # Update device with user's choices
+                new_name, new_path = dialog.get_config()
+
+                device.display_name = new_name
+                device.log_storage_path = new_path
+                session.commit()
+
+                # Create new log directory if needed
+                os.makedirs(new_path, exist_ok=True)
+
+                # Refresh device list
+                self.device_list.refresh_devices()
+
+        finally:
+            session.close()
+
+    def _manage_devices(self):
+        """Show device management dialog."""
+        from gui.manage_devices_dialog import ManageDevicesDialog
+
+        dialog = ManageDevicesDialog(self.database, parent=self)
+        dialog.exec()
+
+        # Refresh device list after dialog closes
+        self.device_list.refresh_devices()
 
     def _show_server_settings(self):
         """Show server settings dialog."""

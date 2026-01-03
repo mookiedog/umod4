@@ -24,6 +24,7 @@
 
 #include "pico.h"
 #include "stdlib.h"
+#include "string.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -79,7 +80,6 @@ void *_sbrk(ptrdiff_t incr)
 }
 
 // Provide our own new() and delete() so that C++ is happy.
-// Note that an embedded system should probably not be using delete() or free()!
 void* operator new(size_t size)
 {
   return malloc(size);
@@ -96,12 +96,5 @@ void operator delete(void* ptr)
   #endif
 }
 
-void * pvPortMalloc( size_t xWantedSize )
-{
-  return malloc(xWantedSize);
-}
-
-void vPortFree( void * pv )
-{
-  panic("Free is not implemented!");
-}
+// pvPortMalloc and vPortFree are provided by FreeRTOS-Kernel-Heap4
+// Do NOT define them here - let Heap4 manage FreeRTOS object allocation

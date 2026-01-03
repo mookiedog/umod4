@@ -108,8 +108,31 @@ if(DEFINED ENV{WIFI_PASSWORD} AND (NOT WIFI_PASSWORD))
     message("Using WIFI_PASSWORD from environment")
 endif()
 
+if(DEFINED ENV{UMOD4_SERVER_HOST} AND (NOT UMOD4_SERVER_HOST))
+    set(UMOD4_SERVER_HOST $ENV{UMOD4_SERVER_HOST})
+    message("Using UMOD4_SERVER_HOST from environment ('${UMOD4_SERVER_HOST}')")
+endif()
+
+if(DEFINED ENV{UMOD4_SERVER_PORT})
+    set(UMOD4_SERVER_PORT $ENV{UMOD4_SERVER_PORT})
+    message("Using UMOD4_SERVER_PORT from environment ('${UMOD4_SERVER_PORT}')")
+elseif(NOT UMOD4_SERVER_PORT)
+    set(UMOD4_SERVER_PORT "8888")
+endif()
+
+# Validate required WiFi/server configuration
+if(NOT WIFI_SSID OR NOT WIFI_PASSWORD)
+    message(FATAL_ERROR "WIFI_SSID and WIFI_PASSWORD environment variables must be set for WiFi builds")
+endif()
+
+if(NOT UMOD4_SERVER_HOST)
+    message(FATAL_ERROR "UMOD4_SERVER_HOST environment variable must be set (e.g., '192.168.1.100' or 'myserver.local')")
+endif()
+
 set(WIFI_SSID "${WIFI_SSID}" CACHE INTERNAL "WiFi SSID for ${PROJECT_NAME}")
 set(WIFI_PASSWORD "${WIFI_PASSWORD}" CACHE INTERNAL "WiFi password for ${PROJECT_NAME}")
+set(UMOD4_SERVER_HOST "${UMOD4_SERVER_HOST}" CACHE INTERNAL "umod4 server hostname/IP for ${PROJECT_NAME}")
+set(UMOD4_SERVER_PORT "${UMOD4_SERVER_PORT}" CACHE INTERNAL "umod4 server port for ${PROJECT_NAME}")
 
 # Not happy with this...
 if(DEFINED ENV{PICO_EXAMPLES_PATH} AND NOT PICO_EXAMPLES_PATH)
@@ -129,6 +152,12 @@ endif()
 include_directories(
     ${LIB_DIR}/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    # lwIP includes needed for pico_cyw43_arch_lwip_sys_freertos
+    ${PICO_SDK_PATH}/lib/lwip/src/include
+    ${PICO_SDK_PATH}/src/rp2_common/pico_lwip/include
+    ${PICO_SDK_PATH}/lib/lwip/src/include/lwip/apps
+    # FreeRTOS lwIP arch port
+    ${PICO_SDK_PATH}/lib/lwip/contrib/ports/freertos/include
 )
 
 add_executable(${PROJECT_NAME}
@@ -147,6 +176,9 @@ add_executable(${PROJECT_NAME}
     src/Spi.cpp
     src/TimeUtils.cpp
     src/Uart.cpp
+    src/WiFiManager.cpp
+    src/HttpClient.cpp
+    src/LogUploader.cpp
 )
 
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
@@ -159,6 +191,9 @@ set_source_files_properties(
     src/main.cpp
     src/SdCard.cpp
     src/SdCardSDIO.cpp
+    src/WiFiManager.cpp
+    src/HttpClient.cpp
+    src/LogUploader.cpp
     PROPERTIES COMPILE_FLAGS "-Wno-volatile"
 )
 
@@ -244,6 +279,17 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     ##PICO_HEAP_SIZE=2048
     #PICO_STACK_SIZE=4096   I'm still not sure the best way to define this. Right now, it's in the memmap_eprom.ld file.
 
+    # WiFi and server configuration (from environment variables)
+    WIFI_SSID=\"${WIFI_SSID}\"
+    WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
+    UMOD4_SERVER_HOST=\"${UMOD4_SERVER_HOST}\"
+    UMOD4_SERVER_PORT=\"${UMOD4_SERVER_PORT}\"
+
+    # Disable CYW43 driver logging to stdio
+    PICO_CYW43_LOGGING_ENABLED=0
+
+    # Note that there can be way more WiFi debug logging from lwIP itself.
+    # See: src/lwipopts.h
 )
 
 # Print some basic information regarding the build size
@@ -267,12 +313,12 @@ target_link_libraries(${PROJECT_NAME}
     hardware_uart
     hardware_spi
     FreeRTOS-Kernel
+    FreeRTOS-Kernel-Heap4  # Required for WiFi async context
     littlefs
     swd_reflash
     tiny_regex_c
     sdio_rp2350
-    pico_cyw43_arch_none
-    #pico_cyw43_arch_lwip_sys_freertos
+    pico_cyw43_arch_lwip_sys_freertos
 )
 
 # Create some useful output files

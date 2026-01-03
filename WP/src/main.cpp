@@ -30,6 +30,11 @@
 #include "umod4_WP.h"
 #include "uart_rx32.pio.h"
 #include "WP_log.h"
+#include "WiFiManager.h"
+#include "HttpClient.h"
+#include "LogUploader.h"
+#include "lwip/netif.h"
+#include "lwip/ip4_addr.h"
 
 // SD Card Interface Selection
 // Uncomment to use SDIO 4-bit mode (~20-25 MB/s) instead of SPI mode (~3 MB/s)
@@ -45,6 +50,11 @@ Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
 FlashEp* flashEp;
+
+// WiFi Phase 1 components
+WiFiManager* wifiMgr = nullptr;
+HttpClient* httpClient = nullptr;
+LogUploader* logUploader = nullptr;
 
 uint32_t flashBuffer[1024];
 
@@ -646,6 +656,8 @@ void allowEpToSendData()
     // Enable the RX-FIFO-not-empty interrupt inside the proper PIO unit
     #if (PIO_UART_SM == 0)
         PIO_UART->inte0 = PIO_INTR_SM0_RXNEMPTY_BITS;
+    #elif (PIO_UART_SM == 1)
+        PIO_UART->inte0 = PIO_INTR_SM1_RXNEMPTY_BITS;
     #else
         #error "Update this to the proper SMx bit!"
     #endif
@@ -653,6 +665,140 @@ void allowEpToSendData()
     // Tell the EP we are ready for data
     gpio_put(EPLOG_FLOWCTRL_PIN, 0);
     gpio_set_dir(EPLOG_FLOWCTRL_PIN, GPIO_OUT);
+}
+
+// ----------------------------------------------------------------------------------
+// WiFi task - connects on boot, uploads logs periodically
+// (Follows pattern from pico-examples/pico_w/wifi/freertos/ping)
+void vWiFiTask(void* arg)
+{
+    printf("%s: Task starting\n", __FUNCTION__);
+
+    printf("%s: Waiting for filesystem to get mounted\n", __FUNCTION__);
+    // Wait for filesystem to be mounted
+    while (!lfs_mounted) {
+        vTaskDelay(1000);
+    }
+
+    printf("%s: Filesystem ready, initializing WiFi\n", __FUNCTION__);
+
+    // Initialize CYW43 - MUST be called after FreeRTOS scheduler starts
+    if (cyw43_arch_init()) {
+        printf("%s: Failed to initialize CYW43\n", __FUNCTION__);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    cyw43_arch_enable_sta_mode();
+    printf("%s: CYW43 initialized, connecting to '%s'...\n", __FUNCTION__, WIFI_SSID);
+
+    // Use blocking connect - works in FreeRTOS task with sys_freertos variant
+    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
+        printf("%s: Failed to connect\n", __FUNCTION__);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    printf("%s: Connected to AP\n", __FUNCTION__);
+
+    // Create WiFi manager wrapper (CYW43 already initialized above)
+    wifiMgr = new WiFiManager();
+    wifiMgr->setInitialized();
+
+    // Get our MAC address
+    char mac_addr[18];
+    if (!wifiMgr->getMACAddress(mac_addr, sizeof(mac_addr))) {
+        printf("%s: Failed to get MAC address\n", __FUNCTION__);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    printf("%s: MAC address: %s\n", __FUNCTION__, mac_addr);
+
+    // Wait for DHCP to assign IP address (up to 30 seconds)
+    char ip_addr[16];
+    printf("%s: Acquiring IP address via DHCP...\n", __FUNCTION__);
+    bool got_ip = false;
+    for (int i = 0; i < 30; i++) {
+        // Check directly via lwIP netif instead of going through WiFiManager
+        if (netif_default && netif_is_up(netif_default)) {
+            const ip4_addr_t* addr = netif_ip4_addr(netif_default);
+            if (addr && !ip4_addr_isany(addr)) {
+                snprintf(ip_addr, sizeof(ip_addr), "%s", ip4addr_ntoa(addr));
+                printf("%s: IP address: %s\n", __FUNCTION__, ip_addr);
+                got_ip = true;
+                break;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));  // Wait 1 second
+    }
+
+    if (!got_ip) {
+        printf("%s: Failed to get IP address via DHCP\n", __FUNCTION__);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // Initialize HTTP client
+    printf("%s: Initializing HTTP client\n", __FUNCTION__);
+    httpClient = new HttpClient(UMOD4_SERVER_HOST, atoi(UMOD4_SERVER_PORT));
+
+    // Register with server - retry every 5 seconds until successful
+    printf("%s: Registering device with server at %s:%s\n", __FUNCTION__, UMOD4_SERVER_HOST, UMOD4_SERVER_PORT);
+    bool registered = false;
+    while (!registered) {
+        if (httpClient->registerDevice(mac_addr, "WP-Phase1", nullptr, ip_addr)) {
+            printf("%s: Device registered successfully\n", __FUNCTION__);
+            registered = true;
+        } else {
+            printf("%s: Registration failed: %s - retrying in 5 seconds...\n",
+                   __FUNCTION__, httpClient->getLastError());
+            vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+    }
+
+    printf("%s: Creating LogUploader\n", __FUNCTION__);
+    // Initialize log uploader
+    logUploader = new LogUploader(httpClient, &lfs);
+
+    // Upload existing logs once at startup
+    printf("%s: Uploading existing logs...\n", __FUNCTION__);
+    int uploaded = logUploader->uploadAllLogs(mac_addr, logger->getCurrentLogName());
+    if (uploaded >= 0) {
+        printf("%s: Uploaded %d log files\n", uploaded);
+    } else {
+        printf("%s: Log upload failed: %s\n", logUploader->getLastError());
+    }
+
+    // Main loop - upload logs periodically (every 5 minutes)
+    const uint32_t upload_interval_ms = 5 * 60 * 1000;
+    uint32_t last_upload_time = 0;
+
+    while (true) {
+        // Poll WiFi status
+        wifiMgr->poll();
+
+        // Check if it's time to upload
+        uint32_t now = time_us_32() / 1000;  // Convert to ms
+        if ((now - last_upload_time) >= upload_interval_ms) {
+            printf("%s: Periodic log upload...\n", __FUNCTION__);
+
+            if (wifiMgr->isConnected()) {
+                int uploaded = logUploader->uploadAllLogs(mac_addr, logger->getCurrentLogName());
+                if (uploaded >= 0) {
+                    printf("%s: Uploaded %d log files\n", uploaded);
+                } else {
+                    printf("%s: Log upload failed: %s\n", logUploader->getLastError());
+                }
+            } else {
+                printf("%s: Not connected, skipping upload\n", __FUNCTION__);
+            }
+
+            last_upload_time = now;
+        }
+
+        vTaskDelay(1000);  // Check every second
+    }
 }
 
 // ----------------------------------------------------------------------------------
@@ -682,6 +828,16 @@ void bootSystem()
 
     printf("%s: Starting the debug shell\n", __FUNCTION__);
     dbgShell = new Shell(&lfs);
+
+    printf("%s: Starting WiFi task\n", __FUNCTION__);
+    TaskHandle_t wifi_task = NULL;
+    BaseType_t err = xTaskCreate(vWiFiTask, "WiFi Task", 4096, NULL, 1, &wifi_task);
+    if (err != pdPASS) {
+        printf("%s: WARNING - Failed to create WiFi task\n", __FUNCTION__);
+    }
+    // Set core affinity to core 0 - async context will pin its task to same core
+    // This prevents the assert failure: get_core_num() == async_context_core_num()
+    vTaskCoreAffinitySet(wifi_task, (1 << 0));
 }
 
 
@@ -698,42 +854,9 @@ void vLedTask(void* arg)
     // Take care of our system boot responsibilities...
     bootSystem();
 
-    #if 0
-    rgb_led->neoPixelSetValue(0, 0, 16, 0, true);
-
-    // Now we are free to be the status LED task
-    int32_t count=0;
-    int32_t incr=1;
-
-    while (1) {
-        const uint32_t maxCount = 31;
-        count += incr;
-        if (count<0) {
-            count = 0;
-            incr = 1;
-        }
-        else if (count>maxCount) {
-            count = maxCount;
-            incr = -1;
-        }
-
-        #if 1
-        rgb_led->neoPixelSetValue(0, count, 0, 16, true);
-        vTaskDelay(50);
-        #else
-        // Measure min/max power for the LED by putting it at min/max brightness for a few seconds at a time
-        bool foo;
-        foo = !foo;
-        uint32_t bright = foo ? 0xFF : 0x00;
-        rgb_led->neoPixelSetValue(0, bright, bright, bright, true);
-        vTaskDelay(3000);
-        #endif
-    }
-    #else
     while (1) {
         vTaskDelay(1000);
     }
-    #endif
 }
 
 // --------------------------------------------------------------------------------------------
@@ -867,12 +990,6 @@ int main()
     }
 
     #if defined SPARE1_LED_PIN
-    hello(3);
-    #endif
-
-    // Pico2_W boards need to do this before we can even access the Pico's on-board LED
-    cyw43_arch_init();
-    #if !defined SPARE1_LED_PIN
     hello(3);
     #endif
 

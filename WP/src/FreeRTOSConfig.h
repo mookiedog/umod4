@@ -72,8 +72,8 @@
 /* Memory allocation related definitions. */
 #define configSUPPORT_STATIC_ALLOCATION         0
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
-#define configTOTAL_HEAP_SIZE                   0       // Heap is defined by linker as all SRAM above BSS to end of RAM
-#define configAPPLICATION_ALLOCATED_HEAP        0
+#define configTOTAL_HEAP_SIZE                   (128*1024)  // 128KB for WiFi/lwIP
+#define configAPPLICATION_ALLOCATED_HEAP        0           // Let Heap4 allocate its own array
 
 /* Hook function related definitions. */
 #define configCHECK_FOR_STACK_OVERFLOW          0

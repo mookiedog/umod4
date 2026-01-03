@@ -2265,19 +2265,19 @@ reset:
 5:      staA    L0171                   ;always init'ed to CR9
         staA    *L0058                  ;always init'ed to CR9
 
-        ldD     #2500                   ;5000 uSec
+        ldD     #(2500)                 ;5000 uSec
         stD     *L005D                  ;the basic injection time duration (front injector)
         stD     *L005F                  ;the basic injection time duration (rear  injector)
 
         ldD     TCNT
-        addD    #1000
+        addD    #(1000)
         stD     L0105                   ;schedule the first of the L0105 5.0 mSec events starting 2.0 mSec from now
 
-        addD    #3500
+        addD    #(3500)
         stD     L0108                   ;NEVER USED: presumably, this schedules the first of the L0108 events
 
         ldD     TCNT
-        addD    #500
+        addD    #(500)
         stD     L0103                   ;schedule the first of the 1.5 mSec L0103 events 1.0 mSec from now
 
         clr     L010B                   ;set to 0 every crank event when the bike is upright
@@ -2585,7 +2585,7 @@ LC391:  ldaA    *L0030                  ; converted, interpolated THW (water tem
 
 LC3DD:  ldD     TCNT
         subD    L0105
-        cmpD    #2500                   ;has 5000 uSec elapsed since the time scheduled in L0105?
+        cmpD    #(2500)                 ;has 5000 uSec elapsed since the time scheduled in L0105?
         bhs     1f                      ;br if so
 
 0:      jmp     6f                      ;else not
@@ -2598,7 +2598,7 @@ LC3DD:  ldD     TCNT
 ;in when we schedule the next event.
 
 1:      ldD     L0105                   ;bump our next target time by 5000 uSec
-        addD    #2500
+        addD    #(2500)
         stD     L0105
 
 ;scheduled this routine to run every 5 mSec:
@@ -2685,14 +2685,14 @@ LC3DD:  ldD     TCNT
 
 6:      ldD     TCNT
         subD    L0103
-        cmpD    #750                    ;1500 uSec
+        cmpD    #(750)                  ;1500 uSec
         bhs     7f                      ;br if elapsed time since our last 1.5 mSec event is >= 1.5 mSec
 
         rts                             ;else we are done
 
 ;The 1.5 mSec event has 'fired'.
 7:      ldD     L0103
-        addD    #750                    ;1500 uSec
+        addD    #(750)                  ;1500 uSec
         stD     L0103                   ;schedule the next 1.5 mSec event 1.5 mSec from the previous one
 
 ;...and then drop into the A/D conversion driver

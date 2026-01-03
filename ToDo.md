@@ -1,5 +1,28 @@
 # To Do
 
+## Development
+
+### WP
+
+* main.cpp
+  * move all wifi stuff into a new file
+  * wifiTask needs to be stateful
+    * must manage things like:
+      * no SD Card
+      * SD Card hotplugging
+        * could insert a new card with new files that could potentially be loaded
+
+* chunked upload of large files
+   * Need a pair of wifi buffers, each the same size as an LFS block. Idea is to be able to wifi transfer from one buffer while concurrently performing a read into the other buffer.
+
+* Get the heap sorted out so that there is only one, and that it works with new/delete/malloc/free & freertos
+
+### Server
+
+* menu item 'show in folder does not work'
+* need ability to delete files from remote filesystem
+
+
 ## Goals for 2026
 
 * WiFi
