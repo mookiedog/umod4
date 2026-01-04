@@ -9,12 +9,12 @@
 
 #include "FreeRTOS.h"
 #include "task.h"
+#include "semphr.h"
 
 #define LFS 1
 
 #include "Gps.h"
 #include "hardware.h"
-#include "Heap.h"
 #if defined LFS
 #include "lfs.h"
 #endif
@@ -36,6 +36,12 @@
 #include "LogUploader.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
+
+// Linker-provided symbols for heap boundaries (for diagnostics)
+extern uint32_t __end__;        // End of BSS, start of heap
+extern uint32_t __HeapLimit;    // End of heap
+static const char* heap_start = (char*)&__end__;
+static const char* heap_end = (char*)&__HeapLimit;
 
 // SD Card Interface Selection
 // Uncomment to use SDIO 4-bit mode (~20-25 MB/s) instead of SPI mode (~3 MB/s)
@@ -77,7 +83,8 @@ int lfs_sync(const struct lfs_config *c);
 
 // This struct contains everything that littlefs needs to work with a mounted filesystem.
 lfs_t lfs;
-mutex_t lfs_mutex;
+// FreeRTOS semaphore for LittleFS locking (instead of pico_sync mutex which uses event groups)
+SemaphoreHandle_t lfs_semaphore;
 bool lfs_mounted = false;  // Track whether filesystem is successfully mounted
 
 // Performance tracking for SD card operations
@@ -212,16 +219,19 @@ int lfs_sync(const struct lfs_config *c)
 // --------------------------------------------------------------------------------------------
 int lfs_mutex_take(const struct lfs_config *c)
 {
-    mutex_enter_blocking(&lfs_mutex);
-
-    return 0;
+    // Use FreeRTOS semaphore instead of pico_sync mutex
+    // (pico_sync mutex uses event groups which fail in ISR context)
+    if (xSemaphoreTake(lfs_semaphore, portMAX_DELAY) == pdTRUE) {
+        return 0;
+    }
+    return -1;
 }
 
 // --------------------------------------------------------------------------------------------
 int lfs_mutex_give(const struct lfs_config *c)
 {
-    mutex_exit(&lfs_mutex);
-
+    // Use FreeRTOS semaphore
+    xSemaphoreGive(lfs_semaphore);
     return 0;
 }
 
@@ -424,7 +434,11 @@ bool comingOnline(SdCardBase* sdCard)
     // See https://github.com/joltwallet/esp_littlefs/issues/211#issuecomment-2585285239
     lfs_cfg.block_cycles = -1;
 
-    mutex_init(&lfs_mutex);
+    // Create FreeRTOS semaphore for LittleFS locking
+    // (don't use pico_sync mutex - it uses event groups which fail in ISR context)
+    lfs_semaphore = xSemaphoreCreateMutex();
+    configASSERT(lfs_semaphore != NULL);
+
     lfs_cfg.lock = lfs_mutex_take;
     lfs_cfg.unlock = lfs_mutex_give;
 
@@ -538,12 +552,12 @@ void startFileSystem(void)
     static hotPlugMgrCfg_t cfg;
 
 #ifdef USE_SDIO_MODE
-    printf("%s: Using SDIO 4-bit mode (library-based)\n", __FUNCTION__);
+    printf("%s: 4-bit SDIO mode\n", __FUNCTION__);
 
     // Create the SdCardSDIO object - uses proven SDIO_RP2350 library low-level functions
     sdCard = new SdCardSDIO(SD_CARD_PIN);
 #else
-    printf("%s: Using SPI mode\n", __FUNCTION__);
+    printf("%s: 1-bit SPI mode\n", __FUNCTION__);
 
     static Spi* spiSd;
 
@@ -632,11 +646,14 @@ void initEpUart() {
     // Set up the PIO unit to act as our UART
     uint offset = pio_add_program(PIO_UART, &uart_rx32_program);
     uart_rx32_program_init(PIO_UART, PIO_UART_SM, offset, EPLOG_RX_PIN, EP_TO_WP_BAUDRATE);
+    printf("UART_RX32: Using PIO%d, SM%d, program offset %d (size: %d instructions)\n",
+           pio_get_index(PIO_UART), PIO_UART_SM, offset, uart_rx32_program.length);
+
 
     // Assign an interrupt handler
     irq_set_exclusive_handler(PIO_UART_RX_IRQ, isr_rx32);
 
-    printf("%s: EP RX32 UART ISR will be serviced by core %d\n", __FUNCTION__, get_core_num());
+    printf("%s: UART_RX32 ISR will be serviced by RP2350 core %d\n", __FUNCTION__, get_core_num());
     // Leave interrupts off until we enable the flowcontrol signal
 }
 
@@ -766,9 +783,9 @@ void vWiFiTask(void* arg)
     printf("%s: Uploading existing logs...\n", __FUNCTION__);
     int uploaded = logUploader->uploadAllLogs(mac_addr, logger->getCurrentLogName());
     if (uploaded >= 0) {
-        printf("%s: Uploaded %d log files\n", uploaded);
+        printf("%s: Uploaded %d log files\n", __FUNCTION__, uploaded);
     } else {
-        printf("%s: Log upload failed: %s\n", logUploader->getLastError());
+        printf("%s: Log upload failed: %s\n", __FUNCTION__, logUploader->getLastError());
     }
 
     // Main loop - upload logs periodically (every 5 minutes)

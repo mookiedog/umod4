@@ -124,7 +124,7 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
     // We will log GPS PPS events just to help sync GPS to ECU log events.
     // The GPS PPS/Timepulse signal is synchronized to the rising edge, forming a 100 mSec duration high pulse.
     gpio_set_irq_enabled_with_callback(GPS_PPS_PIN, GPIO_IRQ_EDGE_RISE, true, &pps_isr);
-    printf("%s: PPS ISR will be serviced by core %d\n", __FUNCTION__, get_core_num());
+    printf("%s: PPS ISR will be serviced by RP2350 core %d\n", __FUNCTION__, get_core_num());
 }
 
 

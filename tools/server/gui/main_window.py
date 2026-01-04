@@ -35,9 +35,9 @@ class DeviceListWidget(QWidget):
 
         # Device table
         self.device_table = QTableWidget()
-        self.device_table.setColumnCount(5)
+        self.device_table.setColumnCount(6)
         self.device_table.setHorizontalHeaderLabels([
-            "Name", "Status", "WP Version", "EP Version", "Last Seen"
+            "Name", "MAC Address", "Status", "WP Version", "EP Version", "Last Seen"
         ])
         self.device_table.horizontalHeader().setStretchLastSection(True)
         self.device_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -60,15 +60,13 @@ class DeviceListWidget(QWidget):
             self.device_table.setRowCount(len(devices))
 
             for row, device in enumerate(devices):
-                # Store MAC address in row data
-                # Display format: "Name (MAC)" or just "MAC" if not renamed
-                if device.display_name == device.mac_address:
-                    display_text = device.mac_address
-                else:
-                    display_text = f"{device.display_name} ({device.mac_address})"
+                # Name column
+                name_item = QTableWidgetItem(device.name if device.name else "")
+                name_item.setData(Qt.ItemDataRole.UserRole, device.mac_address)
+                self.device_table.setItem(row, 0, name_item)
 
-                self.device_table.setItem(row, 0, QTableWidgetItem(display_text))
-                self.device_table.item(row, 0).setData(Qt.ItemDataRole.UserRole, device.mac_address)
+                # MAC Address column
+                self.device_table.setItem(row, 1, QTableWidgetItem(device.mac_address))
 
                 # Determine status (online if last_seen within 30 seconds)
                 if device.last_seen:
@@ -77,12 +75,12 @@ class DeviceListWidget(QWidget):
                 else:
                     status = "Never seen"
 
-                self.device_table.setItem(row, 1, QTableWidgetItem(status))
-                self.device_table.setItem(row, 2, QTableWidgetItem(device.wp_version or "-"))
-                self.device_table.setItem(row, 3, QTableWidgetItem(device.ep_version or "-"))
+                self.device_table.setItem(row, 2, QTableWidgetItem(status))
+                self.device_table.setItem(row, 3, QTableWidgetItem(device.wp_version or "-"))
+                self.device_table.setItem(row, 4, QTableWidgetItem(device.ep_version or "-"))
 
                 last_seen = device.last_seen.strftime("%Y-%m-%d %H:%M:%S") if device.last_seen else "-"
-                self.device_table.setItem(row, 4, QTableWidgetItem(last_seen))
+                self.device_table.setItem(row, 5, QTableWidgetItem(last_seen))
 
         finally:
             session.close()
@@ -140,13 +138,16 @@ class DeviceListWidget(QWidget):
         try:
             device = session.query(Device).filter_by(mac_address=self.selected_mac).first()
             if device:
+                current_name = device.name if device.name else ""
                 new_name, ok = QInputDialog.getText(
                     self, "Rename Device",
-                    "Enter new name:", text=device.display_name
+                    "Enter new name (leave blank to use MAC address):", text=current_name
                 )
-                if ok and new_name:
-                    device.display_name = new_name
-                    session.commit()
+                if ok:
+                    # Use database method to handle rename and directory move
+                    success, error = self.database.update_device_name(self.selected_mac, new_name)
+                    if not success:
+                        QMessageBox.warning(self, "Rename Failed", f"Failed to rename device: {error}")
                     self.refresh_devices()
         finally:
             session.close()
@@ -212,11 +213,13 @@ class TransferHistoryWidget(QWidget):
 
         # Transfer table
         self.transfer_table = QTableWidget()
-        self.transfer_table.setColumnCount(6)
+        self.transfer_table.setColumnCount(7)
         self.transfer_table.setHorizontalHeaderLabels([
-            "Device", "Filename", "Size", "Speed", "Status", "Time"
+            "Name", "MAC Address", "Filename", "Size", "Speed", "Status", "Time"
         ])
         self.transfer_table.horizontalHeader().setStretchLastSection(True)
+        self.transfer_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.transfer_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.transfer_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.transfer_table.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -243,23 +246,35 @@ class TransferHistoryWidget(QWidget):
             self.transfer_table.setRowCount(len(transfers))
 
             for row, transfer in enumerate(transfers):
-                # Store transfer ID in row data
-                device_item = QTableWidgetItem(transfer.device.display_name if transfer.device else transfer.device_mac)
-                device_item.setData(Qt.ItemDataRole.UserRole, transfer.id)
-                self.transfer_table.setItem(row, 0, device_item)
+                # Name column
+                device_name = ""
+                if transfer.device and transfer.device.name:
+                    device_name = transfer.device.name
 
-                self.transfer_table.setItem(row, 1, QTableWidgetItem(transfer.filename))
+                name_item = QTableWidgetItem(device_name)
+                name_item.setData(Qt.ItemDataRole.UserRole, transfer.id)
+                self.transfer_table.setItem(row, 0, name_item)
+
+                # MAC Address column
+                self.transfer_table.setItem(row, 1, QTableWidgetItem(transfer.device_mac))
+
+                # Filename column
+                filename_item = QTableWidgetItem(transfer.filename)
+                # Store device MAC in filename column for delete operations
+                filename_item.setData(Qt.ItemDataRole.UserRole, transfer.device_mac)
+                self.transfer_table.setItem(row, 2, filename_item)
 
                 # Format size
                 size_mb = transfer.size_bytes / (1024 * 1024)
-                self.transfer_table.setItem(row, 2, QTableWidgetItem(f"{size_mb:.2f} MB"))
+                self.transfer_table.setItem(row, 3, QTableWidgetItem(f"{size_mb:.2f} MB"))
 
-                # Format speed
+                # Format speed (convert MB/s to KB/s)
                 if transfer.transfer_speed_mbps:
-                    speed_str = f"{transfer.transfer_speed_mbps:.2f} MB/s"
+                    speed_kbps = transfer.transfer_speed_mbps * 1024
+                    speed_str = f"{speed_kbps:.2f} KB/s"
                 else:
                     speed_str = "-"
-                self.transfer_table.setItem(row, 3, QTableWidgetItem(speed_str))
+                self.transfer_table.setItem(row, 4, QTableWidgetItem(speed_str))
 
                 # Status
                 status_item = QTableWidgetItem(transfer.status)
@@ -267,32 +282,49 @@ class TransferHistoryWidget(QWidget):
                     status_item.setForeground(Qt.GlobalColor.darkGreen)
                 elif transfer.status == 'failed':
                     status_item.setForeground(Qt.GlobalColor.red)
-                self.transfer_table.setItem(row, 4, status_item)
+                self.transfer_table.setItem(row, 5, status_item)
 
                 # Time
                 time_str = transfer.start_time.strftime("%Y-%m-%d %H:%M:%S") if transfer.start_time else "-"
-                self.transfer_table.setItem(row, 5, QTableWidgetItem(time_str))
+                self.transfer_table.setItem(row, 6, QTableWidgetItem(time_str))
 
         finally:
             session.close()
 
     def _show_context_menu(self, position):
         """Show context menu for transfer."""
-        current_row = self.transfer_table.currentRow()
-        if current_row < 0:
+        selected_rows = self.transfer_table.selectionModel().selectedRows()
+        if not selected_rows:
             return
-
-        transfer_id = self.transfer_table.item(current_row, 0).data(Qt.ItemDataRole.UserRole)
 
         menu = QMenu(self)
 
-        open_viz_action = QAction("Open in Viz Tool", self)
-        open_viz_action.triggered.connect(lambda: self._open_in_viz(transfer_id))
-        menu.addAction(open_viz_action)
+        # Single selection - allow open in viz/folder
+        if len(selected_rows) == 1:
+            transfer_id = self.transfer_table.item(selected_rows[0].row(), 0).data(Qt.ItemDataRole.UserRole)
 
-        open_folder_action = QAction("Show in Folder", self)
-        open_folder_action.triggered.connect(lambda: self._show_in_folder(transfer_id))
-        menu.addAction(open_folder_action)
+            open_viz_action = QAction("Open in Viz Tool", self)
+            open_viz_action.triggered.connect(lambda: self._open_in_viz(transfer_id))
+            menu.addAction(open_viz_action)
+
+            open_folder_action = QAction("Show in Folder", self)
+            open_folder_action.triggered.connect(lambda: self._show_in_folder(transfer_id))
+            menu.addAction(open_folder_action)
+
+            menu.addSeparator()
+
+        # Delete options (work for single or multiple selections)
+        delete_local_action = QAction(f"Delete from Local Storage ({len(selected_rows)} file(s))", self)
+        delete_local_action.triggered.connect(self._delete_local_files)
+        menu.addAction(delete_local_action)
+
+        delete_remote_action = QAction(f"Delete from WP LittleFS ({len(selected_rows)} file(s))", self)
+        delete_remote_action.triggered.connect(self._delete_remote_files)
+        menu.addAction(delete_remote_action)
+
+        delete_both_action = QAction(f"Delete from Both Local & WP ({len(selected_rows)} file(s))", self)
+        delete_both_action.triggered.connect(self._delete_both_files)
+        menu.addAction(delete_both_action)
 
         menu.exec(self.transfer_table.viewport().mapToGlobal(position))
 
@@ -333,6 +365,102 @@ class TransferHistoryWidget(QWidget):
                             subprocess.Popen(['xdg-open', folder])
         finally:
             session.close()
+
+    def _delete_local_files(self):
+        """Delete selected files from local storage."""
+        selected_rows = self.transfer_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, "Confirm Deletion",
+            f"Are you sure you want to delete {len(selected_rows)} file(s) from local storage?\n\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from models.database import Transfer, Device
+
+        session = self.database.get_session()
+        try:
+            deleted_count = 0
+            for row_index in selected_rows:
+                row = row_index.row()
+                transfer_id = self.transfer_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+
+                transfer = session.query(Transfer).get(transfer_id)
+                if transfer:
+                    device = session.query(Device).filter_by(mac_address=transfer.device_mac).first()
+                    if device:
+                        log_path = os.path.join(device.log_storage_path, transfer.filename)
+                        if os.path.exists(log_path):
+                            try:
+                                os.remove(log_path)
+                                deleted_count += 1
+                            except Exception as e:
+                                QMessageBox.warning(self, "Delete Failed",
+                                                  f"Failed to delete {transfer.filename}: {e}")
+
+            QMessageBox.information(self, "Deletion Complete",
+                                  f"Deleted {deleted_count} file(s) from local storage.")
+            self.refresh_transfers()
+
+        finally:
+            session.close()
+
+    def _delete_remote_files(self):
+        """Delete selected files from WP LittleFS."""
+        selected_rows = self.transfer_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, "Confirm Deletion",
+            f"Are you sure you want to delete {len(selected_rows)} file(s) from the WP device?\n\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # TODO: Implement remote deletion via HTTP API
+        QMessageBox.warning(self, "Not Implemented",
+                          "Remote deletion from WP LittleFS is not yet implemented.\n"
+                          "This will require adding an HTTP endpoint to the WP firmware.")
+
+    def _delete_both_files(self):
+        """Delete selected files from both local and remote storage."""
+        selected_rows = self.transfer_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, "Confirm Deletion",
+            f"Are you sure you want to delete {len(selected_rows)} file(s) from BOTH local storage and WP device?\n\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Delete local files first
+        self._delete_local_files()
+
+        # Then delete remote files
+        # TODO: Implement remote deletion
+        QMessageBox.information(self, "Partial Deletion",
+                              "Local files deleted. Remote deletion from WP is not yet implemented.")
 
     def _launch_viz(self, log_path):
         """Launch viz tool with log file."""
@@ -446,6 +574,13 @@ class MainWindow(QMainWindow):
         server_settings_action.triggered.connect(self._show_server_settings)
         settings_menu.addAction(server_settings_action)
 
+        # Device menu
+        device_menu = menu_bar.addMenu("Device")
+
+        delete_all_wp_action = QAction("Delete All Files on WP...", self)
+        delete_all_wp_action.triggered.connect(self._delete_all_wp_files)
+        device_menu.addAction(delete_all_wp_action)
+
         # Help menu
         help_menu = menu_bar.addMenu("Help")
 
@@ -509,6 +644,69 @@ class MainWindow(QMainWindow):
 
         finally:
             session.close()
+
+    def _delete_all_wp_files(self):
+        """Delete all files on WP device except actively writing ones."""
+        from models.database import Device
+
+        # First, check if there's a selected device
+        selected_mac = None
+        if hasattr(self, 'device_list') and self.device_list.selected_mac:
+            selected_mac = self.device_list.selected_mac
+
+        # If no device selected, ask user to select one
+        if not selected_mac:
+            session = self.database.get_session()
+            try:
+                devices = session.query(Device).all()
+                if not devices:
+                    QMessageBox.warning(self, "No Devices", "No devices found in database.")
+                    return
+
+                # Show device selection dialog
+                from PySide6.QtWidgets import QInputDialog
+                device_names = []
+                device_macs = []
+                for device in devices:
+                    if device.name:
+                        device_names.append(f"{device.name} ({device.mac_address})")
+                    else:
+                        device_names.append(device.mac_address)
+                    device_macs.append(device.mac_address)
+
+                selected_name, ok = QInputDialog.getItem(
+                    self, "Select Device",
+                    "Select device to delete files from:",
+                    device_names, 0, False
+                )
+
+                if not ok:
+                    return
+
+                selected_mac = device_macs[device_names.index(selected_name)]
+            finally:
+                session.close()
+
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, "Confirm Deletion",
+            f"Are you sure you want to delete ALL files on the WP device {selected_mac}?\n\n"
+            "This will delete all files except any that are currently being written.\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # TODO: Implement remote deletion via HTTP API
+        QMessageBox.warning(self, "Not Implemented",
+                          "Remote deletion from WP LittleFS is not yet implemented.\n"
+                          "This will require adding an HTTP endpoint to the WP firmware that:\n"
+                          "1. Lists all files on the LittleFS\n"
+                          "2. Identifies which file is currently being written\n"
+                          "3. Deletes all other files")
 
     def _manage_devices(self):
         """Show device management dialog."""

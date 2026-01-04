@@ -37,6 +37,10 @@ private:
     lfs_t* lfs_;
     char last_error_[128];
 
+    // Upload configuration
+    static constexpr size_t CHUNK_SIZE = 8192;  // 8KB chunks (device can override based on available RAM)
+    static constexpr int MAX_CHUNK_RETRIES = 3;  // Retry each chunk up to 3 times
+
     // Get list of .um4 files already on server
     bool getServerFileList(const char* device_mac, char* file_list_buf, size_t buf_len);
 
@@ -45,6 +49,9 @@ private:
 
     // Upload a single log file
     bool uploadFile(const char* device_mac, const char* filename);
+
+    // Upload a single file using chunked upload
+    bool uploadFileChunked(const char* device_mac, const char* filename);
 
     void setError(const char* error);
 };

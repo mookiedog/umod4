@@ -165,7 +165,7 @@ add_executable(${PROJECT_NAME}
     src/Crc.cpp
     src/FlashEp.cpp
     src/Gps.cpp
-    src/Heap.cpp
+    src/malloc_lock.cpp
     src/Logger.cpp
     src/main.cpp
     src/NeoPixelConnect.cpp
@@ -183,7 +183,6 @@ add_executable(${PROJECT_NAME}
 
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
 set_source_files_properties(
-    src/Heap.cpp
     src/Shell.cpp
     src/Gps.cpp
     src/Uart.cpp
@@ -212,8 +211,8 @@ add_compile_definitions(BUFFER_SIZE_DOWN=1024)
 add_compile_definitions(LFS_THREADSAFE=1)
 #add_compile_definitions(LFS_TRACE=printf)
 
-# We will define new/delete ourselves
-add_compile_definitions(PICO_CXX_DISABLE_ALLOCATION_OVERRIDES=1)
+# Disable pico_malloc wrapping - we provide our own malloc protection via malloc_lock.cpp
+add_compile_definitions(PICO_USE_MALLOC_MUTEX=0)
 
 # Choose where stdio output goes. It should only be RTT for this project.
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
@@ -305,7 +304,6 @@ target_link_libraries(${PROJECT_NAME}
     pico_stdlib
     pico_multicore
     pico_sync
-    pico_malloc
     hardware_flash
     hardware_timer
     cmsis_core
@@ -314,7 +312,6 @@ target_link_libraries(${PROJECT_NAME}
     hardware_uart
     hardware_spi
     FreeRTOS-Kernel
-    FreeRTOS-Kernel-Heap3  # Required for WiFi async context
     littlefs
     swd_reflash
     tiny_regex_c
