@@ -691,6 +691,7 @@ void allowEpToSendData()
 void vWiFiTask(void* arg)
 {
     printf("%s: Task starting\n", __FUNCTION__);
+    while (1) {vTaskDelay(1000);}
 
     printf("%s: Waiting for filesystem to get mounted\n", __FUNCTION__);
     // Wait for filesystem to be mounted
@@ -721,7 +722,7 @@ void vWiFiTask(void* arg)
 
     // Create WiFi manager wrapper (CYW43 already initialized above)
     wifiMgr = new WiFiManager();
-    wifiMgr->setInitialized();
+    //wifiMgr->setInitialized();
 
     // Get our MAC address
     char mac_addr[18];
@@ -794,7 +795,7 @@ void vWiFiTask(void* arg)
 
     while (true) {
         // Poll WiFi status
-        wifiMgr->poll();
+        //wifiMgr->poll();
 
         // Check if it's time to upload
         uint32_t now = time_us_32() / 1000;  // Convert to ms
@@ -892,6 +893,10 @@ void bootSystem()
     printf("%s: Starting the debug shell\n", __FUNCTION__);
     dbgShell = new Shell(&lfs);
 
+    printf("%s: Creating WiFi manager\n", __FUNCTION__);
+    wifiMgr = new WiFiManager();
+
+    #if 0
     printf("%s: Starting WiFi task\n", __FUNCTION__);
     TaskHandle_t wifi_task = NULL;
     err = xTaskCreate(vWiFiTask, "WiFi Task", 4096, NULL, 1, &wifi_task);
@@ -901,6 +906,7 @@ void bootSystem()
     // Set core affinity to core 0 - async context will pin its task to same core
     // This prevents the assert failure: get_core_num() == async_context_core_num()
     vTaskCoreAffinitySet(wifi_task, (1 << 0));
+    #endif
 }
 
 

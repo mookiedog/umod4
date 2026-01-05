@@ -4,24 +4,30 @@
 #include "pico/cyw43_arch.h"
 #include "lwip/ip_addr.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 /**
  * WiFi connection manager for umod4 WP.
- * This refers to the basic connection to an Access Point (AP) only.
+ * This class manages deciding when WiFi mode is allowed.
+ * If allowed, it will manage the basic connection to an Access Point (AP) ONLY.
  *
  * Handles WiFi initialization, connection, and status monitoring.
  * Uses pico_cyw43_arch_lwip_threadsafe_background for non-blocking operation.
  */
 class WiFiManager {
 public:
-    enum class Status {
+    enum class State {
+        // Inactive states: DISCONNECTING must be declared as the last inactive state
         UNINITIALIZED,
-        INITIALIZING,
-        INITIALIZED,
+        CHECK_WIFI_ALLOWED,
+        DISCONNECTING,
+
+        // Active states: must be declared after the inactive states
+        WIFI_POWERING_UP,
         CONNECTING,
-        CONNECTED,
-        DISCONNECTED,
-        FAILED
-    };
+        CONNECTED
+        };
 
     WiFiManager();
     ~WiFiManager();
@@ -34,12 +40,6 @@ public:
      */
     bool init();
 
-    /**
-     * Connect to WiFi network using compile-time SSID/password.
-     * Non-blocking - use isConnected() or getStatus() to check progress.
-     *
-     * @return true if connection attempt started, false on error
-     */
     bool connect();
 
     /**
@@ -55,7 +55,7 @@ public:
     /**
      * Get current WiFi status.
      */
-    Status getStatus() const { return status_; }
+    bool connected() const { return connected_; }
 
     /**
      * Get IP address (only valid when connected).
@@ -74,22 +74,15 @@ public:
     bool getMACAddress(char* out, size_t outlen) const;
 
     /**
-     * Poll WiFi status (call periodically from main loop).
-     * Updates internal status.
+     * This task manages the basic wifi connection state machine.
      */
-    void poll();
-
-    /**
-     * Mark WiFi as initialized (when cyw43_arch_init() called externally).
-     * Used when driver initialized in main() before FreeRTOS scheduler starts.
-     */
-    void setInitialized();
+    void WiFiManager_task();
 
 private:
-    Status status_;
+    State state_;
+    bool connected_;
     bool initialized_;
-    uint32_t last_poll_time_;
-    uint32_t connect_start_time_;
+    TaskHandle_t taskHandle_;
 };
 
 #endif // WIFI_MANAGER_H
