@@ -156,6 +156,12 @@ void WiFiManager::WiFiManager_task()
 
                     if (addr && addr->addr != 0) {
                         printf("WiFiMgr: Connected! IP: %s\n", ip4addr_ntoa(addr));
+
+                        // Disable WiFi power save for minimum latency
+                        // (Commented out - not needed for current use case)
+                        //printf("WiFiMgr: Disabling WiFi power save\n");
+                        //cyw43_wifi_pm(&cyw43_state, CYW43_NO_POWERSAVE_MODE << 4);
+
                         state_ = State::CONNECTED;
                     } else {
                         // Check for DHCP timeout (15 seconds)

@@ -14,10 +14,16 @@ extern "C" {
 void api_handlers_register(void);
 
 /**
- * CGI handler for /api/info endpoint.
- * Returns JSON with device status information.
+ * Generate JSON for /api/info endpoint.
+ * Called by fs_open_custom() when serving the API.
  */
-const char* cgi_api_info(int iIndex, int iNumParams, char *pcParam[], char *pcValue[]);
+void generate_api_info_json(char* buffer, size_t size);
+
+/**
+ * Generate JSON for /api/list endpoint.
+ * Called by fs_open_custom() when serving the API.
+ */
+void generate_api_list_json(char* buffer, size_t size);
 
 #ifdef __cplusplus
 }

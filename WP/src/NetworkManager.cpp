@@ -1,5 +1,6 @@
 #include "NetworkManager.h"
 #include "api_handlers.h"
+#include "fs_custom.h"
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/apps/httpd.h"
@@ -7,6 +8,9 @@
 #include <cstdio>
 
 #include "umod4_WP.h"
+
+// External reference to LittleFS
+extern lfs_t lfs;
 
 // Forward declaration for FreeRTOS task wrapper
 extern "C" void start_networkMgr_task(void *pvParameters);
@@ -25,6 +29,10 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
     , httpd_running_(false)
     , mdns_running_(false)
 {
+    // Initialize custom filesystem bridge for serving files from LittleFS
+    printf("NetworkMgr: Initializing custom filesystem bridge\n");
+    fs_custom_init(&lfs);
+
     // Initialize HTTP server ONCE (global initialization)
     // This binds to TCP port 80 and must only be called once
     printf("NetworkMgr: Initializing HTTP server (one-time setup)\n");

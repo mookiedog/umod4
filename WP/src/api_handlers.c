@@ -3,6 +3,7 @@
 #include "pico/cyw43_arch.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "lfs.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -10,21 +11,21 @@
 extern const char* get_wp_version(void);
 extern bool wifi_is_connected(void);
 extern const char* wifi_get_ssid(void);
+extern lfs_t lfs;
+extern bool lfs_mounted;
 
 // Buffer for JSON responses (reused across requests to save stack space)
 static char json_response_buffer[512];
 
-/**
- * CGI handler for /api/info endpoint.
- * Returns JSON with device status information.
- */
-const char* cgi_api_info(int iIndex, int iNumParams, char *pcParam[], char *pcValue[])
-{
-    (void)iIndex;
-    (void)iNumParams;
-    (void)pcParam;
-    (void)pcValue;
+// Larger buffer for file listing (can hold ~20-30 log files)
+static char file_list_buffer[2048];
 
+/**
+ * Build JSON response for /api/info
+ * Called from fs_open_custom()
+ */
+void generate_api_info_json(char* buffer, size_t size)
+{
     // Get device MAC address
     char mac_str[18] = "unknown";
     uint8_t mac[6];
@@ -41,7 +42,7 @@ const char* cgi_api_info(int iIndex, int iNumParams, char *pcParam[], char *pcVa
     if (!wifi_ssid) wifi_ssid = "";
 
     // Build JSON response
-    snprintf(json_response_buffer, sizeof(json_response_buffer),
+    snprintf(buffer, size,
              "{\n"
              "  \"device_mac\": \"%s\",\n"
              "  \"wp_version\": \"%s\",\n"
@@ -54,16 +55,89 @@ const char* cgi_api_info(int iIndex, int iNumParams, char *pcParam[], char *pcVa
              (unsigned long)uptime_seconds,
              wifi_status,
              wifi_ssid);
-
-    return json_response_buffer;
 }
 
-// CGI handler table
-static const tCGI cgi_handlers[] = {
-    {"/api/info", cgi_api_info},
-};
+/**
+ * Build JSON response for /api/list
+ * Called from fs_open_custom()
+ */
+void generate_api_list_json(char* buffer, size_t size)
+{
+    // Check if filesystem is mounted
+    if (!lfs_mounted) {
+        snprintf(buffer, size,
+                 "{\"error\": \"Filesystem not mounted\", \"files\": []}");
+        return;
+    }
 
+    // Start JSON array
+    char* ptr = buffer;
+    size_t remaining = size;
+    int len = snprintf(ptr, remaining, "{\"files\": [");
+    ptr += len;
+    remaining -= len;
+
+    // Scan SD card root directory for .um4 files
+    lfs_dir_t dir;
+    int err = lfs_dir_open(&lfs, &dir, "/");
+    if (err == 0) {
+        struct lfs_info info;
+        bool first = true;
+        int file_count = 0;
+
+        while (lfs_dir_read(&lfs, &dir, &info) > 0) {
+            // Skip directories and non-regular files
+            if (info.type != LFS_TYPE_REG) {
+                continue;
+            }
+
+            // Only list .um4 files
+            size_t name_len = strlen(info.name);
+            if (name_len < 5 || strcmp(info.name + name_len - 4, ".um4") != 0) {
+                continue;
+            }
+
+            // Add comma separator (except for first entry)
+            if (!first) {
+                if (remaining < 2) break;  // Not enough space
+                *ptr++ = ',';
+                remaining--;
+            }
+            first = false;
+            file_count++;
+
+            // Add file entry: {"filename": "...", "size": ...}
+            len = snprintf(ptr, remaining,
+                          "\n  {\"filename\": \"%s\", \"size\": %lu}",
+                          info.name, (unsigned long)info.size);
+
+            if (len >= (int)remaining) {
+                // Buffer full, truncate
+                printf("api_list: Buffer full after %d files\n", file_count);
+                break;
+            }
+
+            ptr += len;
+            remaining -= len;
+        }
+
+        lfs_dir_close(&lfs, &dir);
+    } else {
+        printf("api_list: Failed to open root directory: %d\n", err);
+    }
+
+    // Close JSON array
+    if (remaining >= 5) {
+        len = snprintf(ptr, remaining, "\n]}");
+        ptr += len;
+    } else {
+        // Emergency fallback if buffer is full
+        strcpy(buffer + size - 4, "]}");
+    }
+}
+
+// No CGI handlers needed - APIs are served as virtual files via fs_open_custom()
 void api_handlers_register(void)
 {
-    http_set_cgi_handlers(cgi_handlers, sizeof(cgi_handlers) / sizeof(tCGI));
+    // Nothing to register - APIs handled by custom filesystem
 }

@@ -182,6 +182,7 @@ add_executable(${PROJECT_NAME}
     # MDL (Motorbike Data Link) files
     src/NetworkManager.cpp
     src/api_handlers.c
+    src/fs_custom.c
     src/fsdata.c
     src/httpd_stubs.c
 )

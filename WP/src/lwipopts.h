@@ -11,6 +11,7 @@
 
 // FreeRTOS thread and mailbox settings (required for NO_SYS=0)
 #define TCPIP_THREAD_STACKSIZE      2048
+#define TCPIP_THREAD_PRIO           (configMAX_PRIORITIES - 2)  // High priority for network stack
 #define DEFAULT_THREAD_STACKSIZE    2048
 #define DEFAULT_RAW_RECVMBOX_SIZE   8
 #define DEFAULT_TCP_RECVMBOX_SIZE   8
@@ -70,11 +71,18 @@
 #define LWIP_HTTPD_CGI                  1
 #define LWIP_HTTPD_SSI                  1
 #define LWIP_HTTPD_CUSTOM_FILES         1
+#define LWIP_HTTPD_FILE_EXTENSION       1
+#define LWIP_HTTPD_DYNAMIC_FILE_READ    1
 #define LWIP_HTTPD_DYNAMIC_HEADERS      1
 #define LWIP_HTTPD_SUPPORT_POST         1
 #define LWIP_HTTPD_MAX_TAG_NAME_LEN     16
 #define LWIP_HTTPD_MAX_TAG_INSERT_LEN   256
 #define HTTPD_SERVER_PORT               80
+
+// HTTP server polling interval (X * 500ms)
+// Default is 4 (2 seconds), which causes slow response times
+// Set to 1 for 500ms polling (fast enough for interactive use)
+#define HTTPD_POLL_INTERVAL             1
 
 // mDNS responder for device discovery (motorcycle.local)
 #define LWIP_MDNS_RESPONDER             1
@@ -114,5 +122,6 @@
 #define PPP_DEBUG                   LWIP_DBG_OFF
 #define SLIP_DEBUG                  LWIP_DBG_OFF
 #define DHCP_DEBUG                  LWIP_DBG_OFF
+#define HTTPD_DEBUG                 LWIP_DBG_OFF
 
 #endif /* __LWIPOPTS_H__ */

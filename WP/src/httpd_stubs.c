@@ -1,35 +1,16 @@
 /**
- * Stub implementations for lwIP httpd functions.
- * These are required by httpd but not yet fully implemented in Phase 1.
+ * Stub implementations for lwIP httpd POST functions.
+ * These are required by httpd when LWIP_HTTPD_SUPPORT_POST is enabled.
+ *
+ * NOTE: fs_open_custom, fs_read_custom, and fs_close_custom are now
+ * implemented in fs_custom.c (Phase 2).
  */
 
 #include "lwip/apps/httpd.h"
 #include "lwip/apps/fs.h"
 
 /**
- * Custom filesystem open - Phase 1 stub.
- * Returns false to use default fsdata.c embedded files.
- * Will be replaced in Phase 2 with SD card filesystem bridge.
- */
-int fs_open_custom(struct fs_file *file, const char *name)
-{
-    (void)file;
-    (void)name;
-    // Return 0 to indicate "not found", httpd will use embedded fsdata
-    return 0;
-}
-
-/**
- * Custom filesystem close - Phase 1 stub.
- */
-void fs_close_custom(struct fs_file *file)
-{
-    (void)file;
-    // Nothing to do in Phase 1
-}
-
-/**
- * POST begin handler - Phase 1 stub.
+ * POST begin handler - Phase 2 stub.
  * POST support deferred to later phases.
  */
 err_t httpd_post_begin(void *connection, const char *uri, const char *http_request,
