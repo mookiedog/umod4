@@ -179,6 +179,11 @@ add_executable(${PROJECT_NAME}
     src/WiFiManager.cpp
     src/HttpClient.cpp
     src/LogUploader.cpp
+    # MDL (Motorbike Data Link) files
+    src/NetworkManager.cpp
+    src/api_handlers.c
+    src/fsdata.c
+    src/httpd_stubs.c
 )
 
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
@@ -193,6 +198,7 @@ set_source_files_properties(
     src/WiFiManager.cpp
     src/HttpClient.cpp
     src/LogUploader.cpp
+    src/NetworkManager.cpp
     PROPERTIES COMPILE_FLAGS "-Wno-volatile"
 )
 
@@ -321,6 +327,8 @@ target_link_libraries(${PROJECT_NAME}
     tiny_regex_c
     sdio_rp2350
     pico_cyw43_arch_lwip_sys_freertos
+    pico_lwip_http
+    pico_lwip_mdns
 )
 
 # Create some useful output files

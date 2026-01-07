@@ -39,6 +39,7 @@
 #define LWIP_ARP                    1
 #define LWIP_ETHERNET               1
 #define LWIP_ICMP                   1
+#define LWIP_IGMP                   1
 #define LWIP_RAW                    1
 #define TCP_WND                     (8 * TCP_MSS)
 #define TCP_MSS                     1460
@@ -47,6 +48,7 @@
 #define LWIP_NETIF_STATUS_CALLBACK  1
 #define LWIP_NETIF_LINK_CALLBACK    1
 #define LWIP_NETIF_HOSTNAME         1
+#define LWIP_NUM_NETIF_CLIENT_DATA  1
 #define MEM_STATS                   0
 #define SYS_STATS                   0
 #define MEMP_STATS                  0
@@ -62,6 +64,21 @@
 #define LWIP_NETIF_TX_SINGLE_PBUF   1
 #define DHCP_DOES_ARP_CHECK         0
 #define LWIP_DHCP_DOES_ACD_CHECK    0
+
+// HTTP server configuration for MDL (Motorbike Data Link)
+#define LWIP_HTTPD                      1
+#define LWIP_HTTPD_CGI                  1
+#define LWIP_HTTPD_SSI                  1
+#define LWIP_HTTPD_CUSTOM_FILES         1
+#define LWIP_HTTPD_DYNAMIC_HEADERS      1
+#define LWIP_HTTPD_SUPPORT_POST         1
+#define LWIP_HTTPD_MAX_TAG_NAME_LEN     16
+#define LWIP_HTTPD_MAX_TAG_INSERT_LEN   256
+#define HTTPD_SERVER_PORT               80
+
+// mDNS responder for device discovery (motorcycle.local)
+#define LWIP_MDNS_RESPONDER             1
+#define MDNS_MAX_SERVICES               1
 
 #ifndef NDEBUG
 #define LWIP_DEBUG                  1

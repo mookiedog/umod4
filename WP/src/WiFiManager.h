@@ -88,6 +88,14 @@ public:
     bool getMACAddress(char* out, size_t outlen) const;
 
     /**
+     * Get lwIP network interface for WiFi station mode.
+     * Used by NetworkManager to initialize mDNS and HTTP server.
+     *
+     * @return Pointer to netif structure, or nullptr if not initialized
+     */
+    struct netif* getNetif() const;
+
+    /**
      * This task manages the basic wifi connection state machine.
      */
     void WiFiManager_task();

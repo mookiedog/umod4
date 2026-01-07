@@ -70,6 +70,14 @@ bool WiFiManager::getIPAddress(char* out, size_t outlen) const
     return false;
 }
 
+struct netif* WiFiManager::getNetif() const
+{
+    if (state_ < State::WIFI_POWERING_UP) {
+        return nullptr;
+    }
+    return &cyw43_state.netif[CYW43_ITF_STA];
+}
+
 // ----------------------------------------------------------------------------------
 void WiFiManager::WiFiManager_task()
 {
