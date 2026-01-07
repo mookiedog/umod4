@@ -25,6 +25,17 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
     , httpd_running_(false)
     , mdns_running_(false)
 {
+    // Initialize HTTP server ONCE (global initialization)
+    // This binds to TCP port 80 and must only be called once
+    printf("NetworkMgr: Initializing HTTP server (one-time setup)\n");
+    httpd_init();
+    api_handlers_register();
+
+    // Initialize mDNS responder ONCE (global initialization)
+    // This binds to UDP port 5353 and must only be called once
+    printf("NetworkMgr: Initializing mDNS responder (one-time setup)\n");
+    mdns_resp_init();
+
     BaseType_t err = xTaskCreate(
         start_networkMgr_task,
         "NetMgrTask",
@@ -53,14 +64,12 @@ void NetworkManager::start_http_server()
 {
     if (httpd_running_) return;
 
-    printf("NetworkMgr: Starting HTTP server on port 80...\n");
-    httpd_init();
-
-    // Register CGI handlers
-    api_handlers_register();
+    printf("NetworkMgr: Starting HTTP server...\n");
+    // Note: httpd_init() and api_handlers_register() are called ONCE in constructor
+    // The HTTP server is always listening, we just track the state here
 
     httpd_running_ = true;
-    printf("NetworkMgr: HTTP server running\n");
+    printf("NetworkMgr: HTTP server active\n");
 }
 
 void NetworkManager::stop_http_server()
@@ -84,7 +93,8 @@ void NetworkManager::start_mdns()
     }
 
     printf("NetworkMgr: Starting mDNS responder...\n");
-    mdns_resp_init();
+    // Note: mdns_resp_init() is called ONCE in constructor
+    // Here we only add the netif to the already-initialized mDNS responder
     mdns_resp_add_netif(netif, "motorcycle");
 
     mdns_running_ = true;
