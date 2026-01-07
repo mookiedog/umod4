@@ -18,14 +18,17 @@
 class WiFiManager {
 public:
     enum class State {
-        // Inactive states: DISCONNECTING must be declared as the last inactive state
-        UNINITIALIZED,
-        CHECK_WIFI_ALLOWED,
-        DISCONNECTING,
+        // WiFi Inactive states
+        UNINITIALIZED,          // must be declared before CHECK_WIFI_ALLOWED
+        REBOOT_CYW43,           // must be declared before CHECK_WIFI_ALLOWED
 
-        // Active states: must be declared after the inactive states
+        CHECK_WIFI_ALLOWED,
+        DISCONNECTING,          // DISCONNECTING must be declared as the last inactive state
+
+        // WiFi Active states: must be declared after the inactive states
         WIFI_POWERING_UP,
         CONNECTING,
+        WAITING_FOR_IP,
         CONNECTED
         };
 
@@ -56,6 +59,17 @@ public:
      * Get current WiFi status.
      */
     bool connected() const { return connected_; }
+
+    /**
+     *  Returns true only if we have a Link AND an IP
+     */
+    bool isReady() const { return state_ == State::CONNECTED; }
+
+    /**
+     * Returns the current state for more granular debugging
+     */
+    //State getState() const { return state_; }
+
 
     /**
      * Get IP address (only valid when connected).

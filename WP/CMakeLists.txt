@@ -287,6 +287,10 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     # Disable CYW43 driver logging to stdio
     PICO_CYW43_LOGGING_ENABLED=0
 
+    # There are still some messags that get printed from the CYW43 driver,
+    # but I have not figured out how to disable them.
+    # CYW43_PRINTF() is defined in cyw43_debug.h
+
     # Note that there can be way more WiFi debug logging from lwIP itself.
     # See: src/lwipopts.h
 )

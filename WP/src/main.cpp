@@ -836,6 +836,7 @@ void heap_monitor_task(void *pvParameters)
     uintptr_t heap_start = (uintptr_t)&__bss_end__;
     uintptr_t heap_limit = (uintptr_t)&__StackLimit;
     uintptr_t stack_top  = (uintptr_t)&__StackTop;
+    static uint32_t min_remaining;
 
     const uint32_t max_heap_potential = heap_limit - heap_start;
 
@@ -846,15 +847,20 @@ void heap_monitor_task(void *pvParameters)
         // Get the current "top" of the heap from the system
         char* heap_top = (char*)_sbrk(0);
 
-        printf("%s: Heap [max/remaining/inuse/free]: [%d/%d/%d/%d]\n",
-            __FUNCTION__,
-            max_heap_potential,
-            max_heap_potential - mi.arena,
-            mi.arena,
-            mi.uordblks,
-            mi.fordblks,
-            (void*)heap_top
-        );
+        uint32_t remaining = max_heap_potential - mi.arena;
+        if (min_remaining != remaining) {
+            min_remaining = remaining;
+
+            printf("%s: Heap [max/remaining/inuse/free]: [%d/%d/%d/%d]\n",
+                __FUNCTION__,
+                max_heap_potential,
+                remaining,
+                mi.arena,
+                mi.uordblks,
+                mi.fordblks,
+                (void*)heap_top
+            );
+        }
 
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
