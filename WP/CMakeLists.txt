@@ -152,6 +152,7 @@ endif()
 include_directories(
     ${LIB_DIR}/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}  # For generated files like fsdata.c
     # lwIP includes needed for pico_cyw43_arch_lwip_sys_freertos
     ${PICO_SDK_PATH}/lib/lwip/src/include
     ${PICO_SDK_PATH}/src/rp2_common/pico_lwip/include
@@ -159,6 +160,26 @@ include_directories(
     # FreeRTOS lwIP arch port
     ${PICO_SDK_PATH}/lib/lwip/contrib/ports/freertos/include
 )
+
+# Generate fsdata.c from www/ directory for embedded web UI
+set(MAKEFSDATA_SCRIPT "${PICO_SDK_PATH}/lib/lwip/src/apps/http/makefsdata/makefsdata")
+set(WWW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/www")
+set(FSDATA_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/fsdata.c")
+
+# Custom target to generate fsdata.c (included by SDK's fs.c, not compiled directly)
+add_custom_command(
+    OUTPUT ${FSDATA_OUTPUT}
+    COMMAND perl ${MAKEFSDATA_SCRIPT} ${WWW_DIR}
+    COMMAND mv ${WWW_DIR}/fsdata.c ${FSDATA_OUTPUT}.tmp
+    COMMAND bash -c "echo '#include \"lwip/apps/fs.h\"' > ${FSDATA_OUTPUT} && echo '#include \"lwip/def.h\"' >> ${FSDATA_OUTPUT} && echo '' >> ${FSDATA_OUTPUT} && echo '#define file_NULL (struct fsdata_file *) NULL' >> ${FSDATA_OUTPUT} && echo '' >> ${FSDATA_OUTPUT} && sed 's/{{NULL,/{{file_NULL,/g' ${FSDATA_OUTPUT}.tmp >> ${FSDATA_OUTPUT} && rm ${FSDATA_OUTPUT}.tmp"
+    DEPENDS ${WWW_DIR}/index.html
+    WORKING_DIRECTORY ${WWW_DIR}
+    COMMENT "Generating fsdata.c from www/ directory"
+    VERBATIM
+)
+
+# Ensure fsdata.c is generated before building the executable
+add_custom_target(generate_fsdata DEPENDS ${FSDATA_OUTPUT})
 
 add_executable(${PROJECT_NAME}
     src/Clock.cpp
@@ -183,9 +204,12 @@ add_executable(${PROJECT_NAME}
     src/NetworkManager.cpp
     src/api_handlers.c
     src/fs_custom.c
-    src/fsdata.c
+    # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
     src/httpd_stubs.c
 )
+
+# Ensure fsdata.c is generated before compiling fs.c
+add_dependencies(${PROJECT_NAME} generate_fsdata)
 
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
 set_source_files_properties(
@@ -290,6 +314,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
     UMOD4_SERVER_HOST=\"${UMOD4_SERVER_HOST}\"
     UMOD4_SERVER_PORT=\"${UMOD4_SERVER_PORT}\"
+
+    # Point lwIP httpd to our custom-generated fsdata.c in build directory
+    HTTPD_FSDATA_FILE=\"${CMAKE_CURRENT_BINARY_DIR}/fsdata.c\"
 
     # Disable CYW43 driver logging to stdio
     PICO_CYW43_LOGGING_ENABLED=0

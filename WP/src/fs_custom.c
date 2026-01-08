@@ -41,16 +41,12 @@ bool fs_custom_is_ready(void)
  * This is called by lwIP httpd when a file is requested.
  *
  * Supported paths:
+ * - /api/*       - API endpoints (served from RAM)
  * - /logs/*.um4  - Log files from SD card
- * - Future: Embedded web UI files (index.html, etc.)
+ * - Other paths  - Return 0 to let lwIP check built-in fsdata.c
  */
 int fs_open_custom(struct fs_file *file, const char *name)
 {
-    if (!g_lfs) {
-        printf("fs_custom: LittleFS not initialized\n");
-        return 0;  // Failure
-    }
-
     // Strip leading slash
     const char* path = name;
     if (path[0] == '/') {
@@ -110,6 +106,12 @@ int fs_open_custom(struct fs_file *file, const char *name)
 
     // Check if this is a log file request (/logs/*.um4)
     if (strncmp(path, "logs/", 5) == 0) {
+        // Log files require LittleFS to be mounted
+        if (!g_lfs) {
+            printf("fs_custom: LittleFS not initialized for log file access\n");
+            return 0;
+        }
+
         const char* filename = path + 5;  // Skip "logs/" prefix
 
         // Validate filename (only allow .um4 files)

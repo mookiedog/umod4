@@ -79,6 +79,13 @@
 #define LWIP_HTTPD_MAX_TAG_INSERT_LEN   256
 #define HTTPD_SERVER_PORT               80
 
+// Use our custom-generated fsdata.c instead of SDK default
+// This file is generated at build time from WP/www/ directory
+// Note: This must be set via compile definition to get the correct build path
+#ifndef HTTPD_FSDATA_FILE
+#define HTTPD_FSDATA_FILE               "fsdata.c"
+#endif
+
 // HTTP server polling interval (X * 500ms)
 // Default is 4 (2 seconds), which causes slow response times
 // Set to 1 for 500ms polling (fast enough for interactive use)

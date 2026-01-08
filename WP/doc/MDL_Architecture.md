@@ -1835,21 +1835,41 @@ $ time curl http://192.168.7.1/logs/ride_001.um4 > /dev/null
 
 ---
 
-### 11.4 Phase 3: USB-Ethernet Transport
+### 11.4 Phase 3: USB-Ethernet Transport (Dynamic Multi-Homed)
 
-**Goal**: Add USB-Ethernet so HTTP server is accessible via both USB **and** WiFi
+**Goal**: Add USB-Ethernet with hot-plug support - both transports can coexist, with dynamic switching between USB and WiFi as primary interface
 
-**Duration**: 2-3 days
+**Duration**: 3-4 days
 
-**Rationale**: Now that WiFi + HTTP work, add USB transport for track use. Both transports active simultaneously.
+**Rationale**: Now that WiFi + HTTP work, add USB transport for track use. Both transports active simultaneously with intelligent switching based on USB connection state. This provides seamless hot-plug experience.
+
+**Architecture Decision: Dynamic Primary Interface**
+
+The system supports **multi-homed networking** where both WiFi and USB-Ethernet can be active simultaneously, but only one is the "primary" interface (has default route). The primary interface switches automatically based on USB connection state:
+
+1. **USB enumeration detected** (laptop plugged in) → USB becomes primary
+2. **USB disconnected** → WiFi resumes as primary
+3. **Hot-plug supported**: Can plug/unplug USB while engine running
+
+**USB Host Detection**:
+- VBUS alone cannot distinguish between USB host (laptop) and USB charger
+- Solution: Use USB enumeration as indicator
+  - `tud_init()` runs continuously in FreeRTOS task
+  - `tud_mount_cb()` fires when real USB host enumerates device (~200-400ms)
+  - `tud_umount_cb()` fires when USB cable unplugged
+- Timeout: If no enumeration within 500ms of VBUS, it's a charger (WiFi stays primary)
 
 **Tasks**:
 
 1. **Enable TinyUSB CDC-ECM** (`WP/CMakeLists.txt`, `WP/src/tusb_config.h`):
    ```cmake
+   target_link_libraries(WP PRIVATE
+       tinyusb_device
+       tinyusb_board
+   )
    target_compile_definitions(WP PRIVATE
        CFG_TUD_ECM_RNDIS=1
-       CFG_TUD_CDC=0  # Disable serial CDC if needed
+       CFG_TUD_CDC=0  # Disable serial CDC to avoid conflicts
    )
    ```
 
@@ -1857,21 +1877,71 @@ $ time curl http://192.168.7.1/logs/ride_001.um4 > /dev/null
    - CDC-ECM device descriptor (primary for Linux/macOS)
    - Microsoft OS 2.0 descriptors (for Windows RNDIS fallback)
    - Device strings ("umod4 Network Interface")
+   - Composite device: ECM + RNDIS (host picks appropriate interface)
 
-3. **Multi-homed networking** (`WP/src/NetworkManager.cpp`):
-   - Initialize TinyUSB: `tud_init()`
-   - Create `netif_1` (USB-Ethernet) alongside existing `netif_0` (WiFi)
-   - Set static IP `192.168.7.1/24` for USB
-   - Implement `tud_network_init_cb()`, `tud_network_recv_cb()`
-   - HTTP server already listens on `0.0.0.0:80` (both interfaces)
+3. **Multi-homed networking with dynamic switching** (`WP/src/NetworkManager.cpp`):
+   ```cpp
+   class NetworkManager {
+   public:
+       enum class PrimaryTransport { WIFI, USB };
 
-4. **Simple DHCP server** (optional for USB):
-   - Offer `192.168.7.2` to host
-   - Or rely on host setting static IP
+       void init() {
+           // Initialize both stacks
+           init_wifi();      // WiFi via pico_cyw43_arch
+           tud_init();       // TinyUSB always running
+           httpd_init();     // HTTP server binds to 0.0.0.0:80
+       }
 
-5. **mDNS on both interfaces**:
+       void set_primary(PrimaryTransport transport) {
+           // Switch default route to USB or WiFi netif
+           // Keep both interfaces up, only routing changes
+       }
+   };
+
+   // TinyUSB callbacks (called from tud_task())
+   void tud_mount_cb(void) {
+       printf("USB host detected - switching to USB network\n");
+       network_manager.set_primary(PrimaryTransport::USB);
+   }
+
+   void tud_umount_cb(void) {
+       printf("USB disconnected - switching to WiFi\n");
+       network_manager.set_primary(PrimaryTransport::WIFI);
+   }
+   ```
+
+4. **USB network interface setup**:
+   - Create `netif_1` (USB-Ethernet) alongside `netif_0` (WiFi)
+   - Static IP for USB: `192.168.7.1/24`
+   - Implement TinyUSB network callbacks:
+     - `tud_network_init_cb()`: Set MAC address, link state
+     - `tud_network_recv_cb()`: Forward packets to lwIP
+     - `tud_network_xmit_cb()`: Transmit from lwIP to USB
+   - HTTP server already listens on both interfaces (binds to `IPADDR_ANY`)
+
+5. **Simple DHCP server for USB** (optional):
+   - Offer `192.168.7.2/24` to host
+   - Gateway: `192.168.7.1` (Pico)
+   - Alternatively: Host can use static IP or link-local
+
+6. **mDNS on both interfaces**:
    ```c
-   mdns_resp_add_netif(netif_usb, "motorcycle");  // Add USB to existing mDNS
+   mdns_resp_add_netif(netif_wifi, "motorcycle");
+   mdns_resp_add_netif(netif_usb, "motorcycle");
+   // Same hostname resolves on both interfaces
+   ```
+
+7. **FreeRTOS task structure**:
+   ```c
+   void tinyusb_task(void* pvParameters) {
+       while (1) {
+           tud_task();  // Service TinyUSB events
+           vTaskDelay(pdMS_TO_TICKS(1));
+       }
+   }
+
+   // Create TinyUSB task at startup
+   xTaskCreate(tinyusb_task, "TinyUSB", 2048, NULL, configMAX_PRIORITIES-1, NULL);
    ```
 
 **Testing**:
