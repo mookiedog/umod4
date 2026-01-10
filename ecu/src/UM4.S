@@ -3274,11 +3274,7 @@ tbl1__14:
 ;-----------------------------------------------------------------
 ;MUX-X:C0 CO1 CO Pot #1 (right)
 
-;It looks like we read the POT A/D and massage the output to give
-;us a dead band right around the midpoint, but otherwise leave
-;things unchanged.  I don't see how this counts as having the
-;pots "deactivated", except that maybe we don't do anything with
-;the result.
+; Do some math to artificially give the trim pots a "dead zone" around the 0x80 half-way point.
 
 tbl1__08:
         staA    *L002B                  ;save the raw A/D reading for debug purposes
@@ -3286,7 +3282,7 @@ tbl1__08:
         cmpA    #0x90
         bhs     0f                      ;br if reading is >= 0x90
         cmpA    #0x70
-        bhi     2f                      ;br if reading is >  0x70
+        bhi     2f                      ;br if (reading >  0x70) && (reading < 0x90)
 
 ;The reading is in the range [0x00..0x70]:
         ldX     #0x9153                 ;use a table to massage the reading into the range [0x20..0x80]
@@ -3298,8 +3294,9 @@ tbl1__08:
 1:      jsr     LF3C2                   ;massage it
         bra     3f
 
-;The reading is in the range [0x70..8F]:
-2:      ldaA    #0x80                   ;force the result to 0x80
+;For any reading in the range [0x71..8F], we force the result to be 0x80 (mid-band).
+;This creates the dead zone.
+2:      ldaA    #0x80
 
 3:      staA    *L00C5
 
@@ -5424,8 +5421,25 @@ LC8AF_230:    stD     *L0072
 LC8AF_231:    jmp     LC2B6
 
 ;-----------------------------------------------------------------
-; Called twice from inside the mofo loop.
-;returns a value in A, which could be 0x00, 0xFF, or something else.
+; Trimpot processing.
+;
+; Inputs:
+;    Reg B: the trimpot ADC value.
+;           A trimpot value of 0x80 means that the trimpot will not affect the output.
+;           Values less than 0x80 mean that the trimpot should attenuate the output.
+;           Values greater than 0x80 mean that the trimpot should amplify the output.
+;
+;    L00C4: a sensitivity 'gain' ScaleFactor
+;           This variable acts as a "multiplier" for the trimpots.
+;           If this value is very low (e.g., 0x10), the trimpots will have a very subtle effect on the fuel.
+;           If it is high, even a small turn of the pot will cause a large change in the output.
+;
+; Output:
+;    Reg A = round( (TrimpotADC * ScaleFactor) / 128 )
+;           Where positive values saturate at 127 and negative values saturate at -128
+;
+; By basing the scale factor on RPM, it can be arranged so that changes in RPM can have more
+; or less effect on Trimpot settings.
 
 LD5E4:  subB    #0x80
         bhs     0f                      ; Br if B was >= 0x80 to begin with
@@ -10481,25 +10495,32 @@ LF309_19:
         rts
 
 ;*****************************************************************
-;This subr is called from all over the place (40 times).  I think
-;it is used to index into tables.
+;Perform a linear interpolation.
+;
+; There are 3 entry points:
+;   LF3C2:
+;      Reg A: the value to interpolate
+;      Reg X: points at a 5-entry table
+;               0, X	Input Offset	The "Base" value. This is subtracted from your input (Reg A). Anything below this value is treated as 0.
+;               1, X	Input Limit	The "Max" value. This defines the upper boundary of the table. Anything above this is clamped to this value.
+;               2, X	Table Stride	Usually the length of a row. It is multiplied by the input to find the correct memory offset for the data.
+;               3, X	Data Point 0	The first actual data value in the lookup table (the "Floor").
+;               4, X	Data Point 1	The second data value in the table (the "Ceiling")
+;
+;      Function: Reg A is reduced by the 0[X] (but not below 0), then clipped to a max of 1[X], and then multiplied by 2[X].
 
-;It takes 2 params: A and X.  X points at a five entry table.
-
-;Reg A is reduced by the 0[X] to a min of 0, clipped to a max of 1[X], and then multiplied by 2[X].
-
-LF3C2:  subA    0, X                    ;A = A - (0,X)
-        bhs     0f                      ;br if (A was >= (0,X))
-        clrA                            ;else A=0
+LF3C2:  subA    0, X                    ;Reduce A by (0,X)
+        bhs     0f                      ;A > 0
+        clrA                            ;else clamp A to 0
 
 0:
         cmpA    1, X                    ;compared the reduced value of A against the second table entry
         bls     1f                      ;br if A <= the second table entry
-        ldaA    1, X                    ;else set A=second entry
+        ldaA    1, X                    ;else clamp A to the second entry
 
 1:
-        ldaB    2, X
-        mul                             ;multiply A by the third table entr (a table row length?)
+        ldaB    2, X                    ;multiply A by the table stride (length)
+        mul                             ;D contains an 8.8 fixed point number: A is the table entry, B is the fraction to interpolate
 
 ;-----------------------------------------------------------------
 ;A separate entry point (used 9 times).
