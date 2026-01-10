@@ -397,7 +397,7 @@ There are many ways to do that, but the project files are set up to expect the t
 /opt
 └── arm
     └── arm-none-eabi
-        └── 14.2.rel1
+        └── 15.2.rel1
 
 ```
 
@@ -409,13 +409,13 @@ All the installed versions would live side-by-side, as shown:
 └── arm
     └── arm-none-eabi
         ├── 14.2.rel1
-        └── xx.y.rel1
+        └── 15.2.rel1
 ```
 
-To set this up, (and assuming that the version you downloaded was named 14.2.rel1), type the following to create the basic directory structure:
+To set this up, (and assuming that the version you downloaded was named 15.2.rel1), type the following to create the basic directory structure:
 
 ```bash
-sudo mkdir -p /opt/arm/arm-none-eabi/14.2.rel1
+sudo mkdir -p /opt/arm/arm-none-eabi/15.2.rel1
 ```
 
 You will be able switch over to the new tools or switch back to the old ones by just changing an appropriate CMake toolchain file to point at the proper directory.
@@ -437,7 +437,7 @@ Inside that section, you will see a heading:
 
 What you are looking for is:
 
-```arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz```
+```arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz```
 
 Pictorially, you are looking for this entry on the webpage:
 
@@ -448,7 +448,7 @@ __Don't download the file though__: right click the link and select "copy link" 
 
 #### Tools For ARM Raspberry Pi 5
 
-If you are developing on a Pi 5, scroll down the ARM download page until you see the section titled 'AArch64 Linux hosted cross toolchains'. You want the version 'AArch32 bare-metal target (arm-none-eabi)', downloaded via the file 'arm-gnu-toolchain-14.2.rel1-aarch64-arm-none-eabi.tar.xz'. As with the x86 instructions, don't actually download the file, but right-click the link and select 'copy link'.
+If you are developing on a Pi 5, scroll down the ARM download page until you see the section titled 'AArch64 Linux hosted cross toolchains'. You want the version 'AArch32 bare-metal target (arm-none-eabi)', downloaded via the file 'arm-gnu-toolchain-15.2.rel1-aarch64-arm-none-eabi.tar.xz'. As with the x86 instructions, don't actually download the file, but right-click the link and select 'copy link'.
 
 #### Downloading & Installing
 
@@ -456,35 +456,35 @@ Assuming that the link to the toolchain on the ARM download website is still in 
 Make sure you are in the proper directory before downloading the code, then get it using 'wget':
 
 ```bash
-cd /opt/arm/arm-none-eabi/14.2.rel1
-sudo wget https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
+cd /opt/arm/arm-none-eabi/15.2.rel1
+sudo wget https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz
 ```
 
 The version number in the example above may not match what you downloaded.
-Regardless, if you downloaded some version, you should have a very large archive file in your 14.2.rel1 (or equivalent) directory:
+Regardless, if you downloaded some version, you should have a very large archive file in your 15.2.rel1 (or equivalent) directory:
 
 ```bash
 $ ls -l
--rw-r--r-- 1 root root 149739784 Dec  6 06:07 arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz
+-rw-r--r-- 1 root root 155499480 Dec 15 06:38 arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz
 ```
 
 Next up is to extract the files from the archive that was downloaded.
-One problem (at least, for me) is that every single file in the entire archive is prepended with an annoyingly long initial directory name: "arm-gnu-toolchain-*.*Rel*-x86_64-arm-none-eabi", where the '*' characters represent specific version numbers.
+One problem (at least, for me) is that every single file in the entire archive is prepended with an annoyingly long initial directory name: "arm-gnu-toolchain-\*.\*Rel\*-x86_64-arm-none-eabi", where the '\*' characters represent specific version numbers.
 
 It might be useful if a system needed to install cross compilers for every single Arm architecture, but this project doesn't need that level of complexity.
 To get rid of that long pathname, extract files in the archive using the following command:
 
 ```bash
-# assuming you are still in /opt/arm/arm-none-eabi/14.2.rel1 from the previous download step:
-sudo tar xf ./arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz --strip-components 1
+# assuming you are still in /opt/arm/arm-none-eabi/15.2.rel1 from the previous download step:
+sudo tar xf ./arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz --strip-components 1
 ```
 
-Once tar completes, the cross-compilation executable tools will be located at /opt/arm/arm-none-eabi/14.2.rel1/bin.
+Once tar completes, the cross-compilation executable tools will be located at /opt/arm/arm-none-eabi/15.2.rel1/bin.
 Verify that the new tools are functioning by running gcc directly from its bin directory:
 
 ```bash
-$ ./bin/arm-none-eabi-gcc --version
-arm-none-eabi-gcc (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 14.2.1 20241119
+$ ./bin/arm-none-eabi-gdb --version
+GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git
 Copyright (C) 2024 Free Software Foundation, Inc.
 ```
 
@@ -495,7 +495,7 @@ Verify that GDB runs, too:
 
 ```bash
 $ ./bin/arm-none-eabi-gdb --version
-GNU gdb (Arm GNU Toolchain 14.2.Rel1 (Build arm-14.52)) 15.2.90.20241130-git
+GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git
 Copyright (C) 2024 Free Software Foundation, Inc.
 ```
 
@@ -508,6 +508,8 @@ For the project we will be installing later, the toolchain file will be located 
 If you were to install new ARM tools, you could change your toolchain file to use them by editing the 'arm-none-eabi.cmake' file to point at the new tools.
 
 If the version number of the tools has changed for you, edit the toolchain file to reflect your new version number and save it.
+
+After upgrading to a new toolchain, you should delete your umod4 build directory and rebuild everything. If this is the first time you have installed tools, this does not apply so just keep reading.
 
 ### Install OpenOCD
 
@@ -523,6 +525,7 @@ Install source code for OpenOCD, making sure to get the sources from raspberrypi
 ```bash
 cd ~/projects
 git clone https://github.com/raspberrypi/openocd.git
+cd openocd
 git submodule init
 git submodule update
 ```
@@ -584,10 +587,11 @@ Pictorially, we want to end up with a directory structure that has this general 
     ├── openocd       (a special version for debugging RP2xxx chips)
     ├── pico-examples (sample code for SDK applications)
     ├── pico-sdk      (may contain multiple versions of the SDK over time)
-    │   ├── 1.5.1     (predates the Pico/RP2040 only)
-    │   ├── 2.0.0     (first version that supports Pico and Pico2)
-    │   └── 2.1.1     (the most version, at time of writing)
-    └── umod4         (where our umod4 sosftware project gets stored)
+    │   ├── 1.5.1     (Supports Pico/RP2040 only)
+    │   ├── 2.0.0     (first version that supports Pico/RP2040 and Pico2/RP2350)
+    │   ├── 2.1.1     (bug fixes and improvements)
+    │   └── 2.2.0     (the most recent version, at time of writing)
+    └── umod4         (where the umod4 software project will be stored)
 ```
 
 ### RPi SDK
@@ -611,27 +615,29 @@ Next, we clone the 'master' branch of the pico-sdk into the new directory:
 git clone https://github.com/raspberrypi/pico-sdk
 ```
 
-Rename pico-sdk to reflect the SDK branch that we will be checking out:
+Rename pico-sdk to reflect the SDK branch that we will be checking out.
+As of the time of writing, the most recent version is 2.2.0.
+If a newer version is available, use its version number:
 
 ```bash
-mv pico-sdk 2.1.1
+mv pico-sdk 2.2.0
 ```
 
-Now we tell git that we actually want to lock this cloned branch to the "2.1.1" tag on the master branch:
+Now we tell git that we actually want to lock this cloned branch to the "2.2.0" tag on the master branch:
 
 ```bash
-cd 2.1.1
-git checkout 2.1.1
+cd 2.2.0
+git checkout 2.2.0
 ```
 
 Our new branch tag now matches its directory name.
-As always, update the new branch so that it can do WiFi and Bluetooth for Pico[2]-W:
+Update the new branch so that it can do WiFi & Bluetooth on a Pico2 W:
 
 ```bash
 git submodule update --init
 ```
 
-Now, we make FreeRTOS for the Pico family available to any project using this version of the SDK:
+Now, make FreeRTOS for the Pico family available to any project using this version of the SDK:
 
 ```bash
 git submodule add https://github.com/FreeRTOS/FreeRTOS-Kernel
@@ -639,13 +645,26 @@ cd FreeRTOS-Kernel
 git submodule update --init
 ```
 
-Finally, we need to create an environment variable used by various parts of the build system to explain where to find the version of SDK they should be using:
+Finally, create an environment variable used by various parts of the build system to explain where to find the version of SDK they should be using:
 
 ```bash
-echo "export PICO_SDK_PATH=/home/$(id -u -n)/projects/pico-sdk/2.1.1" >> ~/.bashrc
+echo "export PICO_SDK_PATH=/home/$(id -u -n)/projects/pico-sdk/2.2.0" >> ~/.bashrc
 ```
 
 Either close the terminal and reopen it, or execute ". \~/.bashrc" to make sure that the variable is defined in your current shell.
+
+#### Maintaining Multiple SDK Versions
+
+New versions of the SDK get released from time to time.
+A new SDK will be a mixture of new features and bug fixes.
+Just because a new SDK is released, there is no need to delete older versions.
+In fact, there are benefits to leaving old versions around:
+
+* A new version might introduce some incompatibility that needs to be fixed, meaning that the old version should continue to be used until the fix is in place.
+
+* If you develop any other software projects using a Pico, it is possible that some projects might need a specific version of the SDK, while others might want to use the most recent.
+
+By following the instructions above to load new SDK versions 'beside' the old ones, your system can contain multiple versions of the SDK and each project can use the version that it needs.
 
 ## Picotool
 
@@ -695,7 +714,6 @@ When it completes, your 'projects' directory structure should show you a new umo
 
 ```text
 projects
-    ├── FreeRTOS-Kernel
     ├── openocd
     ├── pico-sdk
     └── umod4
@@ -720,41 +738,39 @@ It should produce a bunch of messages in the VS Code 'output' window that looks 
 
 ```text
 [main] Configuring project: umod4
-[proc] Executing command: /usr/bin/cmake -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE --no-warn-unused-cli -S/home/robin/projects/umod4 -B/home/robin/projects/umod4/build -G Ninja
+[driver] Removing /home/robin/projects/umod4/build/CMakeCache.txt
+[driver] Removing /home/robin/projects/umod4/build/CMakeFiles
+[proc] Executing command: /usr/bin/cmake -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE --no-warn-unused-cli -S /home/robin/projects/umod4 -B /home/robin/projects/umod4/build -G Ninja
 [cmake] Not searching for unused variables given on the command line.
-[cmake] -- The C compiler identification is GNU 11.4.0
-[cmake] -- The CXX compiler identification is GNU 11.4.0
-[cmake] -- Detecting C compiler ABI info
-[cmake] -- Detecting C compiler ABI info - done
-[cmake] -- Check for working C compiler: /usr/bin/cc - skipped
-[cmake] -- Detecting C compile features
-[cmake] -- Detecting C compile features - done
-[cmake] -- Detecting CXX compiler ABI info
-[cmake] -- Detecting CXX compiler ABI info - done
-[cmake] -- Check for working CXX compiler: /usr/bin/c++ - skipped
-[cmake] -- Detecting CXX compile features
-[cmake] -- Detecting CXX compile features - done
-[cmake] -- Fetching littlefs project...
-[cmake] -- ...Fetched littlefs!
-[cmake] -- Beginning ExternalProject_Add: tools
-[cmake] -- Beginning ExternalProject_Add: ecu
-[cmake] -- Beginning ExternalProject_Add: EP
-[cmake] -- Beginning ExternalProject_Add: WP
-[cmake] -- Configuring done
-[cmake] -- Generating done
+[cmake] -- Detected Python version: 3.12
+[cmake] --    ---> Installing python lib: pymongo
+...
+<lots more messages snipped out from here>
+...
+[cmake] -- Adding the 'tools' project
+[cmake] -- Adding the 'ecu' project
+[cmake] -- Adding the 'eprom_lib' project
+[cmake] -- Adding the 'EP' project
+[cmake] -- Adding the 'WP' project
+[cmake] -- Configuring done (6.8s)
+[cmake] -- Generating done (0.0s)
 [cmake] -- Build files have been written to: /home/robin/projects/umod4/build
 ```
 
-You should see CMake correctly identify your target board and find the cross compilers that you installed.
+You will see all kinds of messages about installing Python packages, detecting C and C++ compilers, and adding various sub-projects.
 
 The important part is that the messages end with "Build files have been written to: ..." which means, no errors.
 
-Assuming that the system configured without errors, you finally get to build the project.
-In the VS Code window, hit key 'F7' to build everything.
+Assuming that the system configured without errors, you **finally** get to build the umod4 project.
+Go to your VS Code window with the umod4 project in it and hit key 'F7' to build everything.
 The VS Code output window will display tons of messages as everything runs.
+Depending on how beastly your PC is, this may take 15-ish seconds to a couple of minutes.
+This is the worst-case build time though.
+Once the build is complete, subsequent builds only rebuild files that have changed which only takes a small number of seconds.
 If it all goes according to plan, you will see the following down at the very bottom of all those messages:
 
 ```text
+[driver] Build completed: 00:00:15.502
 [build] Build finished with exit code 0
 ```
 
@@ -764,15 +780,20 @@ If you get a non-zero exit code, scroll back to the top of the message output wi
 Then, fix the error.
 I know, I know, maybe not so simple...
 
-**Important:** the CMake process is designed to put anything that gets generated or created by the build process into a directory called 'build', located under the main "projects/ptwd" directory.
-The way things are set up, it is *always* safe to delete the entire contents of the build directory because anything in that directory can be re-created automatically.
+**Important:** the CMake process is designed to put anything that gets generated or created by the build process into a directory called 'build', located inside the main "projects/umod4" directory.
+There is a reason for that.
+It means that it is *always* safe to delete the entire contents of the build directory because anything in that directory can be re-created automatically.
 Sometimes, things can get out of sync in the CMake build process.
 It usually happens after making changes to one of the CMakeLists.txt files in the system.
 If things are acting weird, the nuclear option to get back on track is to:
 
-1) delete the entire 'build' directory
-1) hit "F1", then type "CMake: delete cache and reconfigure"
-1) hit "F7" to rebuild everything
+1) Delete the entire 'build' directory by right-clicking 'build' is the VS Code file wiewer window, then selecting 'delete permanently' from the menu.
+**When the dialog box opens up warning you about permanently deleting 'build', make sure that it really does say 'build' and that you didn't accidentally select some other directory**. Hit the 'delete' button to finally delete build.
+1) Hit "F1", then start typing "CMake: delete cache and reconfigure". As you type, a menu will appear based on what you have typed so far. As soon as you see the menu item "CMake: delete cache and reconfigure" appear, you can quit typing and just click that menu item.
+1) Hit "F7" to rebuild everything. Your build directory will reappear, full of binary goodness.
+
+Try those commands right now, and rebuild your entire system from scratch.
+Never fear deleting 'build'!
 
 ## Interlude
 
