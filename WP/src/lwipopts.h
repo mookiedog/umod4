@@ -1,0 +1,134 @@
+#ifndef _LWIPOPTS_H
+#define _LWIPOPTS_H
+
+// Common settings used in most of the pico_w examples
+// (see https://www.nongnu.org/lwip/2_1_x/group__lwip__opts.html)
+
+// We're using pico_cyw43_arch_lwip_sys_freertos with FreeRTOS
+#define NO_SYS                      0
+#define LWIP_SOCKET                 1
+#define LWIP_NETCONN                1
+
+// FreeRTOS thread and mailbox settings (required for NO_SYS=0)
+#define TCPIP_THREAD_STACKSIZE      2048
+#define TCPIP_THREAD_PRIO           (configMAX_PRIORITIES - 2)  // High priority for network stack
+#define DEFAULT_THREAD_STACKSIZE    2048
+#define DEFAULT_RAW_RECVMBOX_SIZE   8
+#define DEFAULT_TCP_RECVMBOX_SIZE   8
+#define DEFAULT_UDP_RECVMBOX_SIZE   8
+#define TCPIP_MBOX_SIZE             8
+
+// Prevent lwIP from redefining struct timeval (already defined in newlib)
+#define LWIP_TIMEVAL_PRIVATE        0
+
+// Provide errno from newlib
+#define LWIP_PROVIDE_ERRNO          0
+
+// Since we have implemented a thread-safe __malloc_lock,
+// we can safely use the standard libc malloc for lwIP.
+#define MEM_LIBC_MALLOC             1
+
+// Use mem_malloc/mem_free instead of the lwip pool allocator.
+// May make the system run slower, but simplifies memory management.
+#define MEMP_MEM_MALLOC             1
+
+#define MEM_ALIGNMENT               4
+#define MEM_SIZE                    4000
+#define MEMP_NUM_TCP_SEG            32
+#define MEMP_NUM_ARP_QUEUE          10
+#define PBUF_POOL_SIZE              24
+#define LWIP_ARP                    1
+#define LWIP_ETHERNET               1
+#define LWIP_ICMP                   1
+#define LWIP_IGMP                   1
+#define LWIP_RAW                    1
+#define TCP_WND                     (8 * TCP_MSS)
+#define TCP_MSS                     1460
+#define TCP_SND_BUF                 (8 * TCP_MSS)
+#define TCP_SND_QUEUELEN            ((4 * (TCP_SND_BUF) + (TCP_MSS - 1)) / (TCP_MSS))
+#define LWIP_NETIF_STATUS_CALLBACK  1
+#define LWIP_NETIF_LINK_CALLBACK    1
+#define LWIP_NETIF_HOSTNAME         1
+#define LWIP_NUM_NETIF_CLIENT_DATA  1
+#define MEM_STATS                   0
+#define SYS_STATS                   0
+#define MEMP_STATS                  0
+#define LINK_STATS                  0
+// #define ETH_PAD_SIZE                2
+#define LWIP_CHKSUM_ALGORITHM       3
+#define LWIP_DHCP                   1
+#define LWIP_IPV4                   1
+#define LWIP_TCP                    1
+#define LWIP_UDP                    1
+#define LWIP_DNS                    1
+#define LWIP_TCP_KEEPALIVE          1
+#define LWIP_NETIF_TX_SINGLE_PBUF   1
+#define DHCP_DOES_ARP_CHECK         0
+#define LWIP_DHCP_DOES_ACD_CHECK    0
+
+// HTTP server configuration for MDL (Motorbike Data Link)
+#define LWIP_HTTPD                      1
+#define LWIP_HTTPD_CGI                  1
+#define LWIP_HTTPD_SSI                  1
+#define LWIP_HTTPD_CUSTOM_FILES         1
+#define LWIP_HTTPD_FILE_EXTENSION       1
+#define LWIP_HTTPD_DYNAMIC_FILE_READ    1
+#define LWIP_HTTPD_DYNAMIC_HEADERS      1
+#define LWIP_HTTPD_SUPPORT_POST         1
+#define LWIP_HTTPD_MAX_TAG_NAME_LEN     16
+#define LWIP_HTTPD_MAX_TAG_INSERT_LEN   256
+#define HTTPD_SERVER_PORT               80
+
+// Use our custom-generated fsdata.c instead of SDK default
+// This file is generated at build time from WP/www/ directory
+// Note: This must be set via compile definition to get the correct build path
+#ifndef HTTPD_FSDATA_FILE
+#define HTTPD_FSDATA_FILE               "fsdata.c"
+#endif
+
+// HTTP server polling interval (X * 500ms)
+// Default is 4 (2 seconds), which causes slow response times
+// Set to 1 for 500ms polling (fast enough for interactive use)
+#define HTTPD_POLL_INTERVAL             1
+
+// mDNS responder for device discovery (motorcycle.local)
+#define LWIP_MDNS_RESPONDER             1
+#define MDNS_MAX_SERVICES               1
+
+#ifndef NDEBUG
+#define LWIP_DEBUG                  1
+#define LWIP_STATS                  1
+#define LWIP_STATS_DISPLAY          1
+#endif
+
+#define ETHARP_DEBUG                LWIP_DBG_OFF
+#define NETIF_DEBUG                 LWIP_DBG_OFF
+#define PBUF_DEBUG                  LWIP_DBG_OFF
+#define API_LIB_DEBUG               LWIP_DBG_OFF
+#define API_MSG_DEBUG               LWIP_DBG_OFF
+#define SOCKETS_DEBUG               LWIP_DBG_OFF
+#define ICMP_DEBUG                  LWIP_DBG_OFF
+#define INET_DEBUG                  LWIP_DBG_OFF
+#define IP_DEBUG                    LWIP_DBG_OFF
+#define IP_REASS_DEBUG              LWIP_DBG_OFF
+#define RAW_DEBUG                   LWIP_DBG_OFF
+#define MEM_DEBUG                   LWIP_DBG_OFF
+#define MEMP_DEBUG                  LWIP_DBG_OFF
+#define SYS_DEBUG                   LWIP_DBG_OFF
+#define TCP_DEBUG                   LWIP_DBG_OFF
+#define TCP_INPUT_DEBUG             LWIP_DBG_OFF
+#define TCP_OUTPUT_DEBUG            LWIP_DBG_OFF
+#define TCP_RTO_DEBUG               LWIP_DBG_OFF
+#define TCP_CWND_DEBUG              LWIP_DBG_OFF
+#define TCP_WND_DEBUG               LWIP_DBG_OFF
+#define TCP_FR_DEBUG                LWIP_DBG_OFF
+#define TCP_QLEN_DEBUG              LWIP_DBG_OFF
+#define TCP_RST_DEBUG               LWIP_DBG_OFF
+#define UDP_DEBUG                   LWIP_DBG_OFF
+#define TCPIP_DEBUG                 LWIP_DBG_OFF
+#define PPP_DEBUG                   LWIP_DBG_OFF
+#define SLIP_DEBUG                  LWIP_DBG_OFF
+#define DHCP_DEBUG                  LWIP_DBG_OFF
+#define HTTPD_DEBUG                 LWIP_DBG_OFF
+
+#endif /* __LWIPOPTS_H__ */

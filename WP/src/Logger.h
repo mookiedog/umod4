@@ -29,6 +29,9 @@ class Logger {
 
         bool logData_fromISR(uint32_t rxWord);
 
+        // Get current log filename (for WiFi uploader to avoid uploading active file)
+        const char* getCurrentLogName() const { return logName; }
+
     private:
         lfs_t* lfs;
         char logName[16];

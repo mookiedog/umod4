@@ -17,16 +17,6 @@
 #include "NeoPixelConnect.h"
 
 
-/// @brief Constructor - pio will be set to pio0 and sm to 0
-/// @param pinNumber: GPIO pin that controls the NeoPixel string.
-/// @param numberOfPixels: Number of pixels in the string
-
-NeoPixelConnect::NeoPixelConnect(byte pinNumber, uint16_t numberOfPixels) {
-    this->pixelSm = 0;
-    this->pixelPio = pio0;
-    this->neoPixelInit(pinNumber, numberOfPixels);
-}
-
 /// @brief Constructor
 /// @param pinNumber: GPIO pin that controls the NeoPixel string.
 /// @param numberOfPixels: Number of pixels in the string
@@ -42,8 +32,14 @@ NeoPixelConnect::NeoPixelConnect(byte pinNumber, uint16_t numberOfPixels, PIO pi
 /// @param pinNumber: GPIO pin that controls the NeoPixel string.
 /// @param numberOfPixels: Number of pixels in the string
 void NeoPixelConnect::neoPixelInit(byte pinNumber, uint16_t numberOfPixels) {
+    // Claim the state machine
+    pio_sm_claim(this->pixelPio, this->pixelSm);
+
     uint offset = pio_add_program(this->pixelPio, &ws2812_program);
     ws2812_program_init(this->pixelPio, this->pixelSm, offset, pinNumber, 800000, false);
+
+    printf("NeoPixel: Using PIO%d, SM%d, program offset %d (size: %d instructions)\n",
+           pio_get_index(this->pixelPio), this->pixelSm, offset, ws2812_program.length);
 
     // save the number of pixels in use
     this->actual_number_of_pixels = numberOfPixels;

@@ -108,8 +108,31 @@ if(DEFINED ENV{WIFI_PASSWORD} AND (NOT WIFI_PASSWORD))
     message("Using WIFI_PASSWORD from environment")
 endif()
 
+if(DEFINED ENV{UMOD4_SERVER_HOST} AND (NOT UMOD4_SERVER_HOST))
+    set(UMOD4_SERVER_HOST $ENV{UMOD4_SERVER_HOST})
+    message("Using UMOD4_SERVER_HOST from environment ('${UMOD4_SERVER_HOST}')")
+endif()
+
+if(DEFINED ENV{UMOD4_SERVER_PORT})
+    set(UMOD4_SERVER_PORT $ENV{UMOD4_SERVER_PORT})
+    message("Using UMOD4_SERVER_PORT from environment ('${UMOD4_SERVER_PORT}')")
+elseif(NOT UMOD4_SERVER_PORT)
+    set(UMOD4_SERVER_PORT "8888")
+endif()
+
+# Validate required WiFi/server configuration
+if(NOT WIFI_SSID OR NOT WIFI_PASSWORD)
+    message(FATAL_ERROR "WIFI_SSID and WIFI_PASSWORD environment variables must be set for WiFi builds")
+endif()
+
+if(NOT UMOD4_SERVER_HOST)
+    message(FATAL_ERROR "UMOD4_SERVER_HOST environment variable must be set (e.g., '192.168.1.100' or 'myserver.local')")
+endif()
+
 set(WIFI_SSID "${WIFI_SSID}" CACHE INTERNAL "WiFi SSID for ${PROJECT_NAME}")
 set(WIFI_PASSWORD "${WIFI_PASSWORD}" CACHE INTERNAL "WiFi password for ${PROJECT_NAME}")
+set(UMOD4_SERVER_HOST "${UMOD4_SERVER_HOST}" CACHE INTERNAL "umod4 server hostname/IP for ${PROJECT_NAME}")
+set(UMOD4_SERVER_PORT "${UMOD4_SERVER_PORT}" CACHE INTERNAL "umod4 server port for ${PROJECT_NAME}")
 
 # Not happy with this...
 if(DEFINED ENV{PICO_EXAMPLES_PATH} AND NOT PICO_EXAMPLES_PATH)
@@ -129,14 +152,41 @@ endif()
 include_directories(
     ${LIB_DIR}/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}  # For generated files like fsdata.c
+    # lwIP includes needed for pico_cyw43_arch_lwip_sys_freertos
+    ${PICO_SDK_PATH}/lib/lwip/src/include
+    ${PICO_SDK_PATH}/src/rp2_common/pico_lwip/include
+    ${PICO_SDK_PATH}/lib/lwip/src/include/lwip/apps
+    # FreeRTOS lwIP arch port
+    ${PICO_SDK_PATH}/lib/lwip/contrib/ports/freertos/include
 )
+
+# Generate fsdata.c from www/ directory for embedded web UI
+set(MAKEFSDATA_SCRIPT "${PICO_SDK_PATH}/lib/lwip/src/apps/http/makefsdata/makefsdata")
+set(WWW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/www")
+set(FSDATA_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/fsdata.c")
+
+# Custom target to generate fsdata.c (included by SDK's fs.c, not compiled directly)
+add_custom_command(
+    OUTPUT ${FSDATA_OUTPUT}
+    COMMAND perl ${MAKEFSDATA_SCRIPT} ${WWW_DIR}
+    COMMAND mv ${WWW_DIR}/fsdata.c ${FSDATA_OUTPUT}.tmp
+    COMMAND bash -c "echo '#include \"lwip/apps/fs.h\"' > ${FSDATA_OUTPUT} && echo '#include \"lwip/def.h\"' >> ${FSDATA_OUTPUT} && echo '' >> ${FSDATA_OUTPUT} && echo '#define file_NULL (struct fsdata_file *) NULL' >> ${FSDATA_OUTPUT} && echo '' >> ${FSDATA_OUTPUT} && sed 's/{{NULL,/{{file_NULL,/g' ${FSDATA_OUTPUT}.tmp >> ${FSDATA_OUTPUT} && rm ${FSDATA_OUTPUT}.tmp"
+    DEPENDS ${WWW_DIR}/index.html
+    WORKING_DIRECTORY ${WWW_DIR}
+    COMMENT "Generating fsdata.c from www/ directory"
+    VERBATIM
+)
+
+# Ensure fsdata.c is generated before building the executable
+add_custom_target(generate_fsdata DEPENDS ${FSDATA_OUTPUT})
 
 add_executable(${PROJECT_NAME}
     src/Clock.cpp
     src/Crc.cpp
     src/FlashEp.cpp
     src/Gps.cpp
-    src/Heap.cpp
+    src/malloc_lock.cpp
     src/Logger.cpp
     src/main.cpp
     src/NeoPixelConnect.cpp
@@ -147,11 +197,22 @@ add_executable(${PROJECT_NAME}
     src/Spi.cpp
     src/TimeUtils.cpp
     src/Uart.cpp
+    src/WiFiManager.cpp
+    src/HttpClient.cpp
+    src/LogUploader.cpp
+    # MDL (Motorbike Data Link) files
+    src/NetworkManager.cpp
+    src/api_handlers.c
+    src/fs_custom.c
+    # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
+    src/httpd_stubs.c
 )
+
+# Ensure fsdata.c is generated before compiling fs.c
+add_dependencies(${PROJECT_NAME} generate_fsdata)
 
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
 set_source_files_properties(
-    src/Heap.cpp
     src/Shell.cpp
     src/Gps.cpp
     src/Uart.cpp
@@ -159,6 +220,10 @@ set_source_files_properties(
     src/main.cpp
     src/SdCard.cpp
     src/SdCardSDIO.cpp
+    src/WiFiManager.cpp
+    src/HttpClient.cpp
+    src/LogUploader.cpp
+    src/NetworkManager.cpp
     PROPERTIES COMPILE_FLAGS "-Wno-volatile"
 )
 
@@ -177,8 +242,8 @@ add_compile_definitions(BUFFER_SIZE_DOWN=1024)
 add_compile_definitions(LFS_THREADSAFE=1)
 #add_compile_definitions(LFS_TRACE=printf)
 
-# We will define new/delete ourselves
-add_compile_definitions(PICO_CXX_DISABLE_ALLOCATION_OVERRIDES=1)
+# Disable pico_malloc wrapping - we provide our own malloc protection via malloc_lock.cpp
+add_compile_definitions(PICO_USE_MALLOC_MUTEX=0)
 
 # Choose where stdio output goes. It should only be RTT for this project.
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
@@ -244,6 +309,24 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     ##PICO_HEAP_SIZE=2048
     #PICO_STACK_SIZE=4096   I'm still not sure the best way to define this. Right now, it's in the memmap_eprom.ld file.
 
+    # WiFi and server configuration (from environment variables)
+    WIFI_SSID=\"${WIFI_SSID}\"
+    WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
+    UMOD4_SERVER_HOST=\"${UMOD4_SERVER_HOST}\"
+    UMOD4_SERVER_PORT=\"${UMOD4_SERVER_PORT}\"
+
+    # Point lwIP httpd to our custom-generated fsdata.c in build directory
+    HTTPD_FSDATA_FILE=\"${CMAKE_CURRENT_BINARY_DIR}/fsdata.c\"
+
+    # Disable CYW43 driver logging to stdio
+    PICO_CYW43_LOGGING_ENABLED=0
+
+    # There are still some messags that get printed from the CYW43 driver,
+    # but I have not figured out how to disable them.
+    # CYW43_PRINTF() is defined in cyw43_debug.h
+
+    # Note that there can be way more WiFi debug logging from lwIP itself.
+    # See: src/lwipopts.h
 )
 
 # Print some basic information regarding the build size
@@ -271,8 +354,9 @@ target_link_libraries(${PROJECT_NAME}
     swd_reflash
     tiny_regex_c
     sdio_rp2350
-    pico_cyw43_arch_none
-    #pico_cyw43_arch_lwip_sys_freertos
+    pico_cyw43_arch_lwip_sys_freertos
+    pico_lwip_http
+    pico_lwip_mdns
 )
 
 # Create some useful output files

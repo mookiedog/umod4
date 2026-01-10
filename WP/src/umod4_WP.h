@@ -15,16 +15,22 @@
 
 #include "hardware/uart.h"
 
-// Define the PIO unit assignments here.
-// The Pico2W uses an RP2350 which has 3 PIO blocks, but we only need two of them.
-// Define the basic PIO assignments here:
+// The Pico2W uses an RP2350 which has 3 PIO blocks.
+// Everything is hardcoded to avoid problems with making code having to deal with
+// the effects of dynamic allocation on things like interrupt and FIFO names.
+//
+// PIO0: NeoPixel + UART (2 state machines, 13 of 32 instructions used)
+// PIO1: SDIO (exclusive use by SDIO driver because its uses all the instruction memory)
+// PIO2: WiFi (default for the cyw43 driver on a PICO2W, and we will let this sleeping dog lie)
 #define PIO_WS2812          pio0
-#define PIO_WS2812_SM       0
-#define PIO_UART            pio1
-#define PIO_UART_SM         0
-#define PIO_SD              pio2
+#define   PIO_WS2812_SM     0
 
-#define PIO_UART_RX_IRQ     PIO1_IRQ_0
+#define PIO_UART            pio0
+#define   PIO_UART_SM       1
+#define   PIO_UART_RX_IRQ   PIO0_IRQ_0
+
+#define PIO_SD              pio1
+#define   SD_GPIO_FUNC      GPIO_FUNC_PIO1
 
 // The GPIO pin assignments are as per the PCB 4V1 circuit board.
 

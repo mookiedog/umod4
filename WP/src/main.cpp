@@ -1,5 +1,6 @@
-#include "stdio.h"
+#include <stdio.h>
 #include <string.h>
+#include <malloc.h>
 
 #include "pico/stdlib.h"
 #include "pico/mutex.h"
@@ -8,12 +9,12 @@
 
 #include "FreeRTOS.h"
 #include "task.h"
+#include "semphr.h"
 
 #define LFS 1
 
 #include "Gps.h"
 #include "hardware.h"
-#include "Heap.h"
 #if defined LFS
 #include "lfs.h"
 #endif
@@ -30,6 +31,18 @@
 #include "umod4_WP.h"
 #include "uart_rx32.pio.h"
 #include "WP_log.h"
+#include "WiFiManager.h"
+#include "HttpClient.h"
+#include "LogUploader.h"
+#include "NetworkManager.h"
+#include "lwip/netif.h"
+#include "lwip/ip4_addr.h"
+
+// Linker-provided symbols for heap boundaries (for diagnostics)
+extern uint32_t __end__;        // End of BSS, start of heap
+extern uint32_t __HeapLimit;    // End of heap
+static const char* heap_start = (char*)&__end__;
+static const char* heap_end = (char*)&__HeapLimit;
 
 // SD Card Interface Selection
 // Uncomment to use SDIO 4-bit mode (~20-25 MB/s) instead of SPI mode (~3 MB/s)
@@ -45,6 +58,14 @@ Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
 FlashEp* flashEp;
+
+// WiFi Phase 1 components
+WiFiManager* wifiMgr = nullptr;
+HttpClient* httpClient = nullptr;
+LogUploader* logUploader = nullptr;
+
+// MDL (Motorbike Data Link) components
+NetworkManager* networkMgr = nullptr;
 
 uint32_t flashBuffer[1024];
 
@@ -66,7 +87,8 @@ int lfs_sync(const struct lfs_config *c);
 
 // This struct contains everything that littlefs needs to work with a mounted filesystem.
 lfs_t lfs;
-mutex_t lfs_mutex;
+// FreeRTOS semaphore for LittleFS locking (instead of pico_sync mutex which uses event groups)
+SemaphoreHandle_t lfs_semaphore;
 bool lfs_mounted = false;  // Track whether filesystem is successfully mounted
 
 // Performance tracking for SD card operations
@@ -201,16 +223,19 @@ int lfs_sync(const struct lfs_config *c)
 // --------------------------------------------------------------------------------------------
 int lfs_mutex_take(const struct lfs_config *c)
 {
-    mutex_enter_blocking(&lfs_mutex);
-
-    return 0;
+    // Use FreeRTOS semaphore instead of pico_sync mutex
+    // (pico_sync mutex uses event groups which fail in ISR context)
+    if (xSemaphoreTake(lfs_semaphore, portMAX_DELAY) == pdTRUE) {
+        return 0;
+    }
+    return -1;
 }
 
 // --------------------------------------------------------------------------------------------
 int lfs_mutex_give(const struct lfs_config *c)
 {
-    mutex_exit(&lfs_mutex);
-
+    // Use FreeRTOS semaphore
+    xSemaphoreGive(lfs_semaphore);
     return 0;
 }
 
@@ -413,7 +438,11 @@ bool comingOnline(SdCardBase* sdCard)
     // See https://github.com/joltwallet/esp_littlefs/issues/211#issuecomment-2585285239
     lfs_cfg.block_cycles = -1;
 
-    mutex_init(&lfs_mutex);
+    // Create FreeRTOS semaphore for LittleFS locking
+    // (don't use pico_sync mutex - it uses event groups which fail in ISR context)
+    lfs_semaphore = xSemaphoreCreateMutex();
+    configASSERT(lfs_semaphore != NULL);
+
     lfs_cfg.lock = lfs_mutex_take;
     lfs_cfg.unlock = lfs_mutex_give;
 
@@ -527,12 +556,12 @@ void startFileSystem(void)
     static hotPlugMgrCfg_t cfg;
 
 #ifdef USE_SDIO_MODE
-    printf("%s: Using SDIO 4-bit mode (library-based)\n", __FUNCTION__);
+    printf("%s: 4-bit SDIO mode\n", __FUNCTION__);
 
     // Create the SdCardSDIO object - uses proven SDIO_RP2350 library low-level functions
     sdCard = new SdCardSDIO(SD_CARD_PIN);
 #else
-    printf("%s: Using SPI mode\n", __FUNCTION__);
+    printf("%s: 1-bit SPI mode\n", __FUNCTION__);
 
     static Spi* spiSd;
 
@@ -621,11 +650,14 @@ void initEpUart() {
     // Set up the PIO unit to act as our UART
     uint offset = pio_add_program(PIO_UART, &uart_rx32_program);
     uart_rx32_program_init(PIO_UART, PIO_UART_SM, offset, EPLOG_RX_PIN, EP_TO_WP_BAUDRATE);
+    printf("UART_RX32: Using PIO%d, SM%d, program offset %d (size: %d instructions)\n",
+           pio_get_index(PIO_UART), PIO_UART_SM, offset, uart_rx32_program.length);
+
 
     // Assign an interrupt handler
     irq_set_exclusive_handler(PIO_UART_RX_IRQ, isr_rx32);
 
-    printf("%s: EP RX32 UART ISR will be serviced by core %d\n", __FUNCTION__, get_core_num());
+    printf("%s: UART_RX32 ISR will be serviced by RP2350 core %d\n", __FUNCTION__, get_core_num());
     // Leave interrupts off until we enable the flowcontrol signal
 }
 
@@ -646,6 +678,8 @@ void allowEpToSendData()
     // Enable the RX-FIFO-not-empty interrupt inside the proper PIO unit
     #if (PIO_UART_SM == 0)
         PIO_UART->inte0 = PIO_INTR_SM0_RXNEMPTY_BITS;
+    #elif (PIO_UART_SM == 1)
+        PIO_UART->inte0 = PIO_INTR_SM1_RXNEMPTY_BITS;
     #else
         #error "Update this to the proper SMx bit!"
     #endif
@@ -656,11 +690,59 @@ void allowEpToSendData()
 }
 
 // ----------------------------------------------------------------------------------
+// A heap monitoring task that periodically prints out heap usage statistics.
+//
+// The Pico SDK/Newlib internal function is _sbrk
+extern "C" {
+    extern char __bss_end__;
+    extern char __StackLimit;
+    extern char __StackTop;
+    void* _sbrk(ptrdiff_t incr);
+}
+
+void heap_monitor_task(void *pvParameters)
+{
+    uintptr_t heap_start = (uintptr_t)&__bss_end__;
+    uintptr_t heap_limit = (uintptr_t)&__StackLimit;
+    uintptr_t stack_top  = (uintptr_t)&__StackTop;
+    static uint32_t min_remaining;
+
+    const uint32_t max_heap_potential = heap_limit - heap_start;
+
+    while (true) {
+        // Use the older mallinfo struct
+        struct mallinfo mi = mallinfo();
+
+        // Get the current "top" of the heap from the system
+        char* heap_top = (char*)_sbrk(0);
+
+        uint32_t remaining = max_heap_potential - mi.arena;
+        if (min_remaining != remaining) {
+            min_remaining = remaining;
+
+            printf("%s: Heap [max/remaining/inuse/free]: [%d/%d/%d/%d]\n",
+                __FUNCTION__,
+                max_heap_potential,
+                remaining,
+                mi.arena,
+                mi.uordblks,
+                mi.fordblks,
+                (void*)heap_top
+            );
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
+
+// ----------------------------------------------------------------------------------
 // This function is used to perform the FreeRTOS task initialization.
 // FreeRTOS is known to be running when this routine is called so it is free
 // to use any FreeRTOS constructs and call any FreeRTOS routines.
 void bootSystem()
 {
+    BaseType_t err;
+
     initEpUart();
 
     // The logger may be started early since it has a big buffer to handle extremely long LittleFS write times.
@@ -670,6 +752,9 @@ void bootSystem()
     // First thing we log is what version of the log we are generating:
     uint8_t v = LOGID_GEN_WP_LOG_VER_VAL_V0;
     logger->logData(LOGID_GEN_WP_LOG_VER_TYPE_U8, LOGID_GEN_WP_LOG_VER_DLEN, &v);
+
+    TaskHandle_t heap_monitor_task_handle;
+    err = xTaskCreate(heap_monitor_task, "Heap Monitor", 1024, NULL, 1, &heap_monitor_task_handle);
 
     printf("%s: Starting the filesystem\n", __FUNCTION__);
     startFileSystem();
@@ -682,6 +767,12 @@ void bootSystem()
 
     printf("%s: Starting the debug shell\n", __FUNCTION__);
     dbgShell = new Shell(&lfs);
+
+    printf("%s: Creating WiFi manager\n", __FUNCTION__);
+    wifiMgr = new WiFiManager();
+
+    printf("%s: Creating Network manager (MDL HTTP server)\n", __FUNCTION__);
+    networkMgr = new NetworkManager(wifiMgr);
 }
 
 
@@ -698,42 +789,9 @@ void vLedTask(void* arg)
     // Take care of our system boot responsibilities...
     bootSystem();
 
-    #if 0
-    rgb_led->neoPixelSetValue(0, 0, 16, 0, true);
-
-    // Now we are free to be the status LED task
-    int32_t count=0;
-    int32_t incr=1;
-
-    while (1) {
-        const uint32_t maxCount = 31;
-        count += incr;
-        if (count<0) {
-            count = 0;
-            incr = 1;
-        }
-        else if (count>maxCount) {
-            count = maxCount;
-            incr = -1;
-        }
-
-        #if 1
-        rgb_led->neoPixelSetValue(0, count, 0, 16, true);
-        vTaskDelay(50);
-        #else
-        // Measure min/max power for the LED by putting it at min/max brightness for a few seconds at a time
-        bool foo;
-        foo = !foo;
-        uint32_t bright = foo ? 0xFF : 0x00;
-        rgb_led->neoPixelSetValue(0, bright, bright, bright, true);
-        vTaskDelay(3000);
-        #endif
-    }
-    #else
     while (1) {
         vTaskDelay(1000);
     }
-    #endif
 }
 
 // --------------------------------------------------------------------------------------------
@@ -811,6 +869,22 @@ void initSpareIos()
 }
 
 // ----------------------------------------------------------------------------------
+// Helper functions for MDL API handlers
+// ----------------------------------------------------------------------------------
+
+extern "C" const char* get_wp_version(void) {
+    return "1.0.0-mdl-phase1";
+}
+
+extern "C" bool wifi_is_connected(void) {
+    return (wifiMgr != nullptr) && wifiMgr->isReady();
+}
+
+extern "C" const char* wifi_get_ssid(void) {
+    return WIFI_SSID;
+}
+
+// ----------------------------------------------------------------------------------
 // Before main() is called, the Pico boot code in pico-sdk/src/rp2_common/pico_standard_link/crt0.S
 // calls function runtime_init() in pico-sdk/src/rp2_common/pico_runtime/runtime.c
 // That is where all the behind-the-scenes initialization of the runtime occurs.
@@ -867,12 +941,6 @@ int main()
     }
 
     #if defined SPARE1_LED_PIN
-    hello(3);
-    #endif
-
-    // Pico2_W boards need to do this before we can even access the Pico's on-board LED
-    cyw43_arch_init();
-    #if !defined SPARE1_LED_PIN
     hello(3);
     #endif
 
