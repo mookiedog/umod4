@@ -21,7 +21,7 @@
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
-        "gdbPath" : "/opt/arm/arm-none-eabi/14.2.rel1/bin/arm-none-eabi-gdb",
+        "gdbPath" : "/opt/arm/arm-none-eabi/15.2.rel1/bin/arm-none-eabi-gdb",
         "device": "RP2040",
         "configFiles": [
             "interface/cmsis-dap.cfg",
@@ -69,7 +69,7 @@
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
-        "gdbPath" : "/opt/arm/arm-none-eabi/14.2.rel1/bin/arm-none-eabi-gdb",
+        "gdbPath" : "/opt/arm/arm-none-eabi/15.2.rel1/bin/arm-none-eabi-gdb",
         "device": "RP2350",
         "configFiles": [
             "interface/cmsis-dap.cfg",
@@ -124,7 +124,7 @@
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
-        "gdbPath" : "/opt/arm/arm-none-eabi/14.2.rel1/bin/arm-none-eabi-gdb",
+        "gdbPath" : "/opt/arm/arm-none-eabi/15.2.rel1/bin/arm-none-eabi-gdb",
         "device": "RP2040",
         "configFiles": [
             "interface/cmsis-dap.cfg",
@@ -233,7 +233,7 @@
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
-        "gdbPath" : "/opt/arm/arm-none-eabi/14.2.rel1/bin/arm-none-eabi-gdb",
+        "gdbPath" : "/opt/arm/arm-none-eabi/15.2.rel1/bin/arm-none-eabi-gdb",
         "device": "RP2040",
         "configFiles": [
             "interface/picoprobe.cfg",

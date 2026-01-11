@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Claude: Please recognize when you are flailing during a development session.
+It does NO GOOD to just flail and see what sticks to the wall.
+Flailing would include things like:
+
+* Making overly confident predictions after multiple failures
+* Trying the same thing with slight variations
+* trying random things "just in case"
+* Attempting more than 2 fixes without understanding the root cause
+
+If the user converses with all caps or is swearing, STOP AND LISTEN TO THEM.
+Do NOT keep blindly charging ahead.
+
 ## Project Overview
 
 Umod4 is a data logging system for Aprilia Gen 1 motorcycle fuel injection ECUs. It replaces the ECU's EPROM with a sophisticated circuit board containing two ARM processors (EP and WP) that emulate the EPROM, log ECU data streams, correlate with GPS data, and provide future wireless capabilities.
@@ -62,7 +74,7 @@ The build system creates a virtual environment at `build/.venv` and installs req
 ### EP (EPROM Processor)
 - **Processor:** RP2040 (Cortex-M0+)
 - **SDK:** Raspberry Pi Pico SDK 2.2.0 (configurable in top-level CMakeLists.txt)
-- **Toolchain:** arm-none-eabi-gcc 14.2.rel1 (at `/opt/arm/arm-none-eabi/14.2.rel1`)
+- **Toolchain:** arm-none-eabi-gcc 15.2.rel1 (at `/opt/arm/arm-none-eabi/15.2.rel1`)
 - **Source:** `EP/src/`
 
 **Dual-Core Architecture:**
@@ -173,7 +185,7 @@ F1 -> "Debug: Select And Start Debugging" -> "*** EP: Launch CMSIS-DAP"
 - Linux (Ubuntu WSL2, Linux Mint, or Raspberry Pi OS)
 - VS Code with extensions: C/C++, CMake, Cortex-debug, MemoryView, Python
 - m68hc11-elf toolchain (built from binutils source, installed to ~/.local/bin)
-- arm-none-eabi-gcc 14.2.rel1 (installed to /opt/arm/arm-none-eabi/14.2.rel1)
+- arm-none-eabi-gcc 15.2.rel1 (installed to /opt/arm/arm-none-eabi/15.2.rel1)
 - OpenOCD (built from raspberrypi fork for RP2xxx support)
 - Raspberry Pi Pico SDK 2.2.0 (at ~/projects/pico-sdk/2.2.0)
 - Python 3.10+ with venv support
