@@ -1053,7 +1053,11 @@ L8057:  .byte   0x70, 0x70, 0x10
 
 L8062:  .word   0x0064
 L8064:  .word   0x61A8
+
+;The value at L8066 is tested by the code, but is a constant 0x80 in these EPROMs:
+;  549USA, RP58, RP58USA, 549EuroC, 549EuroKat
 L8066:  .byte   0x80
+
 L8067:  .byte   0x00
 L8068:  .byte   0x00
 L8069:  .byte   0x80
@@ -1506,6 +1510,22 @@ L915D:  .byte   0x90, 0x60, 0x10, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0
 ;From P08 with no trimpots:
 ;L915D: .byte   0x90, 0x60, 0x10, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80
 
+;This next table is used to apply an RPM effect to trim pot settings.
+;I have seen codebases where the first three bytes are 0x18, 0x38, 0x20
+;which define the RPM50 value used to index into the table.
+;0x18 means 1200 RPM
+;0x38 means 4000 RPM
+;
+; HOWEVER:
+;A table of <0xFF, 0xFF, 0xFF> with first data byte <0xFF> effectively
+;removes any RPM effect from the calculation.
+;Any attempt to use this table for interpolation by RPM50 will generate a result of 0xFF.
+;Since any input value will always be <= the initial offset value (the first 0xFF byte),
+;A will always be 0x00 after removing the initial offset value.
+;And that means that the interpolation output will always be 100% of the
+;first column entry [located at the fourth byte of the table], or 0xFF.
+;I do not understand why they didn't use an output value of 0x80 (no fuel pulse width trim adjustment).
+;Instead, a value of 0xFF means 'maximum fuel pulse width trim adjustmtent'.
 L9167:  .byte   0xFF, 0xFF, 0xFF        ;0x18, 0x38, 0x20 in both normal P08 (no trimpots) and Gabro's P08 code with trimpots active
         .byte   0xFF, 0xFF, 0xFF, 0xFF
         .byte   0xE4, 0xB7
@@ -3278,6 +3298,7 @@ tbl1__14:
 
 tbl1__08:
         staA    *L002B                  ;save the raw A/D reading for debug purposes
+        staA    LW+LOGID_ECU_TP_CO1_RAW_TYPE_U8
 
         cmpA    #0x90
         bhs     0f                      ;br if reading is >= 0x90
@@ -3299,6 +3320,7 @@ tbl1__08:
 2:      ldaA    #0x80
 
 3:      staA    *L00C5
+        staA    LW+LOGID_ECU_TP_CO1_DB_TYPE_U8
 
         ldD     #0x0200                 ;debug: mark that we just did a CO1 conversion
         stD     *L0016
@@ -3308,6 +3330,7 @@ tbl1__08:
 ;MUX-Y:C0 CO2 CO Pot #2 (left)
 tbl1__12:
         staA    *L002C
+        staA    LW+LOGID_ECU_TP_CO2_RAW_TYPE_U8
         cmpA    #0x90
         bhs     0f
         cmpA    #0x70
@@ -3321,6 +3344,7 @@ tbl1__12:
 
 2:      ldaA    #0x80
 3:      staA    *L00C6
+        staA    LW+LOGID_ECU_TP_CO2_DB_TYPE_U8
 
         ldD     #0x0020                 ;debug: mark that we just did a CO2 conversion
         stD     *L0016
@@ -4937,22 +4961,46 @@ LC8AF_186:    ldD     *L00B2
 
 LC8AF_187:    stD     *L0092            ;L0092 = min?(L00B0, L00B2)
 
-        ldaA    *L004D                  ;8.8 RPM50
+;Calculate how much to adjust the length of the basic fuel injection pulse based on
+;current RPM and trim pot settings.
+;In theory, the L9167 table can be used to make the effect of the trim pots RPM-dependent.
+;For example, a table could be constructed so that the trim pots would have maximum effect
+;around idle speeds, with their effect on the length of an injection pulse getting
+;attenuated as the RPMs rise.
+        ldaA    *L004D                  ;Get current 8.8 RPM50
         ldX     #0x9167
         jsr     LF3C2
-        staA    *L00C4
-        brset   *L0015 #0b00000010 LC8AF_188
-        ldaB    *L00C5
-        jsr     LD5E4
-        staA    *L006F
+        cmpA    *L00C4
+        beq     1f
+        staA    LW+LOGID_ECU_TP_RPM_FACTOR_TYPE_U8
+        staA    *L00C4                  ;This RPM-dependency parameter is used for both front and rear
+
+;Branch if we are processing the rear cyl
+1:      brset   *L0015 #0b00000010 LC8AF_188
+
+;Front:
+        ldaB    *L00C5                  ;Trimpot CO1 (front cyl) ADC, after deadband processing
+        jsr     LD5E4                   ;params: Reg B and L00C4
+        cmpA    *L006F
+        beq     LC8AF_189
+        staA    LW+LOGID_ECU_TP_FRT_ADJ_FACTOR_TYPE_U8
+        staA    *L006F                  ;This is the ajustment factor for the front inj pulse
         bra     LC8AF_189
 
-LC8AF_188:    ldaB    *L00C6
-        jsr     LD5E4
-        staA    *L0078
-LC8AF_189:    ldaA    L8066
+;Rear:
+LC8AF_188:
+        ldaB    *L00C6                  ;Trimpot CO2 (rear cyl) ADC, after deadband processing
+        jsr     LD5E4                   ;params: Reg B and L00C4
+        cmpA    *L0078
+        beq     LC8AF_189
+        staA    LW+LOGID_ECU_TP_REAR_ADJ_FACTOR_TYPE_U8
+        staA    *L0078                  ;This is the adjustment factor for the rear inj pulse
+
+LC8AF_189:
+        ldaA    L8066                   ;this is always 0x01 for for most EPROMs (see L8066: for more info)
         cmpA    #0x01
-        bne     LC8AF_194
+        bne     LC8AF_194               ;...which means this branch is always taken
+
         ldD     #0x0100
         stD     *L007B
         stD     *L007F
@@ -5002,7 +5050,8 @@ LC8AF_193:    stD     *L0072
         bset    *L0001 #0b00010000
         jmp     LC8AF_231
 
-LC8AF_194:    ldX     #LF424            ;start of some table
+LC8AF_194:
+        ldX     #LF424            ;start of some table
 
         ldaA    *L0049_PORTG_debounced
         andA    #0b00101000
@@ -10495,39 +10544,52 @@ LF309_19:
         rts
 
 ;*****************************************************************
-;Perform a linear interpolation.
+;Perform a linear interpolation between two adjacent columns in a 1D interpolation table.
+;
+; It takes an input value and maps it to a pair of column entries in a lookup table,
+; then interpolating between two successive table entries.
 ;
 ; There are 3 entry points:
 ;   LF3C2:
 ;      Reg A: the value to interpolate
-;      Reg X: points at a 5-entry table
-;               0, X	Input Offset	The "Base" value. This is subtracted from your input (Reg A). Anything below this value is treated as 0.
-;               1, X	Input Limit	The "Max" value. This defines the upper boundary of the table. Anything above this is clamped to this value.
-;               2, X	Table Stride	Usually the length of a row. It is multiplied by the input to find the correct memory offset for the data.
-;               3, X	Data Point 0	The first actual data value in the lookup table (the "Floor").
-;               4, X	Data Point 1	The second data value in the table (the "Ceiling")
+;      Reg X: points at the metadata for a 1D interpolation table where the table info is in the first 3  bytes
+;               0, X	input_offset	   The "Base" value in the entire row. This is subtracted from your input (Reg A). Anything below this value is treated as 0.
+;               1, X	input_limit	   The "Max" value of the entire row. This defines the upper boundary of the table. Anything above this is clamped to this value.
+;               2, X	Scale factor       It is multiplied by the input to find the correct memory offset for the data.
+;               3, X	Start of table data
 ;
-;      Function: Reg A is reduced by the 0[X] (but not below 0), then clipped to a max of 1[X], and then multiplied by 2[X].
+; The table is constructed so that (A >= input_offset) and ( A <= (input_offset + input_limit)).
+; If A is outside of either limit, it gets clamped to that limit.
+;
+; Function:
+; Reg A is clamped to the lower and upper limits, then scaled by the scale_factor to make an 8.8 fixed point number.
+; The scale factor is chosen so that the integer part of the fixed point result selects a column
+; and the fractional part of the result defines how much to interpolate between the value at the selected column
+; and the value at its adjacent column.
 
-LF3C2:  subA    0, X                    ;Reduce A by (0,X)
-        bhs     0f                      ;A > 0
-        clrA                            ;else clamp A to 0
+; Begin by clamping A to the table bounds defined by the metadata
+LF3C2:  subA    0, X                    ;Reduce A by (0,X), the "base" value
+        bhs     0f
+        clrA                            ;If A was lower than the base value, it gets clamped to 0
 
 0:
-        cmpA    1, X                    ;compared the reduced value of A against the second table entry
-        bls     1f                      ;br if A <= the second table entry
-        ldaA    1, X                    ;else clamp A to the second entry
+        cmpA    1, X                    ;compared the reduced value of A against the second table entry (the "max" value)
+        bls     1f                      ;br if A<max
+        ldaA    1, X                    ;else clamp A to be no greater than the "max" value
 
-1:
-        ldaB    2, X                    ;multiply A by the table stride (length)
-        mul                             ;D contains an 8.8 fixed point number: A is the table entry, B is the fraction to interpolate
+; Scale A by the scale factore entry
+1:      ldaB    2, X                    ;load B with the scale factor
+        mul                             ;D now contains an 8.8 fixed point number where:
+                                        ;  - A represents the index of specific column in this row
+                                        ;  - B represents the fractional amount to interpolate between column[A] and column[A+1]
 
 ;-----------------------------------------------------------------
 ;A separate entry point (used 9 times).
 ;Entry:
-;  X  - points 3 bytes before the first entry of a 1D table of interpolation data.
+;  X  - points 3 bytes before the first data byte in a 1D table of interpolation data.
+;       The metadata is not used by this routine but the X pointer still needs to account for it being there.
 
-;  AB - contains an 8.8 fixed-point value to convert using the table.
+;  AB - At this point reg D contains an 8.8 fixed-point value to convert using the table.
 ;       Reg A must have a value which is known to be <= the table length
 ;       Reg B has a fractional value.  If the table values are
 ;       increasing, the fractional value gets multiplied against the
@@ -10541,51 +10603,58 @@ LF3C2:  subA    0, X                    ;Reduce A by (0,X)
 ;       proper pair of 8.0 bytes in the table.
 
 
-LF3D0:  pshA                            ;swap A and B
+LF3D0:  pshA                            ;swap A and B so we can add what is currently in A to X
         tBA
         pulB
 
         aBX                             ;X=X+B (the integer part of the 8.8 frac)
 
-; X now points at the desired table entry
+; At this point:
+;  - X points 3 bytes before the desired table column in this table row.
+;  - A holds the fractional amount to interpolate between the entries at [X+3] and [X+4]
 
 ;--------------------------------------------------------------------------------
 
 ;This final entry point is used 1 time.
-
+;
 ;Entry:
+;  X - points 3 bytes before the first of two data bytes to be interpolated.
+;      Again, the metadata is not used at this point, but the X pointer still needs to account for its presence.
+;
 ;  A - Contains an 8-bit fraction representing the amount to
-;      interpolate between table column entries 3[X] and 4[X].
+;      interpolate between the values at the two adjacent table column entries.
 ;      The column entries can be increasing or decreasing.
-
-;  X - points at a specific entry within a row of a table.
-
+;
 ;Returns:
-
 ;  D - An 8.8 fixed point value representing the interpolated result.
-;      A value of 0x.00 would map to 100% of entry 3.
-;      A value of 0x.FF would map to (255/256)% of table entry 4.
+;      A value of 0x.00 would map to 100% of the first entry.
+;      A value of 0x.FF would map to (255/256)% of the second table entry.
 
 ;For example, if 3[X]=0x20 and 4[X]=0x40, and on entry, A=0xC0
-;(0.75), the result will be ((0x40-0x20) * (0xC0 / 256) or 0x18 added
+;(0.75), the result will be ((0x40-0x20) * (0xC0 / 256)) or 0x18 added
 ;to the 3[X] table entry of 0x20 = 0x38.
 
-LF3D4:  tAB
-        beq     1f                      ;fraction is 0.  Result is 100% of entry 3[X].
+LF3D4:  tAB                             ;move the fractional part to B for the upcoming multiply
+        beq     1f                      ;if the fraction is 0, skip doing the math: we know the result is 100% of the first entry.
 
         ldaB    4, X                    ;delta = 4[X] - 3[X]
         subB    3, X
-        bhs     0f                      ;if (delta>0), table is increasing
+        bhs     0f                      ;if (delta>0), table values are increasing
 
-        negB                            ;for tables that are decreasing, we negate delta and the fraction
+; Table values are decreasing
+        negB                            ;negate delta and the fraction
         negA                            ;thus arranging to subtract the multiplication result from the hi entry
-        inX                             ;the add 3[X] (below) will really access 4[X]
+        inX                             ;the add 3[X] (below) will really access 4[X], the next entry
 
 0:
-        mul                             ;scale the delta by the original fraction
+        mul                             ;scale the delta between the two columns entries by the original fraction
+
+;Reg A now holds the integer portion of the interpolation between the two column entry values.
+;It represents how much we need to adjust the initial value, where the initial value
+;came from 3[X] for increasing tables, 4[X] for decreasing tables.
+
 1:
-        addA    3, X                    ;add the integer part of the scaled delta to the appropriate
-                                        ;table entry (3[X] for increasing tables, 4[X] for decreasing tables)
+        addA    3, X                    ;result A = first table entry + the adjustment
         rts
 
 ;*****************************************************************

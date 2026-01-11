@@ -83,6 +83,22 @@
                 <div class="status-label">WiFi SSID</div>
                 <div class="status-value" id="wifi-ssid">--</div>
             </div>
+            <div class="status-item">
+                <div class="status-label">CO1 (Raw)</div>
+                <div class="status-value" id="ecu-0x54">--</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">CO2 (Raw)</div>
+                <div class="status-value" id="ecu-0x55">--</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">CO1 (DB)</div>
+                <div class="status-value" id="ecu-0x56">--</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">CO2 (DB)</div>
+                <div class="status-value" id="ecu-0x57">--</div>
+            </div>
         </div>
 
         <div class="footer">
@@ -100,6 +116,10 @@
                     document.getElementById('mac').textContent = data.device_mac || 'Unknown';
                     document.getElementById('wifi-status').textContent = data.wifi_connected ? 'Connected' : 'Disconnected';
                     document.getElementById('wifi-ssid').textContent = data.wifi_ssid || 'N/A';
+                    document.getElementById('ecu-0x54').textContent = data.ecu_0x54 !== undefined ? data.ecu_0x54 : '--';
+                    document.getElementById('ecu-0x55').textContent = data.ecu_0x55 !== undefined ? data.ecu_0x55 : '--';
+                    document.getElementById('ecu-0x56').textContent = data.ecu_0x56 !== undefined ? data.ecu_0x56 : '--';
+                    document.getElementById('ecu-0x57').textContent = data.ecu_0x57 !== undefined ? data.ecu_0x57 : '--';
                 })
                 .catch(error => {
                     console.error('Error fetching status:', error);

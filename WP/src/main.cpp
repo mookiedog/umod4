@@ -69,6 +69,12 @@ NetworkManager* networkMgr = nullptr;
 
 uint32_t flashBuffer[1024];
 
+// This array tracks the most recently-received data from the ECU data stream
+//  * 8-bit log entries are stored in the lower byte of each 16-bit word
+//  * 16-bit log entries are stored in the full 16-bit word
+// The array is indexed by the ECU log ID.
+uint16_t ecuLiveLog[256];
+
 #if defined LFS
 
 // Configuration of the filesystem is provided by this struct
@@ -634,6 +640,10 @@ void isr_rx32()
     while(!pio_sm_is_rx_fifo_empty(PIO_UART, PIO_UART_SM)) {
         uint32_t rxWord = uart_rx32_program_get(PIO_UART, PIO_UART_SM);
         logger->logData_fromISR(rxWord);
+
+        // Update the live ECU log data array
+        uint8_t logId = (rxWord >> 8) & 0xFF;
+        ecuLiveLog[logId] = (rxWord >> 16) & 0xFFFF;
     }
 
     // The fifo-not-empty interrupt is cleared automatically when we empty out the FIFO

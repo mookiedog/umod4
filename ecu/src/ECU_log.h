@@ -114,6 +114,28 @@
 #define   LOGID_ECU_ECU_ERROR_L000F_TYPE_U8         ((LOGID_ECU_BASE) + 0x43)           // the 8 error bits stored in L000F
 #define   LOGID_ECU_ECU_ERROR_L000F_DLEN            1
 
+#define   LOGID_ECU_TP_CO1_RAW_TYPE_U8              ((LOGID_ECU_BASE) + 0x44)           // Trim Pot CO1 raw ADC value
+#define   LOGID_ECU_TP_CO1_RAW_DLEN                 1
+
+#define   LOGID_ECU_TP_CO2_RAW_TYPE_U8              ((LOGID_ECU_BASE) + 0x45)           // Trim Pot CO2 raw ADC value
+#define   LOGID_ECU_TP_CO2_RAW_DLEN                 1
+
+#define   LOGID_ECU_TP_CO1_DB_TYPE_U8               ((LOGID_ECU_BASE) + 0x46)           // Trim Pot CO1 ADC value after deadband processing
+#define   LOGID_ECU_TP_CO1_DB_DLEN                  1
+
+#define   LOGID_ECU_TP_CO2_DB_TYPE_U8               ((LOGID_ECU_BASE) + 0x47)           // Trim Pot CO2 ADC value after deadband processing
+#define   LOGID_ECU_TP_CO2_DB_DLEN                  1
+
+#define   LOGID_ECU_TP_RPM_FACTOR_TYPE_U8           ((LOGID_ECU_BASE) + 0x48)           // RPM factor for trimp pot calculations
+#define   LOGID_ECU_TP_RPM_FACTOR_DLEN              1
+
+#define   LOGID_ECU_TP_FRT_ADJ_FACTOR_TYPE_U8       ((LOGID_ECU_BASE) + 0x49)           // Fuel trim adjustment factor from trim pot CO1
+#define   LOGID_ECU_TP_FRT_ADJ_FACTOR_DLEN          1
+
+#define   LOGID_ECU_TP_REAR_ADJ_FACTOR_TYPE_U8      ((LOGID_ECU_BASE) + 0x4A)           // Fuel trim adjustment factor from trim pot CO1
+#define   LOGID_ECU_TP_REAR_ADJ_FACTOR_DLEN         1
+
+
 #define   LOGID_ECU_RAW_VTA_TYPE_U16                ((LOGID_ECU_BASE) + 0x50)           // Throttle angle
 #define   LOGID_ECU_RAW_VTA_DLEN                    2
 

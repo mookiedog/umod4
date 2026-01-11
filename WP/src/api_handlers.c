@@ -13,6 +13,7 @@ extern bool wifi_is_connected(void);
 extern const char* wifi_get_ssid(void);
 extern lfs_t lfs;
 extern bool lfs_mounted;
+extern uint16_t ecuLiveLog[256];
 
 // Buffer for JSON responses (reused across requests to save stack space)
 static char json_response_buffer[512];
@@ -48,13 +49,21 @@ void generate_api_info_json(char* buffer, size_t size)
              "  \"wp_version\": \"%s\",\n"
              "  \"uptime_seconds\": %lu,\n"
              "  \"wifi_connected\": %s,\n"
-             "  \"wifi_ssid\": \"%s\"\n"
+             "  \"wifi_ssid\": \"%s\",\n"
+             "  \"ecu_0x54\": %u,\n"
+             "  \"ecu_0x55\": %u,\n"
+             "  \"ecu_0x56\": %u,\n"
+             "  \"ecu_0x57\": %u\n"
              "}",
              mac_str,
              get_wp_version(),
              (unsigned long)uptime_seconds,
              wifi_status,
-             wifi_ssid);
+             wifi_ssid,
+             ecuLiveLog[0x54],
+             ecuLiveLog[0x55],
+             ecuLiveLog[0x56],
+             ecuLiveLog[0x57]);
 }
 
 /**
