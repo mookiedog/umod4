@@ -184,7 +184,6 @@ add_custom_target(generate_fsdata DEPENDS ${FSDATA_OUTPUT})
 add_executable(${PROJECT_NAME}
     src/Clock.cpp
     src/Crc.cpp
-    src/FlashEp.cpp
     src/Gps.cpp
     src/malloc_lock.cpp
     src/Logger.cpp
@@ -257,30 +256,6 @@ target_sources(littlefs INTERFACE
 )
 target_include_directories(littlefs INTERFACE "${LFS_SRC_DIR}")
 
-# Pull in the RP2040 SWD reflash code from its base project as an interface library.
-FetchContent_Declare(swd_reflash
-    GIT_REPOSITORY https://github.com/brucemack/kc1fsz-tools-cpp
-    GIT_TAG main
-)
-
-# We use FetchContent_populate, not _add(), because _populate() does not perform an
-# automatic addSubdirectory(). We will be adding the project as an
-# INTERFACE library.
-message(STATUS "Fetching the 'RP2040 SWD_Reflash' project")
-FetchContent_populate(swd_reflash)
-set(SWD_REFLASH_SRC_DIR ${FETCHCONTENT_BASE_DIR}/swd_reflash-src)
-
-add_library(swd_reflash INTERFACE)
-target_sources(swd_reflash INTERFACE
-    "${SWD_REFLASH_SRC_DIR}/src/SWDUtils.cpp"
-    "${SWD_REFLASH_SRC_DIR}/src/rp2040/SWDDriver.cpp"
-)
-target_include_directories(swd_reflash INTERFACE
-    "${SWD_REFLASH_SRC_DIR}/include"
-    "${SWD_REFLASH_SRC_DIR}/include/kc1fsz-tools"
-    "${SWD_REFLASH_SRC_DIR}/include/kc1fsz-tools/rp2040"
-    )
-
 # Pull in the regex library
 add_library(tiny_regex_c INTERFACE)
 target_sources(tiny_regex_c INTERFACE
@@ -348,7 +323,6 @@ target_link_libraries(${PROJECT_NAME}
     hardware_spi
     FreeRTOS-Kernel
     littlefs
-    swd_reflash
     tiny_regex_c
     sdio_rp2350
     pico_cyw43_arch_lwip_sys_freertos

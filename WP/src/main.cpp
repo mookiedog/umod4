@@ -21,7 +21,6 @@
 #include "log_base.h"
 #include "Logger.h"
 #include "NeoPixelConnect.h"
-#include "FlashEp.h"
 #include "SdCardBase.h"
 #include "SdCard.h"
 #include "SdCardSDIO.h"
@@ -56,7 +55,6 @@ NeoPixelConnect* rgb_led;
 Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
-FlashEp* flashEp;
 
 // WiFi Phase 1 components
 WiFiManager* wifiMgr = nullptr;
@@ -944,27 +942,6 @@ int main()
         gpio_put(EP_RUN_PIN, 0);
         sleep_us(100);
         gpio_put(EP_RUN_PIN, 1);
-
-        #if 0
-            flashEp = new FlashEp(EP_SWCLK_PIN, EP_SWDAT_PIN, EP_RUN_PIN);
-        #endif
-        #if 0
-        // While the EP is in a known state due to the reboot, test our ability to take control of it:
-        flashEp->takeControl();
-
-        uint32_t result = flashEp->readBlk(0x10000000, flashBuffer);
-        if (result == 0) {
-            sleep_us(100);
-            #if 0
-            for (int i=0; i<1024; i++) {
-                if ((i%8)==0) printf("%08x: ", i);
-                printf("%04X ", buffer[i]);
-                if ((i%8)==7) printf("\n");
-            }
-            #endif
-        }
-        flashEp->releaseControl();
-        #endif
     }
 
     #if defined SPARE1_LED_PIN

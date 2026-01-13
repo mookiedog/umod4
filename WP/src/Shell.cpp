@@ -2,7 +2,6 @@
 #include "string.h"
 #include "ctype.h"
 
-#include "FlashEp.h"
 #include "SdCardBase.h"
 
 // The tiny_regex_c interface library:
@@ -673,23 +672,6 @@ void Shell::cmd_pwd(char* args)
     printf("%s\n", cwd);
 }
 
-// ----------------------------------------------------------------------------------
-void Shell::cmd_flashEp(char* pathToUf2File)
-{
-    extern FlashEp* flashEp;
-    flashEp->flashUF2(pathToUf2File);
-}
-
-
-// ----------------------------------------------------------------------------------
-void Shell::cmd_validate(char* pathToUf2File)
-{
-    extern FlashEp* flashEp;
-    const bool skipProgramming = true;
-
-    flashEp->flashUF2(pathToUf2File, skipProgramming);
-}
-
 // Performance stats structure (defined in main.cpp)
 typedef struct {
     uint32_t read_count;
@@ -816,12 +798,6 @@ void Shell::cmd_sdperf(char* args)
                             }
                             else if (strcmp(cmd, "pwd") == 0) {
                                 cmd_pwd(args);
-                            }
-                            else if (strcmp(cmd, "flashEp") == 0) {
-                                cmd_flashEp(args);
-                            }
-                            else if (strcmp(cmd, "validate") == 0) {
-                                cmd_validate(args);
                             }
                             else if (strcmp(cmd, "sdperf") == 0) {
                                 cmd_sdperf(args);
