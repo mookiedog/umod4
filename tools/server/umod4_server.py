@@ -23,9 +23,13 @@ from PySide6.QtCore import Qt, QObject, Signal
 # Add current directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from models.database import Database
+from models.database import Database, Device
 from http_server import Umod4Server
 from gui.main_window import MainWindow
+from checkin_listener import CheckInListener
+from device_manager import DeviceManager
+from timeout_monitor import TimeoutMonitor
+from connectivity_checker import ConnectivityChecker
 
 
 class ServerCallbackBridge(QObject):
@@ -34,6 +38,8 @@ class ServerCallbackBridge(QObject):
     transfer_started = Signal(object)  # Transfer object
     transfer_completed = Signal(int)  # Transfer ID
     connection_event = Signal(object)  # Connection object
+    device_checkin = Signal(str, str)  # device_mac, device_ip
+    device_status_changed = Signal(str, bool)  # device_mac, is_online
 
 
 def main():
@@ -53,9 +59,26 @@ def main():
     database = Database(db_path=args.db)
     print(f"Database: {database.db_path}")
 
-    # Initialize HTTP server
+    # Initialize HTTP server (legacy push-based upload endpoint)
     print(f"Initializing HTTP server on {args.host}:{args.port}")
     server = Umod4Server(database, port=args.port, host=args.host)
+
+    # Initialize device manager (for pull-based downloads)
+    print(f"Initializing device manager...")
+    device_manager = DeviceManager(database)
+
+    # Initialize check-in listener (UDP port 8081)
+    print(f"Initializing check-in listener on UDP port 8081...")
+    checkin_listener = CheckInListener(port=8081)
+
+    # Initialize timeout monitor (marks devices offline after 6 minutes without check-in)
+    # WP heartbeat is every 5 minutes, so 6 minutes = 1.2× heartbeat interval
+    print(f"Initializing timeout monitor...")
+    timeout_monitor = TimeoutMonitor(database, timeout_seconds=360, check_interval=30)
+
+    # Initialize connectivity checker (actively pings devices every 60 seconds)
+    print(f"Initializing connectivity checker...")
+    connectivity_checker = ConnectivityChecker(database, check_interval=60)
 
     # Create Qt application
     app = QApplication(sys.argv)
@@ -129,16 +152,93 @@ def main():
     server.on_transfer_completed = lambda transfer_id: bridge.transfer_completed.emit(transfer_id)
     server.on_connection_event = emit_connection_event
 
+    # Set up device manager callbacks (called from device manager thread)
+    def emit_download_started(device_mac, filename):
+        print(f"Download started: {filename} from {device_mac}")
+        # Note: transfer record is created by device_manager, will be shown in UI
+
+    def emit_download_completed(device_mac, filename, success, error_msg):
+        print(f"Download completed: {filename} from {device_mac} (success={success})")
+        # Refresh transfer history in UI
+        bridge.transfer_completed.emit(0)  # Dummy transfer ID to trigger refresh
+
+    device_manager.on_download_started = emit_download_started
+    device_manager.on_download_completed = emit_download_completed
+
+    # Set up check-in listener callback (called from listener thread)
+    def on_device_checkin(device_mac, device_ip):
+        print(f"Device check-in: {device_mac} at {device_ip}")
+        # Emit signal to Qt thread
+        bridge.device_checkin.emit(device_mac, device_ip)
+
+    checkin_listener.set_callback(on_device_checkin)
+
+    # Connect check-in signal to device manager (runs in Qt main thread)
+    def handle_checkin_in_qt_thread(device_mac, device_ip):
+        # Run device manager in a background thread to avoid blocking UI
+        import threading
+        thread = threading.Thread(
+            target=device_manager.handle_device_checkin,
+            args=(device_mac, device_ip),
+            daemon=True
+        )
+        thread.start()
+
+    bridge.device_checkin.connect(handle_checkin_in_qt_thread)
+
+    # Set up timeout monitor callback (called from monitor thread)
+    def on_device_status_changed(device_mac, is_online):
+        # Emit signal to Qt thread
+        bridge.device_status_changed.emit(device_mac, is_online)
+
+    timeout_monitor.on_status_changed = on_device_status_changed
+
+    # Connect status change signal to refresh device list (runs in Qt main thread)
+    def handle_status_changed_in_qt_thread(device_mac, is_online):
+        # Refresh GUI to show updated online status
+        window.device_list.refresh_devices()
+
+        # Note: TimeoutMonitor only marks devices offline (never online)
+        # Devices become online when they send check-ins (handled by handle_checkin_in_qt_thread)
+
+    bridge.device_status_changed.connect(handle_status_changed_in_qt_thread)
+
+    # Set up connectivity checker callback (called from checker thread)
+    connectivity_checker.on_status_changed = on_device_status_changed
+
     # Show window
     window.show()
 
-    # Auto-start server
+    # Auto-start server and check-in listener
     print("Starting HTTP server...")
     window._toggle_server()
 
+    print("Starting check-in listener...")
+    checkin_listener.start()
+
+    print("Starting timeout monitor...")
+    timeout_monitor.start()
+
+    print("Starting connectivity checker...")
+    connectivity_checker.start()
+
     # Run application
     print("umod4 Server ready!")
-    sys.exit(app.exec())
+    print("  - HTTP server (legacy push): http://{}:{}".format(args.host, args.port))
+    print("  - Check-in listener (pull): UDP port 8081")
+    print("  - Timeout monitor: devices offline after 360s without check-in")
+    print("  - Connectivity checker: actively pings devices every 60s")
+    print("Waiting for device check-ins...")
+
+    try:
+        sys.exit(app.exec())
+    finally:
+        # Clean up on exit
+        print("Shutting down...")
+        connectivity_checker.stop()
+        timeout_monitor.stop()
+        checkin_listener.stop()
+        server.stop()
 
 
 if __name__ == '__main__':

@@ -127,6 +127,12 @@ execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask)
 message(STATUS "   ---> Installing python lib: flask-cors")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask-cors)
 
+message(STATUS "   ---> Installing python lib: sqlalchemy")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install sqlalchemy)
+
+message(STATUS "   ---> Installing python lib: requests")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install requests)
+
 message(STATUS "   ---> Installing python lib: PyYAML")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install PyYAML)
 

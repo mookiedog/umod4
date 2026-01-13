@@ -129,11 +129,11 @@
 #define   LOGID_ECU_TP_RPM_FACTOR_TYPE_U8           ((LOGID_ECU_BASE) + 0x48)           // RPM factor for trimp pot calculations
 #define   LOGID_ECU_TP_RPM_FACTOR_DLEN              1
 
-#define   LOGID_ECU_TP_FRT_ADJ_FACTOR_TYPE_U8       ((LOGID_ECU_BASE) + 0x49)           // Fuel trim adjustment factor from trim pot CO1
-#define   LOGID_ECU_TP_FRT_ADJ_FACTOR_DLEN          1
+#define   LOGID_ECU_TP_CO1_ADJ_FACTOR_TYPE_U8       ((LOGID_ECU_BASE) + 0x49)           // Fuel trim adjustment factor from trim pot CO1
+#define   LOGID_ECU_TP_CO1_ADJ_FACTOR_DLEN          1
 
-#define   LOGID_ECU_TP_REAR_ADJ_FACTOR_TYPE_U8      ((LOGID_ECU_BASE) + 0x4A)           // Fuel trim adjustment factor from trim pot CO1
-#define   LOGID_ECU_TP_REAR_ADJ_FACTOR_DLEN         1
+#define   LOGID_ECU_TP_CO2_ADJ_FACTOR_TYPE_U8       ((LOGID_ECU_BASE) + 0x4A)           // Fuel trim adjustment factor from trim pot CO2
+#define   LOGID_ECU_TP_CO2_ADJ_FACTOR_DLEN          1
 
 
 #define   LOGID_ECU_RAW_VTA_TYPE_U16                ((LOGID_ECU_BASE) + 0x50)           // Throttle angle

@@ -33,7 +33,7 @@
 #define MEMP_MEM_MALLOC             1
 
 #define MEM_ALIGNMENT               4
-#define MEM_SIZE                    4000
+#define MEM_SIZE                    16384
 #define MEMP_NUM_TCP_SEG            32
 #define MEMP_NUM_ARP_QUEUE          10
 #define PBUF_POOL_SIZE              24
@@ -93,6 +93,7 @@
 
 // mDNS responder for device discovery (motorcycle.local)
 #define LWIP_MDNS_RESPONDER             1
+#define LWIP_MDNS_SEARCH                0  // Disable mDNS client/query (only need responder)
 #define MDNS_MAX_SERVICES               1
 
 #ifndef NDEBUG

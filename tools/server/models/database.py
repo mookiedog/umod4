@@ -23,13 +23,18 @@ class Device(Base):
     firmware_track = Column(String, default='stable')  # 'stable' or 'beta'
     first_seen = Column(DateTime, default=datetime.utcnow)
     last_seen = Column(DateTime)
+    last_ip = Column(String)  # Last known IP address
+    is_online = Column(Boolean, default=False)  # Current connection status
     wp_version = Column(String)
     ep_version = Column(String)
+    filesystem_status = Column(String)  # 'ok', 'no_card', 'mount_failed', or None
+    filesystem_message = Column(String)  # Human-readable filesystem status message
     notes = Column(Text)
 
     # Relationships
     transfers = relationship("Transfer", back_populates="device", cascade="all, delete-orphan")
     connections = relationship("Connection", back_populates="device", cascade="all, delete-orphan")
+    upload_sessions = relationship("UploadSession", back_populates="device", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Device(mac={self.mac_address}, name={self.name or self.mac_address})>"
@@ -52,6 +57,7 @@ class Transfer(Base):
     end_time = Column(DateTime)
     status = Column(String, nullable=False)  # 'success', 'failed', 'in_progress'
     error_message = Column(Text)
+    sha256 = Column(String, nullable=True)  # SHA-256 hash for verification
 
     # Relationship
     device = relationship("Device", back_populates="transfers")
@@ -84,19 +90,19 @@ class UploadSession(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String, unique=True, nullable=False, index=True)  # UUID
-    device_mac = Column(String, ForeignKey('devices.mac_address'), nullable=False)
+    device_mac = Column(String, ForeignKey('devices.mac_address', ondelete='CASCADE'), nullable=False)
     filename = Column(String, nullable=False)
     total_size = Column(Integer, nullable=False)
     chunk_size = Column(Integer, nullable=False)  # Device-negotiated chunk size
     bytes_received = Column(Integer, nullable=False, default=0)  # Last contiguous byte
-    transfer_id = Column(Integer, ForeignKey('transfers.id'), nullable=True)  # Link to Transfer
+    transfer_id = Column(Integer, ForeignKey('transfers.id', ondelete='SET NULL'), nullable=True)  # Link to Transfer
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_activity = Column(DateTime, nullable=False, default=datetime.utcnow)
     status = Column(String, nullable=False, default='in_progress')  # 'in_progress', 'completed', 'failed', 'abandoned'
     partial_file_path = Column(String, nullable=False)  # Path to .part file
 
-    # Relationship
-    device = relationship("Device", backref="upload_sessions")
+    # Relationships
+    device = relationship("Device", back_populates="upload_sessions")
     transfer = relationship("Transfer", backref="upload_session")
 
     def __repr__(self):
@@ -130,21 +136,56 @@ class Database:
         """Apply database migrations for schema updates."""
         import sqlite3
 
-        # Check if 'name' column exists in devices table
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         try:
-            # Check if name column exists
+            # Get existing columns
             cursor.execute("PRAGMA table_info(devices)")
             columns = [row[1] for row in cursor.fetchall()]
 
+            # Migration 1: Add 'name' column
             if 'name' not in columns:
                 print("Migrating database: Adding 'name' column to devices table...")
-                # Add name column (nullable, unique)
                 cursor.execute("ALTER TABLE devices ADD COLUMN name TEXT")
                 conn.commit()
                 print("Migration complete: Added 'name' column")
+
+            # Migration 2: Add 'last_ip' column
+            if 'last_ip' not in columns:
+                print("Migrating database: Adding 'last_ip' column to devices table...")
+                cursor.execute("ALTER TABLE devices ADD COLUMN last_ip TEXT")
+                conn.commit()
+                print("Migration complete: Added 'last_ip' column")
+
+            # Migration 3: Add 'is_online' column
+            if 'is_online' not in columns:
+                print("Migrating database: Adding 'is_online' column to devices table...")
+                cursor.execute("ALTER TABLE devices ADD COLUMN is_online INTEGER DEFAULT 0")
+                conn.commit()
+                print("Migration complete: Added 'is_online' column")
+
+            # Migration 4: Add 'sha256' column to transfers table
+            cursor.execute("PRAGMA table_info(transfers)")
+            transfer_columns = [row[1] for row in cursor.fetchall()]
+            if 'sha256' not in transfer_columns:
+                print("Migrating database: Adding 'sha256' column to transfers table...")
+                cursor.execute("ALTER TABLE transfers ADD COLUMN sha256 TEXT")
+                conn.commit()
+                print("Migration complete: Added 'sha256' column")
+
+            # Migration 5: Add filesystem status columns to devices table
+            if 'filesystem_status' not in columns:
+                print("Migrating database: Adding 'filesystem_status' column to devices table...")
+                cursor.execute("ALTER TABLE devices ADD COLUMN filesystem_status TEXT")
+                conn.commit()
+                print("Migration complete: Added 'filesystem_status' column")
+
+            if 'filesystem_message' not in columns:
+                print("Migrating database: Adding 'filesystem_message' column to devices table...")
+                cursor.execute("ALTER TABLE devices ADD COLUMN filesystem_message TEXT")
+                conn.commit()
+                print("Migration complete: Added 'filesystem_message' column")
 
         except Exception as e:
             print(f"Warning: Database migration failed: {e}")

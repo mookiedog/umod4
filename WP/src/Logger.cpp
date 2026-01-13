@@ -5,9 +5,11 @@
 #include "SdCard.h"
 #include "umod4_WP.h"
 #include "WP_log.h"
+#include "WiFiManager.h"
 
 const uint32_t dbg = 1;
 extern void pico_set_led(bool on);
+extern WiFiManager* wifiMgr;
 
 // ----------------------------------------------------------------------------------
 extern "C" void start_logger_task(void *pvParameters);
@@ -165,6 +167,13 @@ bool Logger::openNewLog()
         lfs_err = lfs_file_open(lfs, &logf, logName, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR);
         if (lfs_err != LFS_ERR_OK) {
             printf("%sw: Unable to open new logfile\"%s\": err=%d\n", __FUNCTION__, logName, lfs_err);
+        } else {
+            // Notify server that new log file is ready for download
+            // (Previous file is now closed and complete, ready for transfer)
+            if (wifiMgr != nullptr) {
+                printf("%s: Triggering server check-in for new log file\n", __FUNCTION__);
+                wifiMgr->triggerCheckIn();
+            }
         }
     }
 

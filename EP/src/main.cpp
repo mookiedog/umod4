@@ -466,9 +466,9 @@ void prepEpromImage()
         }
     }
 
-    if (false) {
+    if (true) {
         do {
-            // Reload the UM4 maps back on top of the UM4 base image
+            // Reload the UM4 (549USA) maps back on top of the UM4 base image
             t0 = get_absolute_time();
             err = EpromLoader::loadMapblob(bsonDoc);
             enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);

@@ -447,15 +447,24 @@ class HDF5Writer:
         self.datasets['ecu_air_temp_c'] = self.h5file.create_dataset('ecu_air_temp_c', (0, 2), dtype='float32', **ds_opts)
         self.datasets['ecu_battery_voltage_v'] = self.h5file.create_dataset('ecu_battery_voltage_v', (0, 2), dtype='float32', **ds_opts)
 
-        # System state
-        self.datasets['ecu_fuel_pump'] = self.h5file.create_dataset('ecu_fuel_pump', (0, 2), dtype='uint8', **ds_opts)
-        self.datasets['ecu_portg_debug'] = self.h5file.create_dataset('ecu_portg_debug', (0, 2), dtype='uint8', **ds_opts)
+        # System state (uint64 for timestamps in column 0, values in column 1)
+        self.datasets['ecu_fuel_pump'] = self.h5file.create_dataset('ecu_fuel_pump', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_portg_debug'] = self.h5file.create_dataset('ecu_portg_debug', (0, 2), dtype='uint64', **ds_opts)
 
-        # Errors (4 separate datasets)
-        self.datasets['ecu_error_L000C'] = self.h5file.create_dataset('ecu_error_L000C', (0, 2), dtype='uint8', **ds_opts)
-        self.datasets['ecu_error_L000D'] = self.h5file.create_dataset('ecu_error_L000D', (0, 2), dtype='uint8', **ds_opts)
-        self.datasets['ecu_error_L000E'] = self.h5file.create_dataset('ecu_error_L000E', (0, 2), dtype='uint8', **ds_opts)
-        self.datasets['ecu_error_L000F'] = self.h5file.create_dataset('ecu_error_L000F', (0, 2), dtype='uint8', **ds_opts)
+        # Errors (4 separate datasets) - uint64 for timestamps
+        self.datasets['ecu_error_L000C'] = self.h5file.create_dataset('ecu_error_L000C', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_error_L000D'] = self.h5file.create_dataset('ecu_error_L000D', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_error_L000E'] = self.h5file.create_dataset('ecu_error_L000E', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_error_L000F'] = self.h5file.create_dataset('ecu_error_L000F', (0, 2), dtype='uint64', **ds_opts)
+
+        # Trim pot values - uint64 for timestamps
+        self.datasets['ecu_tp_co1_raw'] = self.h5file.create_dataset('ecu_tp_co1_raw', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_tp_co2_raw'] = self.h5file.create_dataset('ecu_tp_co2_raw', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_tp_co1_db'] = self.h5file.create_dataset('ecu_tp_co1_db', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_tp_co2_db'] = self.h5file.create_dataset('ecu_tp_co2_db', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_tp_rpm_factor'] = self.h5file.create_dataset('ecu_tp_rpm_factor', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_tp_co1_adj_factor'] = self.h5file.create_dataset('ecu_tp_co1_adj_factor', (0, 2), dtype='uint64', **ds_opts)
+        self.datasets['ecu_tp_co2_adj_factor'] = self.h5file.create_dataset('ecu_tp_co2_adj_factor', (0, 2), dtype='uint64', **ds_opts)
 
         # Marker events (1D timestamp arrays)
         self.datasets['ecu_marker_5ms'] = self.h5file.create_dataset('ecu_marker_5ms', (0,), dtype='uint64', **ds_opts_1d)
@@ -1838,6 +1847,48 @@ def main():
                     decodeL000D(L000F)
                     if h5_writer:
                         h5_writer.append_data('ecu_error_L000F', [timekeeper.get_time_ns(), L000F])
+
+                elif byte == L.LOGID_ECU_TP_CO1_RAW_TYPE_U8:
+                    tp_co1_raw = read(f, L.LOGID_ECU_TP_CO1_RAW_DLEN)[0]
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP1_RAW: 0x{tp_co1_raw:02X}")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_tp_co1_raw', [timekeeper.get_time_ns(), tp_co1_raw])
+
+                elif byte == L.LOGID_ECU_TP_CO2_RAW_TYPE_U8:
+                    tp_co2_raw = read(f, L.LOGID_ECU_TP_CO2_RAW_DLEN)[0]
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP2_RAW: 0x{tp_co2_raw:02X}")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_tp_co2_raw', [timekeeper.get_time_ns(), tp_co2_raw])
+
+                elif byte == L.LOGID_ECU_TP_CO1_DB_TYPE_U8:
+                    tp_co1_db = read(f, L.LOGID_ECU_TP_CO1_DB_DLEN)[0]
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP1_DB:  0x{tp_co1_db:02X}")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_tp_co1_db', [timekeeper.get_time_ns(), tp_co1_db])
+
+                elif byte == L.LOGID_ECU_TP_CO2_DB_TYPE_U8:
+                    tp_co2_db = read(f, L.LOGID_ECU_TP_CO2_DB_DLEN)[0]
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP2_DB:  0x{tp_co2_db:02X}")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_tp_co2_db', [timekeeper.get_time_ns(), tp_co2_db])
+
+                elif byte == L.LOGID_ECU_TP_RPM_FACTOR_TYPE_U8:
+                    tp_rpm_factor = read(f, L.LOGID_ECU_TP_RPM_FACTOR_DLEN)[0]
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP_RPM_F: 0x{tp_rpm_factor:02X}")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_tp_rpm_factor', [timekeeper.get_time_ns(), tp_rpm_factor])
+
+                elif byte == L.LOGID_ECU_TP_CO1_ADJ_FACTOR_TYPE_U8:
+                    tp_co1_adj = read(f, L.LOGID_ECU_TP_CO1_ADJ_FACTOR_DLEN)[0]
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP1_ADJ: 0x{tp_co1_adj:02X}")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_tp_co1_adj_factor', [timekeeper.get_time_ns(), tp_co1_adj])
+
+                elif byte == L.LOGID_ECU_TP_CO2_ADJ_FACTOR_TYPE_U8:
+                    tp_co2_adj = read(f, L.LOGID_ECU_TP_CO2_ADJ_FACTOR_DLEN)[0]
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP2_ADJ: 0x{tp_co2_adj:02X}")
+                    if h5_writer:
+                        h5_writer.append_data('ecu_tp_co2_adj_factor', [timekeeper.get_time_ns(), tp_co2_adj])
 
                 elif byte == L.LOGID_ECU_RAW_VTA_TYPE_U16:
                     vta_raw = int.from_bytes(read(f, L.LOGID_ECU_RAW_VTA_DLEN), byteorder='little', signed=False)

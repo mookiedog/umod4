@@ -100,13 +100,20 @@ void NetworkManager::start_mdns()
         return;
     }
 
+    // Generate unique hostname based on MAC address to avoid conflicts
+    // when multiple devices are on the same network
+    char hostname[32];
+    uint8_t mac[6];
+    cyw43_hal_get_mac(CYW43_HAL_MAC_WLAN0, mac);
+    snprintf(hostname, sizeof(hostname), "motorcycle-%02x%02x", mac[4], mac[5]);
+
     printf("NetworkMgr: Starting mDNS responder...\n");
     // Note: mdns_resp_init() is called ONCE in constructor
     // Here we only add the netif to the already-initialized mDNS responder
-    mdns_resp_add_netif(netif, "motorcycle");
+    mdns_resp_add_netif(netif, hostname);
 
     mdns_running_ = true;
-    printf("NetworkMgr: mDNS responder running (motorcycle.local)\n");
+    printf("NetworkMgr: mDNS responder running (%s.local)\n", hostname);
 }
 
 void NetworkManager::stop_mdns()

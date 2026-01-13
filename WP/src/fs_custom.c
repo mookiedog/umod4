@@ -2,6 +2,7 @@
 #include "lwip/apps/fs.h"
 #include "lfs.h"
 #include "pico/stdlib.h"
+#include "pico/sha256.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -9,9 +10,24 @@
 // Forward declarations for API JSON generators
 extern void generate_api_info_json(char* buffer, size_t size);
 extern void generate_api_list_json(char* buffer, size_t size);
+extern void generate_api_sha256_json(char* buffer, size_t size, const char* filename);
+extern void generate_api_delete_json(char* buffer, size_t size, const char* filename);
 
 // Global LittleFS context (set by fs_custom_init)
 static lfs_t* g_lfs = NULL;
+
+/**
+ * SHA-256 hash cache for most recently served file.
+ * This avoids re-reading the file from SD card when server requests hash.
+ * Exported to api_handlers.c for /api/sha256/<filename> endpoint.
+ */
+typedef struct {
+    char filename[64];
+    sha256_result_t hash;
+    bool valid;
+} file_hash_cache_t;
+
+file_hash_cache_t g_file_hash_cache = {0};
 
 /**
  * Custom file structure for both LittleFS files and virtual API files.
@@ -23,6 +39,9 @@ struct lfs_custom_file {
     size_t bytes_read;        // Bytes read so far
     bool is_open;             // Track if file is open
     bool is_api;              // True if this is an API response (in-memory)
+    pico_sha256_state_t sha_state;  // SHA-256 state for calculating hash during transfer
+    bool sha_enabled;         // True if SHA-256 calculation is in progress
+    char sha_filename[64];    // Filename for this transfer (for caching)
 };
 
 void fs_custom_init(lfs_t* lfs_ptr)
@@ -66,19 +85,30 @@ int fs_open_custom(struct fs_file *file, const char *name)
             return 0;
         }
 
-        // Allocate buffer for JSON response (2KB should be enough)
-        api_file->data = (char*)malloc(2048);
+        // Allocate buffer for API response
+        // info and sha256 need 512 bytes, list needs 8KB for ~100 files
+        size_t api_buffer_size = strcmp(api_name, "list") == 0 ? 8192 : 512;
+
+        api_file->data = (char*)malloc(api_buffer_size);
         if (!api_file->data) {
-            printf("fs_custom: Failed to allocate API buffer\n");
+            printf("fs_custom: Failed to allocate API buffer (%zu bytes)\n", api_buffer_size);
             free(api_file);
             return 0;
         }
 
         // Generate JSON based on API endpoint
         if (strcmp(api_name, "info") == 0) {
-            generate_api_info_json(api_file->data, 2048);
+            generate_api_info_json(api_file->data, api_buffer_size);
         } else if (strcmp(api_name, "list") == 0) {
-            generate_api_list_json(api_file->data, 2048);
+            generate_api_list_json(api_file->data, api_buffer_size);
+        } else if (strncmp(api_name, "sha256/", 7) == 0) {
+            // Extract filename from sha256/<filename>
+            const char* filename = api_name + 7;
+            generate_api_sha256_json(api_file->data, api_buffer_size, filename);
+        } else if (strncmp(api_name, "delete/", 7) == 0) {
+            // Extract filename from delete/<filename>
+            const char* filename = api_name + 7;
+            generate_api_delete_json(api_file->data, api_buffer_size, filename);
         } else {
             printf("fs_custom: Unknown API endpoint: %s\n", api_name);
             free(api_file->data);
@@ -151,6 +181,18 @@ int fs_open_custom(struct fs_file *file, const char *name)
         lfs_file->is_api = false;  // This is a real LittleFS file
         lfs_file->data = NULL;
 
+        // Initialize SHA-256 calculation for this file
+        strncpy(lfs_file->sha_filename, filename, sizeof(lfs_file->sha_filename) - 1);
+        lfs_file->sha_filename[sizeof(lfs_file->sha_filename) - 1] = '\0';
+
+        if (pico_sha256_try_start(&lfs_file->sha_state, SHA256_BIG_ENDIAN, true) == PICO_OK) {
+            lfs_file->sha_enabled = true;
+            printf("fs_custom: SHA-256 enabled for '%s'\n", filename);
+        } else {
+            lfs_file->sha_enabled = false;
+            printf("fs_custom: WARNING: SHA-256 hardware busy, serving without hash\n");
+        }
+
         // Fill in fs_file structure for lwIP
         file->data = NULL;  // NULL means streaming mode (use fs_read_custom)
         file->len = (int)lfs_file->file_size;
@@ -211,6 +253,11 @@ int fs_read_custom(struct fs_file *file, char *buffer, int count)
             printf("fs_custom: LFS read error: %ld\n", (long)bytes_read);
             return FS_READ_EOF;
         }
+
+        // Update SHA-256 hash with data being sent
+        if (lfs_file->sha_enabled && bytes_read > 0) {
+            pico_sha256_update_blocking(&lfs_file->sha_state, (const uint8_t*)buffer, bytes_read);
+        }
     }
 
     lfs_file->bytes_read += bytes_read;
@@ -242,8 +289,24 @@ void fs_close_custom(struct fs_file *file)
         } else {
             // LittleFS file - close the file
             lfs_file_close(g_lfs, &lfs_file->file);
-            printf("fs_custom: Closed file (%zu/%zu bytes transferred)\n",
-                   lfs_file->bytes_read, lfs_file->file_size);
+
+            // Finalize SHA-256 hash and cache it
+            if (lfs_file->sha_enabled && lfs_file->bytes_read == lfs_file->file_size) {
+                sha256_result_t result;
+                pico_sha256_finish(&lfs_file->sha_state, &result);
+
+                // Cache the hash for this file
+                strncpy(g_file_hash_cache.filename, lfs_file->sha_filename, sizeof(g_file_hash_cache.filename) - 1);
+                g_file_hash_cache.filename[sizeof(g_file_hash_cache.filename) - 1] = '\0';
+                memcpy(&g_file_hash_cache.hash, &result, sizeof(sha256_result_t));
+                g_file_hash_cache.valid = true;
+
+                printf("fs_custom: Closed file '%s' (%zu/%zu bytes), SHA-256 cached\n",
+                       lfs_file->sha_filename, lfs_file->bytes_read, lfs_file->file_size);
+            } else {
+                printf("fs_custom: Closed file (%zu/%zu bytes transferred)\n",
+                       lfs_file->bytes_read, lfs_file->file_size);
+            }
         }
         lfs_file->is_open = false;
     }

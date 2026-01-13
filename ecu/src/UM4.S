@@ -1055,7 +1055,7 @@ L8062:  .word   0x0064
 L8064:  .word   0x61A8
 
 ;The value at L8066 is tested by the code, but is a constant 0x80 in these EPROMs:
-;  549USA, RP58, RP58USA, 549EuroC, 549EuroKat
+;  549USA, RP58, RP58USA, 549EuroC, 549EuroKat, PA59
 L8066:  .byte   0x80
 
 L8067:  .byte   0x00
@@ -1496,37 +1496,43 @@ L913E:  .byte   0x10, 0xC0, 0x08
 L9148:  .byte   0x70, 0x70, 0x10
         .byte   0x2E, 0x40, 0x50, 0x63, 0x78, 0x8E, 0xA0, 0xB0
 
-; This table is used by CO trimpot processing for both CO1 and CO2.
+;------------------------------------------------------------------------------
+;These two tables are used by CO trimpot deadband processing for both CO1 and CO2.
+;They are used to reconfigure the slope and extent of the remaining ADC range after
+;adding the deadband area in the middle. See the image in this repository located at
+; "ecu/doc/images/trimpot-deadband.png"
 L9153:  .byte   0x10, 0x60, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80
-; from Gabro's P08 with trimpots active:
-;L9153: .byte   0x10, 0x60, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80
-;From P08 with no trimpots
-;L9153: .byte   0x10, 0x60, 0x10, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80
-
-; This table is used by CO trimpot processing for both CO1 and CO2.
 L915D:  .byte   0x90, 0x60, 0x10, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0
-;from Gabro's P08 with trimpots active:
-;L915D: .byte   0x90, 0x60, 0x10, 0x80, 0x90, 0xA0, 0xB0, 0xC2, 0xDB, 0xFD
-;From P08 with no trimpots:
-;L915D: .byte   0x90, 0x60, 0x10, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80
 
-;This next table is used to apply an RPM effect to trim pot settings.
-;I have seen codebases where the first three bytes are 0x18, 0x38, 0x20
-;which define the RPM50 value used to index into the table.
-;0x18 means 1200 RPM
-;0x38 means 4000 RPM
+;------------------------------------------------------------------------------
+;Trimpot Processing Adjustments Based on Engine Speed
 ;
-; HOWEVER:
-;A table of <0xFF, 0xFF, 0xFF> with first data byte <0xFF> effectively
-;removes any RPM effect from the calculation.
-;Any attempt to use this table for interpolation by RPM50 will generate a result of 0xFF.
-;Since any input value will always be <= the initial offset value (the first 0xFF byte),
-;A will always be 0x00 after removing the initial offset value.
-;And that means that the interpolation output will always be 100% of the
-;first column entry [located at the fourth byte of the table], or 0xFF.
-;I do not understand why they didn't use an output value of 0x80 (no fuel pulse width trim adjustment).
-;Instead, a value of 0xFF means 'maximum fuel pulse width trim adjustmtent'.
-L9167:  .byte   0xFF, 0xFF, 0xFF        ;0x18, 0x38, 0x20 in both normal P08 (no trimpots) and Gabro's P08 code with trimpots active
+;Operation:
+; A trimpot setting is a request to alter the length of the basic fuel
+; injection pulse width by some percentage. Setting the trimpot in the middle of its range
+; means no adjustment of the basic fuel pulse width. Setting the trimpot above mid-range
+; will increase the width of every fuel pulse by some percentage. Setting the trimpot
+; below the midpoint will decrease the pulse by some percentage.
+;
+; Table 9167 gives the firmware the ability to make these adjustments RPM-dependent.
+; For example, it might be desirable for the trimpots to have maximum effect on
+; the mixture at idle speeds, then tapering off to some upper RPM where they are
+; defined to have little or no effect. At higher engine speeds, the "authority" of the trimpot
+; gets reduced so that it lessens or even removes its affect the adjustment of the fuel injection pulse.
+; With an RPM-dependent table as described above, it is as though the faster the engine turns,
+; there is some mechanism that magically readjusts the trim pots back towards their neutral setting.
+; As the engine slows, the magic mechanism readjusts the trimpots back to where the user had set them.
+;
+;Output:
+; The output of the table is a 0P8 fixed-point number meaning it can range from 0 to 0.996 (255/256).
+; This number defines the 'authority' that a trimpot adjustment request will actually have
+; on the stretch adjustment to the basic calculated fuel injection pulse width.
+
+;The RP58-era EPROMs I have seen all define this table to have the first 3 bytes
+;of table metadata dfined as <0xFF, 0xFF, 0xFF>, with a single table data byte of <0xFF>.
+;A table with these values will always return an authority result of 0xFF, or 0.996 in 0P8 notation.
+;This means that the trimpot adjustment operates consistently over the entire RPM range.
+L9167:  .byte   0xFF, 0xFF, 0xFF
         .byte   0xFF, 0xFF, 0xFF, 0xFF
         .byte   0xE4, 0xB7
         .byte   0x6A, 0x00
@@ -4983,7 +4989,7 @@ LC8AF_187:    stD     *L0092            ;L0092 = min?(L00B0, L00B2)
         jsr     LD5E4                   ;params: Reg B and L00C4
         cmpA    *L006F
         beq     LC8AF_189
-        staA    LW+LOGID_ECU_TP_FRT_ADJ_FACTOR_TYPE_U8
+        staA    LW+LOGID_ECU_TP_CO1_ADJ_FACTOR_TYPE_U8
         staA    *L006F                  ;This is the ajustment factor for the front inj pulse
         bra     LC8AF_189
 
@@ -4993,11 +4999,11 @@ LC8AF_188:
         jsr     LD5E4                   ;params: Reg B and L00C4
         cmpA    *L0078
         beq     LC8AF_189
-        staA    LW+LOGID_ECU_TP_REAR_ADJ_FACTOR_TYPE_U8
+        staA    LW+LOGID_ECU_TP_CO2_ADJ_FACTOR_TYPE_U8
         staA    *L0078                  ;This is the adjustment factor for the rear inj pulse
 
 LC8AF_189:
-        ldaA    L8066                   ;this is always 0x01 for for most EPROMs (see L8066: for more info)
+        ldaA    L8066                   ;this is always 0x80 for for most EPROMs (see L8066: for more info)
         cmpA    #0x01
         bne     LC8AF_194               ;...which means this branch is always taken
 

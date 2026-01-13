@@ -32,9 +32,8 @@
 #include "uart_rx32.pio.h"
 #include "WP_log.h"
 #include "WiFiManager.h"
-#include "HttpClient.h"
-#include "LogUploader.h"
 #include "NetworkManager.h"
+#include "file_delete_task.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
 
@@ -61,8 +60,6 @@ FlashEp* flashEp;
 
 // WiFi Phase 1 components
 WiFiManager* wifiMgr = nullptr;
-HttpClient* httpClient = nullptr;
-LogUploader* logUploader = nullptr;
 
 // MDL (Motorbike Data Link) components
 NetworkManager* networkMgr = nullptr;
@@ -116,6 +113,13 @@ sd_perf_stats_t sd_perf_stats = {0};
 
 // Global SD card pointer (for access from Shell and other modules)
 SdCardBase* sdCard = nullptr;
+
+// C-compatible wrapper for checking if SD card is inserted
+// Used by C code (api_handlers.c) to check card status
+extern "C" bool sdcard_is_inserted(SdCardBase* card) {
+    if (!card) return false;
+    return card->cardPresent();
+}
 
 // --------------------------------------------------------------------------------------------
 int lfs_read(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, void *buffer, lfs_size_t size_bytes)
@@ -781,8 +785,21 @@ void bootSystem()
     printf("%s: Creating WiFi manager\n", __FUNCTION__);
     wifiMgr = new WiFiManager();
 
+    // Configure server address for check-in notifications (if defined at build time)
+    // UMOD4_SERVER_HOST can be an IP address ("192.168.1.100") or hostname ("umod4-server.local")
+    #ifdef UMOD4_SERVER_HOST
+        #ifdef UMOD4_SERVER_PORT
+            wifiMgr->setServerAddress(UMOD4_SERVER_HOST, UMOD4_SERVER_PORT);
+        #else
+            wifiMgr->setServerAddress(UMOD4_SERVER_HOST);  // Use default port 8081
+        #endif
+    #endif
+
     printf("%s: Creating Network manager (MDL HTTP server)\n", __FUNCTION__);
     networkMgr = new NetworkManager(wifiMgr);
+
+    printf("%s: Initializing file deletion task\n", __FUNCTION__);
+    file_delete_task_init();
 }
 
 

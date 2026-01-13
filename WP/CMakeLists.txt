@@ -117,7 +117,7 @@ if(DEFINED ENV{UMOD4_SERVER_PORT})
     set(UMOD4_SERVER_PORT $ENV{UMOD4_SERVER_PORT})
     message("Using UMOD4_SERVER_PORT from environment ('${UMOD4_SERVER_PORT}')")
 elseif(NOT UMOD4_SERVER_PORT)
-    set(UMOD4_SERVER_PORT "8888")
+    set(UMOD4_SERVER_PORT "8081")
 endif()
 
 # Validate required WiFi/server configuration
@@ -198,12 +198,11 @@ add_executable(${PROJECT_NAME}
     src/TimeUtils.cpp
     src/Uart.cpp
     src/WiFiManager.cpp
-    src/HttpClient.cpp
-    src/LogUploader.cpp
     # MDL (Motorbike Data Link) files
     src/NetworkManager.cpp
     src/api_handlers.c
     src/fs_custom.c
+    src/file_delete_task.c
     # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
     src/httpd_stubs.c
 )
@@ -221,8 +220,6 @@ set_source_files_properties(
     src/SdCard.cpp
     src/SdCardSDIO.cpp
     src/WiFiManager.cpp
-    src/HttpClient.cpp
-    src/LogUploader.cpp
     src/NetworkManager.cpp
     PROPERTIES COMPILE_FLAGS "-Wno-volatile"
 )
@@ -313,7 +310,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     WIFI_SSID=\"${WIFI_SSID}\"
     WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
     UMOD4_SERVER_HOST=\"${UMOD4_SERVER_HOST}\"
-    UMOD4_SERVER_PORT=\"${UMOD4_SERVER_PORT}\"
+    UMOD4_SERVER_PORT=${UMOD4_SERVER_PORT}
 
     # Point lwIP httpd to our custom-generated fsdata.c in build directory
     HTTPD_FSDATA_FILE=\"${CMAKE_CURRENT_BINARY_DIR}/fsdata.c\"
@@ -357,6 +354,7 @@ target_link_libraries(${PROJECT_NAME}
     pico_cyw43_arch_lwip_sys_freertos
     pico_lwip_http
     pico_lwip_mdns
+    pico_sha256  # Hardware-accelerated SHA-256
 )
 
 # Create some useful output files
