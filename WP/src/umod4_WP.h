@@ -15,22 +15,28 @@
 
 #include "hardware/uart.h"
 
-// The Pico2W uses an RP2350 which has 3 PIO blocks.
-// Everything is hardcoded to avoid problems with making code having to deal with
-// the effects of dynamic allocation on things like interrupt and FIFO names.
+// The Pico2W uses an RP2350 which has 3 PIO blocks, 4 state machines per PIO.
+// The WP needs to use all of them. SWD and SDIO need to be active at the same time
+// while flashing the EP, so they must have their own PIO blocks.
+// Fortunately, PIO2 has enough resource to simultaneously handle WiFi, NeoPixel, and the 32-bit UART RX/TX.
 //
-// PIO0: NeoPixel + UART (2 state machines, 13 of 32 instructions used)
-// PIO1: SDIO (exclusive use by SDIO driver because its uses all the instruction memory)
-// PIO2: WiFi (default for the cyw43 driver on a PICO2W, and we will let this sleeping dog lie)
-#define PIO_WS2812          pio0
-#define   PIO_WS2812_SM     0
-
-#define PIO_UART            pio0
-#define   PIO_UART_SM       1
-#define   PIO_UART_RX_IRQ   PIO0_IRQ_0
+// Pio Unit allocations:
+// PIO0: SWD driver. Can't share: it uses all available instruction memory.
+// PIO1: SDIO driver. Can't share: it uses all available instruction memory.
+// PIO2: Will be shared among:
+//         - WiFi (6 instructions)
+//         - WS2812 NeoPixel (4 instructions)
+//         - UART_RX32 (9 instructions)
+//         - UART_TX32 (4 instructions)
+//          - 9 instructions free for future use
 
 #define PIO_SD              pio1
 #define   SD_GPIO_FUNC      GPIO_FUNC_PIO1
+
+#define PIO_WS2812          pio2
+
+#define PIO_UART            pio2
+#define   PIO_UART_RX_IRQ   PIO2_IRQ_0
 
 // The GPIO pin assignments are as per the PCB 4V1 circuit board.
 

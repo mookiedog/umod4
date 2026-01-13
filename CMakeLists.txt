@@ -280,3 +280,25 @@ ExternalProject_Add(WP
     BUILD_ALWAYS true
     INSTALL_COMMAND ""
 )
+
+# ---------------------------------------------------------------------------------------------
+message(STATUS "Adding the 'SwdReflash' project")
+
+set(SWDREFLASH_CMAKE_ARG_LIST
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
+    -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
+    -DPICO_SDK_PATH=${PICO_SDK_PATH}
+    -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=1
+)
+
+ExternalProject_Add(SwdReflash
+    # No dependencies - SwdReflash is completely standalone
+    PREFIX ${CMAKE_BINARY_DIR}/SwdReflash
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/SwdReflash
+    BINARY_DIR ${CMAKE_BINARY_DIR}/SwdReflash
+    CMAKE_GENERATOR ${generator}
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${SWDREFLASH_CMAKE_ARG_LIST}
+    BUILD_ALWAYS true
+    INSTALL_COMMAND ""
+)

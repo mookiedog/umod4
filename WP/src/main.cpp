@@ -56,6 +56,8 @@ Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
 
+int pio_sm_uart;
+
 // WiFi Phase 1 components
 WiFiManager* wifiMgr = nullptr;
 
@@ -639,8 +641,8 @@ void vApplicationIdleHook( void )
 // This ISR moves ECU events from the receive FIFO to the merged log buffer.
 void isr_rx32()
 {
-    while(!pio_sm_is_rx_fifo_empty(PIO_UART, PIO_UART_SM)) {
-        uint32_t rxWord = uart_rx32_program_get(PIO_UART, PIO_UART_SM);
+    while(!pio_sm_is_rx_fifo_empty(PIO_UART, pio_sm_uart)) {
+        uint32_t rxWord = uart_rx32_program_get(PIO_UART, pio_sm_uart);
         logger->logData_fromISR(rxWord);
 
         // Update the live ECU log data array
@@ -654,16 +656,19 @@ void isr_rx32()
 
 // ----------------------------------------------------------------------------------
 // The EP PIO UART receives the ECU data stream.
-// This UART is unidirectional, meaning receive only.
-// It must be a PIO-based UART because we need it to receive data in 16-bit units
-// corresponding to a LogID/Data byte pair and the RP2350 UART silicon only does 8-bit transfers.
+// During normal system operation, this UART is unidirectional, meaning receive only.
+// It must be a PIO-based UART because we need it to receive data in 32-bit units
+// and the RP2350 UART silicon only does 8-bit transfers.
+// All ECU data comes across as 32-bit words, each containing a complete log event
+// that we will inserted into the log in atomic fashion.
 void initEpUart() {
 
     // Set up the PIO unit to act as our UART
+    pio_sm_uart = pio_claim_unused_sm(PIO_UART, true);
     uint offset = pio_add_program(PIO_UART, &uart_rx32_program);
-    uart_rx32_program_init(PIO_UART, PIO_UART_SM, offset, EPLOG_RX_PIN, EP_TO_WP_BAUDRATE);
-    printf("UART_RX32: Using PIO%d, SM%d, program offset %d (size: %d instructions)\n",
-           pio_get_index(PIO_UART), PIO_UART_SM, offset, uart_rx32_program.length);
+    uart_rx32_program_init(PIO_UART, pio_sm_uart, offset, EPLOG_RX_PIN, EP_TO_WP_BAUDRATE);
+    printf("UART_RX32: Using PIO%d, SM%d, program start @ offset %d (size: %d instructions)\n",
+           pio_get_index(PIO_UART), pio_sm_uart, offset, uart_rx32_program.length);
 
 
     // Assign an interrupt handler
@@ -680,21 +685,29 @@ void allowEpToSendData()
 
     // Make sure the rxQ is empty prior to giving the EP the OK to send
     // in case we received some garbage during boot.
-    while(!pio_sm_is_rx_fifo_empty(PIO_UART, PIO_UART_SM)) {
-        uint16_t logEvent = uart_rx32_program_get(PIO_UART, PIO_UART_SM);
+    while(!pio_sm_is_rx_fifo_empty(PIO_UART, pio_sm_uart)) {
+        uint16_t logEvent = uart_rx32_program_get(PIO_UART, pio_sm_uart);
     }
 
     // Enable RX FIFO Not Empty interrupt in this core's NVIC
     irq_set_enabled(PIO_UART_RX_IRQ, true);
 
-    // Enable the RX-FIFO-not-empty interrupt inside the proper PIO unit
-    #if (PIO_UART_SM == 0)
-        PIO_UART->inte0 = PIO_INTR_SM0_RXNEMPTY_BITS;
-    #elif (PIO_UART_SM == 1)
-        PIO_UART->inte0 = PIO_INTR_SM1_RXNEMPTY_BITS;
-    #else
-        #error "Update this to the proper SMx bit!"
-    #endif
+    // Enable the statemachine-specific RX-FIFO-not-empty interrupt inside the proper PIO unit
+    switch (pio_sm_uart) {
+        case 0:
+            PIO_UART->inte0 = PIO_INTR_SM0_RXNEMPTY_BITS;
+            break;
+        case 1:
+            PIO_UART->inte0 = PIO_INTR_SM1_RXNEMPTY_BITS;
+            break;
+        case 2:
+            PIO_UART->inte0 = PIO_INTR_SM2_RXNEMPTY_BITS;
+            break;
+        case 3:
+            PIO_UART->inte0 = PIO_INTR_SM3_RXNEMPTY_BITS;
+        default:
+            panic("Invalid RX32 PIO state machine number");
+    }
 
     // Tell the EP we are ready for data
     gpio_put(EPLOG_FLOWCTRL_PIN, 0);
@@ -807,8 +820,9 @@ void bootSystem()
 // Doing that from this task avoids having a dedicated boot task using stack space after it completes.
 void vLedTask(void* arg)
 {
-    // Get the LED working first so that it can be used by the rest of the system
-    rgb_led = new NeoPixelConnect(WS2812_PIN, WS2812_PIXCNT, PIO_WS2812, PIO_WS2812_SM);
+    // Get the LED working first so that it can be used by the rest of the system.
+    // We need to tell it which PIO to use, but it will claim its own state machine.
+    rgb_led = new NeoPixelConnect(WS2812_PIN, WS2812_PIXCNT, PIO_WS2812);
     rgb_led->neoPixelSetValue(0, 16, 16, 16, true);
 
     // Take care of our system boot responsibilities...

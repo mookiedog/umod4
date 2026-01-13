@@ -58,6 +58,48 @@
             "samplesPerSecond": 4
         },
     },
+        {
+        // SwdReflash: RAM-only program for testing SWD loading
+        // This program runs entirely from RAM (no flash)
+        // Entry point is at 0x20000101 (Thumb mode), SP at 0x20042000
+        "name": "*** RP2040: SwdReflash Launch CMSIS-DAP",
+        "cwd": "${workspaceRoot}",
+        "executable": "${workspaceRoot}/build/SwdReflash/SwdReflash",
+        "request": "launch",
+        "type": "cortex-debug",
+        "servertype": "openocd",
+        "gdbPath" : "/opt/arm/arm-none-eabi/15.2.rel1/bin/arm-none-eabi-gdb",
+        "device": "RP2040",
+        "configFiles": [
+            "interface/cmsis-dap.cfg",
+            "target/rp2040.cfg"
+        ],
+        "svdFile": "${env:PICO_SDK_PATH}/src/rp2040/hardware_regs/RP2040.svd",
+
+        // Debug sessions will not start without setting the adaptor speed as below
+        "openOCDLaunchCommands": ["adapter speed 5000"],
+
+        // For RAM-only programs, we need special setup to start execution
+        "postLaunchCommands": [
+            // Program is loaded to RAM by GDB's 'load' command
+            // Now set PC and SP for RAM execution
+            "set $pc = 0x20000101",
+            "set $sp = 0x20042000",
+            // Set a breakpoint at main
+            "break main",
+            // Continue to main
+            "continue"
+        ],
+
+        // For restarts, need to reload to RAM and reset PC/SP
+        "postRestartCommands": [
+            "load",
+            "set $pc = 0x20000101",
+            "set $sp = 0x20042000",
+            "break main",
+            "continue"
+        ],
+    },
     {
         // This config is here until a VSCode/CMake bug is fixed that allows executables to be found in
         // external projects. Right now, the only way to launch a debug session is to specify the location of

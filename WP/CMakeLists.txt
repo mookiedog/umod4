@@ -224,8 +224,14 @@ set_source_files_properties(
 )
 
 # Include the PIO program header files:
-pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_rx32.pio)
+# 32-bit UART RX & TX PIO programs (from shared lib/pio/ directory)
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pio/uart_rx32.pio)
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pio/uart_tx32.pio)
+
+# 4-bit SDIO PIO program for RP2350
 pico_generate_pio_header(${PROJECT_NAME}  ${SDIO_RP2350_SRC_DIR}/src/sdio_rp2350.pio)
+
+# Neopixel PIO program
 pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/ws2812/ws2812.pio)
 
 # Override the standard Segger definitions for these symbols:

@@ -22,8 +22,7 @@
 /// @param numberOfPixels: Number of pixels in the string
 /// @param pio: pio selected - default = pio0. pio1 may be specified
 /// @param sm: state machine selected. Default = 0
-NeoPixelConnect::NeoPixelConnect(byte pinNumber, uint16_t numberOfPixels, PIO pio, uint sm) {
-    this->pixelSm = sm;
+NeoPixelConnect::NeoPixelConnect(byte pinNumber, uint16_t numberOfPixels, PIO pio) {
     this->pixelPio = pio;
     this->neoPixelInit(pinNumber, numberOfPixels);
 }
@@ -38,7 +37,7 @@ void NeoPixelConnect::neoPixelInit(byte pinNumber, uint16_t numberOfPixels) {
     uint offset = pio_add_program(this->pixelPio, &ws2812_program);
     ws2812_program_init(this->pixelPio, this->pixelSm, offset, pinNumber, 800000, false);
 
-    printf("NeoPixel: Using PIO%d, SM%d, program offset %d (size: %d instructions)\n",
+    printf("NeoPixel: Using PIO%d, SM%d, program start @ offset %d (size: %d instructions)\n",
            pio_get_index(this->pixelPio), this->pixelSm, offset, ws2812_program.length);
 
     // save the number of pixels in use
