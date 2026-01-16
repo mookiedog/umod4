@@ -1,6 +1,7 @@
 #include "NetworkManager.h"
 #include "api_handlers.h"
 #include "fs_custom.h"
+#include "upload_handler.h"
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/apps/httpd.h"
@@ -32,6 +33,10 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
     // Initialize custom filesystem bridge for serving files from LittleFS
     printf("NetworkMgr: Initializing custom filesystem bridge\n");
     fs_custom_init(&lfs);
+
+    // Initialize upload handler BEFORE httpd_init()
+    printf("NetworkMgr: Initializing upload handler\n");
+    upload_handler_init();
 
     // Initialize HTTP server ONCE (global initialization)
     // This binds to TCP port 80 and must only be called once

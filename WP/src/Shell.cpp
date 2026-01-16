@@ -3,6 +3,18 @@
 #include "ctype.h"
 
 #include "SdCardBase.h"
+#include "umod4_EP.h"
+
+#include "FlashEp.h"
+#include "hardware/gpio.h"
+#include "pico/stdlib.h"
+#if 1
+    #include "SWDLoader.h"
+#else
+    #include "swd_load.hpp"
+#endif
+#include "swdreflash_binary.h"
+
 
 // The tiny_regex_c interface library:
 #include "re.h"
@@ -695,6 +707,64 @@ extern SdCardBase* sdCard;
 extern struct lfs_config lfs_cfg;
 
 // ----------------------------------------------------------------------------------
+void Shell::cmd_flashEp(char* args)
+{
+    printf("Flashing EP\n");
+
+    printf("  - Resetting the EP\n");
+    // This is kind of low level - should be encapsulated somewhere else
+    gpio_init(EP_RUN_PIN);
+    gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
+    gpio_put(EP_RUN_PIN, 0);
+    sleep_us(100);
+    gpio_put(EP_RUN_PIN, 1);
+    sleep_us(50);
+
+    printf("  - Loading SWD Reflash Helper\n");
+    // very temporary:
+    const uint section_addresses[] = {
+        0x20000000
+        };
+
+    const uint* section_data[] = {
+        (const unsigned int*)&swdreflash_data
+        };
+    const uint section_data_len[] = {
+        swdreflash_size
+        };
+
+    printf("Loading SWD reflash program to address 0x%08X\n", section_addresses[0]);
+    uint32_t num_sections = 1;
+    bool ok = swdLoader->swd_load_program(section_addresses, section_data, section_data_len, num_sections, 0x20000001, 0x20042000);
+
+    if (!ok) {
+        printf("SWD Reflash Helper program load FAILED\n");
+        return;
+    }
+
+    printf("  - Flashing /EP.uf2\n");
+    int res = 0; //FlashEp::process_uf2(lfs, "/EP.uf2");
+
+
+    vTaskDelay(pdMS_TO_TICKS(10000));
+    if (res == 0) {
+        printf("Fake Flash EP completed successfully\n");
+    }
+    else {
+        printf("Flash EP FAILED with error %d\n", res);
+    }
+
+    // Either way, let the EP run again
+    gpio_init(EP_RUN_PIN);
+    gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
+    gpio_put(EP_RUN_PIN, 0);
+    sleep_us(100);
+    gpio_put(EP_RUN_PIN, 1);
+    sleep_us(50);
+}
+
+
+// ----------------------------------------------------------------------------------
 void Shell::cmd_sdperf(char* args)
 {
 
@@ -801,6 +871,9 @@ void Shell::cmd_sdperf(char* args)
                             }
                             else if (strcmp(cmd, "sdperf") == 0) {
                                 cmd_sdperf(args);
+                            }
+                            else if (strcmp(cmd, "flash") == 0) {
+                                cmd_flashEp(args);
                             }
                             #if 0
                             else if (strcmp(cmd, "cp") == 0) {

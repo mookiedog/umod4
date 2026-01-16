@@ -30,7 +30,9 @@
 //         - UART_TX32 (4 instructions)
 //          - 9 instructions free for future use
 
-#define PIO_SD              pio1
+#define PIO_SWD             pio0
+
+#define PIO_SDIO            pio1
 #define   SD_GPIO_FUNC      GPIO_FUNC_PIO1
 
 #define PIO_WS2812          pio2

@@ -26,13 +26,14 @@
 #include "SdCardSDIO.h"
 #include "Shell.h"
 #include "Spi.h"
+#include "SWDLoader.h"
 #include "Uart.h"
 #include "umod4_WP.h"
 #include "uart_rx32.pio.h"
 #include "WP_log.h"
 #include "WiFiManager.h"
 #include "NetworkManager.h"
-#include "file_delete_task.h"
+#include "file_io_task.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
 
@@ -55,6 +56,7 @@ NeoPixelConnect* rgb_led;
 Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
+SWDLoader* swdLoader;
 
 int pio_sm_uart;
 
@@ -71,6 +73,31 @@ uint32_t flashBuffer[1024];
 //  * 16-bit log entries are stored in the full 16-bit word
 // The array is indexed by the ECU log ID.
 uint16_t ecuLiveLog[256];
+
+#if 0
+// OK< not super happy with this, but it appears that the swd_pio code needs this defined:
+static const pio_program* pio_prog[2] = {nullptr, nullptr};
+static uint16_t pio_offset[2] = {0xffff, 0xffff};
+
+void pio_remove_exclusive_program(PIO pio) {
+    uint8_t pio_index = pio == pio0 ? 0 : 1;
+    const pio_program* current_program = pio_prog[pio_index];
+    uint16_t current_offset = pio_offset[pio_index];
+    if(current_program) {
+        pio_remove_program(pio, current_program, current_offset);
+        pio_prog[pio_index] = nullptr;
+        pio_offset[pio_index] = 0xffff;
+    }
+}
+
+uint16_t pio_change_exclusive_program(PIO pio, const pio_program* prog) {
+    pio_remove_exclusive_program(pio);
+    uint8_t pio_index = pio == pio0 ? 0 : 1;
+    pio_prog[pio_index] = prog;
+    pio_offset[pio_index] = pio_add_program(pio, prog);
+    return pio_offset[pio_index];
+};
+#endif
 
 #if defined LFS
 
@@ -809,8 +836,12 @@ void bootSystem()
     printf("%s: Creating Network manager (MDL HTTP server)\n", __FUNCTION__);
     networkMgr = new NetworkManager(wifiMgr);
 
-    printf("%s: Initializing file deletion task\n", __FUNCTION__);
-    file_delete_task_init();
+    printf("%s: Initializing file I/O task\n", __FUNCTION__);
+    file_io_task_init();
+
+    // Instantiate an SWD loader object
+    bool verbose = true;
+    swdLoader = new SWDLoader(PIO_SWD, verbose);
 }
 
 
@@ -827,6 +858,7 @@ void vLedTask(void* arg)
 
     // Take care of our system boot responsibilities...
     bootSystem();
+
 
     while (1) {
         vTaskDelay(1000);
@@ -971,22 +1003,6 @@ int main()
     printf("WP System clock: %.1f MHz\n", f_clk_sys / 1000.0);
     printf("Heap Range: 0x%08x..0x%08X (%u bytes)\n", heap_start, heap_end, (heap_end-heap_start));
     printf("\n");
-
-    #if 0
-    {
-        // WAY TEMP!!
-        LogSource* testLogSource;
-        uint8_t foo[] = {0x12, 0x34, 0x56, 0x78};
-        uint8_t bar[4];
-        testLogSource = new LogSource(128);
-        testLogSource->log(4, foo);
-        uint64_t ts = testLogSource->get_timestamp();
-        uint16_t len = testLogSource->get_data_length();
-        LogSource::error err = testLogSource->get_data(bar);
-
-        printf("log test: %04X %02X%02X%02X%02X\n",len, bar[0], bar[1], bar[2], bar[3]);
-    }
-    #endif
 
     // The LED task will boot the rest of the system
     BaseType_t err = xTaskCreate(vLedTask, "LED Task", 2048, NULL, 1, NULL);

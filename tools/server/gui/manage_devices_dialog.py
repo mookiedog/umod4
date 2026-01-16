@@ -56,6 +56,14 @@ class ManageDevicesDialog(QDialog):
 
         button_layout.addStretch()
 
+        self.manage_files_button = QPushButton("Manage Files on Device")
+        self.manage_files_button.clicked.connect(self._manage_files)
+        button_layout.addWidget(self.manage_files_button)
+
+        self.upload_button = QPushButton("Upload File to Device")
+        self.upload_button.clicked.connect(self._upload_file)
+        button_layout.addWidget(self.upload_button)
+
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.accept)
         button_layout.addWidget(self.close_button)
@@ -201,6 +209,213 @@ class ManageDevicesDialog(QDialog):
                     f"Device {mac_address} has been deleted.\n\n"
                     f"It will be re-discovered with default settings when it next connects."
                 )
+
+        finally:
+            session.close()
+
+    def _manage_files(self):
+        """Open file management dialog for selected device."""
+        from models.database import Device
+        from gui.device_files_dialog import DeviceFilesDialog
+
+        mac_address = self._get_selected_mac()
+        if not mac_address:
+            return
+
+        session = self.database.get_session()
+        try:
+            device = session.query(Device).filter_by(mac_address=mac_address).first()
+            if not device:
+                return
+
+            # Check if device is online
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(
+                    self,
+                    "Device Offline",
+                    f"Device '{device.display_name}' is not currently online.\n\n"
+                    f"Make sure the device is powered on and connected to the network."
+                )
+                return
+
+            # Open the file management dialog
+            dialog = DeviceFilesDialog(
+                self.database,
+                mac_address,
+                device.last_ip,
+                self
+            )
+            dialog.exec()
+
+        finally:
+            session.close()
+
+    def _upload_file(self):
+        """Upload a file to the selected device."""
+        from models.database import Device, DeviceUpload
+        from device_client import DeviceClient
+        from PySide6.QtWidgets import QProgressDialog
+        from PySide6.QtCore import QThread, Signal
+        from datetime import datetime
+
+        mac_address = self._get_selected_mac()
+        if not mac_address:
+            return
+
+        session = self.database.get_session()
+        try:
+            device = session.query(Device).filter_by(mac_address=mac_address).first()
+            if not device:
+                return
+
+            # Check if device is online
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(
+                    self,
+                    "Device Offline",
+                    f"Device '{device.display_name}' is not currently online.\n\n"
+                    f"Make sure the device is powered on and connected to the network."
+                )
+                return
+
+            # Let user select file to upload
+            source_file, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select File to Upload",
+                "",
+                "All Files (*.*)"
+            )
+
+            if not source_file:
+                return  # User cancelled
+
+            # Extract filename for destination
+            import os
+            destination_filename = os.path.basename(source_file)
+
+            # Confirm upload
+            file_size = os.path.getsize(source_file)
+            reply = QMessageBox.question(
+                self,
+                "Confirm Upload",
+                f"Upload file to device '{device.display_name}'?\n\n"
+                f"Source: {source_file}\n"
+                f"Destination: /{destination_filename}\n"
+                f"Size: {file_size:,} bytes\n\n"
+                f"The file will be uploaded in chunks with SHA-256 verification.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+            # Create progress dialog
+            progress = QProgressDialog(
+                f"Uploading {destination_filename}...",
+                "Cancel",
+                0,
+                100,
+                self
+            )
+            progress.setWindowTitle("File Upload")
+            progress.setModal(True)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+
+            # Upload in a separate thread to keep UI responsive
+            # For simplicity, we'll do it synchronously here but show progress
+
+            client = DeviceClient(device.last_ip)
+
+            def update_progress(bytes_sent, total_bytes):
+                percent = int((bytes_sent / total_bytes) * 100)
+                progress.setValue(percent)
+                progress.setLabelText(
+                    f"Uploading {destination_filename}...\n"
+                    f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
+                )
+                # Process events to keep UI responsive
+                from PySide6.QtWidgets import QApplication
+                QApplication.processEvents()
+
+                # Check if user cancelled
+                if progress.wasCanceled():
+                    raise Exception("Upload cancelled by user")
+
+            # Create database record for this upload
+            upload_record = DeviceUpload(
+                device_mac=mac_address,
+                source_path=source_file,
+                destination_filename=destination_filename,
+                size_bytes=file_size,
+                start_time=datetime.utcnow(),
+                status='in_progress'
+            )
+            session.add(upload_record)
+            session.commit()
+            upload_id = upload_record.id
+
+            try:
+                start_time = datetime.utcnow()
+
+                success, sha256, error_msg = client.upload_file(
+                    source_file,
+                    destination_filename,
+                    progress_callback=update_progress
+                )
+
+                end_time = datetime.utcnow()
+                duration = (end_time - start_time).total_seconds()
+                transfer_speed_mbps = (file_size * 8 / 1_000_000) / duration if duration > 0 else 0
+
+                progress.close()
+
+                # Update database record
+                upload_record = session.query(DeviceUpload).get(upload_id)
+                if upload_record:
+                    upload_record.end_time = end_time
+                    upload_record.transfer_speed_mbps = transfer_speed_mbps
+                    upload_record.sha256 = sha256
+                    upload_record.status = 'success' if success else 'failed'
+                    upload_record.error_message = error_msg
+                    session.commit()
+
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "Upload Complete",
+                        f"File uploaded successfully!\n\n"
+                        f"File: {destination_filename}\n"
+                        f"Location: /{destination_filename}\n"
+                        f"SHA-256: {sha256[:16]}...{sha256[-16:]}\n"
+                        f"Speed: {transfer_speed_mbps:.2f} Mbps\n\n"
+                        f"The file is now available on the device."
+                    )
+                else:
+                    QMessageBox.critical(
+                        self,
+                        "Upload Failed",
+                        f"Failed to upload file:\n\n{error_msg}"
+                    )
+
+            except Exception as e:
+                progress.close()
+
+                # Update database record with error
+                upload_record = session.query(DeviceUpload).get(upload_id)
+                if upload_record:
+                    upload_record.end_time = datetime.utcnow()
+                    upload_record.status = 'failed'
+                    upload_record.error_message = str(e)
+                    session.commit()
+
+                if "cancelled" not in str(e).lower():
+                    QMessageBox.critical(
+                        self,
+                        "Upload Error",
+                        f"An error occurred during upload:\n\n{str(e)}"
+                    )
 
         finally:
             session.close()

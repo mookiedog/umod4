@@ -32,7 +32,8 @@ NeoPixelConnect::NeoPixelConnect(byte pinNumber, uint16_t numberOfPixels, PIO pi
 /// @param numberOfPixels: Number of pixels in the string
 void NeoPixelConnect::neoPixelInit(byte pinNumber, uint16_t numberOfPixels) {
     // Claim the state machine
-    pio_sm_claim(this->pixelPio, this->pixelSm);
+    //pio_sm_claim(this->pixelPio, this->pixelSm);
+    this->pixelSm = pio_claim_unused_sm(this->pixelPio, true);
 
     uint offset = pio_add_program(this->pixelPio, &ws2812_program);
     ws2812_program_init(this->pixelPio, this->pixelSm, offset, pinNumber, 800000, false);

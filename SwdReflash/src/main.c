@@ -18,6 +18,7 @@
 #include "hardware/timer.h"
 #include "hardware/clocks.h"
 
+#include "hardware/resets.h"
 #include "hardware.h"  // From EP/src/hardware.h for DBG_BSY_LSB
 
 /*
@@ -49,6 +50,8 @@ void blink()
     gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
     gpio_put(DBG_BSY_LSB, 1);  // Start with LED OFF
 
+    //while(1);
+
     // Infinite blink loop at 0.1Hz
     while (true) {
         // Turn LED ON (active-low, so write 0)
@@ -68,8 +71,16 @@ void blink()
  */
 int main(void)
 {
+    // Release GPIO peripherals from reset (pico_minimize_runtime strips the initializer)
+    unreset_block_wait(RESETS_RESET_IO_BANK0_BITS | RESETS_RESET_PADS_BANK0_BITS);
+
+    gpio_init(DBG_BSY_LSB);
+    gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
+    gpio_put(DBG_BSY_LSB, 1);  // Start with LED OFF
+    //while (1);
+
     // Force RP2040 to a standard 125MHz
-    set_sys_clock_khz(125000, true);
+    //set_sys_clock_khz(125000, true);
 
     // Leave this LED blinking example in the source for easy testing, if needed later.
     if (true) {

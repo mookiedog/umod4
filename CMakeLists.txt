@@ -257,31 +257,6 @@ ExternalProject_Add(EP
 )
 
 # ---------------------------------------------------------------------------------------------
-message(STATUS "Adding the 'WP' project")
-
-set(WP_CMAKE_ARG_LIST
-    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
-    -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
-    -DLIB_DIR=${LIB_DIR}
-    -DPICO_SDK_PATH=${PICO_SDK_PATH}
-    -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
-    -DLFS_SRC_DIR=${LFS_SRC_DIR}
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=1
-    ${PYTHON_DEFS}
-)
-
-ExternalProject_Add(WP
-    DEPENDS tools EP
-    PREFIX ${CMAKE_BINARY_DIR}/WP
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/WP
-    BINARY_DIR ${CMAKE_BINARY_DIR}/WP
-    CMAKE_GENERATOR ${generator}
-    CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${WP_CMAKE_ARG_LIST}
-    BUILD_ALWAYS true
-    INSTALL_COMMAND ""
-)
-
-# ---------------------------------------------------------------------------------------------
 message(STATUS "Adding the 'SwdReflash' project")
 
 set(SWDREFLASH_CMAKE_ARG_LIST
@@ -299,6 +274,31 @@ ExternalProject_Add(SwdReflash
     BINARY_DIR ${CMAKE_BINARY_DIR}/SwdReflash
     CMAKE_GENERATOR ${generator}
     CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${SWDREFLASH_CMAKE_ARG_LIST}
+    BUILD_ALWAYS true
+    INSTALL_COMMAND ""
+)
+
+# ---------------------------------------------------------------------------------------------
+message(STATUS "Adding the 'WP' project")
+
+set(WP_CMAKE_ARG_LIST
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
+    -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
+    -DLIB_DIR=${LIB_DIR}
+    -DPICO_SDK_PATH=${PICO_SDK_PATH}
+    -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
+    -DLFS_SRC_DIR=${LFS_SRC_DIR}
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=1
+    ${PYTHON_DEFS}
+)
+
+ExternalProject_Add(WP
+    DEPENDS tools EP SwdReflash
+    PREFIX ${CMAKE_BINARY_DIR}/WP
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/WP
+    BINARY_DIR ${CMAKE_BINARY_DIR}/WP
+    CMAKE_GENERATOR ${generator}
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${WP_CMAKE_ARG_LIST}
     BUILD_ALWAYS true
     INSTALL_COMMAND ""
 )

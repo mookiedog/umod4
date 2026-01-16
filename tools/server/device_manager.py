@@ -134,6 +134,11 @@ class DeviceManager:
         for file_info in files:
             filename = file_info['filename']
             file_size = file_info['size']
+
+            # Only sync .um4 log files (skip uploaded files like .uf2, etc.)
+            if not filename.endswith('.um4'):
+                continue
+
             local_path = os.path.join(log_storage_path, filename)
 
             # Check if file already exists

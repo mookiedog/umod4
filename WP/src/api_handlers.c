@@ -5,7 +5,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "lfs.h"
-#include "file_delete_task.h"
+#include "file_io_task.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -136,7 +136,7 @@ void generate_api_list_json(char* buffer, size_t size)
     ptr += len;
     remaining -= len;
 
-    // Scan SD card root directory for .um4 files
+    // Scan SD card root directory for all files
     lfs_dir_t dir;
     int err = lfs_dir_open(&lfs, &dir, "/");
     if (err == 0) {
@@ -147,12 +147,6 @@ void generate_api_list_json(char* buffer, size_t size)
         while (lfs_dir_read(&lfs, &dir, &info) > 0) {
             // Skip directories and non-regular files
             if (info.type != LFS_TYPE_REG) {
-                continue;
-            }
-
-            // Only list .um4 files
-            size_t name_len = strlen(info.name);
-            if (name_len < 5 || strcmp(info.name + name_len - 4, ".um4") != 0) {
                 continue;
             }
 
@@ -224,15 +218,6 @@ void generate_api_delete_json(char* buffer, size_t size, const char* filename)
         snprintf(buffer, size,
                  "{\"success\": false, \"error\": \"Invalid filename\"}");
         printf("api_delete: Invalid filename '%s'\n", filename);
-        return;
-    }
-
-    // Only allow deleting .um4 files
-    size_t name_len = strlen(filename);
-    if (name_len < 5 || strcmp(filename + name_len - 4, ".um4") != 0) {
-        snprintf(buffer, size,
-                 "{\"success\": false, \"error\": \"Only .um4 files can be deleted\"}");
-        printf("api_delete: Attempted to delete non-.um4 file '%s'\n", filename);
         return;
     }
 

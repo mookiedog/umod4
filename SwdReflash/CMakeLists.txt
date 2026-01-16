@@ -89,16 +89,14 @@ pico_enable_stdio_uart(${PROJECT_NAME} 0)
 pico_enable_stdio_usb(${PROJECT_NAME} 0)
 pico_enable_stdio_rtt(${PROJECT_NAME} 0)
 
-# Tell the link against pico_runtime (below) to not pull in things like malloc and printf
-# that the SDK might consider as 'basic', but are certainly unecessary in this project.
-# See https://github.com/raspberrypi/pico-sdk/issues/2250#issuecomment-2646595259
-pico_minimize_runtime(${PROJECT_NAME} ...)
-
 target_link_libraries(${PROJECT_NAME}
-    pico_runtime       # Basic runtime support
-    pico_platform      # Platform definitions
-    hardware_gpio      # GPIO control
-    hardware_timer     # For busy_wait_us_32()
+    pico_stdlib
+    hardware_gpio
+)
+
+# Force the linker to garbage collect unused code (like printf)
+target_link_options(${PROJECT_NAME} PRIVATE
+    -Wl,--gc-sections
 )
 
 # Print build size after compilation
@@ -118,4 +116,4 @@ pico_add_hex_output(${PROJECT_NAME})  # Intel HEX (.hex)
 # not by drag-and-drop to BOOTSEL drive
 
 # Use custom RAM-only linker script
-pico_set_linker_script(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/memmap_ram.ld)
+# pico_set_linker_script(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/memmap_ram.ld)

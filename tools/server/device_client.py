@@ -202,3 +202,141 @@ class DeviceClient:
             return response.status_code == 200
         except:
             return False
+
+    def upload_file(
+        self,
+        source_path: str,
+        destination_filename: str,
+        chunk_size: int = 65536,
+        progress_callback=None
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Upload a file to device with chunking and SHA256 verification.
+
+        Args:
+            source_path: Local path to file to upload
+            destination_filename: Name to save as on device (stored in /uploads/)
+            chunk_size: Size of chunks to send (default 64KB)
+            progress_callback: Optional callback(bytes_sent, total_bytes)
+
+        Returns:
+            Tuple of (success: bool, sha256: Optional[str], error_message: Optional[str])
+        """
+        try:
+            # Validate source file
+            if not os.path.exists(source_path):
+                return False, None, f"Source file not found: {source_path}"
+
+            total_size = os.path.getsize(source_path)
+            if total_size == 0:
+                return False, None, "Source file is empty"
+
+            # Calculate SHA256 of source file
+            print(f"Calculating SHA-256 of source file...")
+            source_sha256 = self.calculate_file_sha256(source_path)
+            print(f"Source SHA-256: {source_sha256}")
+
+            # Generate session ID
+            import uuid
+            session_id = str(uuid.uuid4())
+
+            # Upload file in chunks
+            bytes_sent = 0
+            chunk_offset = 0
+
+            with open(source_path, 'rb') as f:
+                while bytes_sent < total_size:
+                    # Read chunk
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+
+                    # Prepare headers
+                    headers = {
+                        'X-Session-ID': session_id,
+                        'X-Filename': destination_filename,
+                        'X-Total-Size': str(total_size),
+                        'X-Chunk-Size': str(chunk_size),
+                        'X-Chunk-Offset': str(chunk_offset),
+                        'X-Is-Last-Chunk': 'true' if (bytes_sent + len(chunk) >= total_size) else 'false',
+                        'Content-Type': 'application/octet-stream'
+                    }
+
+                    # Calculate CRC32 for this chunk (optional but recommended)
+                    import zlib
+                    chunk_crc32 = zlib.crc32(chunk) & 0xFFFFFFFF
+                    headers['X-Chunk-CRC32'] = f"{chunk_crc32:08x}"
+
+                    # Send chunk
+                    response = requests.post(
+                        f"{self.base_url}/api/upload",
+                        data=chunk,
+                        headers=headers,
+                        timeout=self.timeout
+                    )
+
+                    if response.status_code != 200:
+                        error_msg = f"Upload failed: HTTP {response.status_code}"
+                        try:
+                            error_data = response.json()
+                            if 'error' in error_data:
+                                error_msg = f"Upload failed: {error_data['error']}"
+                        except:
+                            pass
+                        return False, None, error_msg
+
+                    # Update progress
+                    bytes_sent += len(chunk)
+                    chunk_offset += len(chunk)
+
+                    if progress_callback:
+                        progress_callback(bytes_sent, total_size)
+
+                    # Check if upload is complete
+                    try:
+                        response_data = response.json()
+                        if response_data.get('success'):
+                            if bytes_sent >= total_size:
+                                print(f"Upload complete: {bytes_sent} bytes sent")
+                                break
+                    except:
+                        pass
+
+            # Verify upload was complete
+            if bytes_sent < total_size:
+                return False, None, f"Upload incomplete: {bytes_sent}/{total_size} bytes sent"
+
+            print(f"Upload complete, SHA-256 should match: {source_sha256}")
+            return True, source_sha256, None
+
+        except Exception as e:
+            error_msg = f"Error uploading file: {e}"
+            print(error_msg)
+            return False, None, error_msg
+
+    def get_upload_session_status(self, session_id: str) -> Optional[Dict]:
+        """Get status of an upload session for resumption.
+
+        Args:
+            session_id: Session UUID
+
+        Returns:
+            Dictionary with session status or None on error
+            Example: {"session_id": "...", "filename": "...", "bytes_received": 1234, "total_size": 5678}
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/upload/session?session_id={session_id}",
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Check for error response
+            if 'error' in data:
+                print(f"Device returned error for session query: {data['error']}")
+                return None
+
+            return data
+        except Exception as e:
+            print(f"Error getting upload session status: {e}")
+            return None

@@ -16,7 +16,7 @@
 #define SDIO_D3  SD_DAT3      // GPIO 15
 
 // PIO configuration
-#define SDIO_PIO PIO_SD
+#define SDIO_PIO PIO_SDIO
 #define SDIO_SM  0
 #define SDIO_GPIO_FUNC SD_GPIO_FUNC
 #define SDIO_GPIO_SLEW GPIO_SLEW_RATE_FAST

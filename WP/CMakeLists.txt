@@ -181,9 +181,31 @@ add_custom_command(
 # Ensure fsdata.c is generated before building the executable
 add_custom_target(generate_fsdata DEPENDS ${FSDATA_OUTPUT})
 
+# Generate embedded SwdReflash binary for SWD programming
+set(SWDREFLASH_ELF "${CMAKE_CURRENT_BINARY_DIR}/../SwdReflash/SwdReflash")
+set(SWDREFLASH_BIN "${CMAKE_CURRENT_BINARY_DIR}/swdreflash.bin")
+set(SWDREFLASH_C "${CMAKE_CURRENT_BINARY_DIR}/swdreflash_binary.c")
+set(SWDREFLASH_H "${CMAKE_CURRENT_BINARY_DIR}/swdreflash_binary.h")
+set(BIN2C_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../tools/src/bin2c.py")
+
+# Convert SwdReflash ELF to raw binary, then to C array
+# Note: Top-level CMakeLists.txt ensures SwdReflash is built before WP,
+#       so the ELF file will exist when this command runs
+add_custom_command(
+    OUTPUT ${SWDREFLASH_C} ${SWDREFLASH_H}
+    COMMAND ${CROSSCOMPILE_TOOL_PATH}/arm-none-eabi-objcopy -O binary ${SWDREFLASH_ELF} ${SWDREFLASH_BIN}
+    COMMAND python3 ${BIN2C_SCRIPT} ${SWDREFLASH_BIN} ${CMAKE_CURRENT_BINARY_DIR}/swdreflash_binary swdreflash 0x20000101 0x20042000
+    DEPENDS ${BIN2C_SCRIPT} ${SWDREFLASH_ELF}
+    COMMENT "Embedding SwdReflash binary for SWD programming"
+    VERBATIM
+)
+
+add_custom_target(generate_swdreflash_binary DEPENDS ${SWDREFLASH_C} ${SWDREFLASH_H})
+
 add_executable(${PROJECT_NAME}
     src/Clock.cpp
     src/Crc.cpp
+    src/FlashEp.cpp
     src/Gps.cpp
     src/malloc_lock.cpp
     src/Logger.cpp
@@ -194,6 +216,7 @@ add_executable(${PROJECT_NAME}
     src/SdCardSDIO.cpp
     src/Shell.cpp
     src/Spi.cpp
+    src/SWDLoader.cpp
     src/TimeUtils.cpp
     src/Uart.cpp
     src/WiFiManager.cpp
@@ -201,13 +224,16 @@ add_executable(${PROJECT_NAME}
     src/NetworkManager.cpp
     src/api_handlers.c
     src/fs_custom.c
-    src/file_delete_task.c
+    src/file_io_task.c
+    src/upload_handler.c
     # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
     src/httpd_stubs.c
+    # Generated SwdReflash binary (RAM-resident EP flasher, loaded to EP via SWD)
+    ${SWDREFLASH_C}
 )
 
-# Ensure fsdata.c is generated before compiling fs.c
-add_dependencies(${PROJECT_NAME} generate_fsdata)
+# Ensure generated files are created before compiling
+add_dependencies(${PROJECT_NAME} generate_fsdata generate_swdreflash_binary)
 
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
 set_source_files_properties(
@@ -233,6 +259,9 @@ pico_generate_pio_header(${PROJECT_NAME}  ${SDIO_RP2350_SRC_DIR}/src/sdio_rp2350
 
 # Neopixel PIO program
 pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/ws2812/ws2812.pio)
+
+# SWD PIO engine
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/swd/swd.pio)
 
 # Override the standard Segger definitions for these symbols:
 #add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
@@ -277,6 +306,11 @@ target_sources(sdio_rp2350 INTERFACE
 target_include_directories(sdio_rp2350 INTERFACE
     "${SDIO_RP2350_SRC_DIR}/include"
 )
+
+#add_library(swd_load INTERFACE)
+#target_sources(swd_load INTERFACE
+#  ${CMAKE_CURRENT_SOURCE_DIR}/src/swd/swd_load.cpp)
+#target_include_directories(${PROJECT_NAME} PRIVATE src/swd)
 
 # Possibly temp: allow WP to include 'hardware.h' from the EP directory to access certain shared info
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../EP/src)
@@ -335,6 +369,7 @@ target_link_libraries(${PROJECT_NAME}
     pico_lwip_http
     pico_lwip_mdns
     pico_sha256  # Hardware-accelerated SHA-256
+    #swd_load
 )
 
 # Create some useful output files

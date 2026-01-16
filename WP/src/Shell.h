@@ -33,6 +33,7 @@ class Shell {
     void cmd_hd(char* args);
     void cmd_pwd(char* args);
     void cmd_sdperf(char* args);
+    void cmd_flashEp(char* args);
 
     const char* cwd;
 
