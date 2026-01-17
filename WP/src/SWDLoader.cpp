@@ -1,15 +1,16 @@
 #include "SWDLoader.h"
 #include "hardware/clocks.h"
-#include <algorithm>        // min
+#include <algorithm>
 #include <stdio.h>
 
 #include "swd.pio.h"
 
 // --- Exclusive Program Management (Internal Tracking) ---
+// These remain static to the file to keep the global namespace clean.
 static const pio_program* s_pio_prog[2] = {nullptr, nullptr};
 static uint16_t s_pio_offset[2] = {0xffff, 0xffff};
 
-void pio_remove_exclusive_program(PIO pio) {
+static void pio_remove_exclusive_program(PIO pio) {
     uint8_t pio_index = pio == pio0 ? 0 : 1;
     const pio_program* current_program = s_pio_prog[pio_index];
     uint16_t current_offset = s_pio_offset[pio_index];
@@ -20,7 +21,7 @@ void pio_remove_exclusive_program(PIO pio) {
     }
 }
 
-uint16_t pio_change_exclusive_program(PIO pio, const pio_program* prog) {
+static uint16_t pio_change_exclusive_program(PIO pio, const pio_program* prog) {
     pio_remove_exclusive_program(pio);
     uint8_t pio_index = pio == pio0 ? 0 : 1;
     s_pio_prog[pio_index] = prog;
@@ -30,12 +31,34 @@ uint16_t pio_change_exclusive_program(PIO pio, const pio_program* prog) {
 
 // --- Class Implementation ---
 
-SWDLoader::SWDLoader(PIO pio, bool verbose_) : swd_pio(pio), pio_offset(0), pio_sm(0), pio_prog(nullptr), pio_clkdiv(1.0f), verbose(verbose_) {}
+SWDLoader::SWDLoader(PIO pio, bool verbose_)
+    : swd_pio(pio), pio_offset(0), pio_sm(0), pio_prog(nullptr), pio_clkdiv(1.0f),
+      verbose(verbose_), is_initialized(false) {}
 
 void SWDLoader::wait_for_idle() {
     uint pull_offset = (pio_prog == &swd_raw_write_program) ? 2 :
                        (pio_prog == &swd_raw_read_program) ? 0 : 5;
+
+#if 0
+    // Safety timeout: prevents the host from hanging if the target stops responding.
+    // 1,000,000 loops is roughly ~50-100ms depending on CPU clock.
+    uint32_t timeout = 1000000;
+    while (!pio_sm_is_tx_fifo_empty(swd_pio, pio_sm) || swd_pio->sm[pio_sm].addr != pio_offset + pull_offset) {
+        if (--timeout == 0) {
+            if (verbose) printf("SWD Timeout: PIO SM stuck at address %d\n", swd_pio->sm[pio_sm].addr - pio_offset);
+            return;
+        }
+    }
+#else
     while (!pio_sm_is_tx_fifo_empty(swd_pio, pio_sm) || swd_pio->sm[pio_sm].addr != pio_offset + pull_offset);
+#endif
+}
+
+bool SWDLoader::clear_sticky_errors() {
+    // To clear sticky errors, we write to the ABORT register (0x00 on the DP).
+    // Bits: 4 (ORUNERRCLR), 3 (WDERRCLR), 2 (STICKYERRCLR), 1 (STICKYCMPCLR)
+    // 0x1E clears all common error flags.
+    return write_cmd(0x01, 0x1E);
 }
 
 void SWDLoader::switch_program(bool read, bool raw) {
@@ -53,13 +76,7 @@ void SWDLoader::switch_program(bool read, bool raw) {
     }
 }
 
-void SWDLoader::unload_pio() {
-    pio_sm_set_enabled(swd_pio, pio_sm, false);
-    pio_remove_exclusive_program(swd_pio);
-    pio_sm_unclaim(swd_pio, pio_sm);
-}
-
-bool SWDLoader::write_cmd(uint cmd, uint data) {
+bool SWDLoader::write_cmd(uint32_t cmd, uint32_t data) {
     if (pio_prog != &swd_write_program) {
         switch_program(false);
     }
@@ -72,19 +89,19 @@ bool SWDLoader::write_cmd(uint cmd, uint data) {
     return true;
 }
 
-bool SWDLoader::write_block(uint addr, const uint* data, uint len_in_words) {
+bool SWDLoader::write_block(uint32_t addr, const uint32_t* data, uint32_t len_in_words) {
     if (!write_cmd(0x0B, addr)) return false;
-    for (uint i = 0; i < len_in_words; ++i) {
+    for (uint32_t i = 0; i < len_in_words; ++i) {
         if (!write_cmd(0x3B, *data++)) return false;
     }
     return true;
 }
 
-bool SWDLoader::write_reg(uint addr, uint data) {
+bool SWDLoader::write_reg(uint32_t addr, uint32_t data) {
     return write_block(addr, &data, 1);
 }
 
-bool SWDLoader::read_cmd(uint cmd, uint& data) {
+bool SWDLoader::read_cmd(uint32_t cmd, uint32_t& data) {
     if (pio_prog != &swd_read_program) {
         switch_program(true);
     }
@@ -98,7 +115,7 @@ bool SWDLoader::read_cmd(uint cmd, uint& data) {
     return true;
 }
 
-bool SWDLoader::read_reg(uint addr, uint &data) {
+bool SWDLoader::read_reg(uint32_t addr, uint32_t &data) {
     if (!write_cmd(0x0B, addr)) return false;
     if (!read_cmd(0x1F, data)) return false;
     if (!read_cmd(0x3D, data)) return false;
@@ -111,13 +128,23 @@ void SWDLoader::idle() {
     pio_sm_put_blocking(swd_pio, pio_sm, 0);
 }
 
-bool SWDLoader::connect(bool first, uint core) {
-    if (first) {
+bool SWDLoader::connect(uint32_t core, bool halt) {
+    if (!is_initialized) {
+        gpio_init(2);
+        gpio_init(3);
+        gpio_disable_pulls(2);
+        gpio_pull_up(3);
+
+        uint32_t sys_clk_hz = clock_get_hz(clk_sys);
+        pio_clkdiv = sys_clk_hz / (1 * MHZ);
+
         pio_prog = &swd_raw_write_program;
         pio_offset = pio_change_exclusive_program(swd_pio, &swd_raw_write_program);
         pio_sm = pio_claim_unused_sm(swd_pio, true);
+
         swd_initial_init(swd_pio, pio_sm, 2, 3);
         swd_raw_program_init(swd_pio, pio_sm, pio_offset, 2, 3, false, pio_clkdiv);
+        is_initialized = true;
     } else {
         switch_program(false, true);
     }
@@ -155,14 +182,25 @@ bool SWDLoader::connect(bool first, uint core) {
     pio_sm_put_blocking(swd_pio, pio_sm, 0x01002927 | (core << 28));
 
     if (verbose) printf("%s: Read ID\n", __FUNCTION__);
-    uint id;
+    uint32_t id;
     if (!read_cmd(0x25, id)) {
         if (verbose) printf("%s: Read ID failed\n", __FUNCTION__);
         return false;
     }
-    if (verbose) printf("Received ID: %08x\n", __FUNCTION__, id);
+    if (verbose) printf("Received ID: %08x\n", id);
 
     if (core != 0xf && id != 0x0bc12477) return false;
+
+    #if 0
+    // FIXME add this later
+    // If the previous session crashed or timed out during a bus access,
+    // we should clear sticky errors here before trying to Power Up the DP.
+    if (verbose) printf("%s: Clearing sticky errors\n", __FUNCTION__);
+    if (!clear_sticky_errors()) {
+        if (verbose) printf("%s: Abort/Clear failed\n", __FUNCTION__);
+        return false;
+    }
+    #endif
 
     if (verbose) printf("%s: Abort\n", __FUNCTION__);
     if (!write_cmd(0x01, 0x1E)) {
@@ -182,7 +220,7 @@ bool SWDLoader::connect(bool first, uint core) {
         return false;
     }
 
-    uint status;
+    uint32_t status;
     if (!read_cmd(0x0D, status)) {
         if (verbose) printf("%s: Read status on power up failed\n", __FUNCTION__);
         return false;
@@ -200,10 +238,12 @@ bool SWDLoader::connect(bool first, uint core) {
             return false;
         }
 
-        if (verbose) printf("%s: Halt CPU\n", __FUNCTION__);
-        if (!write_reg(0xe000edf0, 0xA05F0003)) {
-            if (verbose) printf("%s: Halt failed\n", __FUNCTION__);
-            return false;
+        if (halt) {
+            if (verbose) printf("%s: Halt CPU\n", __FUNCTION__);
+            if (!write_reg(0xe000edf0, 0xA05F0003)) {
+                if (verbose) printf("%s: Halt failed\n", __FUNCTION__);
+                return false;
+            }
         }
     } else {
         if (!write_cmd(0x29, 0x00000001)) {
@@ -217,37 +257,36 @@ bool SWDLoader::connect(bool first, uint core) {
     return true;
 }
 
-bool SWDLoader::load(uint address, const uint* data, uint len_in_bytes) {
+bool SWDLoader::load_ram(uint32_t address, const uint32_t* data, uint32_t len_in_bytes) {
     if (verbose) printf("%s: Loading %d bytes at %08x\n", __FUNCTION__, len_in_bytes, address);
     idle();
-    constexpr uint BLOCK_SIZE = 1024;
-    uint block_len_in_words = std::min((BLOCK_SIZE - (address & (BLOCK_SIZE - 1))) >> 2, len_in_bytes >> 2);
-    for (uint i = 0; i < len_in_bytes; ) {
+    constexpr uint32_t BLOCK_SIZE = 1024;
+
+    for (uint32_t i = 0; i < len_in_bytes; ) {
+        uint32_t block_len_in_words = std::min((BLOCK_SIZE - ((address + i) & (BLOCK_SIZE - 1))) >> 2, (len_in_bytes - i) >> 2);
         if (!write_block(address + i, &data[i >> 2], block_len_in_words)) {
             if (verbose) printf("%s: Block write failed\n", __FUNCTION__);
             return false;
         }
         i += block_len_in_words << 2;
-        block_len_in_words = std::min(BLOCK_SIZE >> 2, (len_in_bytes - i) >> 2);
     }
 
-    uint j = 0;
-    {
-        uint check_data;
-        if (!read_reg(address + j, check_data)) {
-            if (verbose) printf("%s: Read failed\n", __FUNCTION__);
-            return false;
-        }
-        if (check_data != data[j >> 2]) {
-            if (verbose) printf("%s: Verify failed at %08x, %08x != %08x\n", __FUNCTION__, address + j, check_data, data[j >> 2]);
-            return false;
-        }
+    // Verify first word
+    uint32_t check_data;
+    if (!read_reg(address, check_data)) {
+        if (verbose) printf("%s: Read failed\n", __FUNCTION__);
+        return false;
     }
+    if (check_data != data[0]) {
+        if (verbose) printf("%s: Verify failed at %08x, %08x != %08x\n", __FUNCTION__, address, check_data, data[0]);
+        return false;
+    }
+
     idle();
     return true;
 }
 
-bool SWDLoader::start(uint pc, uint sp) {
+bool SWDLoader::start(uint32_t pc, uint32_t sp) {
     idle();
     write_reg(0xe000e180, 0xFFFFFFFF);
     write_reg(0xe000e280, 0xFFFFFFFF);
@@ -276,49 +315,9 @@ bool SWDLoader::start(uint pc, uint sp) {
     return true;
 }
 
-bool SWDLoader::swd_reset_internal() {
-    gpio_init(2);
-    gpio_init(3);
-    gpio_disable_pulls(2);
-    gpio_pull_up(3);
-    uint sys_clk_hz = clock_get_hz(clk_sys);
-    pio_clkdiv = sys_clk_hz / (1 * MHZ);
-    bool ok = connect(true, 0xf);
-    if (verbose) printf("%s: Reset %s\n", __FUNCTION__, ok ? "OK" : "Fail");
-    return ok;
-}
-
-bool SWDLoader::swd_reset() {
-    bool ok = swd_reset_internal();
-    unload_pio();
-    return ok;
-}
-
-bool SWDLoader::swd_load_program_internal(const uint* addresses, const uint** data, const uint* data_len_in_bytes, uint num_sections, uint pc, uint sp, bool use_xip_as_ram) {
-    bool ok = swd_reset_internal();
-    if (!ok) return false;
-    if (verbose) printf("%s: Connecting\n", __FUNCTION__);
-    ok = connect(false, 0);
-    if (verbose) printf("%s: Connected core 0 %s\n", __FUNCTION__, ok ? "OK" : "Fail");
-    if (!ok) return false;
-    if (use_xip_as_ram) {
-        if (verbose) printf("%s: Disable XIP\n", __FUNCTION__);
-        if (!write_reg(0x14000000, 0)) {
-            if (verbose) printf("%s: Disable XIP failed\n", __FUNCTION__);
-            return false;
-        }
-    }
-    for (uint i = 0; i < num_sections; ++i) {
-        if (!load(addresses[i], data[i], data_len_in_bytes[i])) {
-            if (verbose) printf("%s: Failed to load section %d\n", __FUNCTION__, i);
-            return false;
-        }
-    }
-    return start(pc, sp);
-}
-
-bool SWDLoader::swd_load_program(const uint* addresses, const uint** data, const uint* data_len_in_bytes, uint num_sections, uint pc, uint sp, bool use_xip_as_ram) {
-    bool ok = swd_load_program_internal(addresses, data, data_len_in_bytes, num_sections, pc, sp, use_xip_as_ram);
-    unload_pio();
-    return ok;
+void SWDLoader::unload() {
+    pio_sm_set_enabled(swd_pio, pio_sm, false);
+    pio_remove_exclusive_program(swd_pio);
+    pio_sm_unclaim(swd_pio, pio_sm);
+    is_initialized = false;
 }

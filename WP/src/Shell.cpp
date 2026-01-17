@@ -721,6 +721,28 @@ void Shell::cmd_flashEp(char* args)
     sleep_us(50);
 
     printf("  - Loading SWD Reflash Helper\n");
+    #if 1
+    bool ok;
+    const uint32_t core0 = 0;
+    const bool halt = true;
+    ok = swdLoader->connect(core0, halt);
+    if (!ok) {
+        printf("SWD Reflash Helper program load FAILED: unable to connect to target\n");
+        return;
+    }
+    ok = swdLoader->load_ram(0x20000000, swdreflash_data, swdreflash_size);
+    if (!ok) {
+        printf("SWD Reflash Helper program load FAILED: unable to load program to target RAM\n");
+        return;
+    }
+
+    ok = swdLoader->start(0x20000001, 0x20042000);
+    if (!ok) {
+        printf("SWD Reflash Helper program load FAILED: unable to start program\n");
+        return;
+    }
+
+    #else
     // very temporary:
     const uint section_addresses[] = {
         0x20000000
@@ -736,6 +758,7 @@ void Shell::cmd_flashEp(char* args)
     printf("Loading SWD reflash program to address 0x%08X\n", section_addresses[0]);
     uint32_t num_sections = 1;
     bool ok = swdLoader->swd_load_program(section_addresses, section_data, section_data_len, num_sections, 0x20000001, 0x20042000);
+    #endif
 
     if (!ok) {
         printf("SWD Reflash Helper program load FAILED\n");
@@ -743,7 +766,7 @@ void Shell::cmd_flashEp(char* args)
     }
 
     printf("  - Flashing /EP.uf2\n");
-    int res = 0; //FlashEp::process_uf2(lfs, "/EP.uf2");
+    int res = FlashEp::process_uf2(lfs, "/EP.uf2");
 
 
     vTaskDelay(pdMS_TO_TICKS(10000));

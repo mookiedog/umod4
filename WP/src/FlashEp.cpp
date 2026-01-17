@@ -33,10 +33,12 @@ typedef struct {
     uint32_t magicEnd;
 } UF2_Block;
 
+bool verbose = true;
+
 // Stub: Deal with a consolidated [up to] 64K metablock
 bool FlashEp::handle_metablock(uint32_t start_addr, uint8_t *buffer, size_t size)
 {
-    printf("%s: Metablock ready at 0x%08X, size %zu\n", __FUNCTION__, start_addr, size);
+    printf("%s: Metablock ready for target [0x%08X..0x%08X], size %zu\n", __FUNCTION__, start_addr, start_addr+size-1, size);
     if (size == 0) {
         return true;
     }
@@ -44,7 +46,7 @@ bool FlashEp::handle_metablock(uint32_t start_addr, uint8_t *buffer, size_t size
         printf("%s: Metablock size %zu is not multiple of 4096\n", __FUNCTION__,  size);
         return false;
     }
-    bool ok = true; //swdLoader->load_ram_block(start_addr, (const uint32_t*)buffer, size);
+    bool ok = swdLoader->load_ram(0x20010000, (uint32_t*)buffer, size);
     return ok;
 }
 
@@ -60,6 +62,7 @@ int32_t FlashEp::process_uf2(lfs_t *lfs, const char *path)
     size_t metablock_offset = 0;
     bool first_block = true;
 
+    if (verbose) printf("%s: Opening UF2 file %s\n", __FUNCTION__, path);
     // 1. Stub: Open the file
     int err = lfs_file_open(lfs, &file, path, LFS_O_RDONLY);
     if (err < 0) return err;
@@ -69,6 +72,10 @@ int32_t FlashEp::process_uf2(lfs_t *lfs, const char *path)
     while (lfs_file_read(lfs, &file, &block, sizeof(UF2_Block)) == sizeof(UF2_Block)) {
 
         // 4. Parse and verify
+        if (false && verbose) {
+            printf("%s: Read UF2 block %u/%u to 0x%08X, size %u\n",
+            __FUNCTION__, block.blockNo, block.numBlocks, block.targetAddr, block.payloadSize);
+        }
         if (block.magicStart0 != UF2_MAGIC_START0 ||
             block.magicStart1 != UF2_MAGIC_START1 ||
             block.magicEnd != UF2_MAGIC_END) {

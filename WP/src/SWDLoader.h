@@ -6,49 +6,39 @@
 
 class SWDLoader {
 public:
-    SWDLoader(PIO pio = pio0, bool verbose = false);
+    // verbose defaults to false to keep console clean
+    SWDLoader(PIO pio = pio0, bool verbose_ = false);
 
-    bool swd_reset();
-    bool swd_load_program(const uint* addresses,
-                         const uint** data,
-                         const uint* data_len_in_bytes,
-                         uint num_sections,
-                         uint pc = 0x20000001,
-                         uint sp = 0x20042000,
-                         bool use_xip_as_ram = false);
+    // Public API Lifecycle
+    bool connect(uint32_t core = 0, bool halt = true);
+    bool load_ram(uint32_t address, const uint32_t* data, uint32_t len_in_bytes);
+    bool start(uint32_t pc, uint32_t sp);
+
+    // Cleanup
+    void unload();
 
 private:
-    // Internal state variables (formerly globals)
-    uint pio_offset;
-    uint pio_sm;
+    // Internal State
+    PIO swd_pio;
+    uint32_t pio_offset;
+    uint32_t pio_sm;
     const pio_program_t* pio_prog;
     float pio_clkdiv;
-    PIO swd_pio;
     bool verbose;
+    bool is_initialized = false; // Tracks if PIO hardware is set up
 
-    // Strict logic functions from original source
+    // Helper functions (Strictly preserved logic)
+    bool clear_sticky_errors();
     void wait_for_idle();
     void switch_program(bool read, bool raw = false);
-    void unload_pio();
-    bool write_cmd(uint cmd, uint data);
-    bool write_block(uint addr, const uint* data, uint len_in_words);
-    bool write_reg(uint addr, uint data);
-    bool read_cmd(uint cmd, uint& data);
-    bool read_reg(uint addr, uint &data);
+    bool write_cmd(uint32_t cmd, uint32_t data);
+    bool write_block(uint32_t addr, const uint32_t* data, uint32_t len_in_words);
+    bool write_reg(uint32_t addr, uint32_t data);
+    bool read_cmd(uint32_t cmd, uint32_t& data);
+    bool read_reg(uint32_t addr, uint32_t &data);
     void idle();
-    bool connect(bool first = true, uint core = 0);
-    bool load(uint address, const uint* data, uint len_in_bytes);
-    bool start(uint pc, uint sp);
-    bool swd_reset_internal();
-    bool swd_load_program_internal(const uint* addresses,
-                                  const uint** data,
-                                  const uint* data_len_in_bytes,
-                                  uint num_sections,
-                                  uint pc,
-                                  uint sp,
-                                  bool use_xip_as_ram);
 };
 
+// For convenience, a global SWDLoader instance:
 extern SWDLoader* swdLoader;
-
-#endif // SWD_LOADER_H
+#endif
