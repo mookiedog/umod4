@@ -4,22 +4,21 @@
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
 
-class SWDLoader {
+class Swd {
 public:
-    // verbose defaults to false to keep console clean
-    SWDLoader(PIO pio = pio0, bool verbose_ = false);
+    Swd(PIO pio, uint32_t swdClk_gpio, uint32_t swdIo_gpio, bool verbose_ = false);
 
-    // Public API Lifecycle
-    bool connect(uint32_t core = 0, bool halt = true);
-    bool load_ram(uint32_t address, const uint32_t* data, uint32_t len_in_bytes);
-    bool start(uint32_t pc, uint32_t sp);
+    bool connect_target(uint32_t core = 0, bool halt = true);
+    bool write_target_mem(uint32_t target_addr, const uint32_t* data, uint32_t len_in_bytes);
+    bool read_target_mem(uint32_t target_addr, uint32_t* data, uint32_t len_in_bytes);
+    bool start_target(uint32_t pc, uint32_t sp);
 
-    // Cleanup
     void unload();
 
 private:
-    // Internal State
     PIO swd_pio;
+    uint32_t swc;       // SWD Clock GPIO
+    uint32_t swd;       // SWD IO GPIO
     uint32_t pio_offset;
     uint32_t pio_sm;
     const pio_program_t* pio_prog;
@@ -27,7 +26,7 @@ private:
     bool verbose;
     bool is_initialized = false; // Tracks if PIO hardware is set up
 
-    // Helper functions (Strictly preserved logic)
+    // Helper functions
     bool clear_sticky_errors();
     void wait_for_idle();
     void switch_program(bool read, bool raw = false);
@@ -39,6 +38,6 @@ private:
     void idle();
 };
 
-// For convenience, a global SWDLoader instance:
-extern SWDLoader* swdLoader;
+// For convenience, a global Swd instance:
+extern Swd* swd;
 #endif

@@ -26,7 +26,7 @@
 #include "SdCardSDIO.h"
 #include "Shell.h"
 #include "Spi.h"
-#include "SWDLoader.h"
+#include "Swd.h"
 #include "Uart.h"
 #include "umod4_WP.h"
 #include "uart_rx32.pio.h"
@@ -56,7 +56,7 @@ NeoPixelConnect* rgb_led;
 Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
-SWDLoader* swdLoader;
+Swd* swd;
 
 int pio_sm_uart;
 
@@ -839,9 +839,9 @@ void bootSystem()
     printf("%s: Initializing file I/O task\n", __FUNCTION__);
     file_io_task_init();
 
-    // Instantiate an SWD loader object
-    bool verbose = true;
-    swdLoader = new SWDLoader(PIO_SWD, verbose);
+    // Instantiate an SWD object to reprogram the EP, if needed
+    bool verbose = false;
+    swd = new Swd(PIO_SWD, EP_SWCLK_PIN, EP_SWDAT_PIN, verbose);
 }
 
 
@@ -940,8 +940,17 @@ void initSpareIos()
 }
 
 // ----------------------------------------------------------------------------------
-// Helper functions for MDL API handlers
+void epResetAndRun()
+{
+    gpio_init(EP_RUN_PIN);
+    gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
+    gpio_put(EP_RUN_PIN, 0);
+    sleep_us(100);
+    gpio_put(EP_RUN_PIN, 1);
+}
+
 // ----------------------------------------------------------------------------------
+// Helper functions for MDL API handlers
 
 extern "C" const char* get_wp_version(void) {
     return "1.0.0-mdl-phase1";
@@ -983,11 +992,7 @@ int main()
         // While bench testing, it is hugely useful to reset the EP here which
         // mimics both processors getting reset at ignition key ON.
         #warning " ********** EXTREMELY TEMP - RESETTING THE EP **************"
-        gpio_init(EP_RUN_PIN);
-        gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
-        gpio_put(EP_RUN_PIN, 0);
-        sleep_us(100);
-        gpio_put(EP_RUN_PIN, 1);
+        epResetAndRun();
     }
 
     #if defined SPARE1_LED_PIN

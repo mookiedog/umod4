@@ -36,7 +36,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 # The toolchain file explained where to find the cross-compiler.
 # We need to tell that cross-compiler a bit more about how to compile the code for this project.
-set(CPU cortex-m0)
+set(CPU cortex-m0plus)
 
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -mcpu=${CPU} -mthumb")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcpu=${CPU} -mthumb")
@@ -68,35 +68,42 @@ add_executable(${PROJECT_NAME}
     src/main.c
 )
 
-# Minimal compile definitions for RAM-only LED blink
+# Try an minmize the amount of needless crap that would otherwise get pulled into this build.
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    # Very small heap since we don't use malloc for LED blink
-    PICO_HEAP_SIZE=1024
+    # No malloc, no heap
+    PICO_NO_MALLOC=1
+    PICO_HEAP_SIZE=0
 
-    # Confirm we're in no-flash mode
     PICO_NO_FLASH=1
+    PICO_PRINTF_NONE=1
 
-    # No stdio needed for LED blink
-    PICO_STDIO_ENABLE_CRLF_SUPPORT=0
-    PICO_STDIO_DEFAULT_CRLF=0
+    # Disable the default alarm pool (removes alarm_pool_irq_handler)
+    PICO_TIME_DEFAULT_ALARM_POOL=0
 
-    # No malloc mutex needed (single core, no malloc)
-    PICO_USE_MALLOC_MUTEX=0
+    # Disable thread-safe background processing (removes mutexes)
+    PICO_RP2040_USB_DEVICE_ENUMERATION_FIX=0
+    PICO_USE_STACK_GUARDS=0
 )
 
 # Disable all stdio outputs (no UART, USB, or RTT needed for LED blink)
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
 pico_enable_stdio_usb(${PROJECT_NAME} 0)
 pico_enable_stdio_rtt(${PROJECT_NAME} 0)
+pico_enable_stdio_semihosting(${PROJECT_NAME} 0)
+
+# Target size reduction: Force the use of the "none" implementations
+pico_set_printf_implementation(${PROJECT_NAME} none)
+pico_set_float_implementation(${PROJECT_NAME} none)
 
 target_link_libraries(${PROJECT_NAME}
     pico_stdlib
-    hardware_gpio
+    hardware_flash
 )
 
-# Force the linker to garbage collect unused code (like printf)
 target_link_options(${PROJECT_NAME} PRIVATE
-    -Wl,--gc-sections
+    "--specs=nano.specs"
+    "--specs=nosys.specs"
+    "-Wl,--gc-sections"
 )
 
 # Print build size after compilation

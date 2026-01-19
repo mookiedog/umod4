@@ -9,7 +9,7 @@
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 #if 1
-    #include "SWDLoader.h"
+    #include "Swd.h"
 #else
     #include "swd_load.hpp"
 #endif
@@ -709,81 +709,125 @@ extern struct lfs_config lfs_cfg;
 // ----------------------------------------------------------------------------------
 void Shell::cmd_flashEp(char* args)
 {
-    printf("Flashing EP\n");
-
-    printf("  - Resetting the EP\n");
-    // This is kind of low level - should be encapsulated somewhere else
-    gpio_init(EP_RUN_PIN);
-    gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
-    gpio_put(EP_RUN_PIN, 0);
-    sleep_us(100);
-    gpio_put(EP_RUN_PIN, 1);
-    sleep_us(50);
-
-    printf("  - Loading SWD Reflash Helper\n");
-    #if 1
-    bool ok;
-    const uint32_t core0 = 0;
-    const bool halt = true;
-    ok = swdLoader->connect(core0, halt);
-    if (!ok) {
-        printf("SWD Reflash Helper program load FAILED: unable to connect to target\n");
-        return;
-    }
-    ok = swdLoader->load_ram(0x20000000, swdreflash_data, swdreflash_size);
-    if (!ok) {
-        printf("SWD Reflash Helper program load FAILED: unable to load program to target RAM\n");
-        return;
+    const char* path = args;
+    if ((!args) || strlen(args) == 0) {
+        path = "/EP.uf2";
     }
 
-    ok = swdLoader->start(0x20000001, 0x20042000);
-    if (!ok) {
-        printf("SWD Reflash Helper program load FAILED: unable to start program\n");
+    FlashEp::flashUf2(path);
+}
+
+
+// ----------------------------------------------------------------------------------
+// Dump EP memory via SWD
+// Usage: dumpep <start_addr> <length>
+//   start_addr: hex address (with or without 0x prefix)
+//   length: number of bytes to dump (decimal or hex with 0x prefix)
+void Shell::cmd_dumpEp(char* args)
+{
+    uint32_t startAddr = 0;
+    uint32_t length = 0;
+
+    // Parse start address
+    char* addrArg = decompose(&args, " ");
+    if (!addrArg || *addrArg == 0) {
+        printf("Usage: dumpep <start_addr> <length>\n");
+        printf("  start_addr: hex address (e.g., 0x10000000 or 10000000)\n");
+        printf("  length: bytes to dump (decimal or hex)\n");
         return;
     }
 
-    #else
-    // very temporary:
-    const uint section_addresses[] = {
-        0x20000000
-        };
-
-    const uint* section_data[] = {
-        (const unsigned int*)&swdreflash_data
-        };
-    const uint section_data_len[] = {
-        swdreflash_size
-        };
-
-    printf("Loading SWD reflash program to address 0x%08X\n", section_addresses[0]);
-    uint32_t num_sections = 1;
-    bool ok = swdLoader->swd_load_program(section_addresses, section_data, section_data_len, num_sections, 0x20000001, 0x20042000);
-    #endif
-
-    if (!ok) {
-        printf("SWD Reflash Helper program load FAILED\n");
+    // Parse address (accept with or without 0x prefix)
+    if (sscanf(addrArg, "%i", &startAddr) != 1) {
+        printf("Error: Invalid start address '%s'\n", addrArg);
         return;
     }
 
-    printf("  - Flashing /EP.uf2\n");
-    int res = FlashEp::process_uf2(lfs, "/EP.uf2");
-
-
-    vTaskDelay(pdMS_TO_TICKS(10000));
-    if (res == 0) {
-        printf("Fake Flash EP completed successfully\n");
-    }
-    else {
-        printf("Flash EP FAILED with error %d\n", res);
+    // Parse length
+    char* lenArg = decompose(&args, " ");
+    if (!lenArg || *lenArg == 0) {
+        printf("Error: Length argument required\n");
+        return;
     }
 
-    // Either way, let the EP run again
-    gpio_init(EP_RUN_PIN);
-    gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
-    gpio_put(EP_RUN_PIN, 0);
-    sleep_us(100);
-    gpio_put(EP_RUN_PIN, 1);
-    sleep_us(50);
+    if (sscanf(lenArg, "%i", &length) != 1) {
+        printf("Error: Invalid length '%s'\n", lenArg);
+        return;
+    }
+
+    if (length == 0) {
+        printf("Error: Length must be > 0\n");
+        return;
+    }
+
+    // Limit to reasonable size to avoid hogging memory
+    const uint32_t maxLength = 4096;
+    if (length > maxLength) {
+        printf("Warning: Limiting dump to %u bytes\n", maxLength);
+        length = maxLength;
+    }
+
+    // Check if SWD is available
+    if (!swd) {
+        printf("Error: SWD not initialized\n");
+        return;
+    }
+
+    printf("Dumping EP memory: 0x%08X, %u bytes\n", startAddr, length);
+
+    // Connect to EP (don't halt - just read memory)
+    if (!swd->connect_target(0, false)) {
+        printf("Error: Failed to connect to EP via SWD\n");
+        return;
+    }
+
+    // Round up length to multiple of 4 for word-aligned reads
+    uint32_t alignedLen = (length + 3) & ~3;
+    uint32_t* buffer = (uint32_t*)malloc(alignedLen);
+    if (!buffer) {
+        printf("Error: Failed to allocate %u bytes\n", alignedLen);
+        return;
+    }
+
+    // Read memory from EP
+    if (!swd->read_target_mem(startAddr, buffer, alignedLen)) {
+        printf("Error: Failed to read EP memory\n");
+        free(buffer);
+        return;
+    }
+
+    // Hex dump output (16 bytes per line)
+    const int lineWidth = 16;
+    uint8_t* byteBuffer = (uint8_t*)buffer;
+
+    for (uint32_t offset = 0; offset < length; offset += lineWidth) {
+        // Address
+        printf("%08X: ", startAddr + offset);
+
+        // Hex bytes
+        for (int i = 0; i < lineWidth; i++) {
+            if (offset + i < length) {
+                printf("%02X ", byteBuffer[offset + i]);
+            } else {
+                printf("   ");
+            }
+        }
+
+        // ASCII representation
+        for (int i = 0; i < lineWidth; i++) {
+            if (offset + i < length) {
+                uint8_t c = byteBuffer[offset + i];
+                if (isprint(c) && !iscntrl(c)) {
+                    printf("%c", c);
+                } else {
+                    printf(".");
+                }
+            }
+        }
+        printf("\n");
+    }
+
+    free(buffer);
 }
 
 
@@ -897,6 +941,9 @@ void Shell::cmd_sdperf(char* args)
                             }
                             else if (strcmp(cmd, "flash") == 0) {
                                 cmd_flashEp(args);
+                            }
+                            else if (strcmp(cmd, "dumpep") == 0) {
+                                cmd_dumpEp(args);
                             }
                             #if 0
                             else if (strcmp(cmd, "cp") == 0) {

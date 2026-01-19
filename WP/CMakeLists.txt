@@ -216,7 +216,7 @@ add_executable(${PROJECT_NAME}
     src/SdCardSDIO.cpp
     src/Shell.cpp
     src/Spi.cpp
-    src/SWDLoader.cpp
+    src/Swd.cpp
     src/TimeUtils.cpp
     src/Uart.cpp
     src/WiFiManager.cpp
@@ -314,6 +314,9 @@ target_include_directories(sdio_rp2350 INTERFACE
 
 # Possibly temp: allow WP to include 'hardware.h' from the EP directory to access certain shared info
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../EP/src)
+
+# WP needs to know how to talk to the RP2040 reflasher app
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../SwdReflash/src)
 
 # This next section defines a number of options as described in Appendix B of the C/C++ Pico SDK manual.
 target_compile_definitions(${PROJECT_NAME} PRIVATE

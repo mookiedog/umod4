@@ -80,10 +80,12 @@
         "openOCDLaunchCommands": ["adapter speed 5000"],
 
         // For RAM-only programs, we need special setup to start execution
+        // It is assumed that the program was built to run at 0x20000001
+        // and that the vector table sits at 0x20000100!
         "postLaunchCommands": [
             // Program is loaded to RAM by GDB's 'load' command
             // Now set PC and SP for RAM execution
-            "set $pc = 0x20000101",
+            "set $pc = 0x20000001",
             "set $sp = 0x20042000",
             // Set a breakpoint at main
             "break main",

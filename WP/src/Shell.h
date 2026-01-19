@@ -34,6 +34,7 @@ class Shell {
     void cmd_pwd(char* args);
     void cmd_sdperf(char* args);
     void cmd_flashEp(char* args);
+    void cmd_dumpEp(char* args);
 
     const char* cwd;
 
