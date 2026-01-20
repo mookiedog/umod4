@@ -697,30 +697,103 @@ Finally, do the following so that you can use picotool without needing sudo:
 
 ```bash
 cd ~/projects/picotool
-sudo cp udev/99-picotool.rules /etc/udev/rules.d/
+sudo cp udev/60-picotool.rules /etc/udev/rules.d/
+```
+
+If for some reason the cp command above was not able to find the file 'udev/60-picotool.rules', use a 'find' command to locate it, then use the path that find shows you instead:
+
+```bash
+cd ~/projects/picotool
+find . -name '*picotool.rules'
+./udev/60-picotool.rules
 ```
 
 ## Getting the Umod4 Source Code
 
 It is finally time to get the umod4 code loaded onto your system!
 
-Click on the 'source control' icon from the ribbon on the left side of the VS Code window.
-As in the RPi SDK section, select 'clone repository', then 'clone from Github', and type 'mookiedog/umod4' in the search box.
-Select the highlighted 'mookiedog/umod4' item from the list.
-A window will ask where you want to store the repository.
-Like before, navigate to your home directory, and click into the projects directory, then click 'ok'.
+Before getting started, make sure that your git configuration is to not mess with the line endings when it works with repositories.
+In your terminal window, type the following:
 
-When it completes, your 'projects' directory structure should show you a new umod4 directory:
+```bash
+cd ~/projects
+git config --global core.autocrlf false
+```
 
+Now, we clone the umod4 project onto your own machine.
+Still inside ~/projects, type:
+
+```bash
+git clone https://github.com/mookiedog/umod4.git
+```
+
+You should see output like this:
+```bash
+Cloning into 'umod4'...
+remote: Enumerating objects: 1766, done.
+remote: Counting objects: 100% (91/91), done.
+remote: Compressing objects: 100% (56/56), done.
+remote: Total 1766 (delta 36), reused 62 (delta 35), pack-reused 1675 (from 1)
+Receiving objects: 100% (1766/1766), 11.98 MiB | 16.18 MiB/s, done.
+Resolving deltas: 100% (1044/1044), done.
+```
+
+If you type 'ls' inside ~/projects, you should now see ~/projects/umod4.
 ```text
 projects
     ├── openocd
     ├── pico-sdk
+    ├── picotool
     └── umod4
 ```
 
-Your VS Code window should show a bunch files.
+If you type 'du -sh umod4', it should report that it takes up about 28 megabytes:
+
+```bash
+du -sh umod4
+28M     umod4
+```
+
+Now, cd into umod4 and check your umod4 project's git status:
+
+```bash
+cd umod4
+git status
+```
+
+You should see this exact output:
+
+```bash
+On branch main
+Your branch is up to date with 'origin/main'.
+
+nothing to commit, working tree clean
+```
+
+Now, open a new VS Code editor.
+Make sure to select a remote window (>< chars in lower left), then select 'connect to WSL'.
+Select 'File/Open Folder' and navigate to ~/projects.
+Select the 'umod4' folder, and open it.
+It should just open and show you a ton of files.
+Specifically: VS Code should not be complaining about _anything_. To make absolutely sure, look at the source control icon, circled in green below:
+
+![vscode git status](./doc/images/vscode-no-changes.png)
+
+If you see thousands of changes, something is wrong: maybe you forgot to set the git line endings, as above?
+
+Your VS Code file viewer over on the left side of the window should show a bunch files.
 In fact, if you select the file "BUILDING.md' by clicking it, you will see the file that contains what you are reading right now.
+
+One last, important note.
+When you clone a repository onto your local machine, you are making a copy of the real, remote repository.
+If you accidentally mess up your repository, the nuclear option is to type the following to utterly erase your repository and start over again:
+
+```bash
+cd ~/projects
+rm -rf umod4
+```
+
+At that point, go back to the step that clones the repository, and you will be good to go with a totally fresh repository.
 
 ## Building Umod4
 
