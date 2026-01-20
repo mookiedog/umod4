@@ -340,3 +340,46 @@ class DeviceClient:
         except Exception as e:
             print(f"Error getting upload session status: {e}")
             return None
+
+    def reflash_ep(self, uf2_filename: str, timeout: int = 120) -> Tuple[bool, Optional[str]]:
+        """Trigger EP reflash on device using a UF2 file already on the device.
+
+        The UF2 file must already be uploaded to the device's SD card root directory.
+        This operation takes 10-30 seconds as it programs the EP flash via SWD.
+
+        Args:
+            uf2_filename: Name of UF2 file on device (e.g., "EP.uf2")
+            timeout: HTTP timeout in seconds (default 120 for long reflash operation)
+
+        Returns:
+            Tuple of (success: bool, error_message: Optional[str])
+        """
+        try:
+            # URL-encode the filename for the path
+            import urllib.parse
+            encoded_filename = urllib.parse.quote(uf2_filename, safe='')
+
+            print(f"Triggering EP reflash with file: {uf2_filename}")
+            response = requests.get(
+                f"{self.base_url}/api/reflash/ep/{encoded_filename}",
+                timeout=timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get('success'):
+                print(f"EP reflash successful: {data.get('message', 'OK')}")
+                return True, None
+            else:
+                error_msg = data.get('error', 'Unknown error')
+                print(f"EP reflash failed: {error_msg}")
+                return False, error_msg
+
+        except requests.Timeout:
+            error_msg = "Request timed out - reflash may still be in progress"
+            print(f"EP reflash timeout: {error_msg}")
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"Error triggering EP reflash: {e}"
+            print(error_msg)
+            return False, error_msg

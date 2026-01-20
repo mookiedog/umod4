@@ -676,6 +676,7 @@ cridPrev = -1
 crid = -1
 epromIdString = ""
 currentEpromId = epromIdString
+ecuMetadataString = ""
 rpm_avg = 0.0
 secs=-1
 
@@ -1463,6 +1464,7 @@ def main():
     global crid
     global epromIdString
     global currentEpromId
+    global ecuMetadataString
     global rpm_avg
     global secs
     global fi_on
@@ -1624,6 +1626,18 @@ def main():
                     print(f"{fmt_record(recordCnt, timekeeper)} CPU:    {event}")
                     if h5_writer:
                         h5_writer.append_data('ecu_cpu_event', [timekeeper.get_time_ns(), event])
+
+                elif byte == L.LOGID_ECU_METADATA_TYPE_CS:
+                    # Each write to this address appends the next byte as a char to the ECU metadata string
+                    c = read(f, L.LOGID_ECU_METADATA_DLEN)[0]
+                    if (c != 0):
+                        # Print intermediate bytes (log ID + data byte)
+                        if showBinData:
+                            print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
+                        ecuMetadataString = "".join([ecuMetadataString, chr(c)])
+                    else:
+                        print(f"{fmt_record(recordCnt, timekeeper)} META:   {ecuMetadataString}")
+                        ecuMetadataString = ""
 
                 elif byte == L.LOGID_ECU_T1_OFLO_TYPE_TS:
                     oflo_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_OFLO_DLEN), byteorder='little', signed=False)
@@ -2196,7 +2210,7 @@ def main():
                     rd = read(f, L.LOGID_GEN_EP_LOG_VER_DLEN)
                     print(f"{fmt_record(recordCnt, timekeeper)} EPV:    {rd[0]}")
 
-                elif byte == L.LOGID_EP_FIND_NAME_TYPE_U8:
+                elif byte == L.LOGID_EP_FIND_NAME_TYPE_CS:
                     # Each write to this address appends the next byte as a char to the EPROM_ID_STR
                     c = read(f, L.LOGID_EP_FIND_NAME_DLEN)[0]
                     if (c != 0):
@@ -2211,7 +2225,7 @@ def main():
                         epromIdString = ""
                         print(f"{fmt_record(recordCnt, timekeeper)} FIND:   {currentEpromId}")
 
-                elif byte == L.LOGID_EP_LOAD_NAME_TYPE_U8:
+                elif byte == L.LOGID_EP_LOAD_NAME_TYPE_CS:
                     # Each write to this address appends the next byte as a char to the EPROM_ID_STR
                     c = read(f, L.LOGID_EP_LOAD_NAME_DLEN)[0]
                     if (c != 0):

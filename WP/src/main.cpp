@@ -213,10 +213,6 @@ int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const
         return LFS_ERR_INVAL;
     }
 
-    if (false) {
-        printf("%s: writing %u sectors (%u bytes)\n", __FUNCTION__, num_sectors, size);
-    }
-
     uint32_t t0 = time_us_32();
     err = sd->writeSectors(sector, num_sectors, buffer);
     uint32_t elapsed = time_us_32() - t0;
@@ -651,6 +647,14 @@ void startGps()
 void vApplicationIdleHook( void )
 {
     __wfi();
+}
+
+// --------------------------------------------------------------------------------------------
+// Stack overflow detection hook - called when FreeRTOS detects a stack overflow
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    printf("STACK OVERFLOW in task: %s\n", pcTaskName);
+    panic("Stack overflow");
 }
 
 

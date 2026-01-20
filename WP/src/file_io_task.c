@@ -12,6 +12,7 @@
 #include "queue.h"
 #include "semphr.h"
 #include "umod4_WP.h"  // For TASK_NORMAL_PRIORITY
+#include "FlashEp.h"   // For flash_ep_uf2()
 #include <stdio.h>
 #include <string.h>
 
@@ -224,6 +225,66 @@ static void process_upload_close(const file_io_request_t* req, file_io_result_t*
     }
 }
 
+// Helper to get FlashEp error string
+static const char* flash_ep_error_string(int32_t err)
+{
+    switch (err) {
+        case 0:  return "Success";
+        case -1: return "Unable to connect to EP via SWD";
+        case -2: return "Unable to clear FBI struct in EP RAM";
+        case -3: return "Unable to load flasher program to EP RAM";
+        case -4: return "Unable to start flasher program on EP";
+        case -5: return "Unable to read flashBufferInterface from EP";
+        case -6: return "Timeout waiting for flasher program to start";
+        default: return "UF2 processing/flashing error";
+    }
+}
+
+// Process REFLASH_EP operation
+static void process_reflash_ep(const file_io_request_t* req, file_io_result_t* result)
+{
+    printf("FileIO: REFLASH_EP '%s' (verbose=%d)\n",
+           req->reflash_ep_op.path, req->reflash_ep_op.verbose);
+
+    if (!lfs_mounted) {
+        set_error(result, -1, "Filesystem not mounted");
+        result->reflash_result.flash_result = -1;
+        return;
+    }
+
+    // Check if file exists
+    struct lfs_info info;
+    int err = lfs_stat(&lfs, req->reflash_ep_op.path, &info);
+    if (err != 0) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "File not found: %s", req->reflash_ep_op.path);
+        set_error(result, err, msg);
+        result->reflash_result.flash_result = err;
+        return;
+    }
+
+    printf("FileIO: Starting EP reflash with '%s' (%lu bytes)\n",
+           req->reflash_ep_op.path, (unsigned long)info.size);
+
+    // Call flash_ep_uf2() - this is synchronous and takes 10-30 seconds
+    int32_t flash_result = flash_ep_uf2(req->reflash_ep_op.path, req->reflash_ep_op.verbose);
+
+    result->reflash_result.flash_result = flash_result;
+
+    if (flash_result == 0) {
+        result->success = true;
+        result->error_code = 0;
+        result->error_message[0] = '\0';
+        printf("FileIO: EP reflash completed successfully\n");
+    } else {
+        result->success = false;
+        result->error_code = flash_result;
+        snprintf(result->error_message, sizeof(result->error_message),
+                 "%s (code: %ld)", flash_ep_error_string(flash_result), (long)flash_result);
+        printf("FileIO: EP reflash failed: %s\n", result->error_message);
+    }
+}
+
 // Main task function
 static void file_io_task(void* params)
 {
@@ -251,6 +312,9 @@ static void file_io_task(void* params)
                     break;
                 case FILE_IO_OP_UPLOAD_CLOSE:
                     process_upload_close(&request, &result);
+                    break;
+                case FILE_IO_OP_REFLASH_EP:
+                    process_reflash_ep(&request, &result);
                     break;
                 default:
                     set_error(&result, -1, "Unknown operation");
@@ -358,6 +422,15 @@ bool file_io_upload_close(bool sync, uint32_t timeout_ms, file_io_result_t* resu
     file_io_request_t req = {0};
     req.op = FILE_IO_OP_UPLOAD_CLOSE;
     req.close_op.sync = sync;
+    return file_io_execute(&req, timeout_ms, result);
+}
+
+bool file_io_reflash_ep(const char* path, bool verbose, uint32_t timeout_ms, file_io_result_t* result)
+{
+    file_io_request_t req = {0};
+    req.op = FILE_IO_OP_REFLASH_EP;
+    strncpy(req.reflash_ep_op.path, path, sizeof(req.reflash_ep_op.path) - 1);
+    req.reflash_ep_op.verbose = verbose;
     return file_io_execute(&req, timeout_ms, result);
 }
 

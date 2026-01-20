@@ -7,15 +7,16 @@
 #include <cstdio>      // For printf in error macros
 #include <hardware/gpio.h>
 
-// Pin assignments (from umod4_WP.h lines 70-84)
-#define SDIO_CLK SD_SCK_PIN   // GPIO 10
-#define SDIO_CMD SD_MOSI_PIN  // GPIO 11 (CMD in SDIO mode)
-#define SDIO_D0  SD_DAT0      // GPIO 12
-#define SDIO_D1  SD_DAT1      // GPIO 13
-#define SDIO_D2  SD_DAT2      // GPIO 14
-#define SDIO_D3  SD_DAT3      // GPIO 15
+// Pin assignments come from umod4_WP.h
+#define SDIO_CLK SD_SCK_PIN
+#define SDIO_CMD SD_MOSI_PIN
+#define SDIO_D0  SD_DAT0
+#define SDIO_D1  SD_DAT1
+#define SDIO_D2  SD_DAT2
+#define SDIO_D3  SD_DAT3
 
-// PIO configuration
+// PIO configuration.
+// This SDIO driver gets exclusive access to this PIO unit
 #define SDIO_PIO PIO_SDIO
 #define SDIO_SM  0
 #define SDIO_GPIO_FUNC SD_GPIO_FUNC

@@ -1,34 +1,45 @@
 # To Do
 
+## Bugs
+
+### SDIO Checksum errors
+
+SDIO checksum error in data reception 3622225152 4294967295
+SDIO checksum error in read 2 12
+lfs_read ERROR: sector=52 count=12 err=-10
+
+
 ## Development
+
+General:
+
+* Log build information
+  * ECU
+  * EP
+  * WP
+
+### EP
 
 ### WP
 
-* main.cpp
-  * move all wifi stuff into a new file
-  * wifiTask needs to be stateful
-    * must manage things like:
-      * no SD Card
-      * SD Card hotplugging
-        * could insert a new card with new files that could potentially be loaded
-
-* chunked upload of large files
-   * Need a pair of wifi buffers, each the same size as an LFS block. Idea is to be able to wifi transfer from one buffer while concurrently performing a read into the other buffer.
-
-* Get the heap sorted out so that there is only one, and that it works with new/delete/malloc/free & freertos
+* Get WP OTA working.
+  Can the WP use the same mechanism as the EP, in the sense that it could run a program in RAM that would reflash itself?
+  The big difference is that instead of data magically appearing in mailboxes, the WP would need to read it from a file on the SD Card.
+  Perhaps this could be done by ensuring that a bunch of the code needs to be RAM-resident:
+    * LittleFS
+    * SDIO driver
+    * reflash code itself
 
 ### Server
 
-* menu item 'show in folder does not work'
-* need ability to delete files from remote filesystem
-
+* General cleanup.
+  * It feels kind of buggy
+  * UI should get examined
 
 ## Goals for 2026
 
 * WiFi
-  * offload logs when powered in the garage
   * OTA updates
-    * EP/ECU
     * WP
 
 * Logging data streams
@@ -72,22 +83,6 @@ Features to add:
   * GPS
   * CPU events
   * EPROM load events
-
-## WP
-
-The big items are:
-
-* Complete EP Reflash Mechanism
-* WiFi
-  * Auto Log Upload
-  * OTA reflash:
-    * WP
-    * EP
-
-### WiFi
-
-* __OTA firmware updates__
-* __Unattended Log offload by WP__
 
 ## decodeLog.py
 

@@ -279,6 +279,71 @@ void generate_api_sha256_json(char* buffer, size_t size, const char* filename)
     printf("api_sha256: Returned hash for '%s': %.16s...\n", filename, sha256_hex);
 }
 
+/**
+ * Build JSON response for /api/reflash/ep/<filename>
+ * Called from fs_open_custom()
+ *
+ * NOTE: This is a long-running operation (10-30 seconds).
+ * The actual flashing is performed in the FileIO task context to avoid
+ * stack/context issues in the HTTP callback.
+ */
+void generate_api_reflash_ep_json(char* buffer, size_t size, const char* filename)
+{
+    // Validate filename
+    if (!filename || filename[0] == '\0') {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"No filename specified\"}");
+        printf("api_reflash_ep: No filename specified\n");
+        return;
+    }
+
+    // Check for path traversal attempts
+    if (strchr(filename, '/') || strchr(filename, '\\') ||
+        strcmp(filename, ".") == 0 || strcmp(filename, "..") == 0) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"Invalid filename\"}");
+        printf("api_reflash_ep: Invalid filename '%s'\n", filename);
+        return;
+    }
+
+    // Check if filesystem is mounted
+    if (!lfs_mounted) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"Filesystem not mounted\"}");
+        printf("api_reflash_ep: Filesystem not mounted\n");
+        return;
+    }
+
+    // Build full path (files are in root directory)
+    char filepath[80];
+    snprintf(filepath, sizeof(filepath), "/%s", filename);
+
+    printf("api_reflash_ep: Requesting EP reflash with '%s'\n", filepath);
+
+    // Execute reflash via FileIO task (runs in proper FreeRTOS task context)
+    // Use 120 second timeout for long-running SWD operations
+    file_io_result_t result;
+    bool ok = file_io_reflash_ep(filepath, true, 120000, &result);
+
+    if (!ok) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"Reflash request timed out or failed to queue\"}");
+        printf("api_reflash_ep: Request failed to execute\n");
+        return;
+    }
+
+    if (result.success) {
+        snprintf(buffer, size,
+                 "{\"success\": true, \"message\": \"EP reflash completed successfully\"}");
+        printf("api_reflash_ep: Success!\n");
+    } else {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"%s\"}",
+                 result.error_message);
+        printf("api_reflash_ep: Failed: %s\n", result.error_message);
+    }
+}
+
 // No CGI handlers needed - APIs are served as virtual files via fs_open_custom()
 void api_handlers_register(void)
 {

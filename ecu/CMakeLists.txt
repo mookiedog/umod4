@@ -30,6 +30,7 @@ add_custom_command(
     ${OUTPUTS}
   DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
+    ${CMAKE_CURRENT_SOURCE_DIR}/patch_metadata.py
     ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.S
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ECU_log.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/custom_eprom.ld
@@ -49,8 +50,12 @@ add_custom_command(
     # Make an s19 file just in case the output might need to be burned into a real EPROM for some reason
     COMMAND m68hc11-elf-objcopy --srec-len 32 -I elf32-m68hc11 -O srec ${NAME}.elf ${NAME}.s19
 
-    # Finally, create the .bin file that the rest of the umod4 system needs:
+    # Create an EPROM image .bin file
     COMMAND m68hc11-elf-objcopy ${NAME}.elf --output-target=binary ${NAME}.bin
+
+    # Patch the .bin file with the build metadata
+    COMMAND m68hc11-elf-objcopy ${NAME}.elf --output-target=binary ${NAME}.bin
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/patch_metadata.py ${NAME}.elf ${NAME}.bin
 
     # Not sure this is the right place, but it will do for now:
     COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/bin-to-bson.py -d ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.dsc -b ${NAME}.bin -o ${NAME}.bson -j ${NAME}.json -c ${NAME}.c

@@ -13,6 +13,7 @@ extern void generate_api_list_json(char* buffer, size_t size);
 extern void generate_api_sha256_json(char* buffer, size_t size, const char* filename);
 extern void generate_api_delete_json(char* buffer, size_t size, const char* filename);
 extern void generate_api_upload_session_json(char* buffer, size_t size, const char* session_id);
+extern void generate_api_reflash_ep_json(char* buffer, size_t size, const char* filename);
 
 // Global LittleFS context (set by fs_custom_init)
 static lfs_t* g_lfs = NULL;
@@ -114,6 +115,10 @@ int fs_open_custom(struct fs_file *file, const char *name)
             // Extract session_id from upload/session?session_id=<uuid>
             const char* session_id = api_name + 26;
             generate_api_upload_session_json(api_file->data, api_buffer_size, session_id);
+        } else if (strncmp(api_name, "reflash/ep/", 11) == 0) {
+            // Extract filename from reflash/ep/<filename>
+            const char* filename = api_name + 11;
+            generate_api_reflash_ep_json(api_file->data, api_buffer_size, filename);
         } else {
             printf("fs_custom: Unknown API endpoint: %s\n", api_name);
             free(api_file->data);

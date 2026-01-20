@@ -38,6 +38,9 @@
 #define     LOGID_ECU_CPU_EVENT_VAL_OC3F            (0xA)
 #define     LOGID_ECU_CPU_EVENT_VAL_IC3             (0xB)
 
+#define   LOGID_ECU_METADATA_TYPE_CS                ((LOGID_ECU_BASE) + 0x01)       // The build metadata string
+#define   LOGID_ECU_METADATA_DLEN                   1
+
 #define   LOGID_ECU_T1_OFLO_TYPE_TS                 ((LOGID_ECU_BASE) + 0x02)       // Emitted just after time T1 overflows (every 131072 uSec, or ~7.6Hz )
 #define   LOGID_ECU_T1_OFLO_DLEN                    2
 

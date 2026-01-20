@@ -320,5 +320,10 @@ int32_t FlashEp::flashUf2(const char* pathname, bool verbose)
     // Hard reset the EP via EP_RUN pin
     epResetAndRun();
 
-    return 0;
+    return res;
+}
+
+// C-compatible wrapper for use by api_handlers.c
+extern "C" int32_t flash_ep_uf2(const char* pathname, bool verbose) {
+    return FlashEp::flashUf2(pathname, verbose);
 }

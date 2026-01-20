@@ -29,7 +29,8 @@ typedef enum {
     FILE_IO_OP_UPLOAD_OPEN,
     FILE_IO_OP_UPLOAD_WRITE,
     FILE_IO_OP_UPLOAD_CLOSE,
-    FILE_IO_OP_MKDIR
+    FILE_IO_OP_MKDIR,
+    FILE_IO_OP_REFLASH_EP
 } file_io_op_t;
 
 // Maximum chunk size for upload writes
@@ -60,19 +61,29 @@ typedef struct {
         struct {
             bool sync;  // true to sync before close
         } close_op;
+
+        // For REFLASH_EP
+        struct {
+            char path[80];  // Path to UF2 file (e.g., "/EP.uf2")
+            bool verbose;   // Enable verbose output
+        } reflash_ep_op;
     };
 } file_io_request_t;
 
 // Result structure
 typedef struct {
     bool success;
-    int error_code;         // LFS error code on failure
+    int error_code;         // LFS error code on failure (or FlashEp error code for reflash)
     char error_message[64];
     union {
         // For UPLOAD_WRITE
         struct {
             uint32_t bytes_written;
         } write_result;
+        // For REFLASH_EP
+        struct {
+            int32_t flash_result;  // Result from flash_ep_uf2()
+        } reflash_result;
     };
 } file_io_result_t;
 
@@ -146,6 +157,20 @@ bool file_io_upload_write(const uint8_t* data, uint32_t length, uint32_t timeout
  * @return true if request was processed
  */
 bool file_io_upload_close(bool sync, uint32_t timeout_ms, file_io_result_t* result);
+
+/**
+ * Convenience function: Reflash EP processor via SWD.
+ *
+ * This is a long-running operation (10-30 seconds) that programs the EP
+ * flash using a UF2 file on the SD card.
+ *
+ * @param path Full path to UF2 file (e.g., "/EP.uf2")
+ * @param verbose Enable verbose output during flashing
+ * @param timeout_ms Maximum time to wait (use 120000 for 2 minutes)
+ * @param result Pointer to result structure (includes flash_result code)
+ * @return true if request was processed (check result.success for actual outcome)
+ */
+bool file_io_reflash_ep(const char* path, bool verbose, uint32_t timeout_ms, file_io_result_t* result);
 
 // Legacy compatibility - maps to file_io_delete
 typedef struct {

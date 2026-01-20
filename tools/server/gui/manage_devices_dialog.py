@@ -64,6 +64,17 @@ class ManageDevicesDialog(QDialog):
         self.upload_button.clicked.connect(self._upload_file)
         button_layout.addWidget(self.upload_button)
 
+        # Reflash buttons
+        self.reflash_ep_button = QPushButton("Reflash EP")
+        self.reflash_ep_button.clicked.connect(self._reflash_ep)
+        self.reflash_ep_button.setToolTip("Upload a UF2 file and reflash the EP processor via SWD")
+        button_layout.addWidget(self.reflash_ep_button)
+
+        self.reflash_wp_button = QPushButton("Reflash WP")
+        self.reflash_wp_button.setEnabled(False)
+        self.reflash_wp_button.setToolTip("WP reflash not yet implemented")
+        button_layout.addWidget(self.reflash_wp_button)
+
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.accept)
         button_layout.addWidget(self.close_button)
@@ -415,6 +426,175 @@ class ManageDevicesDialog(QDialog):
                         self,
                         "Upload Error",
                         f"An error occurred during upload:\n\n{str(e)}"
+                    )
+
+        finally:
+            session.close()
+
+    def _reflash_ep(self):
+        """Reflash the EP processor on the selected device."""
+        from models.database import Device
+        from device_client import DeviceClient
+        from PySide6.QtWidgets import QProgressDialog, QApplication
+
+        mac_address = self._get_selected_mac()
+        if not mac_address:
+            return
+
+        session = self.database.get_session()
+        try:
+            device = session.query(Device).filter_by(mac_address=mac_address).first()
+            if not device:
+                return
+
+            # Check if device is online
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(
+                    self,
+                    "Device Offline",
+                    f"Device '{device.display_name}' is not currently online.\n\n"
+                    f"Make sure the device is powered on and connected to the network."
+                )
+                return
+
+            # Let user select UF2 file to upload
+            source_file, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select EP Firmware File",
+                "",
+                "UF2 Files (*.uf2);;All Files (*.*)"
+            )
+
+            if not source_file:
+                return  # User cancelled
+
+            # Extract filename
+            destination_filename = os.path.basename(source_file)
+
+            # Warn if filename is not EP.uf2
+            if destination_filename.lower() != "ep.uf2":
+                reply = QMessageBox.warning(
+                    self,
+                    "Filename Warning",
+                    f"The selected file is named '{destination_filename}'.\n\n"
+                    f"Typically EP firmware files are named 'EP.uf2'.\n\n"
+                    f"Are you sure you want to continue with this file?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
+            # Final confirmation
+            file_size = os.path.getsize(source_file)
+            reply = QMessageBox.warning(
+                self,
+                "Confirm EP Reflash",
+                f"This will reflash the EP processor on device '{device.display_name}'.\n\n"
+                f"File: {source_file}\n"
+                f"Size: {file_size:,} bytes\n\n"
+                f"WARNING: Do not power off the device during reflash!\n\n"
+                f"The device will be temporarily unresponsive during the process "
+                f"(approximately 10-30 seconds).\n\n"
+                f"Continue with EP reflash?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+            client = DeviceClient(device.last_ip)
+
+            # Create progress dialog for upload phase
+            progress = QProgressDialog(
+                f"Uploading {destination_filename}...",
+                "Cancel",
+                0, 100, self
+            )
+            progress.setWindowTitle("EP Reflash - Upload")
+            progress.setModal(True)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+
+            upload_cancelled = False
+
+            def update_upload_progress(bytes_sent, total_bytes):
+                nonlocal upload_cancelled
+                percent = int((bytes_sent / total_bytes) * 100)
+                progress.setValue(percent)
+                progress.setLabelText(
+                    f"Uploading {destination_filename}...\n"
+                    f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
+                )
+                QApplication.processEvents()
+
+                if progress.wasCanceled():
+                    upload_cancelled = True
+                    raise Exception("Upload cancelled by user")
+
+            try:
+                # Upload the UF2 file
+                success, sha256, error_msg = client.upload_file(
+                    source_file,
+                    destination_filename,
+                    progress_callback=update_upload_progress
+                )
+
+                progress.close()
+
+                if upload_cancelled:
+                    return
+
+                if not success:
+                    QMessageBox.critical(
+                        self,
+                        "Upload Failed",
+                        f"Failed to upload firmware file:\n\n{error_msg}"
+                    )
+                    return
+
+                # Now trigger the reflash
+                progress = QProgressDialog(
+                    "Reflashing EP processor...\n\n"
+                    "This may take 10-30 seconds.\n"
+                    "Do not power off the device!",
+                    None,  # No cancel button during reflash
+                    0, 0,  # Indeterminate progress
+                    self
+                )
+                progress.setWindowTitle("EP Reflash - Programming")
+                progress.setModal(True)
+                progress.setMinimumDuration(0)
+
+                QApplication.processEvents()
+
+                # Trigger the reflash with extended timeout
+                success, error_msg = client.reflash_ep(destination_filename, timeout=120)
+
+                progress.close()
+
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "EP Reflash Complete",
+                        f"EP processor reflashed successfully!\n\n"
+                        f"The device should now be running the new firmware."
+                    )
+                else:
+                    QMessageBox.critical(
+                        self,
+                        "EP Reflash Failed",
+                        f"Failed to reflash EP processor:\n\n{error_msg}"
+                    )
+
+            except Exception as e:
+                progress.close()
+                if "cancelled" not in str(e).lower():
+                    QMessageBox.critical(
+                        self,
+                        "Reflash Error",
+                        f"An error occurred during EP reflash:\n\n{str(e)}"
                     )
 
         finally:

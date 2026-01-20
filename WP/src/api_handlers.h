@@ -43,6 +43,14 @@ void generate_api_delete_json(char* buffer, size_t size, const char* filename);
  */
 void handle_upload_chunk(char* buffer, size_t size, const char* post_data, size_t post_data_len);
 
+/**
+ * Generate JSON for /api/reflash/ep?filename=<name> endpoint.
+ * Triggers EP reflash via SWD using specified UF2 file from SD card.
+ * WARNING: This operation takes 10-30 seconds and blocks!
+ * Called by fs_open_custom() when serving the API.
+ */
+void generate_api_reflash_ep_json(char* buffer, size_t size, const char* filename);
+
 #ifdef __cplusplus
 }
 #endif

@@ -67,12 +67,12 @@
 //                      LOGID_ECU_FOO_TYPE_4P12 would represent a 16-bit 4.12 fixed point value
 //    _V    void    Indicates that the log entry carries no useful data
 //                  NOTE: if _DLEN > 0, DLEN bytes will exist in the log data but must be discarded by the decoder
-//    _C    char    Next character of a string
+//    _CS   char    Next character of a C-string
 //                  The string can be considered complete when this character has the value NULL (0x00).
-//                  Note: Turning _C characters into a string implies stateful processing by a decoder:
-//                      The first _C LOGID observed will initialize a string buffer and store the first character in it.
-//                      Subsequent _C LOGIDs will append the new character to the existing string buffer.
-//                      When a _C LOGID is observed with a NULL character, the string is complete for decoding purposes.
+//                  Note: Turning _CS characters into a string implies stateful processing by a decoder:
+//                      The first _CS LOGID observed will initialize a string buffer and store the first character in it.
+//                      Subsequent _CS LOGIDs will append the new character to the existing string buffer.
+//                      When a _CS LOGID is observed with a NULL character, the string is complete for decoding purposes.
 //
 // A complete example of the naming convention follows.
 //
