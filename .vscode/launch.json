@@ -109,7 +109,7 @@
         // Info on the bug is here: https://github.com/microsoft/vscode-cmake-tools/issues/1485
         "name": "*** WP: RP2350 Launch CMSIS-DAP",
         "cwd": "${workspaceRoot}",
-        "executable": "${workspaceRoot}/build/WP/WP",
+        "executable": "${workspaceRoot}/build/WP/WP.elf",
         "request": "launch",
         "type": "cortex-debug",
         "servertype": "openocd",
@@ -139,6 +139,115 @@
 
         // Configure the rtt IO mechanism to let the WP use printf for debug/status output
         // To see the output stream, select 'RTT Ch:0 console' in the debugger terminal window
+        "rttConfig" : {
+          "enabled": true,
+          "address": "auto",
+          "decoders": [
+              {
+                  "label": "",
+                  "port": 0,
+                  "polling_interval": 10,
+                  "type": "console",
+                  "noprompt": true
+              }
+          ]
+        },
+        "liveWatch": {
+            "enabled": true,
+            "samplesPerSecond": 4
+        },
+    },
+    {
+        // Attach-only config: connects to running WP without flashing
+        // Use after BOOTSEL flash to examine boot info without overwriting partition table
+        "name": "*** WP: RP2350 Attach (no flash)",
+        "cwd": "${workspaceRoot}",
+        "executable": "${workspaceRoot}/build/WP/WP.elf",
+        "request": "attach",
+        "type": "cortex-debug",
+        "servertype": "openocd",
+        "gdbPath" : "/opt/arm/arm-none-eabi/15.2.rel1/bin/arm-none-eabi-gdb",
+        "device": "RP2350",
+        "configFiles": [
+            "interface/cmsis-dap.cfg",
+            "target/rp2350.cfg"
+        ],
+        "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
+        "openOCDLaunchCommands": ["adapter speed 5000"],
+        "rttConfig" : {
+          "enabled": true,
+          "address": "auto",
+          "decoders": [
+              {
+                  "label": "",
+                  "port": 0,
+                  "polling_interval": 10,
+                  "type": "console",
+                  "noprompt": true
+              }
+          ]
+        },
+        "liveWatch": {
+            "enabled": true,
+            "samplesPerSecond": 4
+        },
+    },
+    {
+        // Partition-aware debug configuration for WP RP2350
+        // This flashes the partition table and app to their correct locations,
+        // then uses the ROM bootloader to set up XIP remapping.
+        // Use this when debugging code that uses ROM partition functions
+        // (rom_get_uf2_target_partition, rom_get_boot_info, etc.)
+        //
+        // REQUIRES: Run 'ninja partition_table_bin' first (or rebuild all)
+        "name": "*** WP: RP2350 Partition-Aware Debug",
+        "cwd": "${workspaceRoot}",
+        "executable": "${workspaceRoot}/build/WP/WP.elf",
+        "request": "launch",
+        "type": "cortex-debug",
+        "servertype": "openocd",
+        "gdbPath" : "/opt/arm/arm-none-eabi/15.2.rel1/bin/arm-none-eabi-gdb",
+        "device": "RP2350",
+        "configFiles": [
+            "interface/cmsis-dap.cfg",
+            "target/rp2350.cfg"
+        ],
+        "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
+        "runToEntryPoint": "main",
+
+        // Debug sessions will not start without setting the adaptor speed
+        "openOCDLaunchCommands": ["adapter speed 5000"],
+
+        // CRITICAL: Prevent GDB from loading the ELF to flash!
+        // The ELF is linked to 0x10000000, but we need the app at 0x10010000 (slot A).
+        // We flash manually via OpenOCD, then GDB just uses the ELF for symbols.
+        // The ROM bootloader will remap slot A (0x10010000) to appear at 0x10000000.
+        "loadFiles": [],
+
+        // Flash partition table + app to correct locations before running
+        "preLaunchCommands": [
+            // Halt the CPU first
+            "monitor reset halt",
+            // Erase slot B first sector to invalidate any old image
+            // Slot B starts at sector 520 (boot=16 sectors + A=504 sectors = 520)
+            // Sector 520 = 0x10208000
+            "monitor flash erase_sector 0 520 520",
+            // Flash partition table to boot region (0x10000000)
+            "monitor flash write_image erase ${workspaceRoot}/build/WP/partition_table.bin 0x10000000",
+            // Flash app to slot A (0x10010000 = boot region + 64K)
+            "monitor flash write_image erase ${workspaceRoot}/build/WP/WP.bin 0x10010000",
+            // Let ROM bootloader run - it will read partition table and set up XIP remapping
+            "monitor reset init"
+        ],
+
+        // For restarts, use reset init to let bootloader run again
+        "postRestartCommands": [
+            "monitor reset init",
+            "break main",
+            "continue"
+        ],
+
+        // Configure RTT for printf output
         "rttConfig" : {
           "enabled": true,
           "address": "auto",

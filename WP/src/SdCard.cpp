@@ -265,6 +265,7 @@ void SdCard::hotPlugManager(void* arg)
         switch (sdCard->state) {
             case NO_CARD:
             // Turn the card power off
+            // Turn the LED RED
             rgb_led->neoPixelSetValue(0, 16, 0, 0, true);
 
             // The 'card present' signal indicates that a card is physically present in the socket.
@@ -297,8 +298,9 @@ void SdCard::hotPlugManager(void* arg)
             case POWER_UP:
             // V9 Spec 6.1.4.2
             // When power-cycling a card, the host needs to keep card supply voltage below 0.5V for more than 1 mSec.
-            rgb_led->neoPixelSetValue(0, 0, 0, 16, true);
-            vTaskDelay(pdMS_TO_TICKS(50));
+            // Turn LED WHITE
+            rgb_led->neoPixelSetValue(0, 10, 10, 10, true);
+            vTaskDelay(pdMS_TO_TICKS(200));
 
             // From a hardware perspective, the card supply voltage needs to ramp up
             // no faster than 100 uSec and no slower than 35 mSec.
@@ -310,17 +312,23 @@ void SdCard::hotPlugManager(void* arg)
             break;
 
             case INIT_CARD:
-            initRetries = 3;
+            initRetries = 10;
             do {
-                rgb_led->neoPixelSetValue(0, 0, 16, 0, true);
+                // BLUE indicates we are init'ing the card
+                rgb_led->neoPixelSetValue(0, 0, 0, 16, true);
+                vTaskDelay(pdMS_TO_TICKS(200));
                 sdErr = sdCard->init();
-                rgb_led->neoPixelSetValue(0, 0, 16, 16, true);
+
                 if (sdErr == SD_ERR_NOERR) {
+                    // No error after init turns LED GREEN
+                    rgb_led->neoPixelSetValue(0, 0, 16, 0, true);
+                    vTaskDelay(pdMS_TO_TICKS(200));
                     break;
                 }
                 else {
-                    rgb_led->neoPixelSetValue(0, 4, 0, 0, true);
-                    vTaskDelay(pdMS_TO_TICKS(10));
+                    // error: set the LED RED
+                    rgb_led->neoPixelSetValue(0, 10, 0, 0, true);
+                    vTaskDelay(pdMS_TO_TICKS(200));
                 }
             } while (--initRetries >= 0);
 
@@ -341,6 +349,7 @@ void SdCard::hotPlugManager(void* arg)
             if (sdErr == SD_ERR_NOERR) {
                 // The tests passed: invoke the callback to tell the system that a card is now online and usable
                 if (hotPlug_cfg->comingUp(sdCard)) {
+                    // PURPLE is GOOD!
                     rgb_led->neoPixelSetValue(0, 16, 0, 16, true);
                     sdCard->state = OPERATIONAL;
                 }
@@ -1171,3 +1180,42 @@ SdErr_t SdCard::writeSectors(uint32_t sector_num, uint32_t num_sectors, const vo
     // Until we get something working...
     return err;
 }
+
+#if 0
+// --------------------------------------------------------------------------------------------
+SdErr_t SdCard::sync()
+{
+    // SPI mode writes are synchronous - they complete before writeSectors returns
+    return SD_ERR_NOERR;
+}
+
+// --------------------------------------------------------------------------------------------
+// Prepare the SD card for safe removal or system reboot
+// This properly shuts down the card to avoid initialization issues after reboot
+SdErr_t SdCard::shutdown()
+{
+    printf("SPI SD: Shutting down SD card\n");
+
+    // 1. Make sure CS is deasserted
+    endTransaction();
+
+    // 2. Reset card to idle state (CMD0)
+    // In SPI mode, CMD0 with CS asserted resets the card
+    printf("SPI SD: Resetting card to idle (CMD0)\n");
+    uint8_t r1;
+    sendCmd(CMD0, 0, &r1, sizeof(r1));
+
+    // 3. Deassert CS and send clocks to let card finish
+    endTransaction();
+    busy_wait_us_32(1000);
+
+    // 4. Leave CS deasserted (card not selected)
+    spi->deassertCs(csPad);
+
+    // 5. Clear internal state
+    state = NO_CARD;
+
+    printf("SPI SD: Shutdown complete\n");
+    return SD_ERR_NOERR;
+}
+#endif

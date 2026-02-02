@@ -31,6 +31,7 @@ typedef enum {
     FILE_IO_OP_UPLOAD_CLOSE,
     FILE_IO_OP_MKDIR,
     FILE_IO_OP_REFLASH_EP
+    // Note: WP reflash is handled by dedicated ota_flash_task, not here
 } file_io_op_t;
 
 // Maximum chunk size for upload writes
@@ -83,7 +84,7 @@ typedef struct {
         // For REFLASH_EP
         struct {
             int32_t flash_result;  // Result from flash_ep_uf2()
-        } reflash_result;
+        } reflash_ep_result;
     };
 } file_io_result_t;
 
@@ -171,6 +172,10 @@ bool file_io_upload_close(bool sync, uint32_t timeout_ms, file_io_result_t* resu
  * @return true if request was processed (check result.success for actual outcome)
  */
 bool file_io_reflash_ep(const char* path, bool verbose, uint32_t timeout_ms, file_io_result_t* result);
+
+// Note: WP self-reflash is now handled by the dedicated OTA flash task
+// (see ota_flash_task.h). This provides proper subsystem shutdown and
+// upgrade logging before flashing.
 
 // Legacy compatibility - maps to file_io_delete
 typedef struct {

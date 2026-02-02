@@ -168,46 +168,6 @@ set(TOOLS_INSTALL_DIR $ENV{HOME}/.local/bin)
 set(TOOLS_SOURCE_DIR ${CMAKE_SOURCE_DIR}/tools/src)
 
 # ---------------------------------------------------------------------------------------------
-# Metadata Generation Block
-# This allows the EP/WP/ECU builds to obtain their version information.
-# Each of those subsystems will make sure to log their version info so that a log
-# will always be able to identify what software versions were used to create the log.
-
-# 1. Get the current Git Identity
-execute_process(
-    COMMAND git describe --tags --always --dirty
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_ID
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-# 2. Get the Timestamp
-string(TIMESTAMP BUILD_TIME "%Y-%m-%d %H:%M:%S")
-set(NEW_META "{\"GH\":\"${GIT_ID}\",\"BT\":\"${BUILD_TIME}\"}")
-
-# 3. SMART WRITE: Only update the file if the HASH changed
-set(META_FILE "${CMAKE_BINARY_DIR}/system_metadata.json")
-if(EXISTS "${META_FILE}")
-    file(READ "${META_FILE}" OLD_META)
-    # Extract only the Hash part for comparison
-    string(REGEX MATCH "\"GH\":\"[^\"]*\"" OLD_HASH "${OLD_META}")
-    string(REGEX MATCH "\"GH\":\"[^\"]*\"" NEW_HASH "${NEW_META}")
-else()
-    set(OLD_HASH "none")
-endif()
-
-# Only write if the Hash (the Git Identity) is different
-if(NOT "${NEW_HASH}" STREQUAL "${OLD_HASH}")
-    file(WRITE "${META_FILE}" "${NEW_META}")
-else()
-    # We DON'T write. The old file stays on disk with its old timestamp.
-    # This prevents all subprojects from thinking they need to re-link.
-endif()
-
-# 5. Add to the argument list for subprojects
-set(METADATA_DEFS -DSYSTEM_METADATA_JSON_PATH=${META_FILE})
-
-# ---------------------------------------------------------------------------------------------
 message(STATUS "Adding the 'tools' project")
 
 set(TOOLS_CMAKE_ARG_LIST
@@ -234,7 +194,6 @@ set(ECU_CMAKE_ARG_LIST
     -DLIB_DIR=${LIB_DIR}
     -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/host.cmake
-    ${METADATA_DEFS}
     ${PYTHON_DEFS}
 )
 
@@ -260,7 +219,6 @@ set(EPROM_LIB_CMAKE_ARG_LIST
 )
 
 ExternalProject_Add(eprom_lib
-
     PREFIX ${CMAKE_BINARY_DIR}/eprom_lib
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/eprom_lib
     BINARY_DIR ${EPROM_LIB_DIR}
@@ -283,7 +241,6 @@ set(EP_CMAKE_ARG_LIST
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
     -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
-    ${METADATA_DEFS}
     ${PYTHON_DEFS}
 )
 
@@ -331,7 +288,6 @@ set(WP_CMAKE_ARG_LIST
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
     -DLFS_SRC_DIR=${LFS_SRC_DIR}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
-    ${METADATA_DEFS}
     ${PYTHON_DEFS}
 )
 

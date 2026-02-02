@@ -6,6 +6,9 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
 from PySide6.QtCore import Qt
 import os
 
+# Import the version formatter from main_window
+from .main_window import format_wp_version
+
 
 class ManageDevicesDialog(QDialog):
     """Dialog for managing all known devices."""
@@ -71,8 +74,8 @@ class ManageDevicesDialog(QDialog):
         button_layout.addWidget(self.reflash_ep_button)
 
         self.reflash_wp_button = QPushButton("Reflash WP")
-        self.reflash_wp_button.setEnabled(False)
-        self.reflash_wp_button.setToolTip("WP reflash not yet implemented")
+        self.reflash_wp_button.clicked.connect(self._reflash_wp)
+        self.reflash_wp_button.setToolTip("Upload a UF2 file and reflash the WP processor (OTA self-update)")
         button_layout.addWidget(self.reflash_wp_button)
 
         self.close_button = QPushButton("Close")
@@ -100,9 +103,8 @@ class ManageDevicesDialog(QDialog):
                 # MAC address
                 self.device_table.setItem(row, 1, QTableWidgetItem(device.mac_address))
 
-                # WP version
-                wp_version = device.wp_version or "-"
-                self.device_table.setItem(row, 2, QTableWidgetItem(wp_version))
+                # WP version (formatted from JSON to readable string)
+                self.device_table.setItem(row, 2, QTableWidgetItem(format_wp_version(device.wp_version)))
 
                 # Log storage path
                 self.device_table.setItem(row, 3, QTableWidgetItem(device.log_storage_path))
@@ -595,6 +597,174 @@ class ManageDevicesDialog(QDialog):
                         self,
                         "Reflash Error",
                         f"An error occurred during EP reflash:\n\n{str(e)}"
+                    )
+
+        finally:
+            session.close()
+
+    def _reflash_wp(self):
+        """Reflash the WP processor on the selected device (OTA self-update)."""
+        from models.database import Device
+        from device_client import DeviceClient
+        from PySide6.QtWidgets import QProgressDialog, QApplication
+
+        mac_address = self._get_selected_mac()
+        if not mac_address:
+            return
+
+        session = self.database.get_session()
+        try:
+            device = session.query(Device).filter_by(mac_address=mac_address).first()
+            if not device:
+                return
+
+            # Check if device is online
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(
+                    self,
+                    "Device Offline",
+                    f"Device '{device.display_name}' is not currently online.\n\n"
+                    f"Make sure the device is powered on and connected to the network."
+                )
+                return
+
+            # Let user select UF2 file to upload
+            source_file, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select WP Firmware File",
+                "",
+                "UF2 Files (*.uf2);;All Files (*.*)"
+            )
+
+            if not source_file:
+                return  # User cancelled
+
+            # Extract filename
+            destination_filename = os.path.basename(source_file)
+
+            # Warn if filename is not WP.uf2
+            if destination_filename.lower() != "wp.uf2":
+                reply = QMessageBox.warning(
+                    self,
+                    "Filename Warning",
+                    f"The selected file is named '{destination_filename}'.\n\n"
+                    f"Typically WP firmware files are named 'WP.uf2'.\n\n"
+                    f"Are you sure you want to continue with this file?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
+            # Final confirmation with TBYB explanation
+            file_size = os.path.getsize(source_file)
+            reply = QMessageBox.warning(
+                self,
+                "Confirm WP Reflash",
+                f"This will reflash the WP processor on device '{device.display_name}'.\n\n"
+                f"File: {source_file}\n"
+                f"Size: {file_size:,} bytes\n\n"
+                f"WARNING: Do not power off the device during reflash!\n\n"
+                f"The process will:\n"
+                f"1. Upload the firmware file to the device\n"
+                f"2. Device shuts down logger and WiFi, then flashes (30-120 sec)\n"
+                f"3. Device reboots automatically when complete\n\n"
+                f"The device will go offline during flashing and reconnect with\n"
+                f"the new firmware. TBYB protection provides automatic rollback\n"
+                f"if the new firmware fails to boot properly.\n\n"
+                f"Continue with WP reflash?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+            client = DeviceClient(device.last_ip)
+
+            # Create progress dialog for upload phase
+            progress = QProgressDialog(
+                f"Uploading {destination_filename}...",
+                "Cancel",
+                0, 100, self
+            )
+            progress.setWindowTitle("WP Reflash - Upload")
+            progress.setModal(True)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+
+            upload_cancelled = False
+
+            def update_upload_progress(bytes_sent, total_bytes):
+                nonlocal upload_cancelled
+                percent = int((bytes_sent / total_bytes) * 100)
+                progress.setValue(percent)
+                progress.setLabelText(
+                    f"Uploading {destination_filename}...\n"
+                    f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
+                )
+                QApplication.processEvents()
+
+                if progress.wasCanceled():
+                    upload_cancelled = True
+                    raise Exception("Upload cancelled by user")
+
+            try:
+                # Upload the UF2 file
+                success, sha256, error_msg = client.upload_file(
+                    source_file,
+                    destination_filename,
+                    progress_callback=update_upload_progress
+                )
+
+                progress.close()
+
+                if upload_cancelled:
+                    return
+
+                if not success:
+                    QMessageBox.critical(
+                        self,
+                        "Upload Failed",
+                        f"Failed to upload firmware file:\n\n{error_msg}"
+                    )
+                    return
+
+                # Trigger the reflash - this returns immediately with an ACK
+                # The device will shut down subsystems, flash, and reboot automatically
+                success, error_msg = client.reflash_wp(destination_filename, timeout=30)
+
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "WP OTA Update Started",
+                        f"OTA update initiated on device '{device.display_name}'.\n\n"
+                        f"The device will now:\n"
+                        f"1. Shut down the data logger and WiFi\n"
+                        f"2. Flash the new firmware to the inactive partition\n"
+                        f"3. Reboot automatically when complete\n\n"
+                        f"This process takes 30-120 seconds. The device will go offline\n"
+                        f"and reconnect with the new firmware version.\n\n"
+                        f"TBYB Protection is active:\n"
+                        f"• If the new firmware boots successfully and passes self-test, "
+                        f"it will be committed automatically.\n"
+                        f"• If it fails to boot, the device will automatically roll back "
+                        f"to the previous version."
+                    )
+                else:
+                    QMessageBox.critical(
+                        self,
+                        "WP Reflash Failed",
+                        f"Failed to initiate WP reflash:\n\n{error_msg}"
+                    )
+
+            except Exception as e:
+                progress.close()
+                if "cancelled" not in str(e).lower():
+                    QMessageBox.critical(
+                        self,
+                        "Reflash Error",
+                        f"An error occurred during WP reflash:\n\n{str(e)}"
                     )
 
         finally:

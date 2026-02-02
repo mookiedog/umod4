@@ -70,7 +70,7 @@
 #define configMESSAGE_BUFFER_LENGTH_TYPE        size_t
 
 /* Memory allocation related definitions. */
-#define configSUPPORT_STATIC_ALLOCATION         0
+#define configSUPPORT_STATIC_ALLOCATION         1
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configAPPLICATION_ALLOCATED_HEAP        0           // Let Heap4 allocate its own array
 
@@ -93,6 +93,8 @@
 #define configTIMER_TASK_PRIORITY               ( configMAX_PRIORITIES - 1 )
 #define configTIMER_QUEUE_LENGTH                10
 #define configTIMER_TASK_STACK_DEPTH            1024
+/* Should this be necessary: */
+/* #define configTIMER_SERVICE_TASK_CORE_AFFINITY (1 << 0) */
 
 /* Interrupt nesting behaviour configuration. */
 /*

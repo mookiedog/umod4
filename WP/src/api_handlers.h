@@ -51,6 +51,24 @@ void handle_upload_chunk(char* buffer, size_t size, const char* post_data, size_
  */
 void generate_api_reflash_ep_json(char* buffer, size_t size, const char* filename);
 
+/**
+ * Generate JSON for /api/reflash/wp?filename=<name> endpoint.
+ * Triggers WP self-reflash using specified UF2 file from SD card.
+ * The new firmware is written to the inactive A/B partition.
+ * WARNING: This operation takes 30-120 seconds and blocks!
+ * After completion, a reboot is required to activate the new firmware.
+ * The reboot uses TBYB (Try Before You Buy) for automatic rollback protection.
+ * Called by fs_open_custom() when serving the API.
+ */
+void generate_api_reflash_wp_json(char* buffer, size_t size, const char* filename);
+
+/**
+ * Generate JSON for /api/system endpoint.
+ * Returns the SYSTEM_JSON string containing build metadata (Git hash, build time).
+ * Called by fs_open_custom() when serving the API.
+ */
+void generate_api_system_json(char* buffer, size_t size);
+
 #ifdef __cplusplus
 }
 #endif

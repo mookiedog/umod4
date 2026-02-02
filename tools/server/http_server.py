@@ -86,7 +86,13 @@ class Umod4Server:
 
                     # Update device info
                     if 'wp_version' in data:
-                        device.wp_version = data['wp_version']
+                        # wp_version may be a JSON object, convert to string for storage
+                        wp_ver = data['wp_version']
+                        if isinstance(wp_ver, dict):
+                            import json
+                            device.wp_version = json.dumps(wp_ver)
+                        else:
+                            device.wp_version = wp_ver
                     if 'ep_version' in data:
                         device.ep_version = data['ep_version']
                     device.last_seen = datetime.utcnow()

@@ -90,24 +90,6 @@ add_executable(${PROJECT_NAME}
 )
 
 
-# Get the Git version information into this build
-file(READ ${SYSTEM_METADATA_JSON_PATH} RAW_JSON)
-string(REPLACE "\"" "\\\"" ESCAPED_JSON "${RAW_JSON}")
-set(NEW_C_CONTENT "const char SYSTEM_JSON[] = \"${ESCAPED_JSON}\";\n")
-
-set(META_C_FILE "${CMAKE_CURRENT_BINARY_DIR}/generated_metadata.c")
-
-# Only write if the content is actually different
-if(EXISTS "${META_C_FILE}")
-    file(READ "${META_C_FILE}" OLD_C_CONTENT)
-endif()
-
-if(NOT "${NEW_C_CONTENT}" STREQUAL "${OLD_C_CONTENT}")
-    file(WRITE "${META_C_FILE}" "${NEW_C_CONTENT}")
-endif()
-
-target_sources(${PROJECT_NAME} PRIVATE ${META_C_FILE})
-
 # Generate the uart PIO header file for use by this project.
 # FYI: the header file will be generated into "build/EP/uart_tx32_pio.h".
 pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_tx32.pio)

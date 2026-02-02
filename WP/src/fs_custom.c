@@ -14,6 +14,8 @@ extern void generate_api_sha256_json(char* buffer, size_t size, const char* file
 extern void generate_api_delete_json(char* buffer, size_t size, const char* filename);
 extern void generate_api_upload_session_json(char* buffer, size_t size, const char* session_id);
 extern void generate_api_reflash_ep_json(char* buffer, size_t size, const char* filename);
+extern void generate_api_reflash_wp_json(char* buffer, size_t size, const char* filename);
+extern void generate_api_system_json(char* buffer, size_t size);
 
 // Global LittleFS context (set by fs_custom_init)
 static lfs_t* g_lfs = NULL;
@@ -119,6 +121,12 @@ int fs_open_custom(struct fs_file *file, const char *name)
             // Extract filename from reflash/ep/<filename>
             const char* filename = api_name + 11;
             generate_api_reflash_ep_json(api_file->data, api_buffer_size, filename);
+        } else if (strncmp(api_name, "reflash/wp/", 11) == 0) {
+            // Extract filename from reflash/wp/<filename>
+            const char* filename = api_name + 11;
+            generate_api_reflash_wp_json(api_file->data, api_buffer_size, filename);
+        } else if (strcmp(api_name, "system") == 0) {
+            generate_api_system_json(api_file->data, api_buffer_size);
         } else {
             printf("fs_custom: Unknown API endpoint: %s\n", api_name);
             free(api_file->data);

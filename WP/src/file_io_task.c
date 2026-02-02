@@ -13,6 +13,9 @@
 #include "semphr.h"
 #include "umod4_WP.h"  // For TASK_NORMAL_PRIORITY
 #include "FlashEp.h"   // For flash_ep_uf2()
+#include "pico/bootrom.h"
+// Note: WP reflash is handled by ota_flash_task, not here
+#include "boot/picoboot_constants.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -248,7 +251,7 @@ static void process_reflash_ep(const file_io_request_t* req, file_io_result_t* r
 
     if (!lfs_mounted) {
         set_error(result, -1, "Filesystem not mounted");
-        result->reflash_result.flash_result = -1;
+        result->reflash_ep_result.flash_result = -1;
         return;
     }
 
@@ -259,7 +262,7 @@ static void process_reflash_ep(const file_io_request_t* req, file_io_result_t* r
         char msg[64];
         snprintf(msg, sizeof(msg), "File not found: %s", req->reflash_ep_op.path);
         set_error(result, err, msg);
-        result->reflash_result.flash_result = err;
+        result->reflash_ep_result.flash_result = err;
         return;
     }
 
@@ -269,7 +272,7 @@ static void process_reflash_ep(const file_io_request_t* req, file_io_result_t* r
     // Call flash_ep_uf2() - this is synchronous and takes 10-30 seconds
     int32_t flash_result = flash_ep_uf2(req->reflash_ep_op.path, req->reflash_ep_op.verbose);
 
-    result->reflash_result.flash_result = flash_result;
+    result->reflash_ep_result.flash_result = flash_result;
 
     if (flash_result == 0) {
         result->success = true;
@@ -284,6 +287,9 @@ static void process_reflash_ep(const file_io_request_t* req, file_io_result_t* r
         printf("FileIO: EP reflash failed: %s\n", result->error_message);
     }
 }
+
+// Note: WP self-reflash (process_reflash_wp) has been moved to ota_flash_task
+// which provides proper subsystem shutdown and upgrade logging.
 
 // Main task function
 static void file_io_task(void* params)
@@ -316,6 +322,7 @@ static void file_io_task(void* params)
                 case FILE_IO_OP_REFLASH_EP:
                     process_reflash_ep(&request, &result);
                     break;
+                // Note: FILE_IO_OP_REFLASH_WP removed - handled by ota_flash_task
                 default:
                     set_error(&result, -1, "Unknown operation");
                     break;
@@ -350,9 +357,6 @@ void file_io_task_init(void)
         &io_task_handle
     );
     configASSERT(err == pdPASS);
-
-    // Pin to core 0 (same core as Logger and HTTP server for safety)
-    vTaskCoreAffinitySet(io_task_handle, (1 << 0));
 
     printf("FileIO: Task initialized\n");
 }
@@ -433,6 +437,8 @@ bool file_io_reflash_ep(const char* path, bool verbose, uint32_t timeout_ms, fil
     req.reflash_ep_op.verbose = verbose;
     return file_io_execute(&req, timeout_ms, result);
 }
+
+// Note: file_io_reflash_wp() removed - WP reflash is now handled by ota_flash_task
 
 // Legacy compatibility functions
 

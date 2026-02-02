@@ -265,7 +265,7 @@ err_t upload_post_receive_data(void *connection, struct pbuf *p)
 
     pbuf_free(p);
 
-    printf("upload_post_receive_data: Received %u bytes (total=%lu/%lu)\n",
+    if (false) printf("upload_post_receive_data: Received %u bytes (total=%lu/%lu)\n",
            p->tot_len, (unsigned long)session->bytes_received, (unsigned long)session->total_size);
 
     return ERR_OK;

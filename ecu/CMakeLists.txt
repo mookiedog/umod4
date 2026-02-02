@@ -30,12 +30,10 @@ add_custom_command(
     ${OUTPUTS}
   DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
-    ${CMAKE_CURRENT_SOURCE_DIR}/patch_metadata.py
     ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.S
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ECU_log.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/custom_eprom.ld
     ${TOOLS_SOURCE_DIR}/bin-to-bson.py
-    ${SYSTEM_METADATA_JSON_PATH}  # Added: trigger rebuild when metadata changes
 
   COMMENT "Building and Patching UM4.bin"
   VERBATIM
@@ -54,13 +52,7 @@ add_custom_command(
     # 5. Generate Binary
     COMMAND m68hc11-elf-objcopy ${NAME}.elf --output-target=binary ${NAME}.bin
 
-    # 6. Patch Metadata (Using the 3-argument version)
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/patch_metadata.py"
-            "${SYSTEM_METADATA_JSON_PATH}"
-            "${NAME}.elf"
-            "${NAME}.bin"
-
-    # 7. Generate BSON/JSON
+    # 6. Generate BSON/JSON
     COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/bin-to-bson.py
             -d ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.dsc
             -b ${NAME}.bin -o ${NAME}.bson -j ${NAME}.json -c ${NAME}.c

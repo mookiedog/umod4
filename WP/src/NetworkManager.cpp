@@ -62,9 +62,6 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
         printf("NetworkMgr: Critical - Task creation failed\n");
         panic("Unable to create NetworkManager task");
     }
-
-    // Pin to Core 0 for lwIP thread safety
-    vTaskCoreAffinitySet(taskHandle_, (1 << 0));
 }
 
 NetworkManager::~NetworkManager()

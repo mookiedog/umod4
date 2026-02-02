@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "umod4_WP.h"
+#include "ota_flash_task.h"  // For ota_flash_in_progress()
 
 // WiFi credentials from build-time configuration
 #ifndef WIFI_SSID
@@ -51,9 +52,6 @@ WiFiManager::WiFiManager()
         printf("WiFiMgr: Critical - Task creation failed\n");
         panic("Unable to create WiFiManager task");
     }
-
-    // Pin to Core 0 for Pico SDK async safety
-    vTaskCoreAffinitySet(taskHandle_, (1 << 0));
 
     // Create periodic heartbeat timer (5 minutes, repeating)
     heartbeatTimer_ = xTimerCreate(
@@ -109,6 +107,12 @@ void WiFiManager::WiFiManager_task()
     int fail_count = 0;
 
     while (true) {
+
+        // OTA Safety: If OTA flash is in progress, park this task completely.
+        // The OTA task will shut down WiFi and we must NOT try to reinitialize it.
+        if (ota_flash_in_progress()) {
+            while (1);
+        }
 
         // Global Safety: Check if WiFi is allowed via VBUS GPIO
         // Only check if we are beyond the initial setup state

@@ -42,6 +42,24 @@ class DeviceClient:
             print(f"Error getting device info from {self.device_ip}: {e}")
             return None
 
+    def get_system_info(self) -> Optional[Dict]:
+        """Get system build information via /api/system endpoint.
+
+        Returns:
+            Dictionary with build info (GH=git hash, BT=build time) or None on error
+            Example: {"GH": "abc1234", "BT": "2024-01-21 10:30:00"}
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/system",
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Error getting system info from {self.device_ip}: {e}")
+            return None
+
     def list_log_files(self) -> Optional[List[Dict]]:
         """List available log files on device via /api/list endpoint.
 
@@ -381,5 +399,58 @@ class DeviceClient:
             return False, error_msg
         except Exception as e:
             error_msg = f"Error triggering EP reflash: {e}"
+            print(error_msg)
+            return False, error_msg
+
+    def reflash_wp(self, uf2_filename: str, timeout: int = 30) -> Tuple[bool, Optional[str]]:
+        """Trigger WP self-reflash using a UF2 file already on the device.
+
+        The UF2 file must already be uploaded to the device's SD card root directory.
+        This API returns immediately with an acknowledgment, then the device:
+        1. Shuts down subsystems (logger, WiFi)
+        2. Programs the inactive A/B partition
+        3. Reboots automatically
+
+        The device uses TBYB (Try Before You Buy) for automatic rollback
+        protection if the new firmware fails to boot properly.
+
+        Args:
+            uf2_filename: Name of UF2 file on device (e.g., "WP.uf2")
+            timeout: HTTP timeout in seconds (default 30 - response is immediate)
+
+        Returns:
+            Tuple of (success: bool, error_message: Optional[str])
+        """
+        try:
+            # URL-encode the filename for the path
+            import urllib.parse
+            encoded_filename = urllib.parse.quote(uf2_filename, safe='')
+
+            print(f"Triggering WP self-reflash with file: {uf2_filename}")
+            print("  Device will shut down subsystems, flash, and reboot automatically.")
+            response = requests.get(
+                f"{self.base_url}/api/reflash/wp/{encoded_filename}",
+                timeout=timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get('success'):
+                message = data.get('message', 'OTA update starting')
+                print(f"WP reflash initiated: {message}")
+                print("  Device will reboot when complete.")
+                print("  TBYB protection is active - firmware will auto-rollback if boot fails.")
+                return True, None
+            else:
+                error_msg = data.get('error', 'Unknown error')
+                print(f"WP reflash failed: {error_msg}")
+                return False, error_msg
+
+        except requests.Timeout:
+            error_msg = "Request timed out before receiving acknowledgment"
+            print(f"WP reflash timeout: {error_msg}")
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"Error triggering WP reflash: {e}"
             print(error_msg)
             return False, error_msg

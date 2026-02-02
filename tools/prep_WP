@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# Default values
+DO_ERASE=false
+TARGET_DIR=""
+
+# Parse options
+while getopts "e" opt; do
+  case $opt in
+    e) DO_ERASE=true ;;
+    *) echo "Usage: $0 [-e] <directory_path>"; exit 1 ;;
+  esac
+done
+
+# Shift the arguments so $1 is the directory path
+shift $((OPTIND -1))
+TARGET_DIR=$1
+
+# Validation: Check if directory is provided and exists
+if [ -z "$TARGET_DIR" ]; then
+    echo "Error: Please provide a directory path."
+    echo "Usage: $0 [-e] <directory_path>"
+    exit 1
+fi
+
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "Error: Directory '$TARGET_DIR' does not exist."
+    exit 1
+fi
+
+# Paths to the specific files
+PARTITION_TABLE="$TARGET_DIR/partition_table.uf2"
+WP_IMAGE="$TARGET_DIR/WP.uf2"
+
+# Validation: Check if the required files exist in that directory
+for file in "$PARTITION_TABLE" "$WP_IMAGE"; do
+    if [ ! -f "$file" ]; then
+        echo "Error: $(basename "$file") not found in $TARGET_DIR"
+        exit 1
+    fi
+done
+
+# --- Execution ---
+
+# Connection check
+~/.local/bin/picotool info
+#if [ $? -ne 0 ]; then
+#    echo "Error: unable to connect to Pico board"
+#    exit 1
+#fi
+sleep 1
+
+# Perform erase if -e flag was passed
+if [ "$DO_ERASE" = true ]; then
+    echo "Erasing Pico flash..."
+    ~/.local/bin/picotool erase
+    sleep 1
+fi
+
+# Load partition table
+echo "Loading partition table from $TARGET_DIR..."
+~/.local/bin/picotool load -f "$PARTITION_TABLE"
+echo
+sleep 1
+
+# Verify info
+~/.local/bin/picotool info
+echo
+sleep 1
+
+# Load the OTA image to slot A (1)
+echo "Loading WP image to slot 1..."
+~/.local/bin/picotool load -p 1 "$WP_IMAGE" -v
+echo
+sleep 1
+
+# Reboot
+echo "Rebooting device..."
+~/.local/bin/picotool reboot
