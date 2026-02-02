@@ -13,8 +13,6 @@
 #include "task.h"
 #include "semphr.h"
 
-#define LFS 1
-
 #include "FlashWp.h"
 #include "Gps.h"
 #include "lfs.h"
@@ -1020,8 +1018,7 @@ void check_tbyb()
         unpause_watchdog_tick();        // Allow the watchdog to time out even if a debugger is connected
         watchdog_enable(1, false);
         while (true) {
-            hello(100);
-            //__wfi();
+            __wfi();
         }
     }
 }
@@ -1059,9 +1056,7 @@ int main()
         epResetAndRun();
     }
 
-    #if defined SPARE1_LED_PIN
     hello(3);
-    #endif
 
     initSpareIos();
 

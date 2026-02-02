@@ -37,16 +37,56 @@ The latest V4 hardware supports the following features:
   * Raspberry Pi Pico2W: RP2350 dual-core ARM Cortex M-33 at 150 MHz
   * Correlates the incoming ECU data stream with GPS position and velocity information
   * Logs the combined data stream to a micro SD Card
+  * WiFi interface for:
+    * OTA Firmware upgrades (WP and EP)
+    * Automatic log uploading to a local network server after a ride
 
 In the future, the WP will be extended with more features:
 
 * Bluetooth - The main user interface to the Umod4
   * EPROM image selection
   * real time ECU and system status
-* WiFi - A faster interface used for:
-  * Dumping ECU data logs to a server after a ride
-  * Uploading new ECU firmware images
-  * Uploading new Umod4 firmware images
+
+## Umod4 Server
+
+A small server program runs on a local PC.
+The server is responsible for downloading ride logs after a ride.
+A user can also use the server to push OTA (Over The Air) firmware upgrades via WiFi to a bike parked in the garage.
+
+Here is the version 0 server.
+It will change a lot over the next while.
+While simple, it currently does the job:
+
+![umod4 server](images/server-v0.png)
+
+Notice that it can handle multiple umod4 devices.
+You click on the one that you want to work with.
+In my case, I have my Tuono out in the garage, and a test ECU on my workbench downstairs:
+
+![umod4 BenchECU](images/BenchECU.png)
+
+## Umod4 Log Visualizer
+
+Once the logs are downloaded to my PC, I can fire up the visualizer and see everything that happened on my ride.
+The visualizer is a pretty complex program in and of itself, so you will just get a taste of it here.
+
+The visualizer displays the data logs collected by the umod4.
+There is a **lot** of data.
+The ECU tracks crankshaft position six times per revolution.
+The umod4 logs all of it!
+You can clearly see that in how the engine RPM in a big V-twin is not at all consistent in terms of a partial rotation: it looks "fuzzy" for lack of a better word as the crank speeds up and slows down during a single rotation.
+
+Here I am rolling up to a traffic light and turning right, then accellerating up to a GPS-indicated 52 MPH:
+
+![umod4 vizualizer](images/viz-cruising.png)
+
+If you zoom in enough, the vizualizer will show you each rotation of the crankshaft, annotated with things like individual sparkplug firing events and spark timing, and fuel injector pulses in relation to the crank position:
+
+![umod4 vizualizer detail](images/viz-detail.png)
+
+One of the most fun features is the visualizer's ability to overlay the GPS position and velocity data on top of a Google Map window.
+There is a whole lot more over at the visualizer [README page](tools/README_Visualizer.md).
+Check it out over there.
 
 ## Block Diagram
 
@@ -62,9 +102,9 @@ The SD card is used to log the data stream arriving from the ECU. The NEO-8 GPS 
 The GPS module is a generic uBlox NEO-8 from Aliexpress. The NEO-8 can report position and velocity data 10 times a second.
 
 The board also contains a socketed Micro SD card.
-Once the WiFi interfaces get working, the card is treated as non-removable.
+Now that WiFi is working, the SD card can be treated as essentially non-removable.
 This is partly because it is a bit of a pain to physically access it when the ECU is mounted on the bike.
-The long term goal is to offload logs using WiFi whenever the bike gets parked at home.
+It is mainly because the WiFi interface allows access to anything on the SD card filesystem, so there really is no reason to remove it to do things like transfer files to a home PC.
 
 ## PCB Hardware
 
@@ -130,6 +170,7 @@ As always, things are in a state of flux. On the plus side:
 * Data logging works: ECU data and GPS data are written to a single, time-correlated logfile, currently using LittleFS as the file system.
 * The WP module is now using a Pico2W. The extra speed and RAM space is much appreciated.
 * A log [Visualizer](./tools/README_Visualizer.md) exists!
+* WiFi is real! Automatic log downloading works. OTA firmware upgrades work!
 * A new [4V2 revision](https://github.com/mookiedog/umod4-PCB) of the PCB is being planned
 
 Since the Bluetooth interface is not yet developed, the choice of what EPROM or combination of EPROMs to run is a built-time option.
@@ -139,12 +180,6 @@ In short, that means that basically any Aprilia EPROM codebase except the early 
 ### Next Steps
 
 The next steps mostly revolve around getting the Visualizer features fleshed out.
-After that, I really want to make some progress on:
-
-* Getting wireless OTA firmware updates working so I don't have to carry a laptop out to the garage to reflash the two umod4 processors
-* Using WiFi to get log files automatically uploaded to a server after a ride
-
-I made the decision that OTA updates will take precedence.
 
 ## Getting the Visualizer
 

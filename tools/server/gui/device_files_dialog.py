@@ -49,7 +49,7 @@ class DeviceFilesDialog(QDialog):
         layout.addWidget(header)
 
         # Info label
-        info_label = QLabel("Log files (.um4) must be downloaded before deletion. Other files can be deleted freely.")
+        info_label = QLabel("Log files (.um4, .log) must be downloaded before deletion. Other files can be deleted freely.")
         info_label.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(info_label)
 
@@ -127,11 +127,11 @@ class DeviceFilesDialog(QDialog):
             for row, file_info in enumerate(device_files):
                 filename = file_info['filename']
                 file_size = file_info['size']
-                is_log_file = filename.endswith('.um4')
+                is_log_file = filename.endswith('.um4') or filename.endswith('.log')
                 is_downloaded = filename in downloaded_files
 
                 # Determine if file can be deleted:
-                # - Log files (.um4) require download first
+                # - Log files (.um4, .log) require download first
                 # - Other files (uploaded files like .uf2) can always be deleted
                 can_delete = is_downloaded or not is_log_file
 
@@ -219,8 +219,8 @@ class DeviceFilesDialog(QDialog):
 
         # Confirmation dialog
         file_list = "\n".join(f"  • {f}" for f in selected_files)
-        log_files = [f for f in selected_files if f.endswith('.um4')]
-        other_files = [f for f in selected_files if not f.endswith('.um4')]
+        log_files = [f for f in selected_files if f.endswith('.um4') or f.endswith('.log')]
+        other_files = [f for f in selected_files if not (f.endswith('.um4') or f.endswith('.log'))]
 
         extra_info = ""
         if log_files:

@@ -32,10 +32,6 @@
 
 #include "RP58_memorymap.h"
 
-#if defined LFS
-#include "../littlefs/lfs.h"
-#endif
-
 // This can be handy in order to insert an instruction that will
 // be guaranteed to exist for the purposes of setting a debugger breakpoint.
 #define NOP()   __asm("nop")
@@ -67,87 +63,12 @@ const uint uart_sm = 0;
 // To track the amount of time it takes to get the ECU booted
 absolute_time_t epoch;
 
-#if defined LFS
 extern uint32_t __FS_PARTITION_START_ADDR;
 extern uint32_t __FS_PARTITION_SIZE_BYTES;
 
 // Note "xxx_addr" refers to byte addresses in the RP2040 address space, not block addresses in the flash device!
 const uint32_t fsPartitionStart_addr = (uint32_t)&__FS_PARTITION_START_ADDR;
 const uint32_t fsPartitionSize_bytes = (uint32_t)&__FS_PARTITION_SIZE_BYTES;
-
-int lfs_read(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, void *buffer, lfs_size_t size);
-int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const void *buffer, lfs_size_t size);
-int lfs_erase(const struct lfs_config *c, lfs_block_t block);
-int lfs_sync(const struct lfs_config *c);
-
-lfs_t lfs;
-//lfs_file_t file;
-
-// Configuration of the filesystem is provided by this struct
-const struct lfs_config cfg = {
-    // block device operations
-    .read  = lfs_read,
-    .prog  = lfs_prog,
-    .erase = lfs_erase,
-    .sync  = lfs_sync,
-
-    // Block device configuration
-    .read_size = 16,
-    .prog_size = 256,                               // Needs to be 256 because the Pico flash writer demands writing full 256 byte pages
-    .block_size = 4096,
-    .block_count = fsPartitionSize_bytes / 4096,
-    .block_cycles = 500,
-    .cache_size = 512,
-    .lookahead_size = 16,
-
-};
-
-// --------------------------------------------------------------------------------------------
-int lfs_read(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, void *buffer, lfs_size_t size)
-{
-    // Convert the block address to where that block really sits in the flash device.
-    uint32_t flashAddr = (block * 4096) + fsPartitionStart_addr;
-    memcpy(buffer, (const void*)(flashAddr + off), size);
-
-    return LFS_ERR_OK;
-}
-
-// --------------------------------------------------------------------------------------------
-int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const void *buffer, lfs_size_t size)
-{
-    const uint32_t fsStartOffset = (fsPartitionStart_addr - XIP_BASE);
-
-    if ((size & 0xFF) != 0) {
-        return LFS_ERR_INVAL;
-    }
-
-    flash_range_program((block * 4096) + fsStartOffset, (uint8_t *)buffer, size);
-
-    // verify the write???
-
-    return LFS_ERR_OK;
-}
-
-// --------------------------------------------------------------------------------------------
-int lfs_erase(const struct lfs_config *c, lfs_block_t block)
-{
-    // Calculate where the start of our file system sits relative to the start of the flash.
-    const uint32_t fsStartOffset = (fsPartitionStart_addr - XIP_BASE);
-
-    // The flash_range_erase() function wants an address relative to the start of flash
-    uint32_t flashAddr = (block * 4096) + fsStartOffset;
-    flash_range_erase(flashAddr, 4096);
-
-    return LFS_ERR_OK;
-}
-
-// --------------------------------------------------------------------------------------------
-int lfs_sync(const struct lfs_config *c)
-{
-    // Systems that don't support sync operation should just return OK
-    return LFS_ERR_OK;
-}
-#endif
 
 // --------------------------------------------------------------------------------------------
 // Decoding protected EPROMs is not a public feature.

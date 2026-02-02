@@ -64,9 +64,9 @@ bool fs_custom_is_ready(void)
  * This is called by lwIP httpd when a file is requested.
  *
  * Supported paths:
- * - /api/*       - API endpoints (served from RAM)
- * - /logs/*.um4  - Log files from SD card
- * - Other paths  - Return 0 to let lwIP check built-in fsdata.c
+ * - /api/*             - API endpoints (served from RAM)
+ * - /logs/*.um4, *.log - Log files from SD card
+ * - Other paths        - Return 0 to let lwIP check built-in fsdata.c
  */
 int fs_open_custom(struct fs_file *file, const char *name)
 {
@@ -162,9 +162,15 @@ int fs_open_custom(struct fs_file *file, const char *name)
 
         const char* filename = path + 5;  // Skip "logs/" prefix
 
-        // Validate filename (only allow .um4 files)
+        // Validate filename (only allow .um4 and .log files)
         size_t len = strlen(filename);
-        if (len < 5 || strcmp(filename + len - 4, ".um4") != 0) {
+        bool valid_ext = false;
+        if (len >= 4 && strcmp(filename + len - 4, ".um4") == 0) {
+            valid_ext = true;
+        } else if (len >= 4 && strcmp(filename + len - 4, ".log") == 0) {
+            valid_ext = true;
+        }
+        if (!valid_ext) {
             printf("fs_custom: Invalid log file extension: %s\n", filename);
             return 0;
         }

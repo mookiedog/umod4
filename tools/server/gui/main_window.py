@@ -3,9 +3,10 @@
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                                QPushButton, QLabel, QFrame, QSplitter, QTabWidget,
                                QTableWidget, QTableWidgetItem, QHeaderView, QMenu,
-                               QMessageBox, QFileDialog)
+                               QMessageBox, QFileDialog, QInputDialog, QProgressDialog,
+                               QGroupBox, QGridLayout, QApplication)
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QFont
 from datetime import datetime
 import json
 import os
@@ -98,6 +99,11 @@ class DeviceListWidget(QWidget):
                 else:
                     status_item.setForeground(Qt.GlobalColor.red)
                 status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                # Use larger, bold font for visibility
+                status_font = QFont()
+                status_font.setPointSize(18)
+                status_font.setBold(True)
+                status_item.setFont(status_font)
                 self.device_table.setItem(row, 0, status_item)
 
                 # Name column
@@ -841,6 +847,655 @@ class TransferHistoryWidget(QWidget):
                           "Could not find viz tool. Please configure viz path in settings.")
 
 
+class ManageDeviceWidget(QWidget):
+    """Widget for managing the selected device."""
+
+    def __init__(self, database):
+        super().__init__()
+        self.database = database
+        self.selected_mac = None
+        self.device_is_online = False
+        self._setup_ui()
+
+        # Refresh timer to update device status
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self._refresh_device_info)
+        self.refresh_timer.start(2000)  # Refresh every 2 seconds
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Header showing selected device
+        self.header_label = QLabel("No device selected")
+        self.header_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(self.header_label)
+
+        # Device info display
+        info_group = QGroupBox("Device Information")
+        info_layout = QGridLayout(info_group)
+
+        info_layout.addWidget(QLabel("MAC Address:"), 0, 0)
+        self.mac_label = QLabel("-")
+        info_layout.addWidget(self.mac_label, 0, 1)
+
+        info_layout.addWidget(QLabel("Status:"), 1, 0)
+        self.status_label = QLabel("-")
+        info_layout.addWidget(self.status_label, 1, 1)
+
+        info_layout.addWidget(QLabel("Log Path:"), 2, 0)
+        self.path_label = QLabel("-")
+        self.path_label.setWordWrap(True)
+        info_layout.addWidget(self.path_label, 2, 1)
+
+        info_layout.addWidget(QLabel("WP Version:"), 3, 0)
+        self.wp_version_label = QLabel("-")
+        self.wp_version_label.setWordWrap(True)
+        info_layout.addWidget(self.wp_version_label, 3, 1)
+
+        info_layout.addWidget(QLabel("EP Version:"), 4, 0)
+        self.ep_version_label = QLabel("-")
+        info_layout.addWidget(self.ep_version_label, 4, 1)
+
+        info_layout.setColumnStretch(1, 1)
+        layout.addWidget(info_group)
+
+        # Basic operations (always available when device selected)
+        basic_group = QGroupBox("Basic Operations")
+        basic_layout = QHBoxLayout(basic_group)
+
+        self.rename_button = QPushButton("Rename Device")
+        self.rename_button.clicked.connect(self._rename_device)
+        basic_layout.addWidget(self.rename_button)
+
+        self.change_path_button = QPushButton("Change Log Path")
+        self.change_path_button.clicked.connect(self._change_log_path)
+        basic_layout.addWidget(self.change_path_button)
+
+        self.open_folder_button = QPushButton("Open Log Folder")
+        self.open_folder_button.clicked.connect(self._open_log_folder)
+        basic_layout.addWidget(self.open_folder_button)
+
+        self.delete_button = QPushButton("Delete Device")
+        self.delete_button.clicked.connect(self._delete_device)
+        basic_layout.addWidget(self.delete_button)
+
+        basic_layout.addStretch()
+        layout.addWidget(basic_group)
+
+        # Online operations (require device to be online)
+        online_group = QGroupBox("Online Operations (device must be online)")
+        online_layout = QHBoxLayout(online_group)
+
+        self.manage_files_button = QPushButton("Manage Files on Device")
+        self.manage_files_button.clicked.connect(self._manage_files)
+        online_layout.addWidget(self.manage_files_button)
+
+        self.upload_button = QPushButton("Upload File")
+        self.upload_button.clicked.connect(self._upload_file)
+        online_layout.addWidget(self.upload_button)
+
+        self.reflash_ep_button = QPushButton("Reflash EP")
+        self.reflash_ep_button.setToolTip("Upload a UF2 file and reflash the EP processor via SWD")
+        self.reflash_ep_button.clicked.connect(self._reflash_ep)
+        online_layout.addWidget(self.reflash_ep_button)
+
+        self.reflash_wp_button = QPushButton("Reflash WP")
+        self.reflash_wp_button.setToolTip("Upload a UF2 file and reflash the WP processor (OTA self-update)")
+        self.reflash_wp_button.clicked.connect(self._reflash_wp)
+        online_layout.addWidget(self.reflash_wp_button)
+
+        online_layout.addStretch()
+        layout.addWidget(online_group)
+
+        layout.addStretch()
+
+        # Initially disable all buttons
+        self._update_button_states()
+
+    def set_selected_device(self, mac_address):
+        """Set the currently selected device."""
+        self.selected_mac = mac_address
+        self._refresh_device_info()
+
+    def _refresh_device_info(self):
+        """Refresh the device info display."""
+        from models.database import Device
+
+        if not self.selected_mac:
+            self.header_label.setText("No device selected")
+            self.mac_label.setText("-")
+            self.status_label.setText("-")
+            self.path_label.setText("-")
+            self.wp_version_label.setText("-")
+            self.ep_version_label.setText("-")
+            self.device_is_online = False
+            self._update_button_states()
+            return
+
+        session = self.database.get_session()
+        try:
+            device = session.query(Device).filter_by(mac_address=self.selected_mac).first()
+            if not device:
+                self.header_label.setText("Device not found")
+                self.device_is_online = False
+                self._update_button_states()
+                return
+
+            # Update header
+            self.header_label.setText(f"Managing: {device.display_name}")
+
+            # Update info labels
+            self.mac_label.setText(device.mac_address)
+            self.path_label.setText(device.log_storage_path or "-")
+            self.wp_version_label.setText(format_wp_version(device.wp_version))
+            self.ep_version_label.setText(device.ep_version or "-")
+
+            # Determine online status
+            self.device_is_online = getattr(device, 'is_online', False)
+            if self.device_is_online:
+                self.status_label.setText("Online")
+                self.status_label.setStyleSheet("color: green; font-weight: bold;")
+            else:
+                self.status_label.setText("Offline")
+                self.status_label.setStyleSheet("color: red;")
+
+            self._update_button_states()
+
+        finally:
+            session.close()
+
+    def _update_button_states(self):
+        """Update button enabled states based on selection and online status."""
+        has_selection = self.selected_mac is not None
+
+        # Basic operations - require selection only
+        self.rename_button.setEnabled(has_selection)
+        self.change_path_button.setEnabled(has_selection)
+        self.open_folder_button.setEnabled(has_selection)
+        self.delete_button.setEnabled(has_selection)
+
+        # Online operations - require selection AND online
+        online_enabled = has_selection and self.device_is_online
+        self.manage_files_button.setEnabled(online_enabled)
+        self.upload_button.setEnabled(online_enabled)
+        self.reflash_ep_button.setEnabled(online_enabled)
+        self.reflash_wp_button.setEnabled(online_enabled)
+
+    def _get_device(self):
+        """Get the selected device from database. Returns (session, device) tuple."""
+        from models.database import Device
+
+        if not self.selected_mac:
+            return None, None
+
+        session = self.database.get_session()
+        device = session.query(Device).filter_by(mac_address=self.selected_mac).first()
+        return session, device
+
+    def _rename_device(self):
+        """Rename selected device."""
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            new_name, ok = QInputDialog.getText(
+                self,
+                "Rename Device",
+                f"Enter new name for {device.mac_address}:",
+                text=device.display_name
+            )
+
+            if ok and new_name.strip():
+                success, error = self.database.update_device_name(self.selected_mac, new_name.strip())
+                if not success:
+                    QMessageBox.warning(self, "Rename Failed", f"Failed to rename device: {error}")
+                self._refresh_device_info()
+        finally:
+            session.close()
+
+    def _change_log_path(self):
+        """Change log storage path for selected device."""
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            new_path = QFileDialog.getExistingDirectory(
+                self,
+                f"Select Log Storage Directory for {device.display_name}",
+                device.log_storage_path,
+                QFileDialog.Option.ShowDirsOnly
+            )
+
+            if new_path:
+                old_path = device.log_storage_path
+                device.log_storage_path = new_path
+                session.commit()
+                os.makedirs(new_path, exist_ok=True)
+
+                QMessageBox.information(
+                    self,
+                    "Log Path Changed",
+                    f"Log storage path updated.\n\nOld: {old_path}\nNew: {new_path}"
+                )
+                self._refresh_device_info()
+        finally:
+            session.close()
+
+    def _open_log_folder(self):
+        """Open log folder in file manager."""
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            if device.log_storage_path and os.path.exists(device.log_storage_path):
+                if os.name == 'nt':
+                    os.startfile(device.log_storage_path)
+                elif os.name == 'posix':
+                    subprocess.Popen(['xdg-open', device.log_storage_path])
+        finally:
+            session.close()
+
+    def _delete_device(self):
+        """Delete selected device from database."""
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            reply = QMessageBox.question(
+                self,
+                "Delete Device",
+                f"Delete device '{device.display_name}' ({device.mac_address})?\n\n"
+                f"The device will be re-discovered with defaults the next time it connects.\n\n"
+                f"Log files in {device.log_storage_path} will NOT be deleted.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                session.delete(device)
+                session.commit()
+                self.selected_mac = None
+                self._refresh_device_info()
+        finally:
+            session.close()
+
+    def _manage_files(self):
+        """Open file management dialog for selected device."""
+        from gui.device_files_dialog import DeviceFilesDialog
+
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(self, "Device Offline", "Device must be online to manage files.")
+                return
+
+            dialog = DeviceFilesDialog(
+                self.database,
+                device.mac_address,
+                device.last_ip,
+                self
+            )
+            dialog.exec()
+        finally:
+            session.close()
+
+    def _upload_file(self):
+        """Upload a file to the selected device."""
+        from models.database import DeviceUpload
+        from device_client import DeviceClient
+
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(self, "Device Offline", "Device must be online to upload files.")
+                return
+
+            source_file, _ = QFileDialog.getOpenFileName(
+                self, "Select File to Upload", "", "All Files (*.*)"
+            )
+
+            if not source_file:
+                return
+
+            destination_filename = os.path.basename(source_file)
+            file_size = os.path.getsize(source_file)
+
+            reply = QMessageBox.question(
+                self,
+                "Confirm Upload",
+                f"Upload file to device '{device.display_name}'?\n\n"
+                f"Source: {source_file}\n"
+                f"Destination: /{destination_filename}\n"
+                f"Size: {file_size:,} bytes",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+            progress = QProgressDialog(
+                f"Uploading {destination_filename}...", "Cancel", 0, 100, self
+            )
+            progress.setWindowTitle("File Upload")
+            progress.setModal(True)
+            progress.setMinimumDuration(0)
+
+            client = DeviceClient(device.last_ip)
+
+            def update_progress(bytes_sent, total_bytes):
+                percent = int((bytes_sent / total_bytes) * 100)
+                progress.setValue(percent)
+                progress.setLabelText(
+                    f"Uploading {destination_filename}...\n"
+                    f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
+                )
+                QApplication.processEvents()
+                if progress.wasCanceled():
+                    raise Exception("Upload cancelled by user")
+
+            # Create upload record
+            upload_record = DeviceUpload(
+                device_mac=self.selected_mac,
+                source_path=source_file,
+                destination_filename=destination_filename,
+                size_bytes=file_size,
+                start_time=datetime.utcnow(),
+                status='in_progress'
+            )
+            session.add(upload_record)
+            session.commit()
+            upload_id = upload_record.id
+
+            try:
+                start_time = datetime.utcnow()
+                success, sha256, error_msg = client.upload_file(
+                    source_file, destination_filename, progress_callback=update_progress
+                )
+                end_time = datetime.utcnow()
+                duration = (end_time - start_time).total_seconds()
+                transfer_speed_mbps = (file_size * 8 / 1_000_000) / duration if duration > 0 else 0
+
+                progress.close()
+
+                upload_record = session.query(DeviceUpload).get(upload_id)
+                if upload_record:
+                    upload_record.end_time = end_time
+                    upload_record.transfer_speed_mbps = transfer_speed_mbps
+                    upload_record.sha256 = sha256
+                    upload_record.status = 'success' if success else 'failed'
+                    upload_record.error_message = error_msg
+                    session.commit()
+
+                if success:
+                    QMessageBox.information(
+                        self, "Upload Complete",
+                        f"File uploaded successfully!\n\nFile: {destination_filename}\n"
+                        f"SHA-256: {sha256[:16]}...{sha256[-16:]}"
+                    )
+                else:
+                    QMessageBox.critical(self, "Upload Failed", f"Failed to upload file:\n\n{error_msg}")
+
+            except Exception as e:
+                progress.close()
+                upload_record = session.query(DeviceUpload).get(upload_id)
+                if upload_record:
+                    upload_record.end_time = datetime.utcnow()
+                    upload_record.status = 'failed'
+                    upload_record.error_message = str(e)
+                    session.commit()
+                if "cancelled" not in str(e).lower():
+                    QMessageBox.critical(self, "Upload Error", f"An error occurred:\n\n{str(e)}")
+
+        finally:
+            session.close()
+
+    def _reflash_ep(self):
+        """Reflash the EP processor on the selected device."""
+        from device_client import DeviceClient
+
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(self, "Device Offline", "Device must be online to reflash.")
+                return
+
+            source_file, _ = QFileDialog.getOpenFileName(
+                self, "Select EP Firmware File", "", "UF2 Files (*.uf2);;All Files (*.*)"
+            )
+
+            if not source_file:
+                return
+
+            destination_filename = os.path.basename(source_file)
+            file_size = os.path.getsize(source_file)
+
+            if destination_filename.lower() != "ep.uf2":
+                reply = QMessageBox.warning(
+                    self, "Filename Warning",
+                    f"The selected file is named '{destination_filename}'.\n"
+                    f"Typically EP firmware files are named 'EP.uf2'.\n\nContinue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
+            reply = QMessageBox.warning(
+                self, "Confirm EP Reflash",
+                f"Reflash EP processor on '{device.display_name}'?\n\n"
+                f"File: {source_file}\nSize: {file_size:,} bytes\n\n"
+                f"WARNING: Do not power off the device during reflash!",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+            client = DeviceClient(device.last_ip)
+
+            progress = QProgressDialog(
+                f"Uploading {destination_filename}...", "Cancel", 0, 100, self
+            )
+            progress.setWindowTitle("EP Reflash - Upload")
+            progress.setModal(True)
+            progress.setMinimumDuration(0)
+
+            upload_cancelled = False
+
+            def update_progress(bytes_sent, total_bytes):
+                nonlocal upload_cancelled
+                percent = int((bytes_sent / total_bytes) * 100)
+                progress.setValue(percent)
+                progress.setLabelText(
+                    f"Uploading {destination_filename}...\n"
+                    f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
+                )
+                QApplication.processEvents()
+                if progress.wasCanceled():
+                    upload_cancelled = True
+                    raise Exception("Upload cancelled")
+
+            try:
+                success, sha256, error_msg = client.upload_file(
+                    source_file, destination_filename, progress_callback=update_progress
+                )
+                progress.close()
+
+                if upload_cancelled:
+                    return
+
+                if not success:
+                    QMessageBox.critical(self, "Upload Failed", f"Failed to upload firmware:\n\n{error_msg}")
+                    return
+
+                progress = QProgressDialog(
+                    "Reflashing EP processor...\n\nDo not power off the device!",
+                    None, 0, 0, self
+                )
+                progress.setWindowTitle("EP Reflash - Programming")
+                progress.setModal(True)
+                progress.setMinimumDuration(0)
+                QApplication.processEvents()
+
+                success, error_msg = client.reflash_ep(destination_filename, timeout=120)
+                progress.close()
+
+                if success:
+                    QMessageBox.information(self, "EP Reflash Complete", "EP processor reflashed successfully!")
+                else:
+                    QMessageBox.critical(self, "EP Reflash Failed", f"Failed to reflash:\n\n{error_msg}")
+
+            except Exception as e:
+                progress.close()
+                if "cancelled" not in str(e).lower():
+                    QMessageBox.critical(self, "Reflash Error", f"An error occurred:\n\n{str(e)}")
+
+        finally:
+            session.close()
+
+    def _reflash_wp(self):
+        """Reflash the WP processor on the selected device (OTA self-update)."""
+        from device_client import DeviceClient
+
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(self, "Device Offline", "Device must be online to reflash.")
+                return
+
+            source_file, _ = QFileDialog.getOpenFileName(
+                self, "Select WP Firmware File", "", "UF2 Files (*.uf2);;All Files (*.*)"
+            )
+
+            if not source_file:
+                return
+
+            destination_filename = os.path.basename(source_file)
+            file_size = os.path.getsize(source_file)
+
+            if destination_filename.lower() != "wp.uf2":
+                reply = QMessageBox.warning(
+                    self, "Filename Warning",
+                    f"The selected file is named '{destination_filename}'.\n"
+                    f"Typically WP firmware files are named 'WP.uf2'.\n\nContinue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
+            reply = QMessageBox.warning(
+                self, "Confirm WP Reflash",
+                f"Reflash WP processor on '{device.display_name}'?\n\n"
+                f"File: {source_file}\nSize: {file_size:,} bytes\n\n"
+                f"WARNING: Do not power off the device during reflash!\n\n"
+                f"The device will go offline during flashing and reconnect\n"
+                f"with the new firmware. TBYB protection provides automatic\n"
+                f"rollback if the new firmware fails to boot.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+            client = DeviceClient(device.last_ip)
+
+            progress = QProgressDialog(
+                f"Uploading {destination_filename}...", "Cancel", 0, 100, self
+            )
+            progress.setWindowTitle("WP Reflash - Upload")
+            progress.setModal(True)
+            progress.setMinimumDuration(0)
+
+            upload_cancelled = False
+
+            def update_progress(bytes_sent, total_bytes):
+                nonlocal upload_cancelled
+                percent = int((bytes_sent / total_bytes) * 100)
+                progress.setValue(percent)
+                progress.setLabelText(
+                    f"Uploading {destination_filename}...\n"
+                    f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
+                )
+                QApplication.processEvents()
+                if progress.wasCanceled():
+                    upload_cancelled = True
+                    raise Exception("Upload cancelled")
+
+            try:
+                success, sha256, error_msg = client.upload_file(
+                    source_file, destination_filename, progress_callback=update_progress
+                )
+                progress.close()
+
+                if upload_cancelled:
+                    return
+
+                if not success:
+                    QMessageBox.critical(self, "Upload Failed", f"Failed to upload firmware:\n\n{error_msg}")
+                    return
+
+                success, error_msg = client.reflash_wp(destination_filename, timeout=30)
+
+                if success:
+                    # Mark device as offline since it's about to reboot
+                    device.is_online = False
+                    session.commit()
+                    self._refresh_device_info()
+
+                    QMessageBox.information(
+                        self, "WP OTA Update Started",
+                        f"OTA update initiated on '{device.display_name}'.\n\n"
+                        f"The device will shut down, flash, and reboot automatically.\n"
+                        f"This takes 30-120 seconds."
+                    )
+                else:
+                    QMessageBox.critical(self, "WP Reflash Failed", f"Failed to initiate reflash:\n\n{error_msg}")
+
+            except Exception as e:
+                progress.close()
+                if "cancelled" not in str(e).lower():
+                    QMessageBox.critical(self, "Reflash Error", f"An error occurred:\n\n{str(e)}")
+
+        finally:
+            session.close()
+
+
 class MainWindow(QMainWindow):
     """Main window for umod4 server application."""
 
@@ -887,15 +1542,14 @@ class MainWindow(QMainWindow):
         self.device_list.device_selected.connect(self._on_device_selected)
         splitter.addWidget(self.device_list)
 
-        # Bottom: Tabs for transfer history and connection log
+        # Bottom: Tabs for transfer history and device management
         tab_widget = QTabWidget()
 
         self.transfer_history = TransferHistoryWidget(self.database)
         tab_widget.addTab(self.transfer_history, "Transfer History")
 
-        # TODO: Add connection log widget
-        # self.connection_log = ConnectionLogWidget(self.database)
-        # tab_widget.addTab(self.connection_log, "Connection Log")
+        self.manage_device = ManageDeviceWidget(self.database)
+        tab_widget.addTab(self.manage_device, "Manage Device")
 
         splitter.addWidget(tab_widget)
 
@@ -918,22 +1572,9 @@ class MainWindow(QMainWindow):
         # Settings menu
         settings_menu = menu_bar.addMenu("Settings")
 
-        manage_devices_action = QAction("Manage Devices", self)
-        manage_devices_action.triggered.connect(self._manage_devices)
-        settings_menu.addAction(manage_devices_action)
-
-        settings_menu.addSeparator()
-
         server_settings_action = QAction("Server Settings", self)
         server_settings_action.triggered.connect(self._show_server_settings)
         settings_menu.addAction(server_settings_action)
-
-        # Device menu
-        device_menu = menu_bar.addMenu("Device")
-
-        delete_all_wp_action = QAction("Delete All Files on WP...", self)
-        delete_all_wp_action.triggered.connect(self._delete_all_wp_files)
-        device_menu.addAction(delete_all_wp_action)
 
         # Help menu
         help_menu = menu_bar.addMenu("Help")
@@ -958,6 +1599,7 @@ class MainWindow(QMainWindow):
     def _on_device_selected(self, device_mac):
         """Handle device selection."""
         self.transfer_history.set_device_filter(device_mac)
+        self.manage_device.set_selected_device(device_mac)
 
     def configure_new_device(self, device_mac):
         """Show configuration dialog for newly registered device.
@@ -998,79 +1640,6 @@ class MainWindow(QMainWindow):
 
         finally:
             session.close()
-
-    def _delete_all_wp_files(self):
-        """Delete all files on WP device except actively writing ones."""
-        from models.database import Device
-
-        # First, check if there's a selected device
-        selected_mac = None
-        if hasattr(self, 'device_list') and self.device_list.selected_mac:
-            selected_mac = self.device_list.selected_mac
-
-        # If no device selected, ask user to select one
-        if not selected_mac:
-            session = self.database.get_session()
-            try:
-                devices = session.query(Device).all()
-                if not devices:
-                    QMessageBox.warning(self, "No Devices", "No devices found in database.")
-                    return
-
-                # Show device selection dialog
-                from PySide6.QtWidgets import QInputDialog
-                device_names = []
-                device_macs = []
-                for device in devices:
-                    if device.name:
-                        device_names.append(f"{device.name} ({device.mac_address})")
-                    else:
-                        device_names.append(device.mac_address)
-                    device_macs.append(device.mac_address)
-
-                selected_name, ok = QInputDialog.getItem(
-                    self, "Select Device",
-                    "Select device to delete files from:",
-                    device_names, 0, False
-                )
-
-                if not ok:
-                    return
-
-                selected_mac = device_macs[device_names.index(selected_name)]
-            finally:
-                session.close()
-
-        # Confirm deletion
-        reply = QMessageBox.question(
-            self, "Confirm Deletion",
-            f"Are you sure you want to delete ALL files on the WP device {selected_mac}?\n\n"
-            "This will delete all files except any that are currently being written.\n"
-            "This action cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        # TODO: Implement remote deletion via HTTP API
-        QMessageBox.warning(self, "Not Implemented",
-                          "Remote deletion from WP LittleFS is not yet implemented.\n"
-                          "This will require adding an HTTP endpoint to the WP firmware that:\n"
-                          "1. Lists all files on the LittleFS\n"
-                          "2. Identifies which file is currently being written\n"
-                          "3. Deletes all other files")
-
-    def _manage_devices(self):
-        """Show device management dialog."""
-        from gui.manage_devices_dialog import ManageDevicesDialog
-
-        dialog = ManageDevicesDialog(self.database, parent=self)
-        dialog.exec()
-
-        # Refresh device list after dialog closes
-        self.device_list.refresh_devices()
 
     def _show_server_settings(self):
         """Show server settings dialog."""

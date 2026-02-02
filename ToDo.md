@@ -1,5 +1,14 @@
 # To Do
 
+## Short Term
+
+### Server
+
+* reflash upload is not 100% reliable. Need a retry or something.
+* server should store logs by device-name/date/log_xx.um4
+
+
+
 ## Bugs
 
 ### SDIO Checksum errors

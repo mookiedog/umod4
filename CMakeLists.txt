@@ -301,3 +301,58 @@ ExternalProject_Add(WP
     BUILD_ALWAYS true
     INSTALL_COMMAND ""
 )
+
+# ---------------------------------------------------------------------------------------------
+# To make intellesense work better in the context of multiple external projects, we need to create
+# a single database that covers everything.
+if(CMAKE_EXPORT_COMPILE_COMMANDS)
+
+    # Ensure a valid (empty) compilation database exists at configure time
+    file(WRITE ${CMAKE_BINARY_DIR}/compile_commands.json "[]")
+
+    set(MERGE_SCRIPT ${CMAKE_BINARY_DIR}/merge_compile_commands.sh)
+
+    file(WRITE ${MERGE_SCRIPT} "
+#!/bin/sh
+set -e
+
+MERGED_DB=\"${CMAKE_BINARY_DIR}/compile_commands.json\"
+TMP_DB=\"${CMAKE_BINARY_DIR}/compile_commands.tmp.json\"
+
+INPUTS=\"\"
+
+for f in \
+  \"${CMAKE_BINARY_DIR}/WP/compile_commands.json\" \
+  \"${CMAKE_BINARY_DIR}/EP/compile_commands.json\" \
+  \"${CMAKE_BINARY_DIR}/SwdReflash/compile_commands.json\"
+do
+  if [ -s \"$f\" ]; then
+    INPUTS=\"$INPUTS $f\"
+  fi
+done
+
+if [ -n \"$INPUTS\" ]; then
+  jq -s 'add' $INPUTS > \"$TMP_DB\"
+  mv \"$TMP_DB\" \"$MERGED_DB\"
+else
+  echo \"[]\" > \"$MERGED_DB\"
+fi
+")
+
+
+
+    file(CHMOD ${MERGE_SCRIPT}
+         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                     GROUP_READ GROUP_EXECUTE
+                     WORLD_READ WORLD_EXECUTE)
+
+    add_custom_target(merge_compile_commands ALL
+        COMMAND ${MERGE_SCRIPT}
+        COMMENT "Merging compile command databases for IntelliSense"
+    )
+
+    # Ensure merge runs AFTER these builds
+    add_dependencies(merge_compile_commands WP EP SwdReflash)
+
+endif()
+
