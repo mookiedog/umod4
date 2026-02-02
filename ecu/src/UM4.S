@@ -11585,6 +11585,14 @@ _log:   ldaB    #LOGID_GEN_ECU_LOG_VER_VAL_V0
         staB    LW+LOGID_GEN_ECU_LOG_VER_TYPE_U8        ; #1: log version information before anything else
 
         staA    LW+LOGID_ECU_CPU_EVENT_TYPE_U8          ; #2: log the specific CPU event that got us here
+
+; Log the metadata as a character string, NULL terminated
+        ldX     #build_metadata_start-1
+1:      inX
+        ldaA    0,X
+        staA    LW+LOGID_ECU_METADATA_TYPE_CS
+        bne     1b
+
         jmp     reset                                   ; Boot the ECU
 
 
@@ -11630,6 +11638,16 @@ T1_OFLO_ISR:
 
 ;----------------------------------------------------------------
 lastInstr:
+
+        .org    (0x7F00), 0x3F
+build_metadata_start:
+build_metadata_size = 0x80
+;***
+;***  Leave a zero-filled hole at 'build_metadata_start' for 'build_metadata_size' bytes.
+;***  The build process knows to look for the symbols defining this hole.
+;***  If found, the build process will fill it with build metadata information.
+;***
+        .org    (0x7F00 + build_metadata_size), 0x00
 
 ;*****************************************************************
 ; This expression assumes that this file was org'd to relocatable address $0000

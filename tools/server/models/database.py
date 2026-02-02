@@ -33,6 +33,7 @@ class Device(Base):
 
     # Relationships
     transfers = relationship("Transfer", back_populates="device", cascade="all, delete-orphan")
+    device_uploads = relationship("DeviceUpload", back_populates="device", cascade="all, delete-orphan")
     connections = relationship("Connection", back_populates="device", cascade="all, delete-orphan")
     upload_sessions = relationship("UploadSession", back_populates="device", cascade="all, delete-orphan")
 
@@ -45,7 +46,7 @@ class Device(Base):
 
 
 class Transfer(Base):
-    """Transfer history - tracks all file uploads from devices."""
+    """Transfer history - tracks all file downloads from devices (device→server)."""
     __tablename__ = 'transfers'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -64,6 +65,29 @@ class Transfer(Base):
 
     def __repr__(self):
         return f"<Transfer(id={self.id}, device={self.device_mac}, file={self.filename}, status={self.status})>"
+
+
+class DeviceUpload(Base):
+    """Device upload history - tracks all file uploads to devices (server→device)."""
+    __tablename__ = 'device_uploads'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_mac = Column(String, ForeignKey('devices.mac_address'), nullable=False)
+    source_path = Column(String, nullable=False)  # Local file path that was uploaded
+    destination_filename = Column(String, nullable=False)  # Filename on device
+    size_bytes = Column(Integer, nullable=False)
+    transfer_speed_mbps = Column(Float)
+    start_time = Column(DateTime, nullable=False, default=datetime.utcnow)
+    end_time = Column(DateTime)
+    status = Column(String, nullable=False)  # 'success', 'failed', 'in_progress'
+    error_message = Column(Text)
+    sha256 = Column(String, nullable=True)  # SHA-256 hash for verification
+
+    # Relationship
+    device = relationship("Device", back_populates="device_uploads")
+
+    def __repr__(self):
+        return f"<DeviceUpload(id={self.id}, device={self.device_mac}, file={self.destination_filename}, status={self.status})>"
 
 
 class Connection(Base):
@@ -186,6 +210,29 @@ class Database:
                 cursor.execute("ALTER TABLE devices ADD COLUMN filesystem_message TEXT")
                 conn.commit()
                 print("Migration complete: Added 'filesystem_message' column")
+
+            # Migration 6: Create device_uploads table if it doesn't exist
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='device_uploads'")
+            if not cursor.fetchone():
+                print("Migrating database: Creating 'device_uploads' table...")
+                cursor.execute("""
+                    CREATE TABLE device_uploads (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        device_mac TEXT NOT NULL,
+                        source_path TEXT NOT NULL,
+                        destination_filename TEXT NOT NULL,
+                        size_bytes INTEGER NOT NULL,
+                        transfer_speed_mbps REAL,
+                        start_time TEXT NOT NULL,
+                        end_time TEXT,
+                        status TEXT NOT NULL,
+                        error_message TEXT,
+                        sha256 TEXT,
+                        FOREIGN KEY(device_mac) REFERENCES devices(mac_address)
+                    )
+                """)
+                conn.commit()
+                print("Migration complete: Created 'device_uploads' table")
 
         except Exception as e:
             print(f"Warning: Database migration failed: {e}")

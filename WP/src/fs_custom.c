@@ -12,6 +12,10 @@ extern void generate_api_info_json(char* buffer, size_t size);
 extern void generate_api_list_json(char* buffer, size_t size);
 extern void generate_api_sha256_json(char* buffer, size_t size, const char* filename);
 extern void generate_api_delete_json(char* buffer, size_t size, const char* filename);
+extern void generate_api_upload_session_json(char* buffer, size_t size, const char* session_id);
+extern void generate_api_reflash_ep_json(char* buffer, size_t size, const char* filename);
+extern void generate_api_reflash_wp_json(char* buffer, size_t size, const char* filename);
+extern void generate_api_system_json(char* buffer, size_t size);
 
 // Global LittleFS context (set by fs_custom_init)
 static lfs_t* g_lfs = NULL;
@@ -109,6 +113,20 @@ int fs_open_custom(struct fs_file *file, const char *name)
             // Extract filename from delete/<filename>
             const char* filename = api_name + 7;
             generate_api_delete_json(api_file->data, api_buffer_size, filename);
+        } else if (strncmp(api_name, "upload/session?session_id=", 26) == 0) {
+            // Extract session_id from upload/session?session_id=<uuid>
+            const char* session_id = api_name + 26;
+            generate_api_upload_session_json(api_file->data, api_buffer_size, session_id);
+        } else if (strncmp(api_name, "reflash/ep/", 11) == 0) {
+            // Extract filename from reflash/ep/<filename>
+            const char* filename = api_name + 11;
+            generate_api_reflash_ep_json(api_file->data, api_buffer_size, filename);
+        } else if (strncmp(api_name, "reflash/wp/", 11) == 0) {
+            // Extract filename from reflash/wp/<filename>
+            const char* filename = api_name + 11;
+            generate_api_reflash_wp_json(api_file->data, api_buffer_size, filename);
+        } else if (strcmp(api_name, "system") == 0) {
+            generate_api_system_json(api_file->data, api_buffer_size);
         } else {
             printf("fs_custom: Unknown API endpoint: %s\n", api_name);
             free(api_file->data);
@@ -201,6 +219,54 @@ int fs_open_custom(struct fs_file *file, const char *name)
         file->flags = FS_FILE_FLAGS_HEADER_PERSISTENT | FS_FILE_FLAGS_CUSTOM;
 
         printf("fs_custom: Opened '%s', size=%zu bytes\n", filename, lfs_file->file_size);
+        return 1;  // Success
+    }
+
+    // Check if this is a virtual upload response file
+    if (strcmp(path, "upload_success.json") == 0 ||
+        strcmp(path, "upload_error.json") == 0 ||
+        strcmp(path, "upload_progress.json") == 0) {
+
+        // Allocate structure for API response
+        struct lfs_custom_file* api_file = (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file));
+        if (!api_file) {
+            printf("fs_custom: Failed to allocate file structure\n");
+            return 0;
+        }
+
+        // Allocate buffer for response
+        api_file->data = (char*)malloc(256);
+        if (!api_file->data) {
+            printf("fs_custom: Failed to allocate response buffer\n");
+            free(api_file);
+            return 0;
+        }
+
+        // Generate appropriate JSON response
+        if (strcmp(path, "upload_success.json") == 0) {
+            snprintf(api_file->data, 256,
+                    "{\"success\": true, \"message\": \"Upload complete\"}");
+        } else if (strcmp(path, "upload_error.json") == 0) {
+            snprintf(api_file->data, 256,
+                    "{\"success\": false, \"error\": \"Upload failed\"}");
+        } else {  // upload_progress.json
+            snprintf(api_file->data, 256,
+                    "{\"success\": true, \"message\": \"Chunk received\"}");
+        }
+
+        api_file->file_size = strlen(api_file->data);
+        api_file->bytes_read = 0;
+        api_file->is_open = true;
+        api_file->is_api = true;
+
+        // Fill in fs_file structure for lwIP
+        file->data = api_file->data;
+        file->len = (int)api_file->file_size;
+        file->index = 0;
+        file->pextension = api_file;
+        file->flags = FS_FILE_FLAGS_HEADER_PERSISTENT;
+
+        printf("fs_custom: Serving upload response '%s'\n", path);
         return 1;  // Success
     }
 

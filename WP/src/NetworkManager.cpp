@@ -1,6 +1,7 @@
 #include "NetworkManager.h"
 #include "api_handlers.h"
 #include "fs_custom.h"
+#include "upload_handler.h"
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/apps/httpd.h"
@@ -33,6 +34,10 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
     printf("NetworkMgr: Initializing custom filesystem bridge\n");
     fs_custom_init(&lfs);
 
+    // Initialize upload handler BEFORE httpd_init()
+    printf("NetworkMgr: Initializing upload handler\n");
+    upload_handler_init();
+
     // Initialize HTTP server ONCE (global initialization)
     // This binds to TCP port 80 and must only be called once
     printf("NetworkMgr: Initializing HTTP server (one-time setup)\n");
@@ -57,9 +62,6 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
         printf("NetworkMgr: Critical - Task creation failed\n");
         panic("Unable to create NetworkManager task");
     }
-
-    // Pin to Core 0 for lwIP thread safety
-    vTaskCoreAffinitySet(taskHandle_, (1 << 0));
 }
 
 NetworkManager::~NetworkManager()

@@ -104,7 +104,14 @@ class DeviceManager:
                 device = session.query(Device).filter_by(mac_address=device_mac).first()
                 if device:
                     if 'wp_version' in info:
-                        device.wp_version = info['wp_version']
+                        # wp_version is a JSON object like {"GH":"...", "BT":"..."}
+                        # Convert to string for database storage
+                        import json
+                        wp_ver = info['wp_version']
+                        if isinstance(wp_ver, dict):
+                            device.wp_version = json.dumps(wp_ver)
+                        else:
+                            device.wp_version = wp_ver
                     if 'ep_version' in info:
                         device.ep_version = info.get('ep_version')
                     session.commit()
@@ -134,6 +141,11 @@ class DeviceManager:
         for file_info in files:
             filename = file_info['filename']
             file_size = file_info['size']
+
+            # Only sync .um4 log files (skip uploaded files like .uf2, etc.)
+            if not filename.endswith('.um4'):
+                continue
+
             local_path = os.path.join(log_storage_path, filename)
 
             # Check if file already exists

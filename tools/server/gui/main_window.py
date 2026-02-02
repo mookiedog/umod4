@@ -7,8 +7,27 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from datetime import datetime
+import json
 import os
 import subprocess
+
+
+def format_wp_version(version_str: str) -> str:
+    """Format WP version string for display.
+
+    Shows the raw JSON data in a readable format.
+    """
+    if not version_str:
+        return "-"
+
+    try:
+        data = json.loads(version_str)
+        # Show key=value pairs joined by ", "
+        parts = [f"{k}={v}" for k, v in data.items()]
+        return ", ".join(parts)
+    except (json.JSONDecodeError, TypeError):
+        # Not valid JSON, return as-is
+        return version_str
 
 
 class DeviceListWidget(QWidget):
@@ -110,7 +129,7 @@ class DeviceListWidget(QWidget):
                 if fs_status and fs_status != 'ok':
                     status_item.setForeground(Qt.GlobalColor.red)
                 self.device_table.setItem(row, 3, status_item)
-                self.device_table.setItem(row, 4, QTableWidgetItem(device.wp_version or "-"))
+                self.device_table.setItem(row, 4, QTableWidgetItem(format_wp_version(device.wp_version)))
                 self.device_table.setItem(row, 5, QTableWidgetItem(device.ep_version or "-"))
 
                 # Convert last_seen from UTC to local time
@@ -386,6 +405,18 @@ class DeviceListWidget(QWidget):
                         device.is_online = True
                         device.filesystem_status = info.get('fs_status')
                         device.filesystem_message = info.get('fs_message')
+
+                        # Update version info if present
+                        if 'wp_version' in info:
+                            import json
+                            wp_ver = info['wp_version']
+                            if isinstance(wp_ver, dict):
+                                device.wp_version = json.dumps(wp_ver)
+                            else:
+                                device.wp_version = wp_ver
+                        if 'ep_version' in info:
+                            device.ep_version = info.get('ep_version')
+
                         print(f"Device {device.mac_address} is online at {device.last_ip} (fs_status: {device.filesystem_status})")
                     else:
                         # Device did not respond

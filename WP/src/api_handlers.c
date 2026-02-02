@@ -5,7 +5,9 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "lfs.h"
-#include "file_delete_task.h"
+#include "file_io_task.h"
+#include "ota_flash_task.h"
+#include "FlashWp.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -38,7 +40,7 @@ typedef struct {
 
 extern file_hash_cache_t g_file_hash_cache;
 
-// Buffer for JSON responses (reused across requests to save stack space)
+// Buffer for JSON responses (reused across requests to save space)
 static char json_response_buffer[512];
 
 // Larger buffer for file listing (can hold ~100 log files at ~60 bytes each)
@@ -83,10 +85,11 @@ void generate_api_info_json(char* buffer, size_t size)
     }
 
     // Build JSON response
+    // Note: wp_version is embedded as a JSON object, not a string
     snprintf(buffer, size,
              "{\n"
              "  \"device_mac\": \"%s\",\n"
-             "  \"wp_version\": \"%s\",\n"
+             "  \"wp_version\": %s,\n"
              "  \"uptime_seconds\": %lu,\n"
              "  \"wifi_connected\": %s,\n"
              "  \"wifi_ssid\": \"%s\",\n"
@@ -136,7 +139,7 @@ void generate_api_list_json(char* buffer, size_t size)
     ptr += len;
     remaining -= len;
 
-    // Scan SD card root directory for .um4 files
+    // Scan SD card root directory for all files
     lfs_dir_t dir;
     int err = lfs_dir_open(&lfs, &dir, "/");
     if (err == 0) {
@@ -147,12 +150,6 @@ void generate_api_list_json(char* buffer, size_t size)
         while (lfs_dir_read(&lfs, &dir, &info) > 0) {
             // Skip directories and non-regular files
             if (info.type != LFS_TYPE_REG) {
-                continue;
-            }
-
-            // Only list .um4 files
-            size_t name_len = strlen(info.name);
-            if (name_len < 5 || strcmp(info.name + name_len - 4, ".um4") != 0) {
                 continue;
             }
 
@@ -227,15 +224,6 @@ void generate_api_delete_json(char* buffer, size_t size, const char* filename)
         return;
     }
 
-    // Only allow deleting .um4 files
-    size_t name_len = strlen(filename);
-    if (name_len < 5 || strcmp(filename + name_len - 4, ".um4") != 0) {
-        snprintf(buffer, size,
-                 "{\"success\": false, \"error\": \"Only .um4 files can be deleted\"}");
-        printf("api_delete: Attempted to delete non-.um4 file '%s'\n", filename);
-        return;
-    }
-
     // Request deletion via async task (with 5 second timeout)
     // This ensures deletion happens in task context, not HTTP callback context
     file_delete_result_t result;
@@ -292,6 +280,152 @@ void generate_api_sha256_json(char* buffer, size_t size, const char* filename)
              sha256_hex);
 
     printf("api_sha256: Returned hash for '%s': %.16s...\n", filename, sha256_hex);
+}
+
+/**
+ * Build JSON response for /api/reflash/ep/<filename>
+ * Called from fs_open_custom()
+ *
+ * NOTE: This is a long-running operation (10-30 seconds).
+ * The actual flashing is performed in the FileIO task context to avoid
+ * stack/context issues in the HTTP callback.
+ */
+void generate_api_reflash_ep_json(char* buffer, size_t size, const char* filename)
+{
+    // Validate filename
+    if (!filename || filename[0] == '\0') {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"No filename specified\"}");
+        printf("api_reflash_ep: No filename specified\n");
+        return;
+    }
+
+    // Check for path traversal attempts
+    if (strchr(filename, '/') || strchr(filename, '\\') ||
+        strcmp(filename, ".") == 0 || strcmp(filename, "..") == 0) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"Invalid filename\"}");
+        printf("api_reflash_ep: Invalid filename '%s'\n", filename);
+        return;
+    }
+
+    // Check if filesystem is mounted
+    if (!lfs_mounted) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"Filesystem not mounted\"}");
+        printf("api_reflash_ep: Filesystem not mounted\n");
+        return;
+    }
+
+    // Build full path (files are in root directory)
+    char filepath[80];
+    snprintf(filepath, sizeof(filepath), "/%s", filename);
+
+    printf("api_reflash_ep: Requesting EP reflash with '%s'\n", filepath);
+
+    // Execute reflash via FileIO task (runs in proper FreeRTOS task context)
+    // Use 120 second timeout for long-running SWD operations
+    file_io_result_t result;
+    bool ok = file_io_reflash_ep(filepath, true, 120000, &result);
+
+    if (!ok) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"Reflash request timed out or failed to queue\"}");
+        printf("api_reflash_ep: Request failed to execute\n");
+        return;
+    }
+
+    if (result.success) {
+        snprintf(buffer, size,
+                 "{\"success\": true, \"message\": \"EP reflash completed successfully\"}");
+        printf("api_reflash_ep: Success!\n");
+    } else {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"%s\"}",
+                 result.error_message);
+        printf("api_reflash_ep: Failed: %s\n", result.error_message);
+    }
+}
+
+/**
+ * Build JSON response for /api/reflash/wp/<filename>
+ * Called from fs_open_custom()
+ *
+ * This function validates the UF2 file and queues the OTA request to the
+ * dedicated OTA flash task. It returns immediately with an acknowledgment -
+ * the server should NOT wait for more feedback.
+ *
+ * The OTA task will:
+ * 1. Shut down the logger and WiFi
+ * 2. Flash the UF2 to the inactive partition
+ * 3. Reboot to the new firmware (TBYB)
+ *
+ * The new firmware must call rom_explicit_buy() within 16.7 seconds of boot
+ * to commit the update, otherwise it will revert to the previous partition.
+ */
+void generate_api_reflash_wp_json(char* buffer, size_t size, const char* filename)
+{
+    // Validate filename
+    if (!filename || filename[0] == '\0') {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"No filename specified\"}");
+        printf("api_reflash_wp: No filename specified\n");
+        return;
+    }
+
+    // Check for path traversal attempts
+    if (strchr(filename, '/') || strchr(filename, '\\') ||
+        strcmp(filename, ".") == 0 || strcmp(filename, "..") == 0) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"Invalid filename\"}");
+        printf("api_reflash_wp: Invalid filename '%s'\n", filename);
+        return;
+    }
+
+    // Check if OTA is already in progress
+    if (ota_flash_in_progress()) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"OTA update already in progress\"}");
+        printf("api_reflash_wp: OTA already in progress\n");
+        return;
+    }
+
+    // Build full path (files are in root directory)
+    char filepath[80];
+    snprintf(filepath, sizeof(filepath), "/%s", filename);
+
+    printf("api_reflash_wp: Requesting WP self-reflash with '%s'\n", filepath);
+
+    // Queue the OTA request - this validates the file exists and queues the request
+    // It returns immediately, it does NOT wait for the flash to complete
+    bool queued = ota_flash_request(filepath);
+
+    if (queued) {
+        // Success - OTA task will take over from here
+        // Server should return to normal operation and wait for device to check in
+        snprintf(buffer, size,
+                 "{\"success\": true, \"message\": \"OTA update starting. Device will reboot.\"}");
+        printf("api_reflash_wp: OTA request queued successfully\n");
+    } else {
+        // Failed to queue - could be file not found, filesystem not mounted, etc.
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"Failed to start OTA update (file not found or filesystem error)\"}");
+        printf("api_reflash_wp: Failed to queue OTA request\n");
+    }
+}
+
+/**
+ * Build JSON response for /api/system
+ * Returns the SYSTEM_JSON string containing build metadata.
+ * Called from fs_open_custom()
+ */
+extern const char* SYSTEM_JSON;
+
+void generate_api_system_json(char* buffer, size_t size)
+{
+    // SYSTEM_JSON is an escaped JSON string like: {\"GH\":\"abc123\",\"BT\":\"2024-01-21 10:30:00\"}
+    // We need to unescape it for the response
+    snprintf(buffer, size, "%s", SYSTEM_JSON);
 }
 
 // No CGI handlers needed - APIs are served as virtual files via fs_open_custom()

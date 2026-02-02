@@ -75,9 +75,13 @@ class ConnectivityChecker:
                 if not device.last_ip:
                     continue
 
-                # Check if device is reachable and get status info
+                # Check if device is reachable and get device info
                 was_online = device.is_online
-                is_online, fs_status, fs_message = self._check_device(device.last_ip)
+                is_online, info = self._check_device(device.last_ip)
+
+                # Extract fields from info
+                fs_status = info.get('fs_status') if info else None
+                fs_message = info.get('fs_message') if info else None
 
                 # Update status if changed
                 if is_online != was_online:
@@ -86,6 +90,8 @@ class ConnectivityChecker:
                     device.filesystem_message = fs_message
                     if is_online:
                         device.last_seen = datetime.utcnow()
+                        # Update version info when coming online
+                        self._update_version_info(device, info)
                     session.commit()
 
                     print(f"ConnectivityChecker: Device {device.display_name} ({device.mac_address}) "
@@ -98,36 +104,76 @@ class ConnectivityChecker:
                         except Exception as e:
                             print(f"ConnectivityChecker: Error in callback: {e}")
                 elif is_online:
-                    # Device still online, update filesystem status if it changed
+                    # Device still online, update filesystem status and version if changed
+                    needs_commit = False
                     if device.filesystem_status != fs_status:
                         device.filesystem_status = fs_status
                         device.filesystem_message = fs_message
                         device.last_seen = datetime.utcnow()
-                        session.commit()
+                        needs_commit = True
                         print(f"ConnectivityChecker: Device {device.display_name} filesystem status changed to {fs_status}")
+                    # Always update version info for online devices (may have changed after reflash)
+                    if self._update_version_info(device, info):
+                        needs_commit = True
+                    if needs_commit:
+                        session.commit()
 
         finally:
             session.close()
 
     def _check_device(self, device_ip: str) -> tuple:
-        """Check if device is online and get filesystem status.
+        """Check if device is online and get device info.
 
         Args:
             device_ip: Device IP address
 
         Returns:
-            Tuple of (is_online: bool, fs_status: str or None, fs_message: str or None)
+            Tuple of (is_online: bool, info: dict or None)
         """
         try:
             client = DeviceClient(device_ip, timeout=5)
-            # Get device info (includes filesystem status)
+            # Get device info (includes filesystem status and version)
             info = client.get_device_info()
             if info:
-                fs_status = info.get('fs_status')
-                fs_message = info.get('fs_message')
-                return (True, fs_status, fs_message)
+                return (True, info)
             else:
-                return (False, None, None)
+                return (False, None)
         except Exception as e:
             # Device is offline or unreachable
-            return (False, None, None)
+            return (False, None)
+
+    def _update_version_info(self, device: Device, info: dict) -> bool:
+        """Update device version info if changed.
+
+        Args:
+            device: Device model instance
+            info: Device info dict from API
+
+        Returns:
+            True if version info was updated, False otherwise
+        """
+        if not info:
+            return False
+
+        import json
+        updated = False
+
+        if 'wp_version' in info:
+            wp_ver = info['wp_version']
+            if isinstance(wp_ver, dict):
+                new_wp_version = json.dumps(wp_ver)
+            else:
+                new_wp_version = wp_ver
+            if device.wp_version != new_wp_version:
+                device.wp_version = new_wp_version
+                updated = True
+                print(f"ConnectivityChecker: Device {device.display_name} wp_version updated to {new_wp_version}")
+
+        if 'ep_version' in info:
+            new_ep_version = info.get('ep_version')
+            if device.ep_version != new_ep_version:
+                device.ep_version = new_ep_version
+                updated = True
+                print(f"ConnectivityChecker: Device {device.display_name} ep_version updated to {new_ep_version}")
+
+        return updated

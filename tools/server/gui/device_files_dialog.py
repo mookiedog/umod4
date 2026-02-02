@@ -49,7 +49,7 @@ class DeviceFilesDialog(QDialog):
         layout.addWidget(header)
 
         # Info label
-        info_label = QLabel("Only files that have been successfully downloaded can be deleted.")
+        info_label = QLabel("Log files (.um4) must be downloaded before deletion. Other files can be deleted freely.")
         info_label.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(info_label)
 
@@ -70,8 +70,8 @@ class DeviceFilesDialog(QDialog):
         # Buttons
         button_layout = QHBoxLayout()
 
-        self.select_all_button = QPushButton("Select All Downloaded")
-        self.select_all_button.clicked.connect(self._select_all_downloaded)
+        self.select_all_button = QPushButton("Select All Deletable")
+        self.select_all_button.clicked.connect(self._select_all_deletable)
         button_layout.addWidget(self.select_all_button)
 
         self.deselect_all_button = QPushButton("Deselect All")
@@ -127,11 +127,17 @@ class DeviceFilesDialog(QDialog):
             for row, file_info in enumerate(device_files):
                 filename = file_info['filename']
                 file_size = file_info['size']
+                is_log_file = filename.endswith('.um4')
                 is_downloaded = filename in downloaded_files
 
-                # Checkbox (only enabled for downloaded files)
+                # Determine if file can be deleted:
+                # - Log files (.um4) require download first
+                # - Other files (uploaded files like .uf2) can always be deleted
+                can_delete = is_downloaded or not is_log_file
+
+                # Checkbox (enabled based on can_delete)
                 checkbox = QCheckBox()
-                checkbox.setEnabled(is_downloaded)
+                checkbox.setEnabled(can_delete)
                 checkbox_widget = QTableWidgetItem()
                 checkbox_widget.setData(Qt.ItemDataRole.UserRole, filename)
                 self.file_table.setItem(row, 0, checkbox_widget)
@@ -149,28 +155,36 @@ class DeviceFilesDialog(QDialog):
                 size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.file_table.setItem(row, 2, size_item)
 
-                # Downloaded status
-                downloaded_item = QTableWidgetItem("Yes" if is_downloaded else "No")
-                downloaded_item.setFlags(downloaded_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if is_downloaded:
-                    downloaded_item.setForeground(Qt.GlobalColor.darkGreen)
+                # Downloaded status (only relevant for log files)
+                if is_log_file:
+                    downloaded_item = QTableWidgetItem("Yes" if is_downloaded else "No")
+                    downloaded_item.setFlags(downloaded_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if is_downloaded:
+                        downloaded_item.setForeground(Qt.GlobalColor.darkGreen)
+                    else:
+                        downloaded_item.setForeground(Qt.GlobalColor.red)
                 else:
-                    downloaded_item.setForeground(Qt.GlobalColor.red)
+                    downloaded_item = QTableWidgetItem("N/A")
+                    downloaded_item.setFlags(downloaded_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    downloaded_item.setForeground(Qt.GlobalColor.gray)
                 self.file_table.setItem(row, 3, downloaded_item)
 
                 # Status
-                status = "Can delete" if is_downloaded else "Cannot delete (not downloaded)"
+                if can_delete:
+                    status = "Can delete"
+                else:
+                    status = "Log not downloaded"
                 status_item = QTableWidgetItem(status)
                 status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if not is_downloaded:
+                if not can_delete:
                     status_item.setForeground(Qt.GlobalColor.gray)
                 self.file_table.setItem(row, 4, status_item)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to refresh file list: {e}")
 
-    def _select_all_downloaded(self):
-        """Select all downloaded files."""
+    def _select_all_deletable(self):
+        """Select all files that can be deleted."""
         for row in range(self.file_table.rowCount()):
             checkbox = self.file_table.cellWidget(row, 0)
             if checkbox and checkbox.isEnabled():
@@ -205,13 +219,21 @@ class DeviceFilesDialog(QDialog):
 
         # Confirmation dialog
         file_list = "\n".join(f"  • {f}" for f in selected_files)
+        log_files = [f for f in selected_files if f.endswith('.um4')]
+        other_files = [f for f in selected_files if not f.endswith('.um4')]
+
+        extra_info = ""
+        if log_files:
+            extra_info = f"\n\n{len(log_files)} log file(s) have been safely downloaded to your computer."
+        if other_files:
+            extra_info += f"\n\n{len(other_files)} non-log file(s) will be permanently deleted."
+
         reply = QMessageBox.question(
             self,
             "Confirm Deletion",
             f"Delete {len(selected_files)} file(s) from device?\n\n"
             f"{file_list}\n\n"
-            f"This action cannot be undone!\n\n"
-            f"The files have been safely downloaded to your computer.",
+            f"This action cannot be undone!{extra_info}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )

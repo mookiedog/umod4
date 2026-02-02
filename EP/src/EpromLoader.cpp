@@ -36,7 +36,7 @@ void logEpromName_find(const char* nameP)
     if (nameP) {
         do {
             c = *nameP++;
-            enqueue(LOGID_EP_FIND_NAME_TYPE_U8, c);
+            enqueue(LOGID_EP_FIND_NAME_TYPE_CS, c);
         } while (c != '\0');
     }
 }
@@ -49,7 +49,7 @@ void logEpromName_load(const char* nameP)
     if (nameP) {
         do {
             c = *nameP++;
-            enqueue(LOGID_EP_LOAD_NAME_TYPE_U8, c);
+            enqueue(LOGID_EP_LOAD_NAME_TYPE_CS, c);
         } while (c != '\0');
     }
 }

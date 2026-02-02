@@ -2,10 +2,12 @@
 #include <string.h>
 #include <malloc.h>
 
+#include "hardware.h"
+#include "hardware/watchdog.h"
 #include "pico/stdlib.h"
 #include "pico/mutex.h"
 #include "pico/multicore.h"
-
+#include "pico/bootrom.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -13,11 +15,9 @@
 
 #define LFS 1
 
+#include "FlashWp.h"
 #include "Gps.h"
-#include "hardware.h"
-#if defined LFS
 #include "lfs.h"
-#endif
 #include "log_base.h"
 #include "Logger.h"
 #include "NeoPixelConnect.h"
@@ -26,13 +26,15 @@
 #include "SdCardSDIO.h"
 #include "Shell.h"
 #include "Spi.h"
+#include "Swd.h"
 #include "Uart.h"
 #include "umod4_WP.h"
 #include "uart_rx32.pio.h"
 #include "WP_log.h"
 #include "WiFiManager.h"
 #include "NetworkManager.h"
-#include "file_delete_task.h"
+#include "file_io_task.h"
+#include "ota_flash_task.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
 
@@ -42,19 +44,28 @@ extern uint32_t __HeapLimit;    // End of heap
 static const char* heap_start = (char*)&__end__;
 static const char* heap_end = (char*)&__HeapLimit;
 
+const char* SYSTEM_JSON = "{\"BT\":\"" __DATE__ " " __TIME__ "\"}";
+
+// Gah: this is duplicated in FlashWp.cpp. FIXME!
+static __attribute__((aligned(4))) uint8_t workarea[4 * 1024];
+
+// This is only global so we can attach the debugger later and see what
+// was read at startup.
+boot_info_t boot_info;
+bool ota_available = false;
+
 // SD Card Interface Selection
 // Uncomment to use SDIO 4-bit mode (~20-25 MB/s) instead of SPI mode (~3 MB/s)
 #define USE_SDIO_MODE 1
-
-#ifdef CYW43_WL_GPIO_LED_PIN
-#include "pico/cyw43_arch.h"
-#endif
 
 NeoPixelConnect* rgb_led;
 
 Spi* spiLcd;
 Logger* logger;
 Shell* dbgShell;
+Swd* swd;
+
+int pio_sm_uart;
 
 // WiFi Phase 1 components
 WiFiManager* wifiMgr = nullptr;
@@ -62,18 +73,65 @@ WiFiManager* wifiMgr = nullptr;
 // MDL (Motorbike Data Link) components
 NetworkManager* networkMgr = nullptr;
 
-uint32_t flashBuffer[1024];
-
 // This array tracks the most recently-received data from the ECU data stream
+// The array is indexed by the ECU log ID
 //  * 8-bit log entries are stored in the lower byte of each 16-bit word
 //  * 16-bit log entries are stored in the full 16-bit word
-// The array is indexed by the ECU log ID.
 uint16_t ecuLiveLog[256];
-
-#if defined LFS
 
 // Configuration of the filesystem is provided by this struct
 struct lfs_config lfs_cfg;
+
+#ifdef configSUPPORT_STATIC_ALLOCATION
+// If static allocation is allowed, then we are required to statically allocate
+// the idle and timer task
+
+// Core 0: Single variable
+static StaticTask_t xIdleTaskTCB __attribute__((aligned(8)));
+static StackType_t uxIdleTaskStack[configMINIMAL_STACK_SIZE] __attribute__((aligned(8)));
+
+// Core 1+: Arrays
+static StaticTask_t xPassiveIdleTaskTCBs[configNUMBER_OF_CORES - 1] __attribute__((aligned(8)));
+static StackType_t uxPassiveIdleTaskStacks[configNUMBER_OF_CORES - 1][configMINIMAL_STACK_SIZE] __attribute__((aligned(8)));
+
+
+void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer,
+                                    StackType_t **ppxIdleTaskStackBuffer,
+                                    uint32_t *pulIdleTaskStackSize )
+{
+    /* Use & to ensure we are passing the address, not the value */
+    *ppxIdleTaskTCBBuffer = &xIdleTaskTCB;
+    *ppxIdleTaskStackBuffer = &uxIdleTaskStack[0];
+
+    *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+
+void vApplicationGetPassiveIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer,
+                                           StackType_t **ppxIdleTaskStackBuffer,
+                                           uint32_t *pulIdleTaskStackSize,
+                                           BaseType_t xCoreID )
+{
+    // NOTE: xCoreID will be 0 for RP2350 core.1, meaning that xCoreID 0 is the zeroth __additional__ core beyond RP2350 core.0.
+    /* Subscript [xCoreID][0] points to the start of the specific core's stack */
+    *ppxIdleTaskTCBBuffer = &xPassiveIdleTaskTCBs[xCoreID];
+    *ppxIdleTaskStackBuffer = &uxPassiveIdleTaskStacks[xCoreID][0];
+
+    *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+
+// And for the timer task
+static StaticTask_t xTimerTaskTCB;
+static StackType_t uxTimerTaskStack[configTIMER_TASK_STACK_DEPTH];
+
+void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer,
+                                     StackType_t **ppxTimerTaskStackBuffer,
+                                     uint32_t *pulTimerTaskStackSize )
+{
+    *ppxTimerTaskTCBBuffer = &xTimerTaskTCB;
+    *ppxTimerTaskStackBuffer = uxTimerTaskStack;
+    *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
+}
+#endif
 
 // LittleFS has a serious problem where worst case write times can be extremely long (minutes!)
 // apparently due to having to scan the entire disk when it needs to find free blocks.
@@ -184,10 +242,6 @@ int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const
         return LFS_ERR_INVAL;
     }
 
-    if (false) {
-        printf("%s: writing %u sectors (%u bytes)\n", __FUNCTION__, num_sectors, size);
-    }
-
     uint32_t t0 = time_us_32();
     err = sd->writeSectors(sector, num_sectors, buffer);
     uint32_t elapsed = time_us_32() - t0;
@@ -226,7 +280,6 @@ int lfs_sync(const struct lfs_config *c)
     SdErr_t err = sd->sync();
     return (err == SD_ERR_NOERR) ? LFS_ERR_OK : LFS_ERR_IO;
 }
-#endif
 
 // --------------------------------------------------------------------------------------------
 int lfs_mutex_take(const struct lfs_config *c)
@@ -288,90 +341,6 @@ int32_t lfs_bytes_until_fsync(const struct lfs_config *lfs_cfg, lfs_file_t* fp)
     #undef BLOCK_OFFSET
 
     return block_size - block_offset;
-}
-
-// ----------------------------------------------------------------------------------
-// Test multi-sector WRITE with single-sector READ operations
-// This isolates whether the problem is in multi-block writes or reads
-static bool testMultiSectorIO(const struct lfs_config *cfg, uint32_t test_block_size)
-{
-    printf("\n=== Multi-Sector I/O Test ===\n");
-    printf("Testing with LFS block size: %u bytes (%u sectors)\n",
-           test_block_size, test_block_size / 512);
-    printf("Strategy: Multi-sector WRITE, then multi-sector READ to verify\n");
-
-    uint32_t num_sectors = test_block_size / 512;
-
-    // Allocate test buffers
-    uint8_t *write_buf = (uint8_t*)malloc(test_block_size);
-    uint8_t *read_buf = (uint8_t*)malloc(test_block_size);  // Full block for multi-sector read
-
-    if (!write_buf || !read_buf) {
-        printf("ERROR: Failed to allocate test buffers\n");
-        free(write_buf);
-        free(read_buf);
-        return false;
-    }
-
-    // Fill write buffer with test pattern (incrementing bytes)
-    for (uint32_t i = 0; i < test_block_size; i++) {
-        write_buf[i] = (uint8_t)(i & 0xFF);
-    }
-
-    // Use block 100 to avoid filesystem metadata at start of card
-    const lfs_block_t test_block = 100;
-    const lfs_off_t test_offset = 0;
-
-    printf("Writing test block %u with MULTI-SECTOR write (%u sectors)...\n",
-           (uint32_t)test_block, num_sectors);
-
-    int result = lfs_prog(cfg, test_block, test_offset, write_buf, test_block_size);
-    if (result != LFS_ERR_OK) {
-        printf("ERROR: Multi-sector write failed: %d\n", result);
-        free(write_buf);
-        free(read_buf);
-        return false;
-    }
-
-    printf("Multi-sector write successful!\n");
-    printf("Now reading back using MULTI-SECTOR read...\n");
-
-    // Read back entire block with multi-sector read
-    memset(read_buf, 0xAA, test_block_size);  // Clear buffer
-
-    result = lfs_read(cfg, test_block, test_offset, read_buf, test_block_size);
-    if (result != LFS_ERR_OK) {
-        printf("ERROR: Multi-sector read failed: %d\n", result);
-        free(write_buf);
-        free(read_buf);
-        return false;
-    }
-
-    printf("Multi-sector read successful!\n");
-    printf("Verifying data...\n");
-
-    // Verify all data
-    bool data_ok = true;
-    for (uint32_t i = 0; i < test_block_size; i++) {
-        if (read_buf[i] != write_buf[i]) {
-            printf("ERROR: Data mismatch at byte %u: expected 0x%02X, got 0x%02X\n",
-                   i, write_buf[i], read_buf[i]);
-            data_ok = false;
-            break;
-        }
-    }
-
-    free(write_buf);
-    free(read_buf);
-
-    if (data_ok) {
-        printf("=== Multi-Sector I/O Test PASSED ===\n");
-        printf("    Both multi-sector reads and writes work correctly!\n\n");
-        return true;
-    } else {
-        printf("=== Multi-Sector I/O Test FAILED ===\n\n");
-        return false;
-    }
 }
 
 // ----------------------------------------------------------------------------------
@@ -453,15 +422,6 @@ bool comingOnline(SdCardBase* sdCard)
 
     lfs_cfg.lock = lfs_mutex_take;
     lfs_cfg.unlock = lfs_mutex_give;
-
-    #if 0
-    // Test multi-sector I/O operations before mounting filesystem
-    if (!testMultiSectorIO(&lfs_cfg, LFS_BLOCK_SIZE)) {
-        printf("ERROR: Multi-sector I/O test failed - aborting mount\n");
-        lfs_mounted = false;
-        return false;
-    }
-    #endif
 
     // As a development aid, reformat the filesystem if GPIO SPARE2 is grounded.
     bool formatRequest = !gpio_get(SPARE2_PIN);
@@ -555,6 +515,53 @@ void goingOffline(SdCardBase* sdCard)
     if (logger) {
         logger->deinit();
     }
+
+    // Unmount LittleFS to flush metadata
+    if (lfs_mounted) {
+        printf("goingOffline: Unmounting LittleFS\n");
+        lfs_unmount(&lfs);
+        lfs_mounted = false;
+    }
+
+    // Shutdown the SD card hardware
+    if (sdCard) {
+        printf("goingOffline: Shutting down SD card\n");
+        #warning "fixme: missing shutdown"
+        //sdCard->shutdown();
+    }
+}
+
+// ----------------------------------------------------------------------------------
+// C-compatible function for OTA task to call before reboot
+// This performs a complete shutdown of the filesystem and SD card
+extern "C" void sd_shutdown_for_reboot(void)
+{
+    printf("sd_shutdown_for_reboot: Starting filesystem/SD shutdown\n");
+
+    // 1. Stop new filesystem operations
+    lfs_mounted = false;
+
+    // 2. Shutdown logger (closes log file)
+    if (logger) {
+        printf("sd_shutdown_for_reboot: Stopping logger\n");
+        logger->deinit();
+    }
+
+    // 3. Give any pending file operations time to complete
+    busy_wait_us_32(10000);  // 10ms
+
+    // 4. Unmount LittleFS (flushes all metadata)
+    printf("sd_shutdown_for_reboot: Unmounting LittleFS\n");
+    lfs_unmount(&lfs);
+
+    // 5. Shutdown SD card hardware
+    if (sdCard) {
+        printf("sd_shutdown_for_reboot: Shutting down SD card\n");
+        #warning "FIXME: no shutdown"
+        //sdCard->shutdown();
+    }
+
+    printf("sd_shutdown_for_reboot: Complete\n");
 }
 
 
@@ -624,6 +631,14 @@ void vApplicationIdleHook( void )
     __wfi();
 }
 
+// --------------------------------------------------------------------------------------------
+// Stack overflow detection hook - called when FreeRTOS detects a stack overflow
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    printf("STACK OVERFLOW in task: %s\n", pcTaskName);
+    panic("Stack overflow");
+}
+
 
 // ----------------------------------------------------------------------------------
 // The ISR for the 32-bit UART receiving ECU logging data from the EP.
@@ -639,8 +654,8 @@ void vApplicationIdleHook( void )
 // This ISR moves ECU events from the receive FIFO to the merged log buffer.
 void isr_rx32()
 {
-    while(!pio_sm_is_rx_fifo_empty(PIO_UART, PIO_UART_SM)) {
-        uint32_t rxWord = uart_rx32_program_get(PIO_UART, PIO_UART_SM);
+    while(!pio_sm_is_rx_fifo_empty(PIO_UART, pio_sm_uart)) {
+        uint32_t rxWord = uart_rx32_program_get(PIO_UART, pio_sm_uart);
         logger->logData_fromISR(rxWord);
 
         // Update the live ECU log data array
@@ -654,16 +669,19 @@ void isr_rx32()
 
 // ----------------------------------------------------------------------------------
 // The EP PIO UART receives the ECU data stream.
-// This UART is unidirectional, meaning receive only.
-// It must be a PIO-based UART because we need it to receive data in 16-bit units
-// corresponding to a LogID/Data byte pair and the RP2350 UART silicon only does 8-bit transfers.
+// During normal system operation, this UART is unidirectional, meaning receive only.
+// It must be a PIO-based UART because we need it to receive data in 32-bit units
+// and the RP2350 UART silicon only does 8-bit transfers.
+// All ECU data comes across as 32-bit words, each containing a complete log event
+// that we will inserted into the log in atomic fashion.
 void initEpUart() {
 
     // Set up the PIO unit to act as our UART
+    pio_sm_uart = pio_claim_unused_sm(PIO_UART, true);
     uint offset = pio_add_program(PIO_UART, &uart_rx32_program);
-    uart_rx32_program_init(PIO_UART, PIO_UART_SM, offset, EPLOG_RX_PIN, EP_TO_WP_BAUDRATE);
-    printf("UART_RX32: Using PIO%d, SM%d, program offset %d (size: %d instructions)\n",
-           pio_get_index(PIO_UART), PIO_UART_SM, offset, uart_rx32_program.length);
+    uart_rx32_program_init(PIO_UART, pio_sm_uart, offset, EPLOG_RX_PIN, EP_TO_WP_BAUDRATE);
+    printf("UART_RX32: Using PIO%d, SM%d, program start @ offset %d (size: %d instructions)\n",
+           pio_get_index(PIO_UART), pio_sm_uart, offset, uart_rx32_program.length);
 
 
     // Assign an interrupt handler
@@ -680,27 +698,36 @@ void allowEpToSendData()
 
     // Make sure the rxQ is empty prior to giving the EP the OK to send
     // in case we received some garbage during boot.
-    while(!pio_sm_is_rx_fifo_empty(PIO_UART, PIO_UART_SM)) {
-        uint16_t logEvent = uart_rx32_program_get(PIO_UART, PIO_UART_SM);
+    while(!pio_sm_is_rx_fifo_empty(PIO_UART, pio_sm_uart)) {
+        uint16_t logEvent = uart_rx32_program_get(PIO_UART, pio_sm_uart);
     }
 
     // Enable RX FIFO Not Empty interrupt in this core's NVIC
     irq_set_enabled(PIO_UART_RX_IRQ, true);
 
-    // Enable the RX-FIFO-not-empty interrupt inside the proper PIO unit
-    #if (PIO_UART_SM == 0)
-        PIO_UART->inte0 = PIO_INTR_SM0_RXNEMPTY_BITS;
-    #elif (PIO_UART_SM == 1)
-        PIO_UART->inte0 = PIO_INTR_SM1_RXNEMPTY_BITS;
-    #else
-        #error "Update this to the proper SMx bit!"
-    #endif
+    // Enable the statemachine-specific RX-FIFO-not-empty interrupt inside the proper PIO unit
+    switch (pio_sm_uart) {
+        case 0:
+            PIO_UART->inte0 = PIO_INTR_SM0_RXNEMPTY_BITS;
+            break;
+        case 1:
+            PIO_UART->inte0 = PIO_INTR_SM1_RXNEMPTY_BITS;
+            break;
+        case 2:
+            PIO_UART->inte0 = PIO_INTR_SM2_RXNEMPTY_BITS;
+            break;
+        case 3:
+            PIO_UART->inte0 = PIO_INTR_SM3_RXNEMPTY_BITS;
+        default:
+            panic("Invalid RX32 PIO state machine number");
+    }
 
     // Tell the EP we are ready for data
     gpio_put(EPLOG_FLOWCTRL_PIN, 0);
     gpio_set_dir(EPLOG_FLOWCTRL_PIN, GPIO_OUT);
 }
 
+#ifdef HEAP_MON_TASK
 // ----------------------------------------------------------------------------------
 // A heap monitoring task that periodically prints out heap usage statistics.
 //
@@ -746,14 +773,20 @@ void heap_monitor_task(void *pvParameters)
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
+#endif
 
 // ----------------------------------------------------------------------------------
 // This function is used to perform the FreeRTOS task initialization.
 // FreeRTOS is known to be running when this routine is called so it is free
 // to use any FreeRTOS constructs and call any FreeRTOS routines.
-void bootSystem()
+void boot_system(void* args)
 {
     BaseType_t err;
+
+    // Get the LED working first so that it can be used by the rest of the system.
+    // We need to tell it which PIO to use, but it will claim its own state machine.
+    rgb_led = new NeoPixelConnect(WS2812_PIN, WS2812_PIXCNT, PIO_WS2812);
+    rgb_led->neoPixelSetValue(0, 16, 16, 16, true);
 
     initEpUart();
 
@@ -765,8 +798,10 @@ void bootSystem()
     uint8_t v = LOGID_GEN_WP_LOG_VER_VAL_V0;
     logger->logData(LOGID_GEN_WP_LOG_VER_TYPE_U8, LOGID_GEN_WP_LOG_VER_DLEN, &v);
 
+    #ifdef HEAP_MON_TASK
     TaskHandle_t heap_monitor_task_handle;
     err = xTaskCreate(heap_monitor_task, "Heap Monitor", 1024, NULL, 1, &heap_monitor_task_handle);
+    #endif
 
     printf("%s: Starting the filesystem\n", __FUNCTION__);
     startFileSystem();
@@ -796,68 +831,44 @@ void bootSystem()
     printf("%s: Creating Network manager (MDL HTTP server)\n", __FUNCTION__);
     networkMgr = new NetworkManager(wifiMgr);
 
-    printf("%s: Initializing file deletion task\n", __FUNCTION__);
-    file_delete_task_init();
-}
+    printf("%s: Initializing file I/O task\n", __FUNCTION__);
+    file_io_task_init();
 
+    printf("%s: Initializing OTA flash task\n", __FUNCTION__);
+    ota_flash_task_init();
 
-// ----------------------------------------------------------------------------------
-// This task drives the NeoPixel LED as a status indicator.
-// In addition, this task is used to boot the FreeRTOS-dependent portion of the system.
-// Doing that from this task avoids having a dedicated boot task using stack space after it completes.
-void vLedTask(void* arg)
-{
-    // Get the LED working first so that it can be used by the rest of the system
-    rgb_led = new NeoPixelConnect(WS2812_PIN, WS2812_PIXCNT, PIO_WS2812, PIO_WS2812_SM);
-    rgb_led->neoPixelSetValue(0, 16, 16, 16, true);
+    // Instantiate an SWD object to reprogram the EP, if needed
+    bool verbose = false;
+    swd = new Swd(PIO_SWD, EP_SWCLK_PIN, EP_SWDAT_PIN, verbose);
 
-    // Take care of our system boot responsibilities...
-    bootSystem();
-
-    while (1) {
-        vTaskDelay(1000);
-    }
+    // All done booting: delete this task
+    vTaskDelete(NULL);
 }
 
 // --------------------------------------------------------------------------------------------
-// The on-board LED is treated differently between the plain pico boards and their wireless variants.
-// These functions hides the differences.
-int32_t pico_led_init(void)
+// The Pico2W does not have a simple LED, but the umod4 board adds one for it to drive.
+void pico_led_init(void)
 {
-    #if defined SPARE1_LED_PIN
     gpio_init(SPARE1_LED_PIN);
     gpio_put(SPARE1_LED_PIN, 0);
     gpio_set_dir(SPARE1_LED_PIN, GPIO_OUT);
-    #else
-    #if defined(PICO_DEFAULT_LED_PIN)
-    // non-wireless boards access the LED GPIO directly
-    gpio_init(PICO_DEFAULT_LED_PIN);
-    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
-    #endif
-    #endif
-
-    return PICO_OK;
 }
 
 void pico_set_led(bool led_on)
 {
-    #if defined SPARE1_LED_PIN
     gpio_put(SPARE1_LED_PIN, led_on);
-    #else
-    #if defined(PICO_DEFAULT_LED_PIN)
-    gpio_put(PICO_DEFAULT_LED_PIN, led_on);
-    #elif defined(CYW43_WL_GPIO_LED_PIN)
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
-    #endif
-    #endif
+}
+
+void pico_toggle_led()
+{
+    gpio_xor_mask(1u<<SPARE1_LED_PIN);
 }
 
 // --------------------------------------------------------------------------------------------
 // Fast flash the LED 'count' times as a most basic sign of life as we boot.
 void hello(int32_t count)
 {
-    int32_t rval = pico_led_init();
-    hard_assert(rval == PICO_OK);
+    pico_led_init();
 
     for (uint32_t i=0; i<count; i++) {
         pico_set_led(true);
@@ -894,11 +905,21 @@ void initSpareIos()
 }
 
 // ----------------------------------------------------------------------------------
-// Helper functions for MDL API handlers
+void epResetAndRun()
+{
+    gpio_init(EP_RUN_PIN);
+    gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
+    gpio_put(EP_RUN_PIN, 0);
+    sleep_us(100);
+    gpio_put(EP_RUN_PIN, 1);
+}
+
 // ----------------------------------------------------------------------------------
+// Helper functions for MDL API handlers
 
 extern "C" const char* get_wp_version(void) {
-    return "1.0.0-mdl-phase1";
+    // Return the build system-generated version info (git hash + build time)
+    return SYSTEM_JSON;
 }
 
 extern "C" bool wifi_is_connected(void) {
@@ -910,11 +931,109 @@ extern "C" const char* wifi_get_ssid(void) {
 }
 
 // ----------------------------------------------------------------------------------
+// Helper functions for OTA flash task (C-compatible wrappers for C++ objects)
+
+extern "C" bool ota_logger_valid(void) {
+    return (logger != nullptr);
+}
+
+extern "C" void ota_shutdown_logger(void) {
+    if (logger != nullptr) {
+        logger->deinit ();
+    }
+}
+
+// ----------------------------------------------------------------------------------
+void partition_info()
+{
+    int err = rom_load_partition_table(workarea, sizeof(workarea), true);
+    if (err != BOOTROM_OK) {
+        printf("%s: rom_load_partition_table error %d\n", __FUNCTION__, err);
+    }
+    boot_info = {};
+    bool ok = rom_get_boot_info(&boot_info);
+    if (!ok) {printf("%s: rom_get_boot_info FAILED\n", __FUNCTION__);}
+    int b = boot_info.partition;
+    printf("WP  Boot partition: %d/%c\n", b, (b>=0) ? ('A'-1+b) : '?');
+    int o = rom_get_b_partition(b);
+    printf("WP Other partition: %d/%c\n", o, (o>=0) ? ('A'-1+o) : '?');
+
+
+    // We can only do OTA if this system contains a valid partition table.
+    // This will be the case UNLESS this app was flashed by the debugger
+    // and there is no partition table available.
+    ota_available = (ok && boot_info.partition >= 0);
+    printf("WP OTA is%s available\n", ota_available ? "" : " NOT");
+    printf("\n");
+}
+
+// ----------------------------------------------------------------------------------
+// TBYB (Try Before You Buy) OTA Update Commitment
+//
+// If we just booted from a newly-flashed OTA image, we have ~16.7 seconds
+// to call rom_explicit_buy() or the bootrom will revert to the previous
+// partition on the next reboot.
+void check_tbyb()
+{
+    if (!ota_available) {
+        printf("%s: Skipping TBYB check: OTA not available - This is a debug session!\n", __FUNCTION__);
+        return;
+    }
+
+    if (!FlashWp::isOtaPending()) {
+        printf("%s: No commit required\n", __FUNCTION__);
+    }
+    else {
+        extern void unpause_watchdog_tick();   // fixme
+
+        // Get the WS2812 LED working again after the reboot.
+        // Start off by resetting *all* PIO blocks - we don't need to figure out which one the WS2812 might be using
+        reset_block(RESETS_RESET_PIO0_BITS | RESETS_RESET_PIO1_BITS | RESETS_RESET_PIO2_BITS);
+        unreset_block_wait(RESETS_RESET_PIO0_BITS | RESETS_RESET_PIO1_BITS | RESETS_RESET_PIO2_BITS);
+        rgb_led = new NeoPixelConnect(WS2812_PIN, WS2812_PIXCNT, PIO_WS2812);
+
+        // Drive LED BLUE to indicate commit event
+        rgb_led->neoPixelSetValue(0, 0,0,30, true);
+
+        busy_wait_ms(1000);
+
+        // This boot was a warm boot to perform a TBYB check on this image that is running right now.
+        printf("%s: Committing OTA update\n", __FUNCTION__);
+        // For now, we assume that this new image is working
+        int32_t commit_result = FlashWp::commitOtaUpdate();
+        if (commit_result == 0) {
+            printf("%s:   Commit succeeded!\n", __FUNCTION__);
+            rgb_led->neoPixelSetValue(0, 0,30,0, true);
+        }
+        else {
+            printf("%s: Commit failed: %d\n", __FUNCTION__, commit_result);
+            rgb_led->neoPixelSetValue(0, 30,0,0, true);
+        }
+        busy_wait_ms(1000);
+
+        // We have an issue here. Because a TBYB boot event represents a 'warm' restart
+        // of the system, the system hardware (CPU, wifi module, PIO, etc.) may
+        // in an indeterminate state because there was no hard RESET event.
+        // The simplest way to fix that is to perform a watchdog reboot here now
+        // that we are committed. The watchdog reset event will select this new image
+        // now that it is committed.
+        unpause_watchdog_tick();        // Allow the watchdog to time out even if a debugger is connected
+        watchdog_enable(1, false);
+        while (true) {
+            hello(100);
+            //__wfi();
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------------
 // Before main() is called, the Pico boot code in pico-sdk/src/rp2_common/pico_standard_link/crt0.S
 // calls function runtime_init() in pico-sdk/src/rp2_common/pico_runtime/runtime.c
 // That is where all the behind-the-scenes initialization of the runtime occurs.
 int main()
 {
+    // Note: With configNUMBER_OF_CORES=1, core 1 is never used.
+
     // Simulate having pullup resistors on EPLOG_RX_PIN and EPLOG_FLOWCTRL_PIN.
     // Any future PCB4.2 rev of the PCB must add pullups to both of these signals!
     gpio_init(EPLOG_RX_PIN);
@@ -937,11 +1056,7 @@ int main()
         // While bench testing, it is hugely useful to reset the EP here which
         // mimics both processors getting reset at ignition key ON.
         #warning " ********** EXTREMELY TEMP - RESETTING THE EP **************"
-        gpio_init(EP_RUN_PIN);
-        gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
-        gpio_put(EP_RUN_PIN, 0);
-        sleep_us(100);
-        gpio_put(EP_RUN_PIN, 1);
+        epResetAndRun();
     }
 
     #if defined SPARE1_LED_PIN
@@ -952,32 +1067,27 @@ int main()
 
     stdio_init_all();
 
-    printf("\n\nWP Booting on %s\n", STRINGIFY(PICO_BOARD));
+    printf("\n\nWP Core %d booting on board %s\n", get_core_num(), STRINGIFY(PICO_BOARD));
+    printf("WP Version JSON: %s\n", SYSTEM_JSON);
     uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
     printf("WP System clock: %.1f MHz\n", f_clk_sys / 1000.0);
-    printf("Heap Range: 0x%08x..0x%08X (%u bytes)\n", heap_start, heap_end, (heap_end-heap_start));
-    printf("\n");
+    partition_info();
+    check_tbyb();
 
-    #if 0
-    {
-        // WAY TEMP!!
-        LogSource* testLogSource;
-        uint8_t foo[] = {0x12, 0x34, 0x56, 0x78};
-        uint8_t bar[4];
-        testLogSource = new LogSource(128);
-        testLogSource->log(4, foo);
-        uint64_t ts = testLogSource->get_timestamp();
-        uint16_t len = testLogSource->get_data_length();
-        LogSource::error err = testLogSource->get_data(bar);
+    //printf("Heap Range: 0x%08x..0x%08X (%u bytes)\n", heap_start, heap_end, (heap_end-heap_start));
 
-        printf("log test: %04X %02X%02X%02X%02X\n",len, bar[0], bar[1], bar[2], bar[3]);
-    }
-    #endif
+    // Create a transient task to boot the rest of the system
+    BaseType_t err = xTaskCreate(
+        boot_system,        // func ptr of task to run
+        "boot_system",      // task name
+        2048,               // stack size (words)
+        NULL,               // args
+        1,                  // priority
+        NULL                // task handle (if any)
+    );
 
-    // The LED task will boot the rest of the system
-    BaseType_t err = xTaskCreate(vLedTask, "LED Task", 2048, NULL, 1, NULL);
     if (err != pdPASS) {
-        panic("Task creation failed!");
+        panic("Boot Task creation failed!");
     }
 
     vTaskStartScheduler();

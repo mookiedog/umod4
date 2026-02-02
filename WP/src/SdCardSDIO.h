@@ -51,6 +51,15 @@ class SdCardSDIO : public SdCardBase {
     SdErr_t initializeCard();
     SdErr_t readCSD();
     SdErr_t calculateCapacity();
+    uint32_t waitForCardReady(uint32_t timeout_us);  // Wait for card to be ready before operation
 };
+
+// Debug counter accessors (callable from C code, e.g., Shell)
+extern "C" {
+    uint32_t sdio_get_busy_wait_count(void);
+    uint32_t sdio_get_busy_wait_max_us(void);
+    uint32_t sdio_get_busy_wait_total_us(void);
+    void sdio_reset_busy_wait_stats(void);
+}
 
 #endif

@@ -13,6 +13,24 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+// Debug counters for tracking card busy waits
+// These track how often operations had to wait for card to be ready
+static uint32_t g_sdio_busy_wait_count = 0;       // Number of times we had to wait
+static uint32_t g_sdio_busy_wait_max_us = 0;      // Maximum wait time in microseconds
+static uint32_t g_sdio_busy_wait_total_us = 0;    // Total wait time in microseconds
+
+// Accessor functions for debug counters (callable from Shell)
+extern "C" {
+    uint32_t sdio_get_busy_wait_count(void) { return g_sdio_busy_wait_count; }
+    uint32_t sdio_get_busy_wait_max_us(void) { return g_sdio_busy_wait_max_us; }
+    uint32_t sdio_get_busy_wait_total_us(void) { return g_sdio_busy_wait_total_us; }
+    void sdio_reset_busy_wait_stats(void) {
+        g_sdio_busy_wait_count = 0;
+        g_sdio_busy_wait_max_us = 0;
+        g_sdio_busy_wait_total_us = 0;
+    }
+}
+
 // SD Commands
 static const uint8_t CMD0  = 0;   // GO_IDLE_STATE
 static const uint8_t CMD2  = 2;   // ALL_SEND_CID
@@ -500,6 +518,57 @@ SdErr_t SdCardSDIO::speedTest()
     }
 
     // --------------------------------------------------------------------------------------------
+    // Wait for SD card to be ready before starting a new operation.
+    // This prevents issues when the card is still internally busy from a previous write.
+    // Returns the wait time in microseconds (0 if card was already ready).
+    uint32_t SdCardSDIO::waitForCardReady(uint32_t timeout_us)
+    {
+        uint32_t start = time_us_32();
+        bool first_check = true;
+
+        while ((time_us_32() - start) < timeout_us) {
+            // Check if DAT0 is high (card not busy)
+            if (gpio_get(SD_DAT0) == 0) {
+                // Card is busy (DAT0 low), wait and retry
+                first_check = false;
+                busy_wait_us_32(50);
+                continue;
+            }
+
+            // DAT0 is high, verify with CMD13 that card is ready
+            uint32_t card_status;
+            if (rp2350_sdio_command_u32(CMD13, rca, &card_status, 0) == SDIO_OK) {
+                // Extract CURRENT_STATE field (bits [12:9])
+                // States: 0=idle, 1=ready, 2=ident, 3=stby, 4=tran, 5=data, 6=rcv, 7=prg
+                int state = (card_status >> 9) & 0x0F;
+
+                // State 4 (tran) is ready for new commands
+                // States 5 (data), 6 (rcv), 7 (prg) mean card is still busy
+                if (state == 4) {
+                    uint32_t elapsed = time_us_32() - start;
+                    if (!first_check && elapsed > 0) {
+                        // We had to wait - update debug counters
+                        g_sdio_busy_wait_count++;
+                        g_sdio_busy_wait_total_us += elapsed;
+                        if (elapsed > g_sdio_busy_wait_max_us) {
+                            g_sdio_busy_wait_max_us = elapsed;
+                        }
+                    }
+                    return elapsed;
+                }
+            }
+
+            first_check = false;
+            busy_wait_us_32(50);
+        }
+
+        // Timeout - card did not become ready
+        uint32_t elapsed = time_us_32() - start;
+        printf("waitForCardReady: timeout after %lu us\n", elapsed);
+        return elapsed;
+    }
+
+    // --------------------------------------------------------------------------------------------
     // SDIO read implementation following library reference code pattern
     SdErr_t SdCardSDIO::readSectors(uint32_t sector_num, uint32_t num_sectors, void *buffer)
     {
@@ -511,6 +580,9 @@ SdErr_t SdCardSDIO::speedTest()
         if (((uintptr_t)buffer & 3) != 0) {
             return SD_ERR_BAD_ARG;
         }
+
+        // Wait for card to be ready (may still be busy from previous write)
+        waitForCardReady(500000);  // 500ms timeout
 
         uint32_t reply;
         sdio_status_t status;
@@ -582,6 +654,9 @@ SdErr_t SdCardSDIO::speedTest()
         if (((uintptr_t)buffer & 3) != 0) {
             return SD_ERR_BAD_ARG;
         }
+
+        // Wait for card to be ready (may still be busy from previous write)
+        waitForCardReady(500000);  // 500ms timeout
 
         uint32_t reply;
         sdio_status_t status;

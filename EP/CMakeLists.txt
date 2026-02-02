@@ -89,6 +89,7 @@ add_executable(${PROJECT_NAME}
   ${DESCRAMBLER_SOURCE}
 )
 
+
 # Generate the uart PIO header file for use by this project.
 # FYI: the header file will be generated into "build/EP/uart_tx32_pio.h".
 pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_tx32.pio)

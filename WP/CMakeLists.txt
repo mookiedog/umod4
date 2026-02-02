@@ -20,16 +20,12 @@ set (CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
 # These definitions need to occur before including pico_sdk_import.cmake:
 set(PICO_BOARD pico2_w)
 
-# Based on the board definition, define the appropriate platform and cpu:
-if (${PICO_BOARD} STREQUAL "pico_w")
-    set(PICO_PLATFORM rp2040)
-    set(CPU cortex-m0)
-elseif (${PICO_BOARD} STREQUAL "pico2_w")
-    set(PICO_PLATFORM rp2350)
-    set(CPU cortex-m33)
-else()
-    message(FATAL_ERROR "Unknown board type!")
-endif()
+# PICO_PLATFORM controls the toolchain (ARM vs RISC-V), not the security state.
+# Valid values: rp2350, rp2350-arm-s, rp2350-riscv
+# The UF2 family ID (rp2350-arm-s vs rp2350-arm-ns) is set separately via picotool.
+set(PICO_PLATFORM rp2350)
+set(CPU cortex-m33)
+
 
 # As per SDK doc, this include needs to happen before project()
 include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
@@ -37,6 +33,11 @@ include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 project(WP
   LANGUAGES C CXX ASM
 )
+
+# Pico SDK tooling (picotool) requires .elf extension on executables.
+# The SDK normally sets this via Platform/PICO.cmake, but since we use a custom
+# toolchain with CMAKE_SYSTEM_NAME=Generic, we must set it explicitly here.
+set(CMAKE_EXECUTABLE_SUFFIX .elf)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 23)
@@ -181,9 +182,32 @@ add_custom_command(
 # Ensure fsdata.c is generated before building the executable
 add_custom_target(generate_fsdata DEPENDS ${FSDATA_OUTPUT})
 
+# Generate embedded SwdReflash binary for SWD programming
+set(SWDREFLASH_ELF "${CMAKE_CURRENT_BINARY_DIR}/../SwdReflash/SwdReflash")
+set(SWDREFLASH_BIN "${CMAKE_CURRENT_BINARY_DIR}/swdreflash.bin")
+set(SWDREFLASH_C "${CMAKE_CURRENT_BINARY_DIR}/swdreflash_binary.c")
+set(SWDREFLASH_H "${CMAKE_CURRENT_BINARY_DIR}/swdreflash_binary.h")
+set(BIN2C_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../tools/src/bin2c.py")
+
+# Convert SwdReflash ELF to raw binary, then to C array
+# Note: Top-level CMakeLists.txt ensures SwdReflash is built before WP,
+#       so the ELF file will exist when this command runs
+add_custom_command(
+    OUTPUT ${SWDREFLASH_C} ${SWDREFLASH_H}
+    COMMAND ${CROSSCOMPILE_TOOL_PATH}/arm-none-eabi-objcopy -O binary ${SWDREFLASH_ELF} ${SWDREFLASH_BIN}
+    COMMAND python3 ${BIN2C_SCRIPT} ${SWDREFLASH_BIN} ${CMAKE_CURRENT_BINARY_DIR}/swdreflash_binary swdreflash 0x20000101 0x20042000
+    DEPENDS ${BIN2C_SCRIPT} ${SWDREFLASH_ELF}
+    COMMENT "Embedding SwdReflash binary for SWD programming"
+    VERBATIM
+)
+
+add_custom_target(generate_swdreflash_binary DEPENDS ${SWDREFLASH_C} ${SWDREFLASH_H})
+
 add_executable(${PROJECT_NAME}
     src/Clock.cpp
     src/Crc.cpp
+    src/FlashEp.cpp
+    src/FlashWp.cpp
     src/Gps.cpp
     src/malloc_lock.cpp
     src/Logger.cpp
@@ -194,24 +218,38 @@ add_executable(${PROJECT_NAME}
     src/SdCardSDIO.cpp
     src/Shell.cpp
     src/Spi.cpp
+    src/Swd.cpp
     src/TimeUtils.cpp
     src/Uart.cpp
     src/WiFiManager.cpp
+
     # MDL (Motorbike Data Link) files
     src/NetworkManager.cpp
     src/api_handlers.c
     src/fs_custom.c
-    src/file_delete_task.c
+    src/file_io_task.c
+    src/upload_handler.c
+    src/ota_flash_task.c
+    src/flash_safe_helper.c
     # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
     src/httpd_stubs.c
+
+    # The RAM-resident SwdReflash binary that gets loaded to EP via SWD:
+    ${SWDREFLASH_C}
 )
 
-# Ensure fsdata.c is generated before compiling fs.c
-add_dependencies(${PROJECT_NAME} generate_fsdata)
+# Force a rebuild of main.cpp every time so we can see its build time change
+add_custom_target(always_rebuild)
+add_dependencies(${PROJECT_NAME} always_rebuild)
+set_source_files_properties(src/main.cpp PROPERTIES OBJECT_DEPENDS always_rebuild)
+
+# Ensure generated files are created before compiling
+add_dependencies(${PROJECT_NAME} generate_fsdata generate_swdreflash_binary)
 
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
 set_source_files_properties(
     src/Shell.cpp
+    src/flash_safe_helper.c
     src/Gps.cpp
     src/Uart.cpp
     src/Logger.cpp
@@ -224,9 +262,18 @@ set_source_files_properties(
 )
 
 # Include the PIO program header files:
-pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_rx32.pio)
+# 32-bit UART RX & TX PIO programs (from shared lib/pio/ directory)
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pio/uart_rx32.pio)
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pio/uart_tx32.pio)
+
+# 4-bit SDIO PIO program for RP2350
 pico_generate_pio_header(${PROJECT_NAME}  ${SDIO_RP2350_SRC_DIR}/src/sdio_rp2350.pio)
+
+# Neopixel PIO program
 pico_generate_pio_header(${PROJECT_NAME}  ${PICO_EXAMPLES_PATH}/pio/ws2812/ws2812.pio)
+
+# SWD PIO engine
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/swd.pio)
 
 # Override the standard Segger definitions for these symbols:
 #add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
@@ -275,11 +322,12 @@ target_include_directories(sdio_rp2350 INTERFACE
 # Possibly temp: allow WP to include 'hardware.h' from the EP directory to access certain shared info
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../EP/src)
 
-# This next section defines a number of options as described in Appendix B of the C/C++ Pico SDK manual.
+# WP needs to know how to talk to the RP2040 SWD reflasher app
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../SwdReflash/src)
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    # Define these next two here where they are easier to find:
-    ##PICO_HEAP_SIZE=2048
-    #PICO_STACK_SIZE=4096   I'm still not sure the best way to define this. Right now, it's in the memmap_eprom.ld file.
+    # Enable "Try Before You Buy" (TBYB) for OTA updates
+    # PICO_CRT0_IMAGE_TYPE_TBYB=1
 
     # WiFi and server configuration (from environment variables)
     WIFI_SSID=\"${WIFI_SSID}\"
@@ -293,7 +341,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     # Disable CYW43 driver logging to stdio
     PICO_CYW43_LOGGING_ENABLED=0
 
-    # There are still some messags that get printed from the CYW43 driver,
+    # There are still some messages that get printed from the CYW43 driver,
     # but I have not figured out how to disable them.
     # CYW43_PRINTF() is defined in cyw43_debug.h
 
@@ -305,7 +353,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 add_custom_command(
     TARGET ${PROJECT_NAME} POST_BUILD
     VERBATIM
-    COMMAND ${CROSSCOMPILE_TOOL_PATH}/arm-none-eabi-size ${CMAKE_BINARY_DIR}/${PROJECT_NAME}
+    COMMAND ${CROSSCOMPILE_TOOL_PATH}/arm-none-eabi-size $<TARGET_FILE:${PROJECT_NAME}>
 )
 
 # pull in common dependencies
@@ -314,6 +362,8 @@ target_link_libraries(${PROJECT_NAME}
     pico_stdlib
     pico_multicore
     pico_sync
+    pico_bootrom
+    pico_flash
     hardware_flash
     hardware_timer
     cmsis_core
@@ -328,17 +378,32 @@ target_link_libraries(${PROJECT_NAME}
     pico_cyw43_arch_lwip_sys_freertos
     pico_lwip_http
     pico_lwip_mdns
-    pico_sha256  # Hardware-accelerated SHA-256
+    pico_sha256
 )
 
-# Create some useful output files
-pico_add_dis_output(${PROJECT_NAME})
-pico_add_map_output(${PROJECT_NAME})
-pico_add_hex_output(${PROJECT_NAME})
+# CoThis is the partition table our app expects to use
+set(PARTITION_TABLE_JSON ${CMAKE_CURRENT_SOURCE_DIR}/partition_table.json)
 
-# This is annoying, but I can't figure out how to get picotool to do the right thing otherwise:
+# Create all output files (.uf2, .bin, .hex, .dis, .map) using SDK's standard method
+# This calls picotool_postprocess_binary() which handles:
+# - Partition table embedding (from pico_embed_pt_in_binary above)
+# - UF2 generation
+# - Any signing/hashing if configured
+pico_add_extra_outputs(${PROJECT_NAME})
+
+# Generate a standalone partition table UF2 for flashing onto a blank system
+# before flashing the OTA UF2 build.
+set(PARTITION_TABLE_UF2 ${CMAKE_BINARY_DIR}/partition_table.uf2)
 add_custom_command(
-    TARGET ${PROJECT_NAME} POST_BUILD
+    OUTPUT ${PARTITION_TABLE_UF2}
+    COMMAND picotool partition create ${PARTITION_TABLE_JSON} ${PARTITION_TABLE_UF2}
+    DEPENDS ${PARTITION_TABLE_JSON}
+    COMMENT "Generating standalone partition table UF2 from ${PARTITION_TABLE_JSON}"
     VERBATIM
-    COMMAND picotool uf2 convert --quiet ${CMAKE_BINARY_DIR}/${PROJECT_NAME} -t elf ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.uf2 --family ${PICO_PLATFORM}
+)
+
+# Custom target to build standalone partition table
+add_custom_target(partition_table ALL
+    DEPENDS ${PARTITION_TABLE_UF2}
+    COMMENT "Standalone partition table UF2 ready at ${PARTITION_TABLE_UF2}"
 )

@@ -35,23 +35,25 @@ add_custom_command(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/custom_eprom.ld
     ${TOOLS_SOURCE_DIR}/bin-to-bson.py
 
-  COMMENT "Building UM4.bin"
+  COMMENT "Building and Patching UM4.bin"
   VERBATIM
-    # We invoke the C compiler for its pre-processing phase only:
+    # 1. Preprocess
     COMMAND ${PREPROCESSOR} -E -I${LIB_DIR}/inc ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.S > ${NAME}.s
 
-    # Assemble the preprocessed assembly source:
+    # 2. Assemble
     COMMAND m68hc11-elf-as -m68hc11 --short-branchs --print-insn-syntax ${NAME}.s -o ${NAME}.o -a=${NAME}.lst
 
-    # Link it to start where the EPROM lives in the HC11 address space:
+    # 3. Link
     COMMAND m68hc11-elf-ld -T ${CMAKE_CURRENT_SOURCE_DIR}/src/custom_eprom.ld -o ${NAME}.elf ${NAME}.o
 
-    # Make an s19 file just in case the output might need to be burned into a real EPROM for some reason
+    # 4. Generate S19
     COMMAND m68hc11-elf-objcopy --srec-len 32 -I elf32-m68hc11 -O srec ${NAME}.elf ${NAME}.s19
 
-    # Finally, create the .bin file that the rest of the umod4 system needs:
+    # 5. Generate Binary
     COMMAND m68hc11-elf-objcopy ${NAME}.elf --output-target=binary ${NAME}.bin
 
-    # Not sure this is the right place, but it will do for now:
-    COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/bin-to-bson.py -d ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.dsc -b ${NAME}.bin -o ${NAME}.bson -j ${NAME}.json -c ${NAME}.c
+    # 6. Generate BSON/JSON
+    COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/bin-to-bson.py
+            -d ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.dsc
+            -b ${NAME}.bin -o ${NAME}.bson -j ${NAME}.json -c ${NAME}.c
 )
