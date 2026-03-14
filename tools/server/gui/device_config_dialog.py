@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QLineEdit, QFileDialog, QFormLayout,
-                               QDialogButtonBox)
+                               QDialogButtonBox, QApplication)
 from PySide6.QtCore import Qt
 import os
 
@@ -21,6 +21,16 @@ class DeviceConfigDialog(QDialog):
         self.resize(500, 200)
 
         self._setup_ui()
+
+        # Auto-raise when the application regains focus, so the dialog cannot get
+        # permanently hidden behind the main window (X11/WSL2 window manager issue).
+        _app = QApplication.instance()
+        def _raise_on_app_active(state):
+            if state == Qt.ApplicationState.ApplicationActive and self.isVisible():
+                self.raise_()
+                self.activateWindow()
+        _app.applicationStateChanged.connect(_raise_on_app_active)
+        self.finished.connect(lambda: _app.applicationStateChanged.disconnect(_raise_on_app_active))
 
     def _setup_ui(self):
         """Set up the dialog UI."""

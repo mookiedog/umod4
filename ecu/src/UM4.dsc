@@ -1,6 +1,5 @@
 {
-    "eprom": {
-        "name": "UM4",
+    "UM4": {
         "daughterboard": "N",
         "info": {
             "models": [

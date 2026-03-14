@@ -1,10 +1,9 @@
 #include "pico/stdlib.h"
 #include "pico/sync.h"
 #include "Logger.h"
-#include "NeoPixelConnect.h"
-#include "SdCard.h"
+#include "lfsMgr.h"
 #include "umod4_WP.h"
-#include "WP_log.h"
+#include "log_ids.h"
 #include "WiFiManager.h"
 
 const uint32_t dbg = 1;
@@ -25,24 +24,27 @@ void start_logger_task(void *pvParameters)
 
 
 // ----------------------------------------------------------------------------------
-Logger::Logger(int32_t _size)
+Logger::Logger(uint8_t* _buffer, int32_t _size)
 {
-    buffer = (uint8_t*)malloc(_size);
-    if (!buffer) {
-        panic("Unable to malloc log buffer!");
-    }
-    memset(buffer, 0, _size);
-
+    buffer = _buffer;
     bufferLen = _size;
+
     lastBufferP = buffer + _size - 1;
     headP = tailP = buffer;
+    inUse_max = 0;
 
     // Claim a hardware spinlock for protecting buffer access
     // This works from both ISR and task context, and across cores
     int spinlock_num = spin_lock_claim_unused(true);
     bufferLock = spin_lock_init(spinlock_num);
 
-    xTaskCreate(start_logger_task, "Log", 2048 /* words */, this, TASK_NORMAL_PRIORITY, &log_taskHandle);
+    xTaskCreate(
+        start_logger_task,
+        "Log",
+        1024+512,
+        this,
+        TASK_NORMAL_PRIORITY,
+        &log_taskHandle);
 }
 
 // ----------------------------------------------------------------------------------
@@ -199,44 +201,55 @@ bool Logger::openNewLog()
 //  - bits 16..23 this byte will logged if length >= 2
 //  - bits 24..31 this byte will be logged if length == 3
 
-// temp
-uint32_t pps_isr_count, ecu_isr_count, isr1_err_cnt, isr2_err_cnt;
+// temporary error counters for debugging
+uint32_t isr1_err_cnt, isr2_err_cnt, isr3_err_cnt;
 
-//bool __time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
-bool Logger::logData_fromISR(uint32_t dataWord)
+bool __time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
 {
+    // Validate length before acquiring the lock - only depends on dataWord
+    uint32_t len = dataWord & 0xFF;
+    if (len < 1 || len > 3) {
+        isr1_err_cnt++;
+        return false;
+    }
+
     // Don't use spin_lock_blocking() in ISR - it would save/restore interrupt state unnecessarily
     // In ISR context, the CPU already manages interrupt masking appropriately
     spin_lock_unsafe_blocking(bufferLock);
 
-    // Update the new headP exactly once after doing the copy
-    //uint8_t* hP = headP;
-
-    uint32_t len = dataWord & 0xFF;
-    int32_t spaceRemaining = bufferLen - inUse();
-    if ((len < 1) || (len > 3) || (spaceRemaining < len)) {
-        isr1_err_cnt++;
+    // Make sure there is enough room for this new entry
+    if (inUse() + (int32_t)len > bufferLen) {
+        isr2_err_cnt++;
         spin_unlock_unsafe(bufferLock);
         return false;
     }
 
-    for (uint32_t i=0; i<len; i++) {
-        dataWord >>= 8;
-        *headP++ = dataWord;
-        if (headP > lastBufferP) {
-            headP = buffer;
-        }
-    }
+    // Cast away volatile: only headP pointer needs volatile (re-read on each ISR entry),
+    // satisfied by loading it once here under the spinlock.
+    uint8_t* hP = (uint8_t*)headP;
 
-    if (len==1) {
-        // PPS
-        pps_isr_count++;
+    if (__builtin_expect((hP + len) <= lastBufferP, true)) {
+        // Expected case:
+        // All bytes land before end of buffer: unroll loop, no wrap checks needed
+        *hP++ = dataWord >> 8;
+        if (len >= 2) *hP++ = dataWord >> 16;
+        if (len == 3) *hP++ = dataWord >> 24;
     }
     else {
-        // ECU
-        ecu_isr_count++;
+        // Unusual case:
+        // The write straddles end of buffer: unroll loop, but check hP wrap on every byte
+        *hP = dataWord >> 8;
+        if (++hP > lastBufferP) hP = buffer;
+        if (len >= 2) { *hP = dataWord >> 16; if (++hP > lastBufferP) hP = buffer; }
+        if (len == 3) { *hP = dataWord >> 24; if (++hP > lastBufferP) hP = buffer; }
     }
-    //headP = hP;
+
+    int32_t i = inUse();
+    if (i > inUse_max) {
+        inUse_max = i;
+    }
+
+    headP = hP;
     spin_unlock_unsafe(bufferLock);
     return true;
 }
@@ -278,6 +291,11 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* 
         rVal = false;
     }
 
+    int32_t i = inUse();
+    if (i > inUse_max) {
+        inUse_max = i;
+    }
+
     // Release spinlock first, then exit critical section
     spin_unlock_unsafe(bufferLock);
     taskEXIT_CRITICAL();
@@ -286,19 +304,6 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* 
 }
 
 
-// ----------------------------------------------------------------------------------
-int32_t Logger::inUse()
-{
-    int32_t inUse = headP - tailP;
-    if (inUse<0) {
-        inUse += bufferLen;
-    }
-
-    if (inUse<0) {
-        __breakpoint();
-    }
-    return inUse;
-}
 
 // ----------------------------------------------------------------------------------
 int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
@@ -376,10 +381,43 @@ int32_t Logger::syncLog()
 
 
 
-// ugh
-extern uint32_t lfs_bytes_until_fsync(const struct lfs_config *lfs_cfg, lfs_file_t* fp);
-extern lfs_t lfs;
-extern struct lfs_config lfs_cfg;
+// Return number of bytes that should be written before fsync for optimal
+// streaming performance/robustness. LittleFS needs to copy block contents
+// to a new one if fsync is called mid-block, and doesn't persist file
+// contents until fsync is called.
+static uint32_t lfs_bytes_until_fsync(const struct lfs_config *lfs_cfg, lfs_file_t* fp)
+{
+    if (fp == nullptr) {
+        return 0;
+    }
+
+    uint32_t file_pos = fp->pos;
+    uint32_t block_size = lfs_cfg->block_size;
+
+    // first block exclusively stores data:
+    // https://github.com/littlefs-project/littlefs/issues/564#issuecomment-2555733922
+    if (file_pos < block_size) {
+        return block_size - file_pos;
+    }
+
+    // see https://github.com/littlefs-project/littlefs/issues/564#issuecomment-2363032827
+    // n = (N - w/8 ( popcount( N/(B - 2w/8) - 1) + 2))/(B - 2w/8))
+    // off = N - ( B - 2w/8 ) n - w/8popcount( n )
+    #define BLOCK_INDEX(N, B) \
+    (N - sizeof(uint32_t) * (__builtin_popcount(N/(B - 2 * sizeof(uint32_t)) -1) + 2))/(B - 2 * sizeof(uint32_t))
+
+    #define BLOCK_OFFSET(N, B, n) \
+    (N - (B - 2*sizeof(uint32_t)) * n - sizeof(uint32_t) * __builtin_popcount(n))
+
+    uint32_t block_index = BLOCK_INDEX(file_pos, block_size);
+    uint32_t block_offset = BLOCK_OFFSET(file_pos, block_size, block_index);
+
+    #undef BLOCK_INDEX
+    #undef BLOCK_OFFSET
+
+    return block_size - block_offset;
+}
+
 
 // ----------------------------------------------------------------------------------
 void Logger::logTask()
@@ -421,8 +459,14 @@ void Logger::logTask()
         case UNMOUNTED:
             // Our lfs pointer will become non-NULL if an SD card is detected, and a filesystem gets mounted
             if (lfs) {
-                // The filesystem just got mounted
-                // Perform any post-mount initialization that we would like to do right here
+                // The filesystem just got mounted.
+                // The first LFS write will trigger a garbage collection, which can be incredibly expensive.
+                // We hide some or all of that cost by immediately asking for a GC before
+                // before the initial LFS write operation would trigger it.
+                printf("%s: Garbage-collecting LFS\n", __FUNCTION__);
+                uint32_t t0 = time_us_32();
+                int err = lfs_fs_gc(lfs);
+                printf("%s: Garbage collection took %d mSec\n", __FUNCTION__, (time_us_32()-t0)/1000);
                 state = OPEN_LOG;
             }
             else {
@@ -435,13 +479,11 @@ void Logger::logTask()
             {
                 bool success = openNewLog();
                 if (success) {
-                    //rgb_led->neoPixelSetValue(0, 16, 0, 0, true);
                     vTaskDelay(pdMS_TO_TICKS(250));
                     state = CALC_WR_SIZE;
                 }
                 else {
-                    //rgb_led->neoPixelSetValue(0, 0, 16, 0, true);
-                    // TMP not sure this is right
+                    // fixme: not sure this is right
                     state = UNMOUNTED;
                 }
             }
@@ -457,9 +499,6 @@ void Logger::logTask()
 
         case WAIT_FOR_DATA:
             logLength = inUse();
-            #if 0
-            printf("%d/%d P%d E%d E1:%d E2:%d\n", logLength, bytesToWriteBeforeSyncing, pps_isr_count, ecu_isr_count, isr1_err_cnt, isr2_err_cnt);
-            #endif
             if (logLength >= bytesToWriteBeforeSyncing) {
                 state = WRITE_DATA;
             }
@@ -468,37 +507,41 @@ void Logger::logTask()
             }
             break;
 
-        case WRITE_DATA: {
-                // If the block to be written extends past the end of the circular buffer
-                // we will need to write it in two pieces
-
-
-                // This loop gets executed once or twice, depending if the write needs to be broken
-                // in two because it extends past the end of the circular buffer
+        case WRITE_DATA:
+            {
+                // We copy the block to be written to our internal write buffer just in case it is split
+                // across the end of the circular buffer. This allows us to always be able to write it
+                // in a single LFS write call. It is way faster to copy RAM than to call lfs write twice.
                 int32_t totalToWrite = bytesToWriteBeforeSyncing;
                 char c='A';
                 bool err = false;
-                pico_set_led(1);
 
                 uint8_t* tP = tailP;
-                do {
-                    int32_t bytesToEndOfBuffer = (lastBufferP - tP + 1);
-                    int32_t len = (bytesToEndOfBuffer < totalToWrite) ? bytesToEndOfBuffer : totalToWrite;
-                    //printf("%s: Write chunk %c [%d bytes]\n", __FUNCTION__, c++, len);
-                    int32_t bytesWritten = writeChunk(tP, len);
-                    if (bytesWritten < len) {
-                        printf("%s: Write %d bytes failed: %d bytes written\n", __FUNCTION__, len, bytesWritten);
-                        state = WRITE_FAILURE;
-                        err = true;
-                    }
-                    else {
-                        tP += bytesWritten;
-                        if (tP > lastBufferP) {
-                            tP = buffer;
-                        }
-                        totalToWrite -= bytesWritten;
-                    }
-                } while (!err && (totalToWrite > 0));
+                int32_t bytesToEndOfBuffer = (lastBufferP - tP + 1);
+                int32_t len = (bytesToEndOfBuffer < totalToWrite) ? bytesToEndOfBuffer : totalToWrite;
+                int32_t len_remaining = totalToWrite-len;
+                printf("%s: memcpy(1) %d bytes from 0x%08X..0x%08X\n", __FUNCTION__, len, tP, tP+len-1);
+                memcpy(write_buff, tP, len);
+                if (len_remaining == 0) {
+                    tP = tP+len;
+                }
+                else {
+                    // Copy the second half here:
+                    printf("%s: memcpy(2) %d bytes from 0x%08X..0x%08X\n", __FUNCTION__, len_remaining, buffer, buffer+len_remaining-1);
+                    memcpy(write_buff+len, buffer, len_remaining);
+                    tP = buffer+len_remaining;
+                }
+
+                // Now that all the data is in the write_buff, we can free it from the circular buffer
+                tailP = tP;
+
+                // Write write_buff in one single write operation
+                int32_t bytesWritten = writeChunk(write_buff, totalToWrite);
+                if (bytesWritten < len) {
+                    printf("%s: Write %d bytes failed: %d bytes written\n", __FUNCTION__, len, bytesWritten);
+                    state = WRITE_FAILURE;
+                    err = true;
+                }
 
                 if (!err) {
                     // The write[s] succeeded, but the way LittleFS works, the data that got written
@@ -506,9 +549,6 @@ void Logger::logTask()
                     int32_t lfs_err = syncLog();
 
                     if (lfs_err == LFS_ERR_OK) {
-                        // Now that the log data is written & committed, we can finally remove it from the queue!
-                        tailP = tP;
-
                         // Print some stats every megabyte written
                         totalByteCount += bytesToWriteBeforeSyncing;
                         if (totalByteCount > (1024*1024)) {
@@ -525,13 +565,15 @@ void Logger::logTask()
                     }
                 }
 
-                pico_set_led(0);
                 break;
             }
 
         case WRITE_FAILURE:
             // ignore all errors
             lfs_file_close(lfs, &logf);
+            // Delay before retrying: prevents hammering SDIO thousands of times/second
+            // if the SD card or SDIO bus is in a bad state (e.g. after a false CMD13 timeout).
+            vTaskDelay(pdMS_TO_TICKS(1000));
             state = OPEN_LOG;
             break;
         }

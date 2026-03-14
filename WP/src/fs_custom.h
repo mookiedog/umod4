@@ -4,8 +4,6 @@
 #include "lwip/apps/fs.h"
 #include "lfs.h"
 
-#ifdef __cplusplus
-extern "C" {
 #endif
 
 /**
@@ -30,8 +28,3 @@ void fs_custom_init(lfs_t* lfs_ptr);
  */
 bool fs_custom_is_ready(void);
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif // FS_CUSTOM_H

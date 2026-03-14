@@ -82,7 +82,7 @@
 /* Run time and task stats gathering related definitions. */
 #define configGENERATE_RUN_TIME_STATS           0
 #define configUSE_TRACE_FACILITY                1
-#define configUSE_STATS_FORMATTING_FUNCTIONS    0
+#define configUSE_STATS_FORMATTING_FUNCTIONS    1
 
 /* Co-routine related definitions. */
 #define configUSE_CO_ROUTINES                   0
@@ -152,6 +152,15 @@ to exclude the API function. */
 
 /* Additional defines for this umod4 project */
 #define configRECORD_STACK_HIGH_ADDRESS         1
+
+
+// This might not be the right place, but it'll do for now:
+#define TASK_NORMAL_PRIORITY    ((tskIDLE_PRIORITY)+1)
+#define TASK_MED_PRIORITY       ((tskIDLE_PRIORITY)+2)
+#define TASK_HIGH_PRIORITY      ((tskIDLE_PRIORITY)+3)
+#define TASK_WIFI_PRIORITY      ((tskIDLE_PRIORITY)+4)
+#define TASK_ISR_PRIORITY       ((tskIDLE_PRIORITY)+5)
+#define TASK_MAX_PRIORITY       ((tskIDLE_PRIORITY)+6)
 
 #endif /* FREERTOS_CONFIG_H */
 

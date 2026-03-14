@@ -16,9 +16,13 @@ Requirements:
 
 import sys
 import os
+import queue
+import threading
 import argparse
+from dataclasses import dataclass
+from typing import Optional
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtCore import QTimer
 
 # Add current directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,14 +36,48 @@ from timeout_monitor import TimeoutMonitor
 from connectivity_checker import ConnectivityChecker
 
 
-class ServerCallbackBridge(QObject):
-    """Bridge to marshal server callbacks from background threads to Qt main thread."""
-    device_registered = Signal(object)  # Device object
-    transfer_started = Signal(object)  # Transfer object
-    transfer_completed = Signal(int)  # Transfer ID
-    connection_event = Signal(object)  # Connection object
-    device_checkin = Signal(str, str)  # device_mac, device_ip
-    device_status_changed = Signal(str, bool)  # device_mac, is_online
+# --- Event types (background threads put these on the queue) ---
+
+@dataclass
+class DeviceRegisteredEvent:
+    mac_address: str
+    display_name: str
+
+@dataclass
+class TransferStartedEvent:
+    device_mac: str
+    filename: str
+
+@dataclass
+class TransferCompletedEvent:
+    transfer_id: int
+
+@dataclass
+class ConnectionEvent:
+    device_mac: str
+    ip_address: str
+
+@dataclass
+class DeviceCheckinEvent:
+    device_mac: str
+    device_ip: str
+
+@dataclass
+class DeviceStatusChangedEvent:
+    device_mac: str
+    is_online: bool
+
+@dataclass
+class DownloadStartedEvent:
+    device_mac: str
+    filename: str
+
+@dataclass
+class DownloadCompletedEvent:
+    device_mac: str
+    filename: str
+    success: bool
+    error_msg: Optional[str]
 
 
 def main():
@@ -53,6 +91,11 @@ def main():
                        help='HTTP server host (default: 0.0.0.0)')
 
     args = parser.parse_args()
+
+    # Thread-safe event queue: background threads put events here,
+    # a QTimer on the main thread drains and dispatches them.
+    # This eliminates all cross-thread Qt signal emission.
+    event_queue = queue.Queue()
 
     # Initialize database
     print(f"Initializing database...")
@@ -72,7 +115,7 @@ def main():
     checkin_listener = CheckInListener(port=8081)
 
     # Initialize timeout monitor (marks devices offline after 6 minutes without check-in)
-    # WP heartbeat is every 5 minutes, so 6 minutes = 1.2× heartbeat interval
+    # WP heartbeat is every 5 minutes, so 6 minutes = 1.2x heartbeat interval
     print(f"Initializing timeout monitor...")
     timeout_monitor = TimeoutMonitor(database, timeout_seconds=360, check_interval=30)
 
@@ -85,126 +128,105 @@ def main():
     app.setApplicationName("umod4 Server")
     app.setOrganizationName("umod4")
 
-    # Create callback bridge to marshal server callbacks to Qt thread
-    bridge = ServerCallbackBridge()
-
     # Create main window
-    window = MainWindow(database, server)
+    window = MainWindow(database, server, connectivity_checker=connectivity_checker)
 
-    # Connect bridge signals to window slots (runs in Qt main thread)
-    def on_device_registered(device):
-        """Called in Qt main thread when new device registers."""
-        print(f"New device registered: {device.display_name} ({device.mac_address})")
+    # --- Background thread callbacks (just put events on the queue) ---
 
-        # Show configuration dialog for new device
-        window.configure_new_device(device.mac_address)
-
-        window.device_list.refresh_devices()
-
-    def on_transfer_started(transfer):
-        """Called in Qt main thread when transfer starts."""
-        print(f"Transfer started: {transfer.filename} from {transfer.device_mac}")
-
-    def on_transfer_completed(transfer_id):
-        """Called in Qt main thread when transfer completes."""
-        print(f"Transfer completed: {transfer_id}")
-        window.transfer_history.refresh_transfers()
-
-    def on_connection_event(connection):
-        """Called in Qt main thread on connection event."""
-        print(f"Device connected: {connection.device_mac} from {connection.ip_address}")
-
-    bridge.device_registered.connect(on_device_registered)
-    bridge.transfer_started.connect(on_transfer_started)
-    bridge.transfer_completed.connect(on_transfer_completed)
-    bridge.connection_event.connect(on_connection_event)
-
-    # Set up server callbacks (called from server thread, emits signals)
-    # Note: We must extract data from ORM objects before emitting, as they may be
-    # detached from their session by the time the signal is processed in the Qt thread
-    def emit_device_registered(device):
-        # Create a detached copy with just the data we need
-        from types import SimpleNamespace
-        device_data = SimpleNamespace(
+    # HTTP server callbacks (called from werkzeug server thread)
+    def on_server_device_registered(device):
+        event_queue.put(DeviceRegisteredEvent(
             mac_address=device.mac_address,
             display_name=device.display_name
-        )
-        bridge.device_registered.emit(device_data)
+        ))
 
-    def emit_transfer_started(transfer):
-        from types import SimpleNamespace
-        transfer_data = SimpleNamespace(
+    def on_server_transfer_started(transfer):
+        event_queue.put(TransferStartedEvent(
             device_mac=transfer.device_mac,
             filename=transfer.filename
-        )
-        bridge.transfer_started.emit(transfer_data)
+        ))
 
-    def emit_connection_event(connection):
-        from types import SimpleNamespace
-        connection_data = SimpleNamespace(
+    def on_server_transfer_completed(transfer_id):
+        event_queue.put(TransferCompletedEvent(transfer_id=transfer_id))
+
+    def on_server_connection_event(connection):
+        event_queue.put(ConnectionEvent(
             device_mac=connection.device_mac,
             ip_address=connection.ip_address
-        )
-        bridge.connection_event.emit(connection_data)
+        ))
 
-    server.on_device_registered = emit_device_registered
-    server.on_transfer_started = emit_transfer_started
-    server.on_transfer_completed = lambda transfer_id: bridge.transfer_completed.emit(transfer_id)
-    server.on_connection_event = emit_connection_event
+    server.on_device_registered = on_server_device_registered
+    server.on_transfer_started = on_server_transfer_started
+    server.on_transfer_completed = on_server_transfer_completed
+    server.on_connection_event = on_server_connection_event
 
-    # Set up device manager callbacks (called from device manager thread)
-    def emit_download_started(device_mac, filename):
-        print(f"Download started: {filename} from {device_mac}")
-        # Note: transfer record is created by device_manager, will be shown in UI
+    # Device manager callbacks (called from download threads)
+    device_manager.on_download_started = lambda mac, fn: event_queue.put(
+        DownloadStartedEvent(device_mac=mac, filename=fn))
+    device_manager.on_download_completed = lambda mac, fn, ok, err: event_queue.put(
+        DownloadCompletedEvent(device_mac=mac, filename=fn, success=ok, error_msg=err))
 
-    def emit_download_completed(device_mac, filename, success, error_msg):
-        print(f"Download completed: {filename} from {device_mac} (success={success})")
-        # Refresh transfer history in UI
-        bridge.transfer_completed.emit(0)  # Dummy transfer ID to trigger refresh
+    # Check-in listener callback (called from UDP listener thread)
+    checkin_listener.set_callback(lambda mac, ip: event_queue.put(
+        DeviceCheckinEvent(device_mac=mac, device_ip=ip)))
 
-    device_manager.on_download_started = emit_download_started
-    device_manager.on_download_completed = emit_download_completed
+    # Timeout monitor callback (called from monitor thread)
+    timeout_monitor.on_status_changed = lambda mac, online: event_queue.put(
+        DeviceStatusChangedEvent(device_mac=mac, is_online=online))
 
-    # Set up check-in listener callback (called from listener thread)
-    def on_device_checkin(device_mac, device_ip):
-        print(f"Device check-in: {device_mac} at {device_ip}")
-        # Emit signal to Qt thread
-        bridge.device_checkin.emit(device_mac, device_ip)
+    # Connectivity checker callback (called from checker thread)
+    connectivity_checker.on_status_changed = lambda mac, online: event_queue.put(
+        DeviceStatusChangedEvent(device_mac=mac, is_online=online))
 
-    checkin_listener.set_callback(on_device_checkin)
+    # --- Main thread event dispatcher (QTimer, no cross-thread Qt calls) ---
 
-    # Connect check-in signal to device manager (runs in Qt main thread)
-    def handle_checkin_in_qt_thread(device_mac, device_ip):
-        # Run device manager in a background thread to avoid blocking UI
-        import threading
-        thread = threading.Thread(
-            target=device_manager.handle_device_checkin,
-            args=(device_mac, device_ip),
-            daemon=True
-        )
-        thread.start()
+    def dispatch_events():
+        """Drain the event queue and handle each event on the main thread."""
+        while True:
+            try:
+                event = event_queue.get_nowait()
+            except queue.Empty:
+                break
 
-    bridge.device_checkin.connect(handle_checkin_in_qt_thread)
+            if isinstance(event, DeviceRegisteredEvent):
+                print(f"New device registered: {event.display_name} ({event.mac_address})")
+                window.configure_new_device(event.mac_address)
+                window.device_list.refresh_devices()
 
-    # Set up timeout monitor callback (called from monitor thread)
-    def on_device_status_changed(device_mac, is_online):
-        # Emit signal to Qt thread
-        bridge.device_status_changed.emit(device_mac, is_online)
+            elif isinstance(event, TransferStartedEvent):
+                print(f"Transfer started: {event.filename} from {event.device_mac}")
 
-    timeout_monitor.on_status_changed = on_device_status_changed
+            elif isinstance(event, TransferCompletedEvent):
+                print(f"Transfer completed: {event.transfer_id}")
+                window.transfer_history.refresh_transfers()
 
-    # Connect status change signal to refresh device list (runs in Qt main thread)
-    def handle_status_changed_in_qt_thread(device_mac, is_online):
-        # Refresh GUI to show updated online status
-        window.device_list.refresh_devices()
+            elif isinstance(event, ConnectionEvent):
+                print(f"Device connected: {event.device_mac} from {event.ip_address}")
 
-        # Note: TimeoutMonitor only marks devices offline (never online)
-        # Devices become online when they send check-ins (handled by handle_checkin_in_qt_thread)
+            elif isinstance(event, DeviceCheckinEvent):
+                print(f"Device check-in: {event.device_mac} at {event.device_ip}")
+                # Run device manager in a background thread to avoid blocking UI
+                thread = threading.Thread(
+                    target=device_manager.handle_device_checkin,
+                    args=(event.device_mac, event.device_ip),
+                    daemon=True
+                )
+                thread.start()
 
-    bridge.device_status_changed.connect(handle_status_changed_in_qt_thread)
+            elif isinstance(event, DeviceStatusChangedEvent):
+                window.device_list.refresh_devices()
 
-    # Set up connectivity checker callback (called from checker thread)
-    connectivity_checker.on_status_changed = on_device_status_changed
+            elif isinstance(event, DownloadStartedEvent):
+                print(f"Download started: {event.filename} from {event.device_mac}")
+
+            elif isinstance(event, DownloadCompletedEvent):
+                print(f"Download completed: {event.filename} from {event.device_mac} "
+                      f"(success={event.success})")
+                window.transfer_history.refresh_transfers()
+
+    event_timer = QTimer()
+    event_timer.timeout.connect(dispatch_events)
+    event_timer.start(100)  # Poll every 100ms
 
     # Show window
     window.show()
@@ -235,6 +257,7 @@ def main():
     finally:
         # Clean up on exit
         print("Shutting down...")
+        event_timer.stop()
         connectivity_checker.stop()
         timeout_monitor.stop()
         checkin_listener.stop()

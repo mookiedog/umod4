@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.19)  # 3.19 required for string(JSON ...)
 
 include(FetchContent)
 
@@ -91,6 +91,37 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-exceptions")
 # We will not be using C++ run-time typing features
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 
+# Define PICO_FLASH_SIZE_BYTES for the SDK/Linker scripts.
+# It is not a trivial thing to tell the linker how much Flash space is available for a WP image.
+# The amount of flash is not driven by the size of the SPI flash like normal, but instead,
+# by the size of the flash area as defined by partition_table.json.
+# This complicated wad of CMake extracts the true size of partition A from partition_table.json
+# so the linker knows the real flash budget.
+# Note that ORIGIN stays 0x10000000 because the RP2350 bootrom uses QMI
+# ATRANS to remap partition A's physical start to XIP_BASE before launching a WP image.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/partition_table.json" _PTABLE)
+string(JSON _N_PARTS LENGTH "${_PTABLE}" "partitions")
+math(EXPR _N_PARTS_1 "${_N_PARTS} - 1")
+foreach(_I RANGE 0 ${_N_PARTS_1})
+    string(JSON _PART_NAME GET "${_PTABLE}" "partitions" ${_I} "name")
+    if(_PART_NAME STREQUAL "A")
+        string(JSON _PART_SIZE_STR GET "${_PTABLE}" "partitions" ${_I} "size")
+        break()
+    endif()
+endforeach()
+if(NOT _PART_SIZE_STR)
+    message(FATAL_ERROR "Partition 'A' not found in partition_table.json")
+endif()
+string(REGEX MATCH "^([0-9]+)([KM]?)$" _ "${_PART_SIZE_STR}")
+if(CMAKE_MATCH_2 STREQUAL "K")
+    math(EXPR PICO_FLASH_SIZE_BYTES "${CMAKE_MATCH_1} * 1024")
+elseif(CMAKE_MATCH_2 STREQUAL "M")
+    math(EXPR PICO_FLASH_SIZE_BYTES "${CMAKE_MATCH_1} * 1024 * 1024")
+else()
+    set(PICO_FLASH_SIZE_BYTES "${CMAKE_MATCH_1}")
+endif()
+message(STATUS "WP partition A flash budget: ${PICO_FLASH_SIZE_BYTES} bytes (${_PART_SIZE_STR})")
+
 pico_sdk_init()
 
 if(PICO_CYW43_SUPPORTED)
@@ -99,16 +130,9 @@ if(PICO_CYW43_SUPPORTED)
     endif()
 endif()
 
-if(DEFINED ENV{WIFI_SSID} AND (NOT WIFI_SSID))
-    set(WIFI_SSID $ENV{WIFI_SSID})
-    message("Using WIFI_SSID from environment ('${WIFI_SSID}')")
-endif()
-
-if(DEFINED ENV{WIFI_PASSWORD} AND (NOT WIFI_PASSWORD))
-    set(WIFI_PASSWORD $ENV{WIFI_PASSWORD})
-    message("Using WIFI_PASSWORD from environment")
-endif()
-
+# Server config — optional, non-sensitive.
+# WiFi credentials are NOT accepted here — they are entered once via AP mode and
+# stored in the flash config partition, which persists across firmware reflashes.
 if(DEFINED ENV{UMOD4_SERVER_HOST} AND (NOT UMOD4_SERVER_HOST))
     set(UMOD4_SERVER_HOST $ENV{UMOD4_SERVER_HOST})
     message("Using UMOD4_SERVER_HOST from environment ('${UMOD4_SERVER_HOST}')")
@@ -120,20 +144,6 @@ if(DEFINED ENV{UMOD4_SERVER_PORT})
 elseif(NOT UMOD4_SERVER_PORT)
     set(UMOD4_SERVER_PORT "8081")
 endif()
-
-# Validate required WiFi/server configuration
-if(NOT WIFI_SSID OR NOT WIFI_PASSWORD)
-    message(FATAL_ERROR "WIFI_SSID and WIFI_PASSWORD environment variables must be set for WiFi builds")
-endif()
-
-if(NOT UMOD4_SERVER_HOST)
-    message(FATAL_ERROR "UMOD4_SERVER_HOST environment variable must be set (e.g., '192.168.1.100' or 'myserver.local')")
-endif()
-
-set(WIFI_SSID "${WIFI_SSID}" CACHE INTERNAL "WiFi SSID for ${PROJECT_NAME}")
-set(WIFI_PASSWORD "${WIFI_PASSWORD}" CACHE INTERNAL "WiFi password for ${PROJECT_NAME}")
-set(UMOD4_SERVER_HOST "${UMOD4_SERVER_HOST}" CACHE INTERNAL "umod4 server hostname/IP for ${PROJECT_NAME}")
-set(UMOD4_SERVER_PORT "${UMOD4_SERVER_PORT}" CACHE INTERNAL "umod4 server port for ${PROJECT_NAME}")
 
 # Not happy with this...
 if(DEFINED ENV{PICO_EXAMPLES_PATH} AND NOT PICO_EXAMPLES_PATH)
@@ -163,19 +173,28 @@ include_directories(
 )
 
 # Generate fsdata.c from www/ directory for embedded web UI
-set(MAKEFSDATA_SCRIPT "${PICO_SDK_PATH}/lib/lwip/src/apps/http/makefsdata/makefsdata")
+set(MAKEFSDATA_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/tools/makefsdata")
 set(WWW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/www")
 set(FSDATA_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/fsdata.c")
 
 # Custom target to generate fsdata.c (included by SDK's fs.c, not compiled directly)
+# Upload response files (upload_*.json) are now generated dynamically in fs_custom.c
 add_custom_command(
     OUTPUT ${FSDATA_OUTPUT}
     COMMAND perl ${MAKEFSDATA_SCRIPT} ${WWW_DIR}
     COMMAND mv ${WWW_DIR}/fsdata.c ${FSDATA_OUTPUT}.tmp
-    COMMAND bash -c "echo '#include \"lwip/apps/fs.h\"' > ${FSDATA_OUTPUT} && echo '#include \"lwip/def.h\"' >> ${FSDATA_OUTPUT} && echo '' >> ${FSDATA_OUTPUT} && echo '#define file_NULL (struct fsdata_file *) NULL' >> ${FSDATA_OUTPUT} && echo '' >> ${FSDATA_OUTPUT} && sed 's/{{NULL,/{{file_NULL,/g' ${FSDATA_OUTPUT}.tmp >> ${FSDATA_OUTPUT} && rm ${FSDATA_OUTPUT}.tmp"
-    DEPENDS ${WWW_DIR}/index.html
+    COMMAND bash -c "echo '#include \"lwip/apps/fs.h\"' > ${FSDATA_OUTPUT} && echo '#include \"lwip/def.h\"' >> ${FSDATA_OUTPUT} && echo '' >> ${FSDATA_OUTPUT} && echo '#define file_NULL (struct fsdata_file *) NULL' >> ${FSDATA_OUTPUT} && echo '' >> ${FSDATA_OUTPUT} && sed 's/{{NULL,/{{file_NULL,/g' ${FSDATA_OUTPUT}.tmp >> ${FSDATA_OUTPUT}"
+    COMMAND rm ${FSDATA_OUTPUT}.tmp
+    DEPENDS ${MAKEFSDATA_SCRIPT}
+            ${WWW_DIR}/index.html
+            ${WWW_DIR}/status.html
+            ${WWW_DIR}/eprom_info.html
+            ${WWW_DIR}/ecu_live.html
+            ${WWW_DIR}/wifi_config.html
+            ${WWW_DIR}/sd_info.html
+            ${WWW_DIR}/style.css
     WORKING_DIRECTORY ${WWW_DIR}
-    COMMENT "Generating fsdata.c from www/ directory"
+    COMMENT "Generating fsdata.c from www directory"
     VERBATIM
 )
 
@@ -210,29 +229,31 @@ add_executable(${PROJECT_NAME}
     src/FlashWp.cpp
     src/Gps.cpp
     src/malloc_lock.cpp
+    src/lfsMgr.cpp
     src/Logger.cpp
     src/main.cpp
     src/NeoPixelConnect.cpp
     src/Psm.cpp
-    src/SdCard.cpp
     src/SdCardSDIO.cpp
     src/Shell.cpp
-    src/Spi.cpp
     src/Swd.cpp
     src/TimeUtils.cpp
     src/Uart.cpp
     src/WiFiManager.cpp
+    src/dhcpserver.c
+    src/dns_server.c
 
     # MDL (Motorbike Data Link) files
+    src/FlashConfig.cpp
     src/NetworkManager.cpp
-    src/api_handlers.c
-    src/fs_custom.c
-    src/file_io_task.c
-    src/upload_handler.c
-    src/ota_flash_task.c
-    src/flash_safe_helper.c
+    src/api_handlers.cpp
+    src/fs_custom.cpp
+    src/file_io_task.cpp
+    src/upload_handler.cpp
+    src/ota_flash_task.cpp
+    src/flash_safe_helper.cpp
     # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
-    src/httpd_stubs.c
+    src/httpd_stubs.cpp
 
     # The RAM-resident SwdReflash binary that gets loaded to EP via SWD:
     ${SWDREFLASH_C}
@@ -249,15 +270,23 @@ add_dependencies(${PROJECT_NAME} generate_fsdata generate_swdreflash_binary)
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
 set_source_files_properties(
     src/Shell.cpp
-    src/flash_safe_helper.c
+    src/api_handlers.cpp
+    src/flash_safe_helper.cpp
+    src/FlashConfig.cpp
+    src/FlashWp.cpp
+    src/file_io_task.cpp
+    src/fs_custom.cpp
     src/Gps.cpp
-    src/Uart.cpp
+    src/lfsMgr.cpp
     src/Logger.cpp
     src/main.cpp
-    src/SdCard.cpp
-    src/SdCardSDIO.cpp
-    src/WiFiManager.cpp
     src/NetworkManager.cpp
+    src/ota_flash_task.cpp
+    src/SdCardSDIO.cpp
+    src/upload_handler.cpp
+    src/WiFiManager.cpp
+    src/Uart.cpp
+
     PROPERTIES COMPILE_FLAGS "-Wno-volatile"
 )
 
@@ -310,10 +339,27 @@ target_sources(tiny_regex_c INTERFACE
 )
 target_include_directories(tiny_regex_c INTERFACE "${TINY_REGEX_C_SRC_DIR}")
 
+# Pull in the BSON library (shared with EP)
+add_library(bsonlib INTERFACE)
+target_sources(bsonlib INTERFACE
+    "${LIB_DIR}/src/bsonlib.cpp"
+)
+target_include_directories(bsonlib INTERFACE "${LIB_DIR}/inc")
+
+# Pull in the murmur3 hash library (shared with EP)
+add_library(murmur3 INTERFACE)
+target_sources(murmur3 INTERFACE
+    "${LIB_DIR}/src/murmur3.cpp"
+)
+target_include_directories(murmur3 INTERFACE "${LIB_DIR}/inc")
+
 # Pull in the SDIO_RP2350 library (low-level SDIO functions only, not SdFat integration)
+# NOTE: sdio_rp2350.cpp is a locally-patched copy in WP/src/ rather than the fetched version.
+# The fetched version (in build/_deps/) is still used for headers and the PIO program.
+# When updating the upstream library, also update WP/src/sdio_rp2350.cpp.
 add_library(sdio_rp2350 INTERFACE)
 target_sources(sdio_rp2350 INTERFACE
-    "${SDIO_RP2350_SRC_DIR}/src/sdio_rp2350.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/sdio_rp2350.cpp"
 )
 target_include_directories(sdio_rp2350 INTERFACE
     "${SDIO_RP2350_SRC_DIR}/include"
@@ -329,14 +375,17 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     # Enable "Try Before You Buy" (TBYB) for OTA updates
     # PICO_CRT0_IMAGE_TYPE_TBYB=1
 
-    # WiFi and server configuration (from environment variables)
-    WIFI_SSID=\"${WIFI_SSID}\"
-    WIFI_PASSWORD=\"${WIFI_PASSWORD}\"
-    UMOD4_SERVER_HOST=\"${UMOD4_SERVER_HOST}\"
-    UMOD4_SERVER_PORT=${UMOD4_SERVER_PORT}
+    # Optional compile-time default credentials (used only on first boot if flash config is blank).
+    # After first boot, config is read from the flash config partition.
+    $<$<BOOL:${UMOD4_SERVER_HOST}>:DEFAULT_SERVER_HOST=\"${UMOD4_SERVER_HOST}\">
+    DEFAULT_SERVER_PORT=${UMOD4_SERVER_PORT}
 
     # Point lwIP httpd to our custom-generated fsdata.c in build directory
     HTTPD_FSDATA_FILE=\"${CMAKE_CURRENT_BINARY_DIR}/fsdata.c\"
+
+    # Hook into the SDK panic() function to print heap stats before halting.
+    # See my_panic_handler() in main.cpp.
+    PICO_PANIC_FUNCTION=my_panic_handler
 
     # Disable CYW43 driver logging to stdio
     PICO_CYW43_LOGGING_ENABLED=0
@@ -374,6 +423,8 @@ target_link_libraries(${PROJECT_NAME}
     FreeRTOS-Kernel
     littlefs
     tiny_regex_c
+    bsonlib
+    murmur3
     sdio_rp2350
     pico_cyw43_arch_lwip_sys_freertos
     pico_lwip_http
@@ -381,7 +432,10 @@ target_link_libraries(${PROJECT_NAME}
     pico_sha256
 )
 
-# CoThis is the partition table our app expects to use
+# Output memory usage stats
+target_link_options(${PROJECT_NAME} PRIVATE -Wl,--print-memory-usage)
+
+# This is the partition table our app expects to use
 set(PARTITION_TABLE_JSON ${CMAKE_CURRENT_SOURCE_DIR}/partition_table.json)
 
 # Create all output files (.uf2, .bin, .hex, .dis, .map) using SDK's standard method

@@ -6,7 +6,11 @@
 
 class Swd {
 public:
-    Swd(PIO pio, uint32_t swdClk_gpio, uint32_t swdIo_gpio, bool verbose_ = false);
+    // Of a 4V1 PCB, a user must ground the swd_inhibit_gpio before attaching an SWD debugger.
+    // Otherwise, the there will be driver conflicts between the WP and the debugger.
+    // If set to a valid GPIO pin, connect_target() will returns false when that pin reads low.
+    Swd(PIO pio, uint32_t swdClk_gpio, uint32_t swdIo_gpio, bool verbose_ = false,
+        uint32_t swd_inhibit_gpio = 0xFFFFFFFFu);
 
     bool connect_target(uint32_t core = 0, bool halt = true);
     bool write_target_mem(uint32_t target_addr, const uint32_t* data, uint32_t len_in_bytes);
@@ -25,6 +29,7 @@ private:
     float pio_clkdiv;
     bool verbose;
     bool is_initialized = false; // Tracks if PIO hardware is set up
+    bool swd_inhibit;
 
     // Helper functions
     bool clear_sticky_errors();

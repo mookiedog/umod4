@@ -23,7 +23,7 @@
         {
             "name": "A",
             "id": 0,
-            "size": "2016K",
+            "size": "2012K",
             "families": ["rp2350-arm-s"],
             "permissions": {
                 "secure": "rw",
@@ -34,7 +34,7 @@
         {
             "name": "B",
             "id": 1,
-            "size": "2016K",
+            "size": "2012K",
             "families": ["rp2350-arm-s"],
             "permissions": {
                 "secure": "rw",
@@ -42,6 +42,17 @@
                 "bootloader": "rw"
             },
             "link": ["a", 1]
+        },
+        {
+            "name": "config",
+            "start": "0x3FE000",
+            "size": "8K",
+            "families": [],
+            "permissions": {
+                "secure": "rw",
+                "nonsecure": "rw",
+                "bootloader": "rw"
+            }
         }
     ]
 }

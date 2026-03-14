@@ -31,9 +31,8 @@ add_custom_command(
   DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
     ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.S
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ECU_log.h
+    ${LIB_DIR}/inc/log_ids.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/custom_eprom.ld
-    ${TOOLS_SOURCE_DIR}/bin-to-bson.py
 
   COMMENT "Building and Patching UM4.bin"
   VERBATIM
@@ -51,9 +50,4 @@ add_custom_command(
 
     # 5. Generate Binary
     COMMAND m68hc11-elf-objcopy ${NAME}.elf --output-target=binary ${NAME}.bin
-
-    # 6. Generate BSON/JSON
-    COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/bin-to-bson.py
-            -d ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.dsc
-            -b ${NAME}.bin -o ${NAME}.bson -j ${NAME}.json -c ${NAME}.c
 )

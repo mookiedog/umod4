@@ -14,7 +14,7 @@ from typing import List, Dict, Optional, Tuple
 class DeviceClient:
     """HTTP client for communicating with umod4 device."""
 
-    def __init__(self, device_ip: str, timeout: int = 30):
+    def __init__(self, device_ip: str, timeout: int = 5):
         """Initialize device client.
 
         Args:
@@ -225,111 +225,222 @@ class DeviceClient:
         self,
         source_path: str,
         destination_filename: str,
-        chunk_size: int = 65536,
+        chunk_size: int = 32768, # 32KB is the "Goldilocks" size for Pico 2 RAM
         progress_callback=None
     ) -> Tuple[bool, Optional[str], Optional[str]]:
-        """Upload a file to device with chunking and SHA256 verification.
-
-        Args:
-            source_path: Local path to file to upload
-            destination_filename: Name to save as on device (stored in /uploads/)
-            chunk_size: Size of chunks to send (default 64KB)
-            progress_callback: Optional callback(bytes_sent, total_bytes)
-
-        Returns:
-            Tuple of (success: bool, sha256: Optional[str], error_message: Optional[str])
         """
+        Instrumented Stream upload for Pico 2W.
+        Uses a persistent session to prevent socket exhaustion and
+        32KB chunks to prevent heap fragmentation.
+        """
+        import time as _time
+        import uuid
+        import zlib
+        import os
+
+        # Initialize Telemetry Counters
+        upload_start_time = _time.monotonic()
+        bytes_sent = 0
+        total_chunks = 0
+        retries_connect = 0
+        retries_read_timeout = 0
+        retries_http_error = 0
+        result = (False, None, "Upload not started")
+
+        # Rolling data rate calculation (configurable window size)
+        ROLLING_WINDOW_SIZE = 10  # Calculate rate over last N chunks (easy to change)
+        chunk_history = []  # List of (timestamp, bytes) tuples for rolling rate
+
         try:
-            # Validate source file
             if not os.path.exists(source_path):
-                return False, None, f"Source file not found: {source_path}"
+                result = (False, None, f"Source file not found: {source_path}")
+                return result
 
             total_size = os.path.getsize(source_path)
-            if total_size == 0:
-                return False, None, "Source file is empty"
-
-            # Calculate SHA256 of source file
             print(f"Calculating SHA-256 of source file...")
             source_sha256 = self.calculate_file_sha256(source_path)
-            print(f"Source SHA-256: {source_sha256}")
-
-            # Generate session ID
-            import uuid
             session_id = str(uuid.uuid4())
 
-            # Upload file in chunks
-            bytes_sent = 0
-            chunk_offset = 0
+            print(f"[SERVER] Starting upload: {total_size} bytes, chunk_size={chunk_size}, session={session_id[:8]}...")
 
-            with open(source_path, 'rb') as f:
-                while bytes_sent < total_size:
-                    # Read chunk
-                    chunk = f.read(chunk_size)
-                    if not chunk:
-                        break
+            # Use Session to keep the TCP pipe open
+            with requests.Session() as http_session:
+                with open(source_path, 'rb') as f:
+                    while bytes_sent < total_size:
+                        chunk = f.read(chunk_size)
+                        is_last = (bytes_sent + len(chunk) >= total_size)
 
-                    # Prepare headers
-                    headers = {
-                        'X-Session-ID': session_id,
-                        'X-Filename': destination_filename,
-                        'X-Total-Size': str(total_size),
-                        'X-Chunk-Size': str(chunk_size),
-                        'X-Chunk-Offset': str(chunk_offset),
-                        'X-Is-Last-Chunk': 'true' if (bytes_sent + len(chunk) >= total_size) else 'false',
-                        'Content-Type': 'application/octet-stream'
-                    }
+                        headers = {
+                            'X-Session-ID': session_id,
+                            'X-Filename': destination_filename,
+                            'X-Total-Size': str(total_size),
+                            'X-Chunk-Size': str(len(chunk)),
+                            'X-Chunk-Offset': str(bytes_sent),
+                            'X-Is-Last-Chunk': 'true' if is_last else 'false',
+                            'X-Chunk-CRC32': f"{zlib.crc32(chunk) & 0xFFFFFFFF:08x}",
+                            'Content-Type': 'application/octet-stream'
+                        }
 
-                    # Calculate CRC32 for this chunk (optional but recommended)
-                    import zlib
-                    chunk_crc32 = zlib.crc32(chunk) & 0xFFFFFFFF
-                    headers['X-Chunk-CRC32'] = f"{chunk_crc32:08x}"
+                        chunk_success = False
+                        chunk_start_time = _time.monotonic()
 
-                    # Send chunk
-                    response = requests.post(
-                        f"{self.base_url}/api/upload",
-                        data=chunk,
-                        headers=headers,
-                        timeout=self.timeout
-                    )
+                        for attempt in range(15):
+                            attempt_start = _time.monotonic()
+                            try:
+                                # (connect timeout, read timeout)
+                                # 2s is enough for the handshake, 30s for the SDIO write
+                                if attempt > 0:
+                                    print(f"[SERVER] Chunk {total_chunks} retry {attempt} at offset {bytes_sent}")
 
-                    if response.status_code != 200:
-                        error_msg = f"Upload failed: HTTP {response.status_code}"
-                        try:
-                            error_data = response.json()
-                            if 'error' in error_data:
-                                error_msg = f"Upload failed: {error_data['error']}"
-                        except:
-                            pass
-                        return False, None, error_msg
+                                response = http_session.post(
+                                    f"{self.base_url}/api/upload",
+                                    data=chunk,
+                                    headers=headers,
+                                    timeout=(2.0, 30.0)
+                                )
 
-                    # Update progress
-                    bytes_sent += len(chunk)
-                    chunk_offset += len(chunk)
+                                attempt_duration = _time.monotonic() - attempt_start
 
-                    if progress_callback:
-                        progress_callback(bytes_sent, total_size)
+                                # Parse response body
+                                resp_body = "NO JSON"
+                                try:
+                                    resp_data = response.json()
+                                    resp_body = f"success={resp_data.get('success', '?')}"
+                                    if 'error' in resp_data:
+                                        resp_body += f", error={resp_data['error']}"
+                                    if 'status' in resp_data:
+                                        resp_body += f", status={resp_data['status']}"
+                                except:
+                                    # Show full response for first few parse errors for diagnostics
+                                    if total_chunks < 5:
+                                        resp_body = f"PARSE_ERROR: {response.content!r}"
+                                    else:
+                                        resp_body = f"PARSE_ERROR (len={len(response.content)})"
 
-                    # Check if upload is complete
-                    try:
-                        response_data = response.json()
-                        if response_data.get('success'):
-                            if bytes_sent >= total_size:
-                                print(f"Upload complete: {bytes_sent} bytes sent")
+                                # Detailed logging: first 10 chunks + every 20th chunk thereafter
+                                if total_chunks < 10 or (total_chunks % 20 == 0):
+                                    print(f"[SERVER] Chunk {total_chunks} @ offset {bytes_sent}: "
+                                          f"HTTP {response.status_code}, {resp_body}")
+
+                                # Check for device errors
+                                if response.status_code == 200:
+                                    try:
+                                        resp_data = response.json()
+                                        if not resp_data.get('success', True):
+                                            print(f"[SERVER] Device returned error: {resp_data.get('error', 'Unknown error')}")
+                                            result = (False, None, resp_data.get('error', 'Device Error'))
+                                            return result
+                                    except: pass
+
+                                    chunk_success = True
+                                    chunk_duration = _time.monotonic() - chunk_start_time
+
+                                    if attempt > 0 or chunk_duration > 2.0:
+                                        # Log if we had to retry or if chunk took a long time
+                                        print(f"[SERVER] Chunk {total_chunks} completed: {len(chunk)} bytes in {chunk_duration:.2f}s ({len(chunk)/1024/chunk_duration:.1f} KB/s, {attempt} retries)")
+
+                                    # Tiny gap to allow lwIP to process ACKs
+                                    _time.sleep(0.002)
+                                    break
+                                else:
+                                    retries_http_error += 1
+                                    # Try to get response body for HTTP errors
+                                    try:
+                                        error_body = response.json()
+                                        print(f"[SERVER] HTTP {response.status_code} at chunk {total_chunks} offset {bytes_sent}, "
+                                              f"attempt {attempt+1}, duration {attempt_duration:.2f}s, body={error_body}")
+                                    except:
+                                        print(f"[SERVER] HTTP {response.status_code} at chunk {total_chunks} offset {bytes_sent}, "
+                                              f"attempt {attempt+1}, duration {attempt_duration:.2f}s, body={response.content[:100]}")
+                                    _time.sleep(0.1)
+
+                            except requests.ConnectTimeout as e:
+                                retries_connect += 1
+                                attempt_duration = _time.monotonic() - attempt_start
+                                print(f"[SERVER] ConnectTimeout at chunk {total_chunks} offset {bytes_sent}, "
+                                      f"attempt {attempt+1}, duration {attempt_duration:.2f}s")
+                                _time.sleep(0.1)
+                            except requests.ReadTimeout as e:
+                                retries_read_timeout += 1
+                                attempt_duration = _time.monotonic() - attempt_start
+                                print(f"[SERVER] ReadTimeout at chunk {total_chunks} offset {bytes_sent}, "
+                                      f"attempt {attempt+1}, duration {attempt_duration:.2f}s (waited >30s)")
+                                _time.sleep(0.2)
+                                # If the session pipe breaks, we break the attempt loop
+                                # to let the 'while' loop try to re-establish the connection.
                                 break
-                    except:
-                        pass
+                            except requests.ConnectionError as e:
+                                retries_read_timeout += 1
+                                attempt_duration = _time.monotonic() - attempt_start
+                                print(f"[SERVER] ConnectionError at chunk {total_chunks} offset {bytes_sent}, "
+                                      f"attempt {attempt+1}, duration {attempt_duration:.2f}s: {e}")
+                                _time.sleep(0.2)
+                                # If the session pipe breaks, we break the attempt loop
+                                # to let the 'while' loop try to re-establish the connection.
+                                break
 
-            # Verify upload was complete
-            if bytes_sent < total_size:
-                return False, None, f"Upload incomplete: {bytes_sent}/{total_size} bytes sent"
+                        if not chunk_success:
+                            chunk_duration = _time.monotonic() - chunk_start_time
+                            print(f"[SERVER] FAILED: Chunk stalled at offset {bytes_sent} after {chunk_duration:.1f}s and {attempt+1} attempts")
+                            result = (False, None, f"Stalled at {bytes_sent}")
+                            return result
 
-            print(f"Upload complete, SHA-256 should match: {source_sha256}")
-            return True, source_sha256, None
+                        bytes_sent += len(chunk)
+                        total_chunks += 1
+
+                        # Update rolling rate window
+                        chunk_history.append((_time.monotonic(), len(chunk)))
+                        if len(chunk_history) > ROLLING_WINDOW_SIZE:
+                            chunk_history.pop(0)  # Keep only last N chunks
+
+                        # Calculate rolling data rate
+                        if len(chunk_history) >= 2:
+                            window_duration = chunk_history[-1][0] - chunk_history[0][0]
+                            window_bytes = sum(c[1] for c in chunk_history)
+                            rolling_rate_kbps = (window_bytes / 1024) / window_duration if window_duration > 0 else 0
+                        else:
+                            rolling_rate_kbps = 0
+
+                        if False:
+                            # Progress display with rolling rate
+                            progress_pct = (bytes_sent / total_size) * 100
+                            print(f"\r[UPLOAD] {bytes_sent}/{total_size} bytes ({progress_pct:.1f}%) | "
+                                  f"Xfer rate: {rolling_rate_kbps:.0f} KB/s (last {len(chunk_history)} chunks)", end='', flush=True)
+
+                        if progress_callback:
+                            # Pass rolling rate as third parameter for GUI display
+                            # Callback signature: progress_callback(bytes_sent, total_size, rate_kbps=None)
+                            try:
+                                progress_callback(bytes_sent, total_size, rolling_rate_kbps)
+                            except TypeError:
+                                # Fallback for old callback that doesn't accept third parameter
+                                progress_callback(bytes_sent, total_size)
+
+            result = (True, source_sha256, None)
+            return result
 
         except Exception as e:
-            error_msg = f"Error uploading file: {e}"
-            print(error_msg)
-            return False, None, error_msg
+            result = (False, None, f"Upload failed: {e}")
+            return result
+
+        finally:
+            # Clear progress line
+            print()  # Newline after progress display
+
+            elapsed = _time.monotonic() - upload_start_time
+            total_retries = retries_connect + retries_read_timeout + retries_http_error
+            rate_kbps = (bytes_sent / 1024) / elapsed if elapsed > 0 else 0
+
+            print(f"--- Stream Stats ---")
+            print(f"  Result: {'OK' if result[0] else 'FAILED'}")
+            print(f"  Sent: {bytes_sent}/{total_size} bytes ({total_chunks} chunks)")
+            print(f"  Time: {elapsed:.1f}s ({rate_kbps:.1f} KB/s)")
+            print(f"  Retries: {total_retries} total")
+            print(f"    - ConnectTimeout (2s): {retries_connect}")
+            print(f"    - ReadTimeout (30s): {retries_read_timeout}")
+            print(f"    - HTTP errors: {retries_http_error}")
+            if total_retries > 0:
+                print(f"  Retry overhead: ~{retries_connect * 0.1 + retries_read_timeout * 0.2 + retries_http_error * 0.1:.1f}s in sleep delays")
 
     def get_upload_session_status(self, session_id: str) -> Optional[Dict]:
         """Get status of an upload session for resumption.
@@ -358,6 +469,29 @@ class DeviceClient:
         except Exception as e:
             print(f"Error getting upload session status: {e}")
             return None
+
+    def reboot(self, timeout: int = 5) -> Tuple[bool, Optional[str]]:
+        """Send a clean reboot command to the device via /api/reboot.
+
+        The device shuts down the logger and WiFi gracefully before rebooting.
+        Returns as soon as the device acknowledges the request (~200ms before reboot).
+
+        Returns:
+            Tuple of (success: bool, error_message: Optional[str])
+        """
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/reboot",
+                timeout=timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data.get('success'):
+                return True, None
+            else:
+                return False, data.get('error', 'Unknown error')
+        except Exception as e:
+            return False, f"Error: {e}"
 
     def reflash_ep(self, uf2_filename: str, timeout: int = 120) -> Tuple[bool, Optional[str]]:
         """Trigger EP reflash on device using a UF2 file already on the device.

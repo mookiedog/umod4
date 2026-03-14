@@ -7,6 +7,16 @@
 // SdCardSDIO provides SDIO 4-bit interface to an SD flash card
 // Provides ~20-25 MB/s throughput vs ~3 MB/s for SPI
 
+// Configuration struct for hotPlugManager task
+typedef struct {
+    class SdCardBase* sdCard;
+    bool (*comingUp)(class SdCardBase*);
+    void (*goingDown)(class SdCardBase*);
+} hotPlugMgrCfg_t;
+
+// FreeRTOS task - hotPlugManager with "C" linkage
+extern "C" void hotPlugManager(void* arg);
+
 class SdCardSDIO : public SdCardBase {
     public:
     /// @brief Create an object that provides SDIO 4-bit interface to an SD flash card
@@ -14,6 +24,7 @@ class SdCardSDIO : public SdCardBase {
     SdCardSDIO(int32_t cardPresentPad);
 
     SdErr_t init() override;
+    SdErr_t shutdown() override;
 
     // Sector-based interface (512-byte sectors)
     // Note: Legacy implementation, uses single-block transfers only (CMD17/CMD24)
@@ -32,6 +43,11 @@ class SdCardSDIO : public SdCardBase {
     /// @brief Get the SD card interface clock frequency in Hz
     /// @return Clock frequency in Hz
     uint32_t getClockFrequency_Hz() const override { return clockFrequency_Hz; }
+
+    /// @brief The hotPlugManager is meant to be invoked as a FreeRTOS task.
+    /// It manages card insertion and removal events.
+    /// @param arg Points at a hotPlugMgrCfg_t configuration object
+    static void hotPlugManager(void* arg);
 
     private:
     int32_t cardPresentPad;

@@ -1,6 +1,7 @@
 {
     "eprom": {
         "name": "RP58USA",
+        "map-style": "RP58",
         "info": {
             "models": [
                 "RSV 2001-2003"

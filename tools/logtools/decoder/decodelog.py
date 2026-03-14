@@ -483,6 +483,9 @@ class HDF5Writer:
         self.datasets['wp_fs_write_time_ms'] = self.h5file.create_dataset('wp_fs_write_time_ms', (0, 2), dtype='uint16', **ds_opts)
         self.datasets['wp_fs_sync_time_ms'] = self.h5file.create_dataset('wp_fs_sync_time_ms', (0, 2), dtype='uint16', **ds_opts)
 
+        # Log data rate (bytes per second)
+        self.datasets['wp_log_data_rate_bps'] = self.h5file.create_dataset('wp_log_data_rate_bps', (0, 2), dtype='float32', **ds_opts)
+
     def append_data(self, dataset_name, data):
         """Append data to a resizable dataset (buffered for performance).
 
@@ -1218,6 +1221,9 @@ global_in_upper_half = False  # Track which half of timer cycle we're in
 gps_last_sec_time_ns = -1  # Track when we last saw a GPS SEC change
 gps_first_sec_time_ns = -1  # Track when we saw the FIRST GPS SEC (for drift calculation)
 gps_sec_count = 0  # Count of GPS SEC events seen
+gps_last_sec_value = -1  # Track previous second value (0-59) for data rate calculation
+gps_last_sec_file_pos = -1  # Track file position at last SEC event for data rate calculation
+max_data_rate_bytes_per_sec = 0  # Maximum data rate observed between SEC events
 
 f=""
 
@@ -1487,15 +1493,27 @@ def main():
 
     # Auto-generate output filename if not specified
     if not args.output:
-        # Replace .um4 extension if present, otherwise append
+        # Strip known extensions to form base name
         base_name = args.logfile
-        if base_name.lower().endswith('.um4'):
-            base_name = base_name[:-4]  # Remove .um4
+        for ext in ('.um4', '.hr', '.h5', '.hdf5', '.bin'):
+            if base_name.lower().endswith(ext):
+                base_name = base_name[:-len(ext)]
+                break
 
         if args.format == 'hr':
             args.output = base_name + '.hr'
         else:  # h5
             args.output = base_name + '.h5'
+
+    # Prevent overwriting the input file
+    if os.path.abspath(args.output) == os.path.abspath(args.logfile):
+        print(f"Error: output file '{args.output}' would overwrite input file", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate input file exists before opening any output files
+    if not os.path.isfile(args.logfile):
+        print(f"Error: Input file '{args.logfile}' not found.", file=sys.stderr)
+        sys.exit(1)
 
     # Validate arguments
     if args.format == 'h5':
@@ -1556,11 +1574,21 @@ def main():
                 # Use the path defined on the cmdline
                 site_packages = args.Logsyms
             else:
-                # Get the directory containing the current script
-                script_dir = Path(__file__).parent.absolute()
+                # Walk up from the script's directory to find the project root
+                # (identified by having a build/.venv directory)
+                d = Path(__file__).parent.absolute()
+                venv_path = None
+                while d != d.parent:
+                    candidate = d / "build" / ".venv"
+                    if candidate.is_dir():
+                        venv_path = candidate
+                        break
+                    d = d.parent
 
-                # Get an absolute path to the .venv
-                venv_path = os.path.join(script_dir, "..", "..", "build", ".venv")
+                if venv_path is None:
+                    print("FATAL ERROR: Could not find build/.venv in any parent directory", file=sys.stderr)
+                    print("Try building the project first with CMake to generate Logsyms", file=sys.stderr)
+                    return 1
 
                 # Use that to find where the packages live
                 site_packages = os.path.join(venv_path, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages")
@@ -2238,60 +2266,72 @@ def main():
                     else:
                         currentEpromId = epromIdString
                         epromIdString = ""
-                        print(f"{fmt_record(recordCnt, timekeeper)} LOAD:   {currentEpromId}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_NAME:   {currentEpromId}")
 
                 elif byte == L.LOGID_EP_LOAD_ADDR_TYPE_U16:
                     epromStartAddr = int.from_bytes(read(f, L.LOGID_EP_LOAD_ADDR_DLEN), byteorder='little', signed=False)
-                    print(f"{fmt_record(recordCnt, timekeeper)} ADDR:   0x{epromStartAddr:04X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} LD_ADDR:   0x{epromStartAddr:04X}")
                     if h5_writer:
                         h5_writer.current_eprom_addr = epromStartAddr
 
                 elif byte == L.LOGID_EP_LOAD_LEN_TYPE_U16:
                     epromLen = int.from_bytes(read(f, L.LOGID_EP_LOAD_LEN_DLEN), byteorder='little', signed=False)
-                    print(f"{fmt_record(recordCnt, timekeeper)} LEN:    0x{epromLen:04X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} LD_LEN:    0x{epromLen:04X}")
                     if h5_writer:
                         h5_writer.current_eprom_len = epromLen
 
                 elif byte == L.LOGID_EP_LOAD_ERR_TYPE_U8:
                     loadErr = read(f, L.LOGID_EP_LOAD_ERR_DLEN)[0]
                     if loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOERR:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_NOERR")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_NOERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOTFOUND:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_NOTFOUND")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_NOTFOUND")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NONAME:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_NONAME")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_NONAME")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_CKSUMERR:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_CKSUMERR")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_CKSUMERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_VERIFYERR:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_VERIFYERR")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_VERIFYERR")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADOFFSET:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_BADOFFSET")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BADOFFSET")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADLENGTH:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_BADLENGTH")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BADLENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NODAUGHTERBOARDKEY:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_NODAUGHTERBOARDKEY")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_NODAUGHTERBOARDKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOMEMKEY:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_NOMEMKEY")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_NOMEMKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_M3FAIL:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_M3FAIL")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_M3FAIL")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYSTART:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_MISSING_KEY_START")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_MISSING_KEY_START")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYLENGTH:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_MISSING_KEY_LENGTH")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_MISSING_KEY_LENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_MISSINGKEYM3:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_KEY_M3")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_KEY_M3")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADM3BSONTYPE:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_BAD_M3_BSON_TYPE")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BAD_M3_BSON_TYPE")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADM3VALUE:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_BAD_M3_VALUE")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BAD_M3_VALUE")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOBINKEY:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_NOBINKEY")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_NOBINKEY")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADBINLENGTH:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_BADBINLENGTH")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BADBINLENGTH")
                     elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADBINSUBTYPE:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   ERR_BADBINSUBTYPE")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BADBINSUBTYPE")
+                    elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BADMAGIC:
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BADMAGIC")
+                    elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_NOIMAGES:
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_NOIMAGES")
+                    elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_SELECTORIZETOOBIG:
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_SELECTORIZETOOBIG")
+                    elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BAD_SLOT:
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BAD_SLOT")
+                    elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_BAD_HASH:
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_BAD_HASH")
+                    elif loadErr == L.LOGID_EP_LOAD_ERR_VAL_LIMP_MODE:
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   ERR_LIMP_MODE")
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} STAT:   *** Unknown error: 0x{loadErr:02X}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_STAT:   *** Unknown error: 0x{loadErr:02X}")
 
                     # Finalize EPROM load record for HDF5
                     if h5_writer:
@@ -2308,6 +2348,20 @@ def main():
                             h5_writer.current_eprom_addr = None
                             h5_writer.current_eprom_len = None
 
+                elif byte == L.LOGID_EP_LOAD_IMAGESLOT_TYPE_U8:
+                    slot = read(f, L.LOGID_EP_LOAD_IMAGESLOT_DLEN)[0]
+                    print(f"{fmt_record(recordCnt, timekeeper)} LD_SLOT:   {slot}")
+
+                elif byte == L.LOGID_EP_INFO_TYPE_CS:
+                    c = read(f, L.LOGID_EP_INFO_DLEN)[0]
+                    if (c != 0):
+                        if showBinData:
+                            print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
+                        epromIdString = "".join([epromIdString, chr(c)])
+                    else:
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_DSC:    {epromIdString}")
+                        epromIdString = ""
+
                 # WP-specific events
                 elif byte == L.LOGID_GEN_WP_LOG_VER_TYPE_U8:
                     rd = read(f, L.LOGID_GEN_WP_LOG_VER_DLEN)
@@ -2321,12 +2375,16 @@ def main():
 
                 elif byte == L.LOGID_WP_SECS_TYPE_U8:
                     global gps_last_sec_time_ns, gps_first_sec_time_ns, gps_sec_count
+                    global gps_last_sec_value, gps_last_sec_file_pos, max_data_rate_bytes_per_sec
                     secs = read(f, L.LOGID_WP_SECS_DLEN)[0]
 
                     # Update global time tracking
                     timekeeper.advance_time_by_ns(1)
 
-                    # Track GPS SEC events for drift calculation
+                    # Get current file position for data rate calculation
+                    current_file_pos = f.tell()
+
+                    # Track GPS SEC events for drift calculation and data rate
                     if gps_last_sec_time_ns < 0:
                         # First GPS SEC - just record it
                         print(f"{fmt_record(recordCnt, timekeeper)} SEC:    {secs:02}  (first GPS SEC)")
@@ -2337,7 +2395,7 @@ def main():
                         print(f"{fmt_record(recordCnt, timekeeper)} SEC:    {secs:02}  " +
                               f"(Δlast: {elapsed_since_last_ns/1e9:.6f}s, reference point for drift tracking)")
                     else:
-                        # Third and subsequent GPS SEC events - calculate drift
+                        # Third and subsequent GPS SEC events - calculate drift and data rate
                         gps_sec_count += 1
 
                         # Calculate elapsed time since last SEC
@@ -2355,12 +2413,28 @@ def main():
                         drift_sec = total_elapsed_sec - expected_elapsed_sec
                         drift_ppm = (drift_sec / expected_elapsed_sec) * 1e6 if expected_elapsed_sec > 0 else 0
 
+                        # Calculate data rate if exactly 1 second has elapsed (check second values)
+                        data_rate_str = ""
+                        if gps_last_sec_value >= 0 and gps_last_sec_file_pos >= 0:
+                            # Check if this is exactly the next second (with wraparound at 60)
+                            if (gps_last_sec_value + 1) % 60 == secs:
+                                bytes_since_last = current_file_pos - gps_last_sec_file_pos
+                                data_rate_bytes_per_sec = float(bytes_since_last)
+                                if data_rate_bytes_per_sec > max_data_rate_bytes_per_sec:
+                                    max_data_rate_bytes_per_sec = data_rate_bytes_per_sec
+                                data_rate_str = f", rate: {data_rate_bytes_per_sec:.1f} B/s"
+                                # Write to HDF5
+                                if h5_writer:
+                                    h5_writer.append_data('wp_log_data_rate_bps', [timekeeper.get_time_ns(), data_rate_bytes_per_sec])
+
                         print(f"{fmt_record(recordCnt, timekeeper)} SEC:    {secs:02}  " +
                               f"(Δlast: {elapsed_since_last_ns/1e9:.6f}s, " +
                               f"Σretro: {total_elapsed_sec:.3f}s, " +
-                              f"drift: {drift_sec:+.3f}s = {drift_ppm:+.1f}ppm)")
+                              f"drift: {drift_sec:+.3f}s = {drift_ppm:+.1f}ppm{data_rate_str})")
 
                     gps_last_sec_time_ns = global_time_ns
+                    gps_last_sec_value = secs
+                    gps_last_sec_file_pos = current_file_pos
 
                     if h5_writer:
                         h5_writer.temp_gps_secs = secs
@@ -2468,7 +2542,10 @@ def main():
             # End of file reached - print summary
             final_time_sec = timekeeper.get_time_ns() / 1e9
             file_size = f.tell()
-            print(f"\n# Decoding complete: {recordCnt} records processed, {file_size} bytes read, {final_time_sec:.2f} seconds of data", file=sys.stderr)
+            summary_msg = f"\n# Decoding complete: {recordCnt} records processed, {file_size} bytes read, {final_time_sec:.2f} seconds of data"
+            if max_data_rate_bytes_per_sec > 0:
+                summary_msg += f", max data rate: {max_data_rate_bytes_per_sec:.1f} B/s"
+            print(summary_msg, file=sys.stderr)
 
     except FileNotFoundError:
         print(f"Error: File '{args.logfile}' not found.")

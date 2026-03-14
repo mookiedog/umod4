@@ -16,6 +16,7 @@
 #include "hardware/pio.h"
 #include "hardware/irq.h"
 #include "hardware/structs/bus_ctrl.h"
+#include "hardware/structs/systick.h"
 #include "hardware/clocks.h"
 #include "hardware/flash.h"
 #include "hardware/timer.h"
@@ -27,7 +28,7 @@
 #include "EpromLoader.h"
 #include "hardware.h"
 #include "epromEmulator.h"
-#include "EP_log.h"
+#include "log_ids.h"
 #include "bsonlib.h"
 
 #include "RP58_memorymap.h"
@@ -39,13 +40,11 @@
 // Linker generated symbols we need to know about
 extern uint32_t __StackOneBottom;
 extern uint32_t __StackOneTop;
+extern uint8_t  __ram_core1_buslog_start__[];
 
-// This circular buffer holds all the HC11 bus activity
-// It would be better to use the linker to place this in its own fixed RAM bank
-// to avoid any possible access contention issues.
-// We will put the ecu_busLog into RAM bank2 for the exclusive use of core1.
-// It might be better to assign this variable using the linker:
-uint8_t* ecu_busLog = (uint8_t*)0x21020000;
+// ECU bus log: lives in bank0 upper 32K (RAM_CORE1), same bank as the EPROM image.
+// Written exclusively by core1's epromTask, only read by debugger. Zero contention.
+uint8_t* ecu_busLog = __ram_core1_buslog_start__;
 
 // Temp: for testing, we make this a bit longer. It really doesn't need to be very big at all
 #define ECU_EVENTLOG_LENGTH_BYTES 256
@@ -61,14 +60,7 @@ PIO const uart_pio = pio0;
 const uint uart_sm = 0;
 
 // To track the amount of time it takes to get the ECU booted
-absolute_time_t epoch;
-
-extern uint32_t __FS_PARTITION_START_ADDR;
-extern uint32_t __FS_PARTITION_SIZE_BYTES;
-
-// Note "xxx_addr" refers to byte addresses in the RP2040 address space, not block addresses in the flash device!
-const uint32_t fsPartitionStart_addr = (uint32_t)&__FS_PARTITION_START_ADDR;
-const uint32_t fsPartitionSize_bytes = (uint32_t)&__FS_PARTITION_SIZE_BYTES;
+uint64_t epoch;
 
 // --------------------------------------------------------------------------------------------
 // Decoding protected EPROMs is not a public feature.
@@ -278,10 +270,25 @@ void startCore1(void)
 
     // Wait for core1 to signal us that it is actively servicing HC11 bus transactions
     bool core1Rdy = false;
+    uint64_t t = time_us_64();
+    bool msg = false;
     do {
         if (multicore_fifo_rvalid()) {
             uint32_t msg = multicore_fifo_pop_blocking();
             core1Rdy = (msg == 0x12345678);     // fix me: this should not be hardcoded
+        }
+        else {
+            uint64_t tNow = time_us_64();
+            if (tNow - t > 250000) {
+                t = tNow;
+                // toggle DBG_BSY LED at 2 Hz for a visual indicator that the ECU is not powered,
+                // or Core1 has not started for some reason.
+                gpio_xor_mask(DBG_BSY_BITS);
+                if (!msg) {
+                    msg = true;
+                    printf("***\n*** Check ECU power!\n***\n");
+                }
+            }
         }
     } while (!core1Rdy);
 
@@ -289,7 +296,8 @@ void startCore1(void)
 
     // Now that core1 is serving memory transactions, we can finally release the HC11 out of RESET.
     // Driving the HC11 reset output signal to '0' deasserts the HC11 RESET
-    printf("%s: Releasing the ECU from RESET %ld uSecs after the EP booted\n", __FUNCTION__, get_absolute_time()-epoch);
+    uint64_t elapsed = time_us_64() - epoch;
+    printf("%s: Releasing the ECU from RESET %lld mSecs after the EP booted\n", __FUNCTION__, (elapsed+500)/1000);
     sio_hw->gpio_clr = HC11_RESET_BITS;
 }
 
@@ -314,125 +322,45 @@ void __time_critical_func(enqueue)(uint8_t id, uint8_t data)
 
 
 // --------------------------------------------------------------------------------------------
+// Send the entire mapblop from the currently loaded EPROM image to the WP.
+// This ensures that the log knows precisely what data was used to generate the log events.
+static inline void __time_critical_func(logMapblob)()
+{
+    // Hmmm. We don't actually know if this is an RP58-comaptible image or not.
+    // For the moment, we will assume that it is.
+
+    // Verify that the buffer can handle a mapblob before we get going.
+    // At this point, the buffer is known to be almost totally empty.
+    assert(sizeof(streamBuffer) >= RP58_MAPBLOB_LENGTH);
+
+    uint16_t* mapblobP = (uint16_t*)EPROM_IMAGE_BASE;
+    for (uint32_t i=RP58_MAPBLOB_OFFSET; i<(RP58_MAPBLOB_LENGTH)/2; i++) {
+        uint16_t w = *mapblobP++;
+        enqueue(LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16, w);
+    }
+}
+
+
+// --------------------------------------------------------------------------------------------
 // Prepare an EPROM image for Core1 to serve to the ECU.
 //
 // The image can be a simple EPROM image (protected or not), or it can be constructed from
 // the codebase from one image (typically the UM4 ECU logging codebase) overlayed with the
-// maps from any other RP58-compatible EPROM image. This allows any RP58-compatible EPROM
+// maps from any other RP58 map-style EPROM image. This allows any RP58 map-style EPROM
 // to get the data-logging capability of the UM4 EPROM.
 //
 // The resulting EPROM image gets placed in RAM where Core1 expects to find it.
 void prepEpromImage()
 {
     uint32_t t0, t1, elapsed;
-    uint8_t err;
-    const char* name;
-    EpromLoader::bsonDoc_t bsonDoc;
 
-    #if 1
-    // Test that if we try to load an EPROM image with no mem or bin data, we get a proper error result:
-    name = "8797512";
-    err = EpromLoader::loadImage(name);
-    if ((err == LOGID_EP_LOAD_ERR_VAL_NOBINKEY) || (err == LOGID_EP_LOAD_ERR_VAL_NOMEMKEY)) {
-        // All good!
-    }
-    else {
-        printf("%s: Expected loadImage(%s) to fail with NOBINKEY, got err=%02x!\n", __FUNCTION__, name, err);
-    }
+    t0 = get_absolute_time();
+    EpromLoader::loadImage();
+    t1 = get_absolute_time();
+    elapsed = absolute_time_diff_us(t0, t1);
+    printf("%s: loadImage() completed in %u mSec \n", __FUNCTION__, (elapsed+500) / 1000);
 
-    // Test that we can load a protected image. We will actually not use this image.
-    if (hasDescrambler()){
-        name = "8796539";
-        err = EpromLoader::loadImage(name);
-        enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
-        if (err) {
-            printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
-        }
-    }
-
-    // This is the image that we really want to load.
-    // If there are any issues while loading, all we can do is keep trying.
-    do {
-        name = "UM4";
-        printf("%s: Loading image %s\n", __FUNCTION__, name);
-        bsonDoc = EpromLoader::findEprom(name);
-        if (!bsonDoc) {
-            enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
-            //panic("Unable to find UM4 image in BSON partition!");
-            blinkCode(2);
-        }
-        else {
-            err = EpromLoader::loadImage(bsonDoc);
-            enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
-            if (err != LOGID_EP_LOAD_ERR_VAL_NOERR) {
-                //panic("Unable to load UM4 eprom image!");
-                blinkCode(3);
-            }
-        }
-    } while (!bsonDoc || (err != LOGID_EP_LOAD_ERR_VAL_NOERR));
-
-    if (hasDescrambler()) {
-        // Now try loading protected 8796539 maps on top of our UM4 image:
-        t0 = get_absolute_time();
-        name = "8796539";
-        err = EpromLoader::loadMapblob(name);
-        enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
-        if (err != LOGID_EP_LOAD_ERR_VAL_NOERR) {
-            printf("%s: Unable to load protected %s mapblob: err=%02x!\n", __FUNCTION__, name, err);
-        }
-        else {
-            t1 = get_absolute_time();
-            elapsed = absolute_time_diff_us(t0, t1);
-            printf("%s: Loaded protected %s mapblob in %u microseconds\n", __FUNCTION__, name, elapsed);
-        }
-    }
-
-    if (true) {
-        do {
-            // Reload the UM4 (549USA) maps back on top of the UM4 base image
-            t0 = get_absolute_time();
-            err = EpromLoader::loadMapblob(bsonDoc);
-            enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
-            if (err) {
-                printf("Unable to reload UM4 mapblob!\n");
-                blinkCode(4);
-                //panic("mapblob load failed");
-            }
-            else {
-                t1 = get_absolute_time();
-                elapsed = absolute_time_diff_us(t0, t1);
-                printf("%s: Loaded unprotected UM4 mapblob in %u microseconds\n", __FUNCTION__, elapsed);
-            }
-        } while (err != LOGID_EP_LOAD_ERR_VAL_NOERR);
-    }
-    else {
-        // Run RP58 maps instead of the stock 549USA maps contained in UM4
-        t0 = get_absolute_time();
-        name = "RP58";
-        err = EpromLoader::loadMapblob(name);
-        enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
-        if (err != LOGID_EP_LOAD_ERR_VAL_NOERR) {
-            printf("%s: Unable to load %s mapblob: err=%02x!\n", __FUNCTION__, name, err);
-        }
-        else {
-            t1 = get_absolute_time();
-            elapsed = absolute_time_diff_us(t0, t1);
-            printf("%s: Loaded %s mapblob in %u microseconds\n", __FUNCTION__, name, elapsed);
-        }
-    }
-
-    #else
-    // Load a plain 549USA to see if the bike runs better
-    name = "549USA";
-    err = EpromLoader::loadImage(name);
-    enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, err);
-    if (err) {
-        printf("%s: loadImage(%s) failed, err=%02x!\n", __FUNCTION__, name, err);
-    }
-    #endif
 }
-
-uint32_t burstTime;
 
 // --------------------------------------------------------------------------------------------
 // If possible, send the oldest data in the streamBuffer to the WP.
@@ -455,16 +383,22 @@ uint32_t burstTime;
 // Therefore:
 // - Regardless of how full the stream buffer is, we will not send out more than two 16-bit messages
 //   every 50 microseconds.
-const uint32_t tx_delay = 50;
+// SysTick is in the CPU core (PPB), NOT behind the APB bridge.
+// Using the hardware timer (time_us_64) would cause APB bridge contention with core1's
+// GPIO interrupt clear, adding up to 3 cycles of jitter to the EPROM service loop.
+// SysTick counts down from reload value at 125 MHz. 24-bit counter wraps every ~134 ms.
+const uint32_t tx_delay_ticks = 50 * 125;   // 50 uS * 125 ticks/uS = 6250 ticks
 
-void __time_critical_func(processOutgoing)(void)
+static inline void __time_critical_func(processOutgoing)(void)
 {
-    static uint64_t nextTx_us=0;
+    static uint32_t lastTx_tick = 0;
     static uint32_t tx32data;
 
     if (inUse > 0) {
-        uint64_t now = time_us_64();
-        if (nextTx_us < now) {
+        uint32_t now = systick_hw->cvr;
+        // SysTick counts DOWN, so elapsed = last - now (mod 24-bit)
+        uint32_t elapsed = (lastTx_tick - now) & 0x00FFFFFF;
+        if (elapsed >= tx_delay_ticks) {
             // We only send data in groups of up to 2 ECU events
             uint32_t count = (inUse > 2) ? 2 : inUse;
             for (uint32_t i=0; i<count; i++) {
@@ -501,10 +435,8 @@ void __time_critical_func(processOutgoing)(void)
                 tail = (tail+1) & ((sizeof(streamBuffer)/sizeof(streamBuffer[0]))-1);
             }
 
-            burstTime = time_us_64() - now;
-
             // This enforces a minimum time between EP transmission bursts to allow the WP time to process its receive FIFO
-            nextTx_us = now + tx_delay;
+            lastTx_tick = now;
         }
     }
 }
@@ -513,17 +445,13 @@ void __time_critical_func(processOutgoing)(void)
 // --------------------------------------------------------------------------------------------
 // Both com lines between EP ane WP are init'd to have a pullup by default.
 // WP indicates it is ready for ECU data when it drives the FLOWCTRL_GPIO to '0'.
-static bool wpReady()
+static inline bool wpReady()
 {
-    #if defined FLOWCTRL_GPIO
     return (gpio_get(FLOWCTRL_GPIO) == 0);
-    #else
-    return false;
-    #endif
 }
 
 // --------------------------------------------------------------------------------------------
-void __time_critical_func(processIncoming)(void)
+static inline void __time_critical_func(processIncoming)(void)
 {
     if (multicore_fifo_rvalid()) {
         uint32_t busSigs = sio_hw->fifo_rd;
@@ -542,22 +470,29 @@ void __time_critical_func(processIncoming)(void)
 // --------------------------------------------------------------------------------------------
 // Core0's whole job is to forward the incoming ECU message stream from Core1 over to the
 // WiFi Processor (WP).
-
-static void core0Mainloop(void) __attribute__((noreturn));
+//
+// NOTE: The code within this mainloop must NEVER access any devices on the far side of
+// the APB bridge. Doing so WILL create bus contention issues with Core1. The issue is that
+// core1 must access the GPIO control registers to clear its GPIO interrupt on every
+// falling E-clock edge. If core0 is accessing any APB-bridge devices at the same time,
+// the resulting APB bridge contention will delay Core1's GPIO interrupt clear, disturbing
+// the timing of the HC11 memory cycle.
+//
+// Note: do not make this function static because the -Os optimizer will inline it back into
+// its caller main() causing it to get run from flash.
+void __time_critical_func(core0Mainloop)(void) __attribute__((noreturn));
 void core0Mainloop(void)
 {
     // Do not delay entering the mainloop after starting core1 because
     // ECU logging data will arrive essentially immediately!
     startCore1();
 
-    // Until the WP is ready for data, all we can do is buffer the incoming ECU data stream
-    while (!wpReady()) {
-        processIncoming();
-    }
-
+    // If the WP is not ready, we just buffer incoming data.
     while (1) {
         processIncoming();
-        processOutgoing();
+        if (wpReady()) {
+            processOutgoing();
+        }
     }
 }
 
@@ -578,6 +513,17 @@ void disableInts()
     for (uint32_t i=0; i<NUM_IRQS; i++) {
         irq_set_enabled(i, false);
     }
+}
+
+// --------------------------------------------------------------------------------------------
+void initSystick()
+{
+    // Configure SysTick as a free-running 24-bit down counter at processor clock speed.
+    // Used by processOutgoing() for tx pacing instead of the hardware timer used by time_us_64()
+    // because that timer is behind the APB bridge and would contend with core1.
+    systick_hw->rvr = 0x00FFFFFF;   // max reload value
+    systick_hw->cvr = 0;            // clear current value
+    systick_hw->csr = 0x05;         // enable, use processor clock, no interrupt
 }
 
 // --------------------------------------------------------------------------------------------
@@ -607,7 +553,7 @@ void initUart()
 // --------------------------------------------------------------------------------------------
 int main(void)
 {
-    epoch = get_absolute_time();
+    epoch = time_us_64();
 
     initCpu();
 
@@ -628,7 +574,12 @@ int main(void)
     showBootMessages();
 
     disableInts();
+
+    initSystick();
     initUart();
+
     prepEpromImage();
+    logMapblob();
+
     core0Mainloop();
 }

@@ -1,0 +1,35 @@
+{
+    "images": [
+        {
+            "name": "UM4",
+            "description": "UM4 datalogging firmware (549USA maps)",
+            "bin": "UM4.bin"
+        },
+        {
+            "name": "8796539",
+            "description": "Derestricted intake, slip on exhaust",
+            "protection": "A",
+            "bin": "8796539.bin"
+        }
+    ],
+    "selector": {
+        "images": [
+            // Test that we can load a protected EPROM as the entire image (no UM4 code combining)
+            {"code": "8796539", "continue": true},
+
+            // Test that we can load a protected mapblob on top of an unprotected UM4
+            {"code": "UM4", "mapblob": "8796539", "continue": true},
+
+            // Test that we successfully keep trying after trying to load a non-existent image
+            {"code": "non-existent"},
+
+            // Test that we successfully keep trying after trying to load a non-existent image
+            {"code": "UM4", "mapblob": "non-existent"},
+
+            // Test we can load our plain UM4 with no protection
+            {"code": "UM4", "continue": true}
+
+            // Finally, test that we fall through to load the limp-mode image
+        ]
+    }
+}

@@ -199,7 +199,6 @@ If you don't want the program anymore, just delete the directory where you unzip
 
 A sample log file is included for testing.
 
-
 See the [Visualizer documentation](tools/README_Visualizer.md) for detailed usage instructions.
 
 ## Further Reading

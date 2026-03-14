@@ -9,9 +9,9 @@
 #include <cstdio>
 
 #include "umod4_WP.h"
+#include "lfsMgr.h"
 
-// External reference to LittleFS
-extern lfs_t lfs;
+extern char g_device_name[64];
 
 // Forward declaration for FreeRTOS task wrapper
 extern "C" void start_networkMgr_task(void *pvParameters);
@@ -29,30 +29,27 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
     , state_(State::WAITING_FOR_WIFI)
     , httpd_running_(false)
     , mdns_running_(false)
+    , lwip_services_initialized_(false)
 {
-    // Initialize custom filesystem bridge for serving files from LittleFS
+    // Initialize custom filesystem bridge for serving files from LittleFS.
+    // Safe to call here (no lwIP involvement).
     printf("NetworkMgr: Initializing custom filesystem bridge\n");
     fs_custom_init(&lfs);
 
-    // Initialize upload handler BEFORE httpd_init()
+    // Initialize upload handler. Safe to call here (no lwIP involvement).
     printf("NetworkMgr: Initializing upload handler\n");
     upload_handler_init();
 
-    // Initialize HTTP server ONCE (global initialization)
-    // This binds to TCP port 80 and must only be called once
-    printf("NetworkMgr: Initializing HTTP server (one-time setup)\n");
-    httpd_init();
-    api_handlers_register();
-
-    // Initialize mDNS responder ONCE (global initialization)
-    // This binds to UDP port 5353 and must only be called once
-    printf("NetworkMgr: Initializing mDNS responder (one-time setup)\n");
-    mdns_resp_init();
+    // httpd_init(), api_handlers_register(), and mdns_resp_init() are deferred to
+    // init_lwip_services(), called from STARTING_SERVICES once WiFi is up.
+    // They require lwIP pool memory (memp_malloc) which is only initialized after
+    // cyw43_arch_init() runs inside WiFiManager_task(). Calling them here, in the
+    // boot task before WiFiMgrTask runs, would crash with MEMP_MEM_MALLOC=0.
 
     BaseType_t err = xTaskCreate(
         start_networkMgr_task,
         "NetMgrTask",
-        2048,
+        1024,
         this,
         TASK_NORMAL_PRIORITY,
         &taskHandle_
@@ -68,6 +65,23 @@ NetworkManager::~NetworkManager()
 {
     stop_http_server();
     stop_mdns();
+}
+
+void NetworkManager::init_lwip_services()
+{
+    if (lwip_services_initialized_) return;
+
+    // Initialize HTTP server ONCE. Binds to TCP port 80.
+    // lwIP pool memory must be initialized (via cyw43_arch_init) before this call.
+    printf("NetworkMgr: Initializing HTTP server (one-time setup)\n");
+    httpd_init();
+    api_handlers_register();
+
+    // Initialize mDNS responder ONCE. Binds to UDP port 5353.
+    printf("NetworkMgr: Initializing mDNS responder (one-time setup)\n");
+    mdns_resp_init();
+
+    lwip_services_initialized_ = true;
 }
 
 void NetworkManager::start_http_server()
@@ -102,12 +116,7 @@ void NetworkManager::start_mdns()
         return;
     }
 
-    // Generate unique hostname based on MAC address to avoid conflicts
-    // when multiple devices are on the same network
-    char hostname[32];
-    uint8_t mac[6];
-    cyw43_hal_get_mac(CYW43_HAL_MAC_WLAN0, mac);
-    snprintf(hostname, sizeof(hostname), "motorcycle-%02x%02x", mac[4], mac[5]);
+    const char* hostname = g_device_name;
 
     printf("NetworkMgr: Starting mDNS responder...\n");
     // Note: mdns_resp_init() is called ONCE in constructor
@@ -144,6 +153,7 @@ void NetworkManager::NetworkManager_task()
                 break;
 
             case State::STARTING_SERVICES:
+                init_lwip_services();   // no-op after first call; safe here (lwIP pools initialized)
                 start_mdns();
                 start_http_server();
                 state_ = State::RUNNING;

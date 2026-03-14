@@ -2,7 +2,7 @@
     "eprom": {
         "name": "8796529_Super_D",
         "daughterboard": "A",
-        "RP58-compatible": "Y",
+        "map-style": "RP58",
         "info": {
             "models": [
                 "RSV 2001-2003"

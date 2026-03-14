@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - Filesystem</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        :root { --accent: #17a2b8; }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .stat-item {
+            background: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+        }
+        .stat-label {
+            font-size: 0.8em;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #666;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+        }
+        .stat-value {
+            font-size: 1.4em;
+            color: #333;
+            font-family: monospace;
+        }
+        .section-title {
+            font-weight: 700;
+            color: #555;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 10px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #eee;
+        }
+        .file-list {
+            margin-bottom: 20px;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            border-bottom: 1px solid #f0f0f0;
+            gap: 10px;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            flex-shrink: 0;
+            cursor: pointer;
+        }
+        .file-item input[type="checkbox"]:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        .file-name {
+            flex: 1;
+            font-family: monospace;
+            font-size: 0.95em;
+            color: #333;
+            word-break: break-all;
+        }
+        .file-size {
+            font-size: 0.85em;
+            color: #888;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .open-badge {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            font-size: 0.7em;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: middle;
+            letter-spacing: 0.05em;
+        }
+        .empty-msg {
+            color: #999;
+            font-style: italic;
+            padding: 15px 0;
+            text-align: center;
+        }
+        button {
+            padding: 14px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 5px;
+        }
+        button:hover:not(:disabled) {
+            opacity: 0.85;
+        }
+        button:disabled {
+            background: #aaa;
+            cursor: default;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-armed {
+            background: #a71d2a;
+            color: white;
+        }
+        .btn-reload {
+            background: #6c757d;
+            color: white;
+            margin-top: 10px;
+        }
+        .btn-warning {
+            background: #fd7e14;
+            color: white;
+        }
+        .btn-warning-armed {
+            background: #c96a0e;
+            color: white;
+        }
+        .error-box {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            border-radius: 5px;
+            padding: 12px;
+            margin-bottom: 20px;
+        }
+        .success-box {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            border-radius: 5px;
+            padding: 12px;
+            margin-bottom: 15px;
+        }
+        #select-all-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            color: #555;
+        }
+        #select-all-row input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">Filesystem</span>
+                <div class="ribbon-status">
+                    <a href="/" class="ribbon-icon-link" title="Home">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+
+        <div id="error-box" class="error-box" style="display:none;"></div>
+
+        <div id="stats-section" style="display:none;">
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-label">Card Size</div>
+                    <div class="stat-value" id="total-mb">—</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Files Total</div>
+                    <div class="stat-value" id="used-mb">—</div>
+                </div>
+            </div>
+
+            <div class="section-title">Files on Card</div>
+
+            <div id="select-all-row" style="display:none;">
+                <input type="checkbox" id="select-all">
+                <label for="select-all">Select all deletable files</label>
+            </div>
+
+            <div class="file-list" id="file-list"></div>
+
+            <div id="delete-controls" style="display:none;">
+                <div id="result-msg" style="display:none;"></div>
+                <button id="delete-btn" class="btn-danger" onclick="handleDelete()">Delete Selected Files</button>
+            </div>
+
+            <button class="btn-reload" onclick="loadInfo()">&#8635; Refresh</button>
+        </div>
+
+        <div id="loading-msg" style="color:#999; padding: 10px 0;">Loading...</div>
+
+        <div id="reformat-section" style="margin-top: 30px; border-top: 1px solid #ddd; padding-top: 20px;">
+            <div class="section-title">Filesystem Management</div>
+
+            <!-- Backup subsection -->
+            <div style="margin-bottom: 20px;">
+                <p style="font-weight:600; color:#555; margin-bottom:6px;">Backup Config Files</p>
+                <p style="font-size:0.85em; color:#666; margin-bottom:8px;">Save config files from the device to your phone before erasing.</p>
+                <div id="backup-links">Loading&hellip;</div>
+            </div>
+
+            <!-- Restore subsection -->
+            <div style="margin-bottom: 24px; border-bottom: 1px solid #eee; padding-bottom: 20px;">
+                <p style="font-weight:600; color:#555; margin-bottom:6px;">Restore Config Files</p>
+                <p style="font-size:0.85em; color:#666; margin-bottom:8px;">Upload previously saved config files back to the device.</p>
+                <input type="file" id="restore-picker" multiple accept=".jpg,.json"
+                       style="margin-bottom:8px; width:100%;"
+                       onchange="handleRestorePicker(event)">
+                <ul id="restore-file-list" style="list-style:none; padding:0; margin:0 0 8px 0; font-size:0.9em;"></ul>
+                <button id="restore-btn" class="btn" style="display:none; background:#17a2b8; color:white;" onclick="doRestore()">Restore Selected Files</button>
+                <div id="restore-status" style="margin-top:8px; font-size:0.85em;"></div>
+            </div>
+
+            <!-- Erase filesystem -->
+            <p style="font-size:0.85em; color:#666; margin-bottom:12px;">
+                Erases the SD card filesystem and reboots. All log files will be permanently
+                deleted. The filesystem will be rebuilt automatically on startup.
+            </p>
+            <div id="reformat-result" style="display:none;"></div>
+            <button id="reformat-btn" class="btn-warning" onclick="handleReformat()">Erase Filesystem &amp; Reboot</button>
+        </div>
+
+        </div>
+    </div>
+
+    <script>
+        var deleteArmed = false;
+        var disarmTimer = null;
+        var fileData = [];
+
+        function fmtSize(bytes) {
+            if (bytes >= 1024 * 1024) {
+                return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            } else if (bytes >= 1024) {
+                return (bytes / 1024).toFixed(1) + ' KB';
+            }
+            return bytes + ' B';
+        }
+
+        function fmtMB(mb) {
+            if (mb >= 1000) {
+                return (mb / 1024).toFixed(1) + ' GB';
+            }
+            return mb + ' MB';
+        }
+
+        function getChecked() {
+            return fileData
+                .filter(function(f) { return !f.open; })
+                .filter(function(f) {
+                    var cb = document.getElementById('cb-' + f.name);
+                    return cb && cb.checked;
+                });
+        }
+
+        function updateDeleteButton() {
+            var checked = getChecked();
+            var ctrl = document.getElementById('delete-controls');
+            var btn = document.getElementById('delete-btn');
+            ctrl.style.display = checked.length > 0 ? 'block' : 'none';
+            if (deleteArmed) return; // don't reset text while armed
+            btn.textContent = 'Delete Selected Files (' + checked.length + ')';
+        }
+
+        function disarm() {
+            deleteArmed = false;
+            if (disarmTimer) { clearTimeout(disarmTimer); disarmTimer = null; }
+            var btn = document.getElementById('delete-btn');
+            btn.className = 'btn-danger';
+            updateDeleteButton();
+        }
+
+        function handleDelete() {
+            var checked = getChecked();
+            if (checked.length === 0) return;
+
+            if (!deleteArmed) {
+                deleteArmed = true;
+                var btn = document.getElementById('delete-btn');
+                btn.className = 'btn-armed';
+                btn.textContent = 'Tap again to confirm deleting ' + checked.length + ' file' + (checked.length > 1 ? 's' : '');
+                disarmTimer = setTimeout(disarm, 4000);
+                return;
+            }
+
+            // Second tap — execute deletions
+            disarm();
+            var btn = document.getElementById('delete-btn');
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            var resultEl = document.getElementById('result-msg');
+            resultEl.style.display = 'none';
+
+            deleteFiles(checked, 0, [], function(errors) {
+                btn.disabled = false;
+                if (errors.length === 0) {
+                    resultEl.className = 'success-box';
+                    resultEl.textContent = 'Deleted ' + checked.length + ' file' + (checked.length > 1 ? 's' : '') + '.';
+                } else {
+                    resultEl.className = 'error-box';
+                    resultEl.textContent = 'Errors: ' + errors.join(', ');
+                }
+                resultEl.style.display = 'block';
+                loadInfo();
+            });
+        }
+
+        function deleteFiles(files, index, errors, done) {
+            if (index >= files.length) { done(errors); return; }
+            var name = files[index].name;
+            fetch('/api/delete/' + encodeURIComponent(name))
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (!d.success) errors.push(name + ': ' + (d.error || 'failed'));
+                    deleteFiles(files, index + 1, errors, done);
+                })
+                .catch(function() {
+                    errors.push(name + ': request failed');
+                    deleteFiles(files, index + 1, errors, done);
+                });
+        }
+
+        function renderFiles(files) {
+            fileData = files;
+            var listEl = document.getElementById('file-list');
+            var selectAllRow = document.getElementById('select-all-row');
+
+            if (files.length === 0) {
+                listEl.innerHTML = '<div class="empty-msg">No files on SD card.</div>';
+                selectAllRow.style.display = 'none';
+                document.getElementById('delete-controls').style.display = 'none';
+                return;
+            }
+
+            var deletable = files.filter(function(f) { return !f.open; });
+            var autoSelectable = deletable.filter(function(f) { return !f.name.endsWith('.json') && !f.name.endsWith('.jpg'); });
+            selectAllRow.style.display = autoSelectable.length > 0 ? 'flex' : 'none';
+
+            listEl.innerHTML = '';
+            files.forEach(function(f) {
+                var div = document.createElement('div');
+                div.className = 'file-item';
+
+                var cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.id = 'cb-' + f.name;
+                cb.disabled = f.open;
+                cb.onchange = function() {
+                    disarm();
+                    updateDeleteButton();
+                    // sync select-all state (only considers auto-selectable files)
+                    var allChecked = autoSelectable.length > 0 && autoSelectable.every(function(df) {
+                        var c = document.getElementById('cb-' + df.name);
+                        return c && c.checked;
+                    });
+                    document.getElementById('select-all').checked = allChecked;
+                };
+                div.appendChild(cb);
+
+                var nameSpan = document.createElement('span');
+                nameSpan.className = 'file-name';
+                nameSpan.textContent = f.name;
+                if (f.name.endsWith('.json') || f.name.endsWith('.jpg')) nameSpan.style.color = '#bbb';
+                if (f.open) {
+                    var badge = document.createElement('span');
+                    badge.className = 'open-badge';
+                    badge.textContent = 'ACTIVE';
+                    nameSpan.appendChild(badge);
+                }
+                div.appendChild(nameSpan);
+
+                var sizeSpan = document.createElement('span');
+                sizeSpan.className = 'file-size';
+                sizeSpan.textContent = fmtSize(f.size);
+                div.appendChild(sizeSpan);
+
+                listEl.appendChild(div);
+            });
+
+            document.getElementById('select-all').checked = false;
+            document.getElementById('select-all').onchange = function() {
+                var checked = this.checked;
+                autoSelectable.forEach(function(f) {
+                    var cb = document.getElementById('cb-' + f.name);
+                    if (cb) cb.checked = checked;
+                });
+                disarm();
+                updateDeleteButton();
+            };
+
+            updateDeleteButton();
+        }
+
+        function loadInfo() {
+            document.getElementById('loading-msg').style.display = 'block';
+            document.getElementById('stats-section').style.display = 'none';
+            document.getElementById('error-box').style.display = 'none';
+            document.getElementById('result-msg').style.display = 'none';
+            disarm();
+
+            fetch('/api/sd-info')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    document.getElementById('loading-msg').style.display = 'none';
+
+                    if (d.error) {
+                        var eb = document.getElementById('error-box');
+                        eb.textContent = d.error;
+                        eb.style.display = 'block';
+                        return;
+                    }
+
+                    document.getElementById('total-mb').textContent = fmtMB(d.total_mb);
+                    document.getElementById('used-mb').textContent = fmtMB(d.used_mb);
+                    document.getElementById('stats-section').style.display = 'block';
+                    renderFiles(d.files || []);
+                    buildBackupLinks(d.files || [], d.device_name || '');
+                })
+                .catch(function(e) {
+                    document.getElementById('loading-msg').style.display = 'none';
+                    var eb = document.getElementById('error-box');
+                    eb.textContent = 'Failed to load SD card info.';
+                    eb.style.display = 'block';
+                    buildBackupLinks([], '');
+                });
+        }
+
+        // ---- Backup & Restore ----
+        var BACKUP_FILES = ['background.jpg', 'ecu_live.json'];
+
+        function buildBackupLinks(files, deviceName) {
+            var el = document.getElementById('backup-links');
+            var found = [];
+            for (var i = 0; i < files.length; i++) {
+                if (BACKUP_FILES.indexOf(files[i].name) >= 0) found.push(files[i].name);
+            }
+            if (!found.length) {
+                el.innerHTML = '<span style="color:#999; font-size:0.85em;">No config files on device.</span>';
+                return;
+            }
+            var html = '';
+            for (var j = 0; j < found.length; j++) {
+                var dlName = deviceName ? deviceName + '_' + found[j] : found[j];
+                html += '<a href="/files/' + found[j] + '" download="' + dlName + '" '
+                      + 'style="display:inline-block; margin-right:14px; margin-bottom:4px;">'
+                      + found[j] + '</a>';
+            }
+            el.innerHTML = html;
+        }
+
+        // Returns the target filename (e.g. "background.jpg") for a picked file,
+        // or null if not a recognised backup file.
+        // Handles plain names ("background.jpg") and device-prefixed names
+        // ("umod4_3BFF_background.jpg") as downloaded by this page.
+        function getRestoreTarget(name) {
+            for (var i = 0; i < BACKUP_FILES.length; i++) {
+                var bf = BACKUP_FILES[i];
+                if (name === bf || name.endsWith('_' + bf)) return bf;
+            }
+            return null;
+        }
+
+        var restoreFiles = [];
+        function handleRestorePicker(e) {
+            restoreFiles = [];
+            var ul = document.getElementById('restore-file-list');
+            ul.innerHTML = '';
+            document.getElementById('restore-status').innerHTML = '';
+            for (var i = 0; i < e.target.files.length; i++) {
+                var f = e.target.files[i];
+                var target = getRestoreTarget(f.name);
+                if (!target) continue;
+                var idx = restoreFiles.length;
+                restoreFiles.push({file: f, target: target});
+                var li = document.createElement('li');
+                var kb = Math.round(f.size / 1024 * 10) / 10;
+                var label = f.name === target ? f.name : f.name + ' \u2192 ' + target;
+                li.innerHTML = '<label style="cursor:pointer;">'
+                    + '<input type="checkbox" checked data-idx="' + idx + '" style="margin-right:6px;"> '
+                    + label + ' (' + kb + '\u00a0KB)</label>';
+                ul.appendChild(li);
+            }
+            document.getElementById('restore-btn').style.display = restoreFiles.length ? '' : 'none';
+        }
+
+        function doRestore() {
+            var checks = document.querySelectorAll('#restore-file-list input[type=checkbox]');
+            var toRestore = [];
+            checks.forEach(function(cb) {
+                if (cb.checked) toRestore.push(restoreFiles[parseInt(cb.dataset.idx)]);
+            });
+            if (!toRestore.length) return;
+            var btn = document.getElementById('restore-btn');
+            btn.disabled = true;
+            var statusEl = document.getElementById('restore-status');
+            statusEl.innerHTML = '';
+            var i = 0;
+            function next() {
+                if (i >= toRestore.length) {
+                    btn.disabled = false;
+                    loadInfo();
+                    return;
+                }
+                var item = toRestore[i++];
+                var row = document.createElement('div');
+                row.textContent = 'Restoring ' + item.target + '\u2026';
+                statusEl.appendChild(row);
+                // Read as ArrayBuffer first so the browser has the full
+                // content in memory and sends Content-Length (required by lwIP).
+                // This also ensures iCloud-backed files are fully downloaded.
+                item.file.arrayBuffer().then(function(buf) {
+                    return fetch('/api/restore/' + item.target, {
+                        method: 'POST',
+                        body: buf,
+                        headers: {'Content-Type': item.file.type || 'application/octet-stream'}
+                    });
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    row.textContent = item.target + ': ' + (d.success ? 'OK \u2713' : 'Failed \u2717');
+                    next();
+                })
+                .catch(function() {
+                    row.textContent = item.target + ': Error (connection lost)';
+                    next();
+                });
+            }
+            next();
+        }
+
+        var reformatArmed = false;
+        var reformatDisarmTimer = null;
+
+        function disarmReformat() {
+            reformatArmed = false;
+            if (reformatDisarmTimer) { clearTimeout(reformatDisarmTimer); reformatDisarmTimer = null; }
+            var btn = document.getElementById('reformat-btn');
+            btn.className = 'btn-warning';
+            btn.textContent = 'Erase Filesystem \u0026 Reboot';
+            btn.disabled = false;
+        }
+
+        function handleReformat() {
+            if (!reformatArmed) {
+                reformatArmed = true;
+                var btn = document.getElementById('reformat-btn');
+                btn.className = 'btn-warning-armed';
+                btn.textContent = 'Tap again to confirm \u2014 ALL LOG FILES WILL BE ERASED';
+                reformatDisarmTimer = setTimeout(disarmReformat, 4000);
+                return;
+            }
+
+            disarmReformat();
+            var btn = document.getElementById('reformat-btn');
+            btn.disabled = true;
+            btn.textContent = 'Erasing\u2026';
+
+            fetch('/api/reformat-filesystem')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.success) {
+                        btn.style.display = 'none';
+                        pollForReboot();
+                    } else {
+                        var el = document.getElementById('reformat-result');
+                        el.className = 'error-box';
+                        el.textContent = 'Failed: ' + (d.error || 'unknown error');
+                        el.style.display = 'block';
+                        btn.disabled = false;
+                        btn.textContent = 'Erase Filesystem \u0026 Reboot';
+                    }
+                })
+                .catch(function() {
+                    // Device may have dropped connection during reboot - treat as success
+                    pollForReboot();
+                });
+        }
+
+        function pollForReboot() {
+            var el = document.getElementById('reformat-result');
+            el.className = 'success-box';
+            el.textContent = 'Rebooting\u2026 Waiting for device to come back online.';
+            el.style.display = 'block';
+
+            var deadline = Date.now() + 30000;
+            function tick() {
+                if (Date.now() > deadline) {
+                    el.textContent = 'Device not responding after 30 seconds. Try refreshing manually.';
+                    el.className = 'error-box';
+                    return;
+                }
+                fetch('/api/ping')
+                    .then(function(r) { return r.json(); })
+                    .then(function(d) {
+                        if (d.ok) {
+                            el.textContent = 'Device is back online. Filesystem was reformatted.';
+                            setTimeout(function() { location.reload(); }, 1500);
+                        } else {
+                            setTimeout(tick, 2000);
+                        }
+                    })
+                    .catch(function() { setTimeout(tick, 2000); });
+            }
+            setTimeout(tick, 5000);
+        }
+
+        fetch('/api/info')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
+            })
+            .catch(function() {});
+
+        loadInfo();
+    </script>
+</body>
+</html>

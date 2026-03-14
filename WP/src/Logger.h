@@ -12,11 +12,15 @@
 // The log buffer needs to be able to absorb incoming data while data in the
 // buffer is being written to the file system. The LittleFS file system can
 // be extremely slow under certain circumstances.
-#define LOG_BUFFER_SIZE 65536
+// For the purposes of calculating how many bytes can be buffered before we
+// overflow, remember that there is a dedicated 16K write buffer
+// *after* this buffer where is extracted before writing to filesystem.
+// This buffer does not need to be a power of two.
+#define LOG_BUFFER_SIZE ((96*1024)-16384)
 
 class Logger {
     public:
-        Logger(int32_t size);
+        Logger(uint8_t* buffer, int32_t size);
 
         bool init(lfs_t* lfs);
         void deinit();
@@ -32,12 +36,14 @@ class Logger {
         // Get current log filename (for WiFi uploader to avoid uploading active file)
         const char* getCurrentLogName() const { return logName; }
 
+        int32_t get_log_size() {return bufferLen;}
+        int32_t get_inUse_max() {return inUse_max;}
+
     private:
         lfs_t* lfs;
         char logName[16];
         bool tempName;
         lfs_file_t logf;
-        int32_t logSize;
 
         struct lfs_fsinfo fsinfo;
 
@@ -57,10 +63,21 @@ class Logger {
         volatile uint8_t* headP;        // needs to be volatile since RX32 ISR updates it
         uint8_t* tailP;
 
+        // FIXME: get this from lfs_config somehow!!
+        // This buffer is used to hold data from the circular buffer before calling lfs_write.
+        // The issue is if the data to be written as a chunk spans the end of the circular buffer.
+        // It is way cheaper to call memcpy twice than to call lfs_write twice
+        // so all writes get copied into a buffer where it is guaranteed we can write it with one call.
+        uint8_t write_buff[16384];
+
         // Hardware spinlock for protecting buffer access from both cores and ISR context
         spin_lock_t* bufferLock;
 
-        int32_t inUse();
+        int32_t inUse() {
+            int32_t used = headP - tailP;
+            if (used < 0) used += bufferLen;
+            return used;
+        }
         int32_t writeChunk(uint8_t* buffer, int32_t len);
         int32_t syncLog();
 
@@ -68,6 +85,8 @@ class Logger {
         uint32_t totalWriteEvents;
         uint64_t totalTimeSyncing, minTimeSyncing, maxTimeSyncing;
         uint32_t totalSyncEvents;
+
+        uint32_t inUse_max;
 };
 
 #endif

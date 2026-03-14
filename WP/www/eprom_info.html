@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - Image Store</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        :root { --accent: #28a745; }
+        body { max-width: 700px; }
+
+        /* Section headers */
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 24px 0 8px 0;
+        }
+        .section-title {
+            font-weight: bold;
+            color: #555;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        /* Status badges */
+        .badge {
+            font-size: 0.8em;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 12px;
+            text-transform: uppercase;
+        }
+        .badge-ok      { background: #e6fffa; color: #234e52; border: 1px solid #b2f5ea; }
+        .badge-warn    { background: #fffbeb; color: #744210; border: 1px solid #f6e05e; }
+        .badge-err     { background: #fff5f5; color: #9b2c2c; border: 1px solid #feb2b2; }
+        .badge-neutral { background: #f8f9fa; color: #6c757d; border: 1px solid #dee2e6; }
+
+        /* Status bar */
+        .status-bar {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            padding: 10px 14px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            margin-bottom: 4px;
+            align-items: center;
+            font-size: 0.9em;
+        }
+        .status-bar span { white-space: nowrap; }
+        .engine-warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 5px;
+            padding: 7px 12px;
+            font-size: 0.88em;
+            color: #856404;
+            display: none;
+            margin-bottom: 8px;
+        }
+
+        /* Image library list */
+        .lib-list { max-height: 192px; /* ~4 rows — adjust as needed */ overflow-y: auto; }
+        .lib-row {
+            display: flex; align-items: center; gap: 8px;
+            padding: 7px 8px; border-bottom: 1px solid #f0f0f0;
+            cursor: pointer; user-select: none;
+        }
+        .lib-row:last-child { border-bottom: none; }
+        .lib-row:hover { background: #f8f9fa; }
+        .lib-row.lib-selected {
+            background: #bee3f8; border-left: 3px solid #3182ce; padding-left: 5px;
+        }
+        .lib-idx { color: #aaa; font-size: 0.8em; min-width: 1.6em; text-align: center; flex-shrink: 0; }
+        .lib-name { font-family: monospace; font-weight: 700; font-size: 1.12em; color: #222; }
+        .lib-desc { color: #777; font-size: 0.78em; }
+        .lib-details {
+            background: #edf2f7; border-top: 1px dashed #bee3f8;
+            padding: 6px 10px 6px 34px; font-size: 0.8em; color: #444;
+            display: flex; gap: 16px; flex-wrap: wrap;
+        }
+        .prot-badge { font-size: 0.78em; font-weight: 700; padding: 2px 6px;
+                      border-radius: 10px; text-transform: uppercase; }
+        .prot-N { background: #e2e8f0; color: #4a5568; }
+        .prot-A { background: #fed7e2; color: #742a2a; }
+        .lib-empty { color: #888; font-style: italic; padding: 12px 8px; }
+
+        /* Buttons */
+        button {
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            padding: 6px 14px;
+            font-size: 0.85em;
+            font-weight: 600;
+            line-height: 1.3;
+        }
+        button:disabled { opacity: 0.45; cursor: not-allowed; }
+        .btn-primary   { background: #28a745; color: white; }
+        .btn-primary:hover:not(:disabled)   { background: #218838; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-secondary:hover:not(:disabled) { background: #5a6268; }
+        .btn-danger    { background: #dc3545; color: white; }
+        .btn-danger:hover:not(:disabled)    { background: #c82333; }
+        .btn-small     { padding: 6px 10px; }
+        .btn-icon      { padding: 6px 8px; background: #e9ecef;
+                         color: #495057; border-radius: 4px; border: 1px solid #ced4da; }
+        .btn-icon:hover:not(:disabled) { background: #dee2e6; }
+
+        /* Upload form */
+        .form-row { margin-bottom: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .form-row label { font-size: 0.85em; color: #555; min-width: 80px; font-weight: 600; }
+        .form-row input[type=text], .form-row select {
+            flex: 1; min-width: 140px;
+            padding: 6px 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 0.88em;
+        }
+        .form-row input[type=file] { flex: 1; font-size: 0.85em; }
+        .file-hint { font-size: 0.8em; color: #888; margin-top: 2px; }
+        .result-msg { font-size: 0.88em; padding: 6px 10px; border-radius: 4px; margin-top: 8px; }
+        .result-ok  { background: #d4edda; color: #155724; }
+        .result-err { background: #f8d7da; color: #721c24; }
+
+        /* Selector editor */
+        .selector-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 4px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .selector-row:last-child { border-bottom: none; }
+        .selector-row.sel-selected {
+            background: #bee3f8;
+            border-left: 3px solid #3182ce;
+            padding-left: 1px;
+        }
+        .selector-idx {
+            color: #aaa; min-width: 1.6em; font-size: 0.9em;
+            cursor: pointer; text-align: center;
+            padding: 2px 3px; border-radius: 3px; user-select: none;
+        }
+        .selector-idx:hover { background: #e2e8f0; color: #555; }
+        .selector-row select { padding: 5px 8px; border: 1px solid #ced4da; border-radius: 4px;
+                                font-size: 0.85em; min-width: 80px; flex: 1; }
+        .selector-header {
+            display: flex; align-items: center; gap: 6px;
+            padding: 2px 4px 5px; border-bottom: 2px solid #dee2e6; margin-bottom: 2px;
+        }
+        .selector-idx-hdr { min-width: 1.6em; }
+        .sel-col-hdr { flex: 1; font-weight: 700; color: #555; font-size: 0.82em; padding: 0 2px; }
+        .selector-controls { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+
+        .info-block {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 14px 16px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">EPROM Management</span>
+                <div class="ribbon-status">
+                    <a href="/" class="ribbon-icon-link" title="Home">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+
+        <!-- Status bar -->
+        <div class="status-bar" id="status-bar">
+            <span id="badge-ecu" class="badge badge-neutral">ECU &hellip;</span>
+            <span id="badge-ep"  class="badge badge-neutral">EP &hellip;</span>
+            <span id="badge-engine" class="badge badge-neutral" style="display:none"></span>
+        </div>
+        <div class="engine-warning" id="engine-warning">
+            &#9888; Engine is running — write operations are disabled. Stop the engine before making changes.
+        </div>
+
+        <!-- ── 1. EPROM Load Status ───────────────────────────────────── -->
+        <div class="section-header">
+            <span class="section-title">Last EP Boot</span>
+        </div>
+        <div class="info-block" id="ep-boot-status">
+            <em style="color:#888;">Waiting for EP&hellip;</em>
+        </div>
+
+        <!-- ── 2. Selector Editor ─────────────────────────────────────── -->
+        <div class="section-header">
+            <span class="section-title">Boot Selector</span>
+        </div>
+        <div class="info-block" id="selector-panel">
+            <div id="selector-list">
+                <em style="color:#888;">Loading&hellip;</em>
+            </div>
+            <div class="selector-controls" id="selector-controls">
+                <button class="btn-icon btn-small" id="btn-sel-up"   disabled onclick="selectorCtrlUp()"   title="Move up">&#9650;</button>
+                <button class="btn-icon btn-small" id="btn-sel-down" disabled onclick="selectorCtrlDown()" title="Move down">&#9660;</button>
+                <button class="btn-icon btn-small" id="btn-sel-top"  disabled onclick="selectorCtrlTop()"  title="Move to top">&#8657;</button>
+                <button class="btn-icon btn-small" id="btn-sel-del"  disabled onclick="selectorCtrlDel()"  title="Delete" style="color:#9b2c2c;">&#10005;</button>
+                <button class="btn-icon btn-small" id="selector-add" onclick="selectorAddEntry()" title="Add entry">+</button>
+            </div>
+            <div id="selector-save-row" style="display:none; margin-top:12px; gap:8px; align-items:center; flex-wrap:wrap;">
+                <button class="btn-primary" id="btn-selector-save" onclick="doSelectorSave()">Save &amp; Reboot EP</button>
+                <button class="btn-secondary" onclick="fetchSelector()">Cancel</button>
+                <span id="selector-result" style="font-size:0.88em;"></span>
+            </div>
+        </div>
+
+        <!-- ── 3. Image Store (slot scan) ─────────────────────────────── -->
+        <div class="section-header">
+            <span class="section-title">Image Library</span>
+            <span style="display:flex; gap:4px;">
+                <button class="btn-icon btn-small" id="btn-lib-sort" onclick="toggleLibSort()" title="Toggle sort order">&#9650;</button>
+                <button class="btn-secondary btn-small" id="btn-scan" onclick="doScan()">&#8635; Scan</button>
+            </span>
+        </div>
+        <div class="info-block" style="padding:0; overflow:hidden;">
+            <div class="lib-list" id="slot-list">
+                <div class="lib-empty">Scanning&hellip;</div>
+            </div>
+            <div style="padding:8px 12px; border-top:1px solid #dee2e6; display:flex; gap:8px; align-items:center;">
+                <button class="btn-primary btn-small" id="btn-lib-add" onclick="showUploadPanel(false)">+ Add</button>
+                <button class="btn-secondary btn-small" id="btn-lib-edit" disabled onclick="showUploadPanel(true)">&#9998; Edit</button>
+                <span id="delete-result" style="font-size:0.85em; flex:1;"></span>
+                <button class="btn-danger btn-small" id="btn-lib-del" disabled onclick="doDelete()">&#10005; Delete</button>
+            </div>
+        </div>
+
+        <!-- ── 4. Upload / Edit Image ─────────────────────────────────── -->
+        <div id="upload-panel" style="display:none;">
+            <div class="section-header">
+                <span class="section-title" id="upload-panel-title">Upload New Image</span>
+            </div>
+            <div class="info-block">
+                <div class="form-row" id="upload-file-row">
+                    <label>File</label>
+                    <input type="file" id="upload-file" accept=".bin" onchange="onUploadFileChange(this)">
+                </div>
+                <div class="file-hint" id="upload-file-hint">Must be exactly 32768 bytes (.bin EPROM image)</div>
+                <div class="form-row" style="margin-top:10px;">
+                    <label>Name</label>
+                    <input type="text" id="upload-name" maxlength="31" placeholder="e.g. UM4">
+                </div>
+                <div class="form-row">
+                    <label>Description</label>
+                    <input type="text" id="upload-desc" maxlength="63" placeholder="e.g. UM4 datalogging firmware">
+                </div>
+                <div class="form-row">
+                    <label>Protection</label>
+                    <select id="upload-prot">
+                        <option value="N" selected>N — None</option>
+                        <option value="A">A — Aprilia Daughterboard V1</option>
+                    </select>
+                </div>
+                <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <button class="btn-primary" id="btn-upload" onclick="doUpload()"><span id="btn-upload-label">Upload</span></button>
+                    <button class="btn-secondary" onclick="hideUploadPanel()">Cancel</button>
+                </div>
+                <div class="result-msg" id="upload-result" style="display:none"></div>
+            </div>
+        </div>
+
+        </div>
+    </div>
+
+    <script>
+    'use strict';
+    var g_slots = [];               // array from /api/image-store/scan (sorted by name)
+    var g_slot_names = [];          // just the names, for dropdowns
+    var g_selector = [];            // array of {code, mapblob?} from /api/image-store/selector
+    var g_engine_running = false;
+    var g_lib_selected = -1;        // index into g_slots[] for image library selection
+    var g_lib_pending_select = '';  // name to auto-select after next scan
+    var g_lib_sort_asc = true;      // true = A→Z, false = Z→A
+    var g_edit_slot_index = -1;     // slot index being edited (-1 = add mode)
+
+    // ── Utilities ────────────────────────────────────────────────────────
+
+    function esc(s) {
+        return String(s)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function showResult(id, ok, msg) {
+        var el = document.getElementById(id);
+        el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
+        el.textContent = msg;
+        el.style.display = '';
+        if (ok) setTimeout(function() { el.style.display = 'none'; }, 4000);
+    }
+
+    function setWriteEnabled(enabled) {
+        var ids = ['btn-upload','btn-selector-save','selector-add','btn-lib-add'];
+        ids.forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.disabled = !enabled;
+        });
+        document.getElementById('engine-warning').style.display = enabled ? 'none' : '';
+        updateSelectorControls();
+        updateLibControls();
+    }
+
+
+    // ── Device name ──────────────────────────────────────────────────────
+
+    fetch('/api/info')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.device_name)
+                document.getElementById('device-name').textContent = d.device_name;
+        }).catch(function() {});
+
+    // ── Status polling (/api/eprom-info) ──────────────────────────────────
+
+    function fetchEpromInfo() {
+        fetch('/api/eprom-info')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                updateEcuBadge(d.ecu_alive);
+                updateEpBadge(d.status, d.loaded_slot);
+                updateEngineBadge(d.engine_running);
+                updateBootStatus(d);
+            }).catch(function() {});
+    }
+
+    function updateEcuBadge(alive) {
+        var el = document.getElementById('badge-ecu');
+        if (alive === true) {
+            el.className = 'badge badge-ok';
+            el.textContent = '\u25cf ECU Online';
+        } else if (alive === false) {
+            el.className = 'badge badge-neutral';
+            el.textContent = '\u25cb ECU Offline';
+        } else {
+            el.className = 'badge badge-neutral';
+            el.innerHTML = 'ECU &hellip;';
+        }
+    }
+
+    function updateEpBadge(status, slot) {
+        var el = document.getElementById('badge-ep');
+        if (status === 'ok') {
+            el.className = 'badge badge-ok';
+            el.textContent = 'EP Loaded';
+        } else if (status === 'limp_mode') {
+            el.className = 'badge badge-err';
+            el.textContent = 'EP Limp Mode';
+        } else {
+            el.className = 'badge badge-neutral';
+            el.textContent = 'EP Waiting';
+        }
+    }
+
+    function updateEngineBadge(running) {
+        g_engine_running = !!running;
+        var el = document.getElementById('badge-engine');
+        if (running) {
+            el.className = 'badge badge-warn';
+            el.textContent = '\u25cf Engine Running';
+            el.style.display = '';
+        } else {
+            el.style.display = 'none';
+        }
+        setWriteEnabled(!running);
+    }
+
+    function updateBootStatus(d) {
+        var el = document.getElementById('ep-boot-status');
+        if (d.status === 'waiting') {
+            el.innerHTML = '<em style="color:#888;">Waiting for EP to report&hellip;</em>';
+            return;
+        }
+        if (d.status === 'limp_mode') {
+            el.innerHTML = '<span style="color:#9b2c2c;">&#9888; Limp mode — no image loaded</span>';
+            return;
+        }
+        var entries = d.image_selector || [];
+        if (entries.length === 0) {
+            el.innerHTML = '<em style="color:#888;">(no selector entries)</em>';
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            var code = esc(e.code || e.name || '?');
+            var mapblob = e.mapblob ? ' + <em>' + esc(e.mapblob) + '</em>' : '';
+            var loaded = (d.loaded_slot > 0 && i === 0);  // first entry is the active one
+            html += '<div style="padding:5px 2px; border-bottom:1px solid #f0f0f0; font-size:0.9em;'
+                  + (loaded ? ' background:#d4edda; border-radius:4px; margin:0 -4px; padding:5px 8px;' : '') + '">'
+                  + '<span style="color:#aaa; font-size:0.85em; margin-right:8px;">' + (i+1) + '</span>'
+                  + '<span style="font-family:monospace;">' + code + '</span>' + mapblob
+                  + (loaded ? ' <span style="color:#155724; font-size:0.8em; font-weight:700;">&#10003; loaded</span>' : '')
+                  + '</div>';
+        }
+        el.innerHTML = html;
+    }
+
+    fetchEpromInfo();
+    setInterval(fetchEpromInfo, 2000);
+
+    // ── Slot scan ─────────────────────────────────────────────────────────
+
+    function doScan() {
+        document.getElementById('btn-scan').disabled = true;
+        document.getElementById('slot-list').innerHTML =
+            '<div class="lib-empty">Scanning&hellip;</div>';
+
+        fetch('/api/image-store/scan')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                g_slots = (d.slots || []).slice().sort(function(a, b) {
+                    var cmp = a.name.localeCompare(b.name);
+                    return g_lib_sort_asc ? cmp : -cmp;
+                });
+                g_slot_names = g_slots.map(function(s) { return s.name; });
+                // Auto-select a pending name (e.g. after upload)
+                g_lib_selected = -1;
+                if (g_lib_pending_select) {
+                    for (var i = 0; i < g_slots.length; i++) {
+                        if (g_slots[i].name === g_lib_pending_select) {
+                            g_lib_selected = i;
+                            break;
+                        }
+                    }
+                    g_lib_pending_select = '';
+                }
+                renderSlotList();
+                rebuildSelectorDropdowns();
+            })
+            .catch(function(e) {
+                document.getElementById('slot-list').innerHTML =
+                    '<div class="lib-empty" style="color:#9b2c2c;">Scan error: ' + esc(String(e)) + '</div>';
+            })
+            .finally(function() {
+                document.getElementById('btn-scan').disabled = false;
+            });
+    }
+
+    function renderSlotList() {
+        var container = document.getElementById('slot-list');
+        if (g_slots.length === 0) {
+            container.innerHTML = '<div class="lib-empty">(no images stored)</div>';
+            updateLibControls();
+            return;
+        }
+        var html = '';
+        g_slots.forEach(function(s, i) {
+            var sel = (i === g_lib_selected);
+            var prot = s.protection || 'N';
+            html += '<div class="lib-row' + (sel ? ' lib-selected' : '') + '" onclick="libSelect(' + i + ')">'
+                + '<div><div class="lib-name">' + esc(s.name) + '</div>'
+                + '<div class="lib-desc">' + esc(s.description || '') + '</div></div>'
+                + '</div>';
+            if (sel) {
+                html += '<div class="lib-details">'
+                    + '<span>Hash: <span style="font-family:monospace;">' + esc(s.hash || '\u2014') + '</span></span>'
+                    + '<span>Protection: <span class="prot-badge prot-' + esc(prot) + '">' + esc(prot) + '</span></span>'
+                    + '</div>';
+            }
+        });
+        container.innerHTML = html;
+        // Scroll selected row into view within the (potentially clipped) lib-list container
+        var selRow = container.querySelector('.lib-row.lib-selected');
+        if (selRow) selRow.scrollIntoView({ block: 'nearest' });
+        updateLibControls();
+    }
+
+    function libSelect(i) {
+        g_lib_selected = (g_lib_selected === i) ? -1 : i;
+        renderSlotList();
+    }
+
+    function toggleLibSort() {
+        g_lib_sort_asc = !g_lib_sort_asc;
+        var btn = document.getElementById('btn-lib-sort');
+        if (btn) btn.innerHTML = g_lib_sort_asc ? '&#9650;' : '&#9660;';
+        // Remember selected name so we can restore the selection after re-sort
+        var selName = (g_lib_selected >= 0 && g_slots[g_lib_selected])
+                    ? g_slots[g_lib_selected].name : '';
+        g_slots.sort(function(a, b) {
+            var cmp = a.name.localeCompare(b.name);
+            return g_lib_sort_asc ? cmp : -cmp;
+        });
+        g_slot_names = g_slots.map(function(s) { return s.name; });
+        g_lib_selected = -1;
+        if (selName) {
+            for (var i = 0; i < g_slots.length; i++) {
+                if (g_slots[i].name === selName) { g_lib_selected = i; break; }
+            }
+        }
+        renderSlotList();
+    }
+
+    function updateLibControls() {
+        var noSel = g_engine_running || g_lib_selected < 0;
+        var delBtn = document.getElementById('btn-lib-del');
+        if (delBtn) delBtn.disabled = noSel;
+        var editBtn = document.getElementById('btn-lib-edit');
+        if (editBtn) editBtn.disabled = noSel;
+    }
+
+    // ── Delete ────────────────────────────────────────────────────────────
+
+    function doDelete() {
+        if (g_engine_running || g_lib_selected < 0) return;
+        var slot = g_slots[g_lib_selected];
+        if (!slot) return;
+        if (!confirm('Delete "' + slot.name + '" (slot ' + slot.index + ')? This cannot be undone.')) return;
+        var btn = document.getElementById('btn-lib-del');
+        btn.disabled = true;
+        btn.textContent = '\u2026';
+
+        fetch('/api/image-store/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slot: slot.index })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var resEl = document.getElementById('delete-result');
+            resEl.style.color = '#155724';
+            resEl.textContent = '\u2714 "' + slot.name + '" deleted \u2014 EP rebooting\u2026';
+            g_lib_selected = -1;
+            btn.textContent = '\u2715 Delete';
+            doScan();
+        })
+        .catch(function(e) {
+            var resEl = document.getElementById('delete-result');
+            resEl.style.color = '#9b2c2c';
+            resEl.textContent = 'Delete failed: ' + e;
+            btn.disabled = false;
+            btn.textContent = '\u2715 Delete';
+        });
+    }
+
+    // ── Upload panel show/hide ────────────────────────────────────────────
+
+    function showUploadPanel(editMode) {
+        g_edit_slot_index = -1;
+        document.getElementById('upload-panel').style.display = '';
+        document.getElementById('upload-file').value = '';
+        document.getElementById('upload-result').style.display = 'none';
+        if (editMode && g_lib_selected >= 0 && g_lib_selected < g_slots.length) {
+            var slot = g_slots[g_lib_selected];
+            g_edit_slot_index = slot.index;
+            document.getElementById('upload-panel-title').textContent = 'Edit Image';
+            document.getElementById('upload-file-row').style.display = 'none';
+            document.getElementById('upload-file-hint').style.display = 'none';
+            document.getElementById('upload-name').value = slot.name;
+            document.getElementById('upload-desc').value = slot.description || '';
+            document.getElementById('upload-prot').value = slot.protection || 'N';
+            document.getElementById('btn-upload-label').textContent = 'Save Changes';
+        } else {
+            document.getElementById('upload-panel-title').textContent = 'Upload New Image';
+            document.getElementById('upload-file-row').style.display = '';
+            document.getElementById('upload-file-hint').style.display = '';
+            document.getElementById('upload-name').value = '';
+            document.getElementById('upload-desc').value = '';
+            document.getElementById('upload-prot').value = 'N';
+            document.getElementById('btn-upload-label').textContent = 'Upload';
+        }
+        document.getElementById('upload-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function hideUploadPanel() {
+        document.getElementById('upload-panel').style.display = 'none';
+        g_edit_slot_index = -1;
+    }
+
+    // ── Upload ────────────────────────────────────────────────────────────
+
+    function onUploadFileChange(input) {
+        var f = input.files && input.files[0];
+        if (!f) return;
+        // Strip extension, truncate to maxlength, populate name field
+        var base = f.name.replace(/\.[^.]+$/, '').slice(0, 31);
+        document.getElementById('upload-name').value = base;
+    }
+
+    function doUpload() {
+        if (g_engine_running) return;
+        var name = document.getElementById('upload-name').value.trim();
+        var desc = document.getElementById('upload-desc').value.trim();
+        var prot = document.getElementById('upload-prot').value;
+        var resultEl = document.getElementById('upload-result');
+
+        if (!name) {
+            showResult('upload-result', false, 'Name is required.');
+            return;
+        }
+
+        // Edit mode: save updated metadata, keep existing binary
+        if (g_edit_slot_index >= 0) {
+            resultEl.style.display = '';
+            resultEl.className = 'result-msg badge-neutral';
+            resultEl.textContent = 'Saving\u2026';
+            document.getElementById('btn-upload').disabled = true;
+
+            fetch('/api/image-store/edit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                    'X-IS-Slot': String(g_edit_slot_index),
+                    'X-IS-Name': name,
+                    'X-IS-Description': desc,
+                    'X-IS-Protection': prot
+                },
+                body: new Uint8Array(0)
+            }).then(function(r) {
+                return r.json();
+            }).then(function(d) {
+                document.getElementById('btn-upload').disabled = false;
+                hideUploadPanel();
+                showResult('delete-result', true, '\u2714 "' + esc(name) + '" updated \u2014 EP rebooting\u2026');
+                setTimeout(function() {
+                    document.getElementById('delete-result').textContent = '';
+                }, 5000);
+                g_lib_pending_select = name;
+                doScan();
+            }).catch(function(e) {
+                showResult('upload-result', false, 'Save failed: ' + e);
+                document.getElementById('btn-upload').disabled = false;
+            });
+            return;
+        }
+
+        // Upload mode: require a .bin file
+        var fileInput = document.getElementById('upload-file');
+        if (!fileInput.files || !fileInput.files[0]) {
+            showResult('upload-result', false, 'Please select a .bin file.');
+            return;
+        }
+
+        // Duplicate name check
+        var existing = g_slots.find(function(s) { return s.name === name; });
+        if (existing) {
+            if (!confirm('"' + name + '" already exists in the Image Library.\nProceed and overwrite it?')) {
+                return;
+            }
+        }
+
+        var file = fileInput.files[0];
+        resultEl.style.display = '';
+        resultEl.className = 'result-msg badge-neutral';
+        resultEl.textContent = 'Reading file\u2026';
+
+        // Read as ArrayBuffer so browser sets exact Content-Length (required by lwIP)
+        file.arrayBuffer().then(function(buf) {
+            if (buf.byteLength !== 32768) {
+                showResult('upload-result', false,
+                    'File must be exactly 32768 bytes (got ' + buf.byteLength + ').');
+                return;
+            }
+
+            resultEl.textContent = 'Uploading\u2026';
+            document.getElementById('btn-upload').disabled = true;
+
+            return fetch('/api/image-store/upload', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                    'X-IS-Name': name,
+                    'X-IS-Description': desc,
+                    'X-IS-Protection': prot
+                },
+                body: buf
+            });
+        }).then(function(r) {
+            if (!r) return;  // already showed error above
+            return r.json();
+        }).then(function(d) {
+            if (!d) return;
+            document.getElementById('btn-upload').disabled = false;
+            hideUploadPanel();
+            showResult('delete-result', true, '\u2714 "' + esc(name) + '" uploaded \u2014 EP rebooting\u2026');
+            setTimeout(function() {
+                document.getElementById('delete-result').textContent = '';
+            }, 5000);
+            g_lib_pending_select = name;
+            doScan();
+        }).catch(function(e) {
+            showResult('upload-result', false, 'Upload failed: ' + e);
+            document.getElementById('btn-upload').disabled = false;
+        });
+    }
+
+    // ── Selector editor ───────────────────────────────────────────────────
+
+    var g_selected_idx = -1;
+    var g_selector_dirty = false;
+
+    function markSelectorDirty() {
+        g_selector_dirty = true;
+        document.getElementById('selector-save-row').style.display = 'flex';
+    }
+
+    function clearSelectorDirty() {
+        g_selector_dirty = false;
+        document.getElementById('selector-save-row').style.display = 'none';
+    }
+
+    function selectorUserEdit() {
+        selectorUpdate();
+        markSelectorDirty();
+    }
+
+    function fetchSelector() {
+        fetch('/api/image-store/selector')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                g_selector = (d.found && d.images) ? d.images.slice() : [];
+                g_selected_idx = -1;
+                renderSelector();
+                clearSelectorDirty();
+            })
+            .catch(function() {
+                g_selector = [];
+                g_selected_idx = -1;
+                renderSelector();
+                clearSelectorDirty();
+            });
+    }
+
+    function makeNameOptions(selected) {
+        var opts = '';
+        g_slot_names.forEach(function(n) {
+            opts += '<option value="' + esc(n) + '"'
+                 + (n === selected ? ' selected' : '') + '>'
+                 + esc(n) + '</option>';
+        });
+        if (!g_slot_names.includes(selected) && selected) {
+            opts = '<option value="' + esc(selected) + '" selected>' + esc(selected) + '</option>' + opts;
+        }
+        return opts;
+    }
+
+    function makeMapblobOptions(selected) {
+        var opts = '<option value=""' + (!selected ? ' selected' : '') + '>(none)</option>';
+        g_slot_names.forEach(function(n) {
+            opts += '<option value="' + esc(n) + '"'
+                 + (n === selected ? ' selected' : '') + '>'
+                 + esc(n) + '</option>';
+        });
+        if (selected && !g_slot_names.includes(selected)) {
+            opts += '<option value="' + esc(selected) + '" selected>' + esc(selected) + '</option>';
+        }
+        return opts;
+    }
+
+    function updateSelectorControls() {
+        var n = g_selector.length;
+        var i = g_selected_idx;
+        var hasSel = i >= 0 && i < n;
+        var dis = g_engine_running;
+        var btnUp  = document.getElementById('btn-sel-up');
+        var btnDn  = document.getElementById('btn-sel-down');
+        var btnTop = document.getElementById('btn-sel-top');
+        var btnDel = document.getElementById('btn-sel-del');
+        if (btnUp)  btnUp.disabled  = dis || !hasSel || i === 0;
+        if (btnDn)  btnDn.disabled  = dis || !hasSel || i === n - 1;
+        if (btnTop) btnTop.disabled = dis || !hasSel || i === 0;
+        if (btnDel) btnDel.disabled = dis || !hasSel;
+    }
+
+    function renderSelector() {
+        var list = document.getElementById('selector-list');
+        if (g_selector.length === 0) {
+            list.innerHTML = '<em style="color:#888;">(empty \u2014 EP will boot into limp mode)</em>';
+            updateSelectorControls();
+            return;
+        }
+        var html = '<div class="selector-header">'
+            + '<span class="selector-idx-hdr"></span>'
+            + '<span class="sel-col-hdr">Code</span>'
+            + '<span class="sel-col-hdr">Mapblob</span>'
+            + '</div>';
+        g_selector.forEach(function(entry, i) {
+            var sel = (i === g_selected_idx);
+            html += '<div class="selector-row' + (sel ? ' sel-selected' : '') + '" data-idx="' + i + '">'
+                + '<span class="selector-idx" onclick="selectorSelect(' + i + ')">' + (i+1) + '</span>'
+                + '<select class="sel-code" data-idx="' + i + '" onchange="selectorUserEdit()">'
+                + makeNameOptions(entry.code) + '</select>'
+                + '<select class="sel-mapblob" data-idx="' + i + '" onchange="selectorUserEdit()">'
+                + makeMapblobOptions(entry.mapblob) + '</select>'
+                + '</div>';
+        });
+        list.innerHTML = html;
+        if (g_engine_running) {
+            document.querySelectorAll('#selector-list select').forEach(function(el) {
+                el.disabled = true;
+            });
+        }
+        updateSelectorControls();
+    }
+
+    function selectorUpdate() {
+        // Sync g_selector from current DOM state
+        g_selector = [];
+        document.querySelectorAll('#selector-list .selector-row').forEach(function(row) {
+            var code = row.querySelector('.sel-code').value;
+            var mapblob = row.querySelector('.sel-mapblob').value;
+            var entry = { code: code };
+            if (mapblob) entry.mapblob = mapblob;
+            g_selector.push(entry);
+        });
+    }
+
+    function selectorSelect(idx) {
+        selectorUpdate();
+        g_selected_idx = (g_selected_idx === idx) ? -1 : idx;
+        renderSelector();
+    }
+
+    function selectorCtrlUp() {
+        if (g_selected_idx <= 0) return;
+        selectorUpdate();
+        var tmp = g_selector[g_selected_idx - 1];
+        g_selector[g_selected_idx - 1] = g_selector[g_selected_idx];
+        g_selector[g_selected_idx] = tmp;
+        g_selected_idx--;
+        renderSelector();
+        markSelectorDirty();
+    }
+
+    function selectorCtrlDown() {
+        if (g_selected_idx < 0 || g_selected_idx >= g_selector.length - 1) return;
+        selectorUpdate();
+        var tmp = g_selector[g_selected_idx + 1];
+        g_selector[g_selected_idx + 1] = g_selector[g_selected_idx];
+        g_selector[g_selected_idx] = tmp;
+        g_selected_idx++;
+        renderSelector();
+        markSelectorDirty();
+    }
+
+    function selectorCtrlTop() {
+        if (g_selected_idx <= 0) return;
+        selectorUpdate();
+        var entry = g_selector.splice(g_selected_idx, 1)[0];
+        g_selector.unshift(entry);
+        g_selected_idx = 0;
+        renderSelector();
+        markSelectorDirty();
+    }
+
+    function selectorCtrlDel() {
+        if (g_selected_idx < 0) return;
+        selectorUpdate();
+        g_selector.splice(g_selected_idx, 1);
+        if (g_selected_idx >= g_selector.length) g_selected_idx = g_selector.length - 1;
+        renderSelector();
+        markSelectorDirty();
+    }
+
+    function selectorAddEntry() {
+        selectorUpdate();
+        g_selector.push({ code: g_slot_names[0] || '' });
+        g_selected_idx = g_selector.length - 1;
+        renderSelector();
+        markSelectorDirty();
+    }
+
+    function rebuildSelectorDropdowns() {
+        renderSelector();
+    }
+
+    function doSelectorSave() {
+        if (g_engine_running) return;
+        selectorUpdate();
+        if (g_selector.length === 0) {
+            if (!confirm('Save an empty selector? EP will boot into limp mode.')) return;
+        }
+
+        var statusEl = document.getElementById('selector-result');
+        statusEl.style.color = '#555';
+        statusEl.textContent = 'Saving\u2026';
+        document.getElementById('btn-selector-save').disabled = true;
+
+        var body = JSON.stringify({ images: g_selector });
+
+        fetch('/api/image-store/selector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: body
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            statusEl.style.color = '#155724';
+            statusEl.textContent = '\u2714 Saved \u2014 EP rebooting\u2026';
+            document.getElementById('btn-selector-save').disabled = false;
+            clearSelectorDirty();
+            setTimeout(fetchSelector, 3000);
+            setTimeout(function() { statusEl.textContent = ''; }, 5000);
+        })
+        .catch(function(e) {
+            statusEl.style.color = '#9b2c2c';
+            statusEl.textContent = 'Error: ' + e;
+            document.getElementById('btn-selector-save').disabled = false;
+        });
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────
+
+    doScan();
+    fetchSelector();
+    </script>
+</body>
+</html>

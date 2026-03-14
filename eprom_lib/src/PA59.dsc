@@ -1,7 +1,7 @@
 {
     "eprom": {
         "name": "PA59",
-        "RP58-Compatible": "Y",
+        "map-style": "RP58",
         "info": {
             "models": [
                 "Falco 2003"

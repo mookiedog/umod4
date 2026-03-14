@@ -68,8 +68,7 @@
 #define SPARE1_PIN          26
 #define SPARE1_LED_PIN      (SPARE1_PIN)
 
-// We will use SPARE2 as a development aid.
-// If grounded, it will indicate to the system that it should reformat the LittleFS filesystem on the SD Card.
+// SPARE2 is an unallocated spare GPIO, available for future use.
 #define SPARE2_PIN          5
 
 // Interface for driving a local LCD using SPI1
@@ -108,12 +107,6 @@
 // The reason is that we would not want a malfunctioning WP from preventing the ECU
 // from letting the engine run. We always want to be able to ride home!
 #define RESET_HC11          28
-
-// This might not be the right place, but it'll do for now:
-#define TASK_NORMAL_PRIORITY  ((tskIDLE_PRIORITY)+1)
-#define TASK_HIGH_PRIORITY    ((tskIDLE_PRIORITY)+2)
-#define TASK_ISR_PRIORITY     ((tskIDLE_PRIORITY)+3)
-#define TASK_MAX_PRIORITY     ((tskIDLE_PRIORITY)+4)
 
 #define STRINGIFY(x) STRINGIFY2(x)
 #define STRINGIFY2(x) #x

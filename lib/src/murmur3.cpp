@@ -11,6 +11,39 @@ static inline uint32_t murmur_32_scramble(uint32_t k)
     return k;
 }
 
+void murmur3_begin(murmur3_state_t* s, uint32_t seed)
+{
+    s->h1 = seed;
+    s->total = 0;
+}
+
+void murmur3_update(murmur3_state_t* s, const uint8_t* data, uint32_t len)
+{
+    uint32_t h = s->h1;
+    for (uint32_t i = 0; i < len; i += 4) {
+        uint32_t k;
+        memcpy(&k, data + i, sizeof(uint32_t));
+        h ^= murmur_32_scramble(k);
+        h = (h << 13) | (h >> 19);
+        h = h * 5 + 0xe6546b64;
+    }
+    s->h1 = h;
+    s->total += len;
+}
+
+uint32_t murmur3_finish(murmur3_state_t* s)
+{
+    uint32_t h = s->h1;
+    /* No tail bytes — total is always a multiple of 4 */
+    h ^= s->total;
+    h ^= h >> 16;
+    h *= 0x85ebca6b;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35;
+    h ^= h >> 16;
+    return h;
+}
+
 uint32_t murmur3_32(const uint8_t *key, size_t len, uint32_t seed)
 {
     uint32_t h = seed;

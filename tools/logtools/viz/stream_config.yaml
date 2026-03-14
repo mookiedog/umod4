@@ -123,6 +123,15 @@ streams:
     normalize: true
     display_range_min_top: 30.0  # Minimum value for top of display (prevents over-scaling at low speeds)
 
+  wp_log_data_rate_bps:
+    type: graph_data
+    display_name: "Log Data Rate (B/s)"
+    default_color: "#FF8000"
+    units: bytes_per_sec
+    owns_axis: true
+    normalize: true
+    display_range_min: 0.0
+
   ecu_map_kpa:
     type: graph_data
     display_name: "MAP (kPa)"

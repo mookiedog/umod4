@@ -2,8 +2,8 @@
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                QTableWidget, QTableWidgetItem, QHeaderView,
-                               QMessageBox, QLabel, QCheckBox, QProgressDialog)
-from PySide6.QtCore import Qt, QThread, Signal
+                               QMessageBox, QLabel, QProgressDialog, QApplication)
+from PySide6.QtCore import Qt
 from device_client import DeviceClient
 
 
@@ -23,6 +23,16 @@ class DeviceFilesDialog(QDialog):
         self._load_device_info()
         self._setup_ui()
         self._refresh_files()
+
+        # Auto-raise when the application regains focus, so the dialog cannot get
+        # permanently hidden behind the main window (X11/WSL2 window manager issue).
+        _app = QApplication.instance()
+        def _raise_on_app_active(state):
+            if state == Qt.ApplicationState.ApplicationActive and self.isVisible():
+                self.raise_()
+                self.activateWindow()
+        _app.applicationStateChanged.connect(_raise_on_app_active)
+        self.finished.connect(lambda: _app.applicationStateChanged.disconnect(_raise_on_app_active))
 
     def _load_device_info(self):
         """Load device information from database."""
@@ -135,17 +145,28 @@ class DeviceFilesDialog(QDialog):
                 # - Other files (uploaded files like .uf2) can always be deleted
                 can_delete = is_downloaded or not is_log_file
 
-                # Checkbox (enabled based on can_delete)
-                checkbox = QCheckBox()
-                checkbox.setEnabled(can_delete)
-                checkbox_widget = QTableWidgetItem()
-                checkbox_widget.setData(Qt.ItemDataRole.UserRole, filename)
-                self.file_table.setItem(row, 0, checkbox_widget)
-                self.file_table.setCellWidget(row, 0, checkbox)
+                # Checkbox column: use QTableWidgetItem with check state rather than
+                # setCellWidget(QCheckBox) to avoid PySide6/shiboken C++ ownership bugs
+                # that cause use-after-free segfaults when _refresh_files is called again.
+                checkbox_item = QTableWidgetItem()
+                checkbox_item.setData(Qt.ItemDataRole.UserRole, filename)
+                checkbox_item.setCheckState(Qt.CheckState.Unchecked)
+                if can_delete:
+                    checkbox_item.setFlags(
+                        Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
+                    )
+                else:
+                    # Not enabled: grayed-out, user cannot toggle
+                    checkbox_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable)
+                self.file_table.setItem(row, 0, checkbox_item)
+
+                is_config_file = filename.endswith(('.json', '.jpg'))
 
                 # Filename
                 name_item = QTableWidgetItem(filename)
                 name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if is_config_file:
+                    name_item.setForeground(Qt.GlobalColor.gray)
                 self.file_table.setItem(row, 1, name_item)
 
                 # Size in KB
@@ -153,6 +174,8 @@ class DeviceFilesDialog(QDialog):
                 size_item = QTableWidgetItem(f"{size_kb:,.1f}")
                 size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                if is_config_file:
+                    size_item.setForeground(Qt.GlobalColor.gray)
                 self.file_table.setItem(row, 2, size_item)
 
                 # Downloaded status (only relevant for log files)
@@ -170,13 +193,15 @@ class DeviceFilesDialog(QDialog):
                 self.file_table.setItem(row, 3, downloaded_item)
 
                 # Status
-                if can_delete:
+                if is_config_file:
+                    status = "Config file"
+                elif can_delete:
                     status = "Can delete"
                 else:
                     status = "Log not downloaded"
                 status_item = QTableWidgetItem(status)
                 status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if not can_delete:
+                if not can_delete or is_config_file:
                     status_item.setForeground(Qt.GlobalColor.gray)
                 self.file_table.setItem(row, 4, status_item)
 
@@ -184,27 +209,28 @@ class DeviceFilesDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Failed to refresh file list: {e}")
 
     def _select_all_deletable(self):
-        """Select all files that can be deleted."""
+        """Select all deletable files, excluding config files (.json, .jpg)."""
         for row in range(self.file_table.rowCount()):
-            checkbox = self.file_table.cellWidget(row, 0)
-            if checkbox and checkbox.isEnabled():
-                checkbox.setChecked(True)
+            item = self.file_table.item(row, 0)
+            if item and (item.flags() & Qt.ItemFlag.ItemIsEnabled):
+                filename = item.data(Qt.ItemDataRole.UserRole) or ""
+                if not filename.endswith(('.json', '.jpg')):
+                    item.setCheckState(Qt.CheckState.Checked)
 
     def _deselect_all(self):
         """Deselect all files."""
         for row in range(self.file_table.rowCount()):
-            checkbox = self.file_table.cellWidget(row, 0)
-            if checkbox:
-                checkbox.setChecked(False)
+            item = self.file_table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Unchecked)
 
     def _get_selected_files(self):
         """Get list of selected filenames."""
         selected = []
         for row in range(self.file_table.rowCount()):
-            checkbox = self.file_table.cellWidget(row, 0)
-            if checkbox and checkbox.isChecked():
-                filename_item = self.file_table.item(row, 0)
-                filename = filename_item.data(Qt.ItemDataRole.UserRole)
+            item = self.file_table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                filename = item.data(Qt.ItemDataRole.UserRole)
                 selected.append(filename)
         return selected
 

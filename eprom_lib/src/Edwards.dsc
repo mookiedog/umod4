@@ -1,7 +1,7 @@
 {
     "eprom": {
         "name": "Edwards",
-        "RP58-Compatible": "Y",
+        "map-style": "RP58",
         "info": {
             "models": [
                 "Edwards Replica"

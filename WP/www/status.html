@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - Settings</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .section {
+            margin-bottom: 28px;
+        }
+        .section-title {
+            font-weight: 700;
+            color: #555;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 12px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #eee;
+        }
+        .form-row {
+            margin-bottom: 14px;
+        }
+        label {
+            display: block;
+            font-size: 0.9em;
+            color: #555;
+            margin-bottom: 4px;
+        }
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+        input:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 2px rgba(0,123,255,0.15);
+        }
+        .readonly-value {
+            padding: 10px 12px;
+            font-size: 1em;
+            color: #333;
+        }
+        .save-btn {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            box-sizing: border-box;
+            margin-top: 10px;
+        }
+        .save-btn:hover:not(:disabled) { background: #5a6268; }
+        .save-btn:disabled { background: #aaa; cursor: default; }
+        .status-msg {
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 5px;
+            font-size: 0.95em;
+            display: none;
+        }
+        .status-msg.success { background: #d4edda; color: #155724; }
+        .status-msg.error   { background: #f8d7da; color: #721c24; }
+        .reboot-btn {
+            display: block;
+            width: 100%;
+            margin-top: 28px;
+            padding: 14px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            box-sizing: border-box;
+        }
+        .reboot-btn:disabled { background: #aaa; cursor: default; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">Settings</span>
+                <div class="ribbon-status">
+                    <a href="/" class="ribbon-icon-link" title="Home">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+
+        <div class="section">
+            <div class="section-title">Device Identity</div>
+            <div class="form-row">
+                <label>MAC Address</label>
+                <div class="readonly-value" id="mac">--</div>
+            </div>
+            <div class="form-row">
+                <label for="device_name">Device Name</label>
+                <input type="text" id="device_name" maxlength="63" placeholder="e.g. Robin's Tuono">
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-bottom: 28px;">
+            <label>Uptime</label>
+            <div class="readonly-value" id="uptime">--</div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Server</div>
+            <div class="form-row">
+                <label for="server_host">Server Hostname or IP</label>
+                <input type="text" id="server_host" maxlength="63"
+                       placeholder="e.g. umod4-server.local or 192.168.1.10">
+            </div>
+            <div class="form-row">
+                <label for="server_port">Server Port</label>
+                <input type="number" id="server_port" min="1" max="65535" placeholder="e.g. 8081">
+            </div>
+        </div>
+
+        <button class="save-btn" id="save-btn" onclick="doSave()">Save &amp; Reboot</button>
+        <div class="status-msg" id="status-msg"></div>
+
+        <button class="reboot-btn" id="reboot-btn" onclick="doReboot()">Reboot Device</button>
+
+        </div>
+    </div>
+
+    <script>
+        function fmtUptime(s) {
+            var d = Math.floor(s / 86400);
+            var h = Math.floor((s % 86400) / 3600);
+            var m = Math.floor((s % 3600) / 60);
+            var sec = s % 60;
+            var pad = function(n) { return String(n).padStart(2, '0'); };
+            if (d > 0) return d + 'd ' + pad(h) + ':' + pad(m) + ':' + pad(sec);
+            return pad(h) + ':' + pad(m) + ':' + pad(sec);
+        }
+
+        function updateStatus() {
+            fetch('/api/info')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.device_name) document.getElementById('device-name').textContent = data.device_name;
+                    document.getElementById('uptime').textContent = fmtUptime(data.uptime_seconds);
+                    document.getElementById('mac').textContent = data.device_mac || 'Unknown';
+                })
+                .catch(function() {});
+        }
+
+        // Load current config on page load
+        fetch('/api/config')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.device_name) document.getElementById('device_name').value = data.device_name;
+                if (data.server_host) document.getElementById('server_host').value = data.server_host;
+                if (data.server_port) document.getElementById('server_port').value = data.server_port;
+            })
+            .catch(function() {});
+
+        function doSave() {
+            var btn = document.getElementById('save-btn');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            var body = {};
+            var name = document.getElementById('device_name').value.trim();
+            var host = document.getElementById('server_host').value.trim();
+            if (name) body['device_name'] = name;
+            if (host) body['server_host'] = host;
+            var port = parseInt(document.getElementById('server_port').value, 10);
+            if (port > 0 && port <= 65535) body['server_port'] = port;
+
+            fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    btn.textContent = 'Rebooting\u2026';
+                    pollForDevice();
+                } else {
+                    showStatus('Save failed: ' + (data.error || 'unknown error'), false);
+                    btn.disabled = false;
+                    btn.textContent = 'Save & Reboot';
+                }
+            })
+            .catch(function() {
+                btn.textContent = 'Rebooting\u2026';
+                pollForDevice();
+            });
+        }
+
+        function pollForDevice() {
+            showStatus('Saved! Waiting for device to come back\u2026', true);
+            var deadline = Date.now() + 30000;
+            function tick() {
+                if (Date.now() > deadline) {
+                    showStatus('Device not responding after 30 seconds. Try refreshing manually.', false);
+                    return;
+                }
+                fetchWithTimeout('/api/ping', 2000)
+                    .then(function(r) { return r.json(); })
+                    .then(function(d) {
+                        if (d.ok) {
+                            showStatus('Device is back online! Reloading\u2026', true);
+                            setTimeout(function() { location.reload(); }, 1500);
+                        } else {
+                            setTimeout(tick, 2000);
+                        }
+                    })
+                    .catch(function() { setTimeout(tick, 2000); });
+            }
+            setTimeout(tick, 5000);
+        }
+
+        function fetchWithTimeout(url, ms) {
+            var controller = new AbortController();
+            var tid = setTimeout(function() { controller.abort(); }, ms);
+            return fetch(url, {signal: controller.signal})
+                .finally(function() { clearTimeout(tid); });
+        }
+
+        function showStatus(msg, ok) {
+            var el = document.getElementById('status-msg');
+            el.textContent = msg;
+            el.className = 'status-msg ' + (ok ? 'success' : 'error');
+            el.style.display = 'block';
+        }
+
+        function doReboot() {
+            if (!confirm('Reboot the device?')) return;
+            var btn = document.getElementById('reboot-btn');
+            btn.disabled = true;
+            btn.textContent = 'Rebooting...';
+            fetch('/api/reboot')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        btn.textContent = 'Rebooted \u2014 reconnecting...';
+                    } else {
+                        btn.textContent = 'Reboot failed: ' + (data.error || 'unknown error');
+                        btn.disabled = false;
+                    }
+                })
+                .catch(function() {
+                    btn.textContent = 'Rebooted \u2014 reconnecting...';
+                });
+        }
+
+        updateStatus();
+        setInterval(updateStatus, 2000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - Live Stream</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .btn {
+            padding: 8px 18px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 600;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn-edit   { background: #6c757d; color: white; }
+        .btn-save   { background: #28a745; color: white; }
+        .btn-cancel { background: #dc3545; color: white; }
+        .btn:hover  { opacity: 0.9; }
+
+        #ecu-status {
+            display: inline-block;
+            margin-bottom: 20px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        #ecu-status.online  { background: #e6fffa; color: #234e52; border: 1px solid #b2f5ea; }
+        #ecu-status.offline { background: #fff5f5; color: #9b2c2c; border: 1px solid #feb2b2; }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 15px;
+        }
+        .status-item {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #edf2f7;
+        }
+        .status-label {
+            font-weight: 700;
+            color: #718096;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .status-value {
+            font-size: 1.6em;
+            color: #2d3748;
+            font-family: 'Courier New', monospace;
+            font-weight: 700;
+        }
+
+        #edit-panel { display: none; margin-top: 20px; }
+        .edit-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .edit-slot {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 8px;
+        }
+        .edit-slot label { font-size: 0.8em; color: #4a5568; width: 50px; }
+        .edit-slot input {
+            flex: 1;
+            padding: 6px;
+            border: 1px solid #cbd5e0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .edit-slot input.error { border-color: #e53e3e; background: #fff5f5; }
+
+        @media (max-width: 600px) {
+            .edit-grid { grid-template-columns: 1fr; }
+            .status-grid { grid-template-columns: 1fr 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">Live Stream</span>
+                <div class="ribbon-status">
+                    <a href="/" class="ribbon-icon-link" title="Home">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+
+        <div id="ecu-status">Connecting...</div>
+
+        <div class="toolbar">
+            <button class="btn btn-edit"   id="btn-edit"   onclick="startEdit()">Edit Layout</button>
+            <button class="btn btn-save"   id="btn-save"   onclick="saveConfig()" style="display:none">Save Changes</button>
+            <button class="btn btn-cancel" id="btn-cancel" onclick="cancelEdit()" style="display:none">Cancel</button>
+        </div>
+
+        <div class="status-grid" id="live-grid"></div>
+        <p id="no-items-msg" style="display:none">No items configured. Click Edit to add log IDs.</p>
+
+        <div id="edit-panel">
+            <p style="font-size: 0.9em; color: #718096; margin-bottom: 15px;">Enter hex IDs (e.g. 0x56) to monitor specific ECU channels.</p>
+            <div class="edit-grid" id="edit-grid"></div>
+        </div>
+
+        </div>
+    </div>
+
+    <script>
+        var currentItems = [];
+        var pollTimer = null;
+
+        fetch('/api/info')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
+            })
+            .catch(function() {});
+
+        fetchConfig();
+
+        function fetchConfig() {
+            fetch('/api/ecu-live-config')
+                .then(function(r) { return r.json(); })
+                .then(function(cfg) {
+                    currentItems = cfg.items;
+                    buildDisplay();
+                    startPolling();
+                })
+                .catch(function(e) { console.error('Config fetch error:', e); });
+        }
+
+        function buildDisplay() {
+            var grid = document.getElementById('live-grid');
+            var noMsg = document.getElementById('no-items-msg');
+            grid.innerHTML = '';
+            var hasItems = false;
+            for (var i = 0; i < currentItems.length; i++) {
+                if (currentItems[i] >= 0) {
+                    hasItems = true;
+                    var hex = '0x' + (currentItems[i] & 0xFF).toString(16).toUpperCase();
+                    var div = document.createElement('div');
+                    div.className = 'status-item';
+                    div.innerHTML = '<div class="status-label">' + hex + '</div>' +
+                                    '<div class="status-value" id="val-' + i + '">--</div>';
+                    grid.appendChild(div);
+                }
+            }
+            noMsg.style.display = hasItems ? 'none' : 'block';
+        }
+
+        function startPolling() {
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = setInterval(pollData, 2000);
+            pollData();
+        }
+
+        function pollData() {
+            fetch('/api/ecu-live-data')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var badge = document.getElementById('ecu-status');
+                    if (data.ecu_alive) {
+                        badge.className = 'online';
+                        badge.textContent = '● ECU Online';
+                    } else {
+                        badge.className = 'offline';
+                        badge.textContent = '○ ECU Offline — Turn Ignition ON';
+                    }
+                    document.getElementById('live-grid').style.opacity = data.ecu_alive ? '1' : '0.5';
+
+                    data.items.forEach(function(entry) {
+                        var el = document.getElementById('val-' + entry.slot);
+                        if (el) el.textContent = (entry.value !== null) ? entry.value : '--';
+                    });
+                })
+                .catch(function(e) { console.error('Poll error:', e); });
+        }
+
+        function startEdit() {
+            if (pollTimer) clearInterval(pollTimer);
+            document.getElementById('btn-edit').style.display = 'none';
+            document.getElementById('btn-save').style.display = '';
+            document.getElementById('btn-cancel').style.display = '';
+            document.getElementById('live-grid').style.display = 'none';
+            document.getElementById('no-items-msg').style.display = 'none';
+            document.getElementById('edit-panel').style.display = 'block';
+
+            var editGrid = document.getElementById('edit-grid');
+            editGrid.innerHTML = '';
+            for (var i = 0; i < 10; i++) {
+                var val = currentItems[i] >= 0 ? '0x' + (currentItems[i] & 0xFF).toString(16).toUpperCase() : '';
+                var slot = document.createElement('div');
+                slot.className = 'edit-slot';
+                slot.innerHTML = '<label>Slot ' + i + '</label><input type="text" id="slot-' + i + '" value="' + val + '" placeholder="0x00">';
+                editGrid.appendChild(slot);
+            }
+        }
+
+        function cancelEdit() {
+            document.getElementById('btn-edit').style.display = '';
+            document.getElementById('btn-save').style.display = 'none';
+            document.getElementById('btn-cancel').style.display = 'none';
+            document.getElementById('edit-panel').style.display = 'none';
+            document.getElementById('live-grid').style.display = '';
+            buildDisplay();
+            startPolling();
+        }
+
+        function parseSlot(s) {
+            s = s.trim();
+            if (s === '') return -1;
+            var n = (s.toLowerCase().startsWith('0x')) ? parseInt(s, 16) : parseInt(s, 10);
+            return (isNaN(n) || n < 0 || n > 255) ? null : n;
+        }
+
+        function saveConfig() {
+            var items = [];
+            var valid = true;
+            for (var i = 0; i < 10; i++) {
+                var input = document.getElementById('slot-' + i);
+                var v = parseSlot(input.value);
+                if (v === null) { input.classList.add('error'); valid = false; }
+                else { input.classList.remove('error'); items.push(v); }
+            }
+            if (!valid) return;
+
+            fetch('/api/ecu-live-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: items })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) { currentItems = items; cancelEdit(); }
+                else { alert('Save failed'); }
+            });
+        }
+    </script>
+</body>
+</html>

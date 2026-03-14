@@ -7,15 +7,19 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#ifdef __cplusplus
-extern "C" {
 #endif
 
 /**
  * Maximum number of concurrent upload sessions.
- * Each session consumes ~200 bytes of RAM for metadata.
+ * Each session consumes ~200 bytes of RAM for metadata + 16KB for ping-pong buffers.
  */
 #define MAX_UPLOAD_SESSIONS 2
+
+/**
+ * Ping-pong buffer size (8KB each).
+ * Two buffers allow receiving network data while writing previous buffer to SD.
+ */
+#define UPLOAD_BUFFER_SIZE 8192
 
 /**
  * Upload session state.
@@ -31,6 +35,14 @@ typedef struct {
     bool file_open;               // True if file is currently open (managed by file_io_task)
     bool in_use;                  // True if this slot is allocated
     void* connection;             // lwIP connection handle
+    uint32_t last_activity_ms;    // Timestamp of last activity (ms since boot)
+
+    // Ping-pong buffers for non-blocking SD writes (statically allocated)
+    uint8_t write_buffer_a[UPLOAD_BUFFER_SIZE];  // Buffer A (8KB, static)
+    uint8_t write_buffer_b[UPLOAD_BUFFER_SIZE];  // Buffer B (8KB, static)
+    uint8_t active_buffer;        // 0=A, 1=B (which buffer is receiving data)
+    uint32_t buffer_used[2];      // Bytes used in each buffer [A, B]
+    bool write_in_progress;       // True if async SD write is pending
 } upload_session_t;
 
 /**
@@ -66,8 +78,3 @@ void upload_post_finished(void *connection, char *response_uri, u16_t response_u
  */
 void generate_api_upload_session_json(char* buffer, size_t size, const char* session_id);
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif // UPLOAD_HANDLER_H

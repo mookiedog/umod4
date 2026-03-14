@@ -3,7 +3,6 @@
 // Target: 20-25 MB/s throughput vs ~3 MB/s SPI
 
 #include "SdCardSDIO.h"
-#include "SdCard.h"  // For extract_bits_BE and CSD constants
 #include "sdio_rp2350.h"  // From SDIO_RP2350 library
 #include <stdio.h>
 #include <string.h>
@@ -12,6 +11,10 @@
 #include "hardware/gpio.h"
 #include "FreeRTOS.h"
 #include "task.h"
+
+#include "NeoPixelConnect.h"
+
+extern NeoPixelConnect* rgb_led;
 
 // Debug counters for tracking card busy waits
 // These track how often operations had to wait for card to be ready
@@ -50,8 +53,51 @@ static const uint8_t CMD55 = 55;  // APP_CMD
 static const uint8_t ACMD6 = 6;   // SET_BUS_WIDTH
 static const uint8_t ACMD41 = 41; // SD_SEND_OP_COND
 
-// Declare extract_bits_BE from SdCard.cpp
-extern uint32_t extract_bits_BE(uint8_t* data, int32_t dataLen_bits, int32_t be_start_bit, int32_t num_bits);
+// Utility function to extract bit fields from big-endian byte arrays
+// Used for parsing CSD register fields
+// Example: If data[] contains 32 bits (4 bytes), then B31 would refer to
+// the MS bit of the first byte and B0 would refer to the LS bit of the fourth byte.
+static uint32_t extract_bits_BE(uint8_t* data, int32_t dataLen_bits, int32_t be_start_bit, int32_t num_bits)
+{
+    if ((be_start_bit >= dataLen_bits) || (be_start_bit - num_bits) < 0) {
+        panic("Extraction field extends outside source array");
+    }
+
+    uint32_t bits_remaining = num_bits;
+    uint8_t* p = &data[(((dataLen_bits-1)/8) - (be_start_bit/8))];
+
+    uint32_t value = 0;
+
+    if (bits_remaining != 8) {
+        // Extract low-order bits from the starting byte, from msb down to the lsb, but not past bit 0.
+        // We will strip off the bits that extend past msb in the last step.
+        int32_t msb = be_start_bit & 7;
+        int32_t lsb = msb - num_bits + 1;
+        if (lsb<0) {
+            lsb = 0;
+        }
+
+        value = *p++;
+        value >>= lsb;
+        bits_remaining -= (msb-lsb+1);
+    }
+
+    while (bits_remaining >= 8) {
+        value = (value<<8) | *p++;
+        bits_remaining -= 8;
+    }
+
+    // Extract high-order bits from the end byte, if any
+    if (bits_remaining > 0) {
+        value = (value << bits_remaining);
+        uint32_t final_bits = *p >> (8-bits_remaining);
+        final_bits &= ((1<<bits_remaining)-1);
+        value |= final_bits;
+    }
+
+    value &= (1<<num_bits)-1;
+    return value;
+}
 
 // --------------------------------------------------------------------------------------------
 SdCardSDIO::SdCardSDIO(int32_t _cardPresentPad)
@@ -393,11 +439,20 @@ SdErr_t SdCardSDIO::init()
 
     // Store and report the actual clock speed achieved
     clockFrequency_Hz = (target_mode == SDIO_HIGHSPEED) ? 50000000 :
-    (target_mode == SDIO_STANDARD) ? 25000000 : 0;
+                         (target_mode == SDIO_STANDARD) ? 25000000 : 0;
 
     const char* mode_name = (target_mode == SDIO_HIGHSPEED) ? "50 MHz high-speed" :
-    (target_mode == SDIO_STANDARD) ? "25 MHz standard" : "unknown";
+                             (target_mode == SDIO_STANDARD) ? "25 MHz standard" : "unknown";
     printf("SDIO clock: %s\n", mode_name);
+
+    return SD_ERR_NOERR;
+}
+
+// --------------------------------------------------------------------------------------------
+SdErr_t SdCardSDIO::shutdown()
+{
+    // TODO: Power down SD card and shut down SDIO PIO state machine
+    printf("%s: shutdown in progress\n", __FUNCTION__);
 
     return SD_ERR_NOERR;
 }
@@ -407,7 +462,12 @@ SdErr_t SdCardSDIO::testCard()
 {
     uint8_t buffer[512] __attribute__((aligned(4)));
 
-    printf("Testing SDIO card read access...\n");
+    printf("Testing SDIO card read access on core %d...\n", get_core_num());
+
+    // Fill the buffer with known contents so we can verify that it was overwritten or not
+    for (int32_t i=0; i<sizeof(buffer); i++) {
+        buffer[i] = ~i;
+    }
 
     // Test first sector
     if (readSectors(0, 1, buffer) != SD_ERR_NOERR) {
@@ -488,263 +548,412 @@ SdErr_t SdCardSDIO::speedTest()
         if (i < SPEEDTEST_NUM_BLOCKS) {
             printf("Block %2d: cmd=%3lu dma_start=%3lu poll=%3lu total=%4lu us\n",
                 i, cmd_time, dma_start_time, poll_time, cmd_time + dma_start_time + poll_time);
-            }
-
-            total_cmd_time += cmd_time;
-            total_dma_start_time += dma_start_time;
-            total_poll_time += poll_time;
-            total_time += (cmd_time + dma_start_time + poll_time);
         }
 
-        // Calculate statistics
-        uint32_t avg_cmd = total_cmd_time / SPEEDTEST_NUM_BLOCKS;
-        uint32_t avg_dma_start = total_dma_start_time / SPEEDTEST_NUM_BLOCKS;
-        uint32_t avg_poll = total_poll_time / SPEEDTEST_NUM_BLOCKS;
-        uint32_t avg_total = total_time / SPEEDTEST_NUM_BLOCKS;
-        uint32_t total_bytes = 512 * SPEEDTEST_NUM_BLOCKS;
-        float throughput_kbps = (total_bytes / 1024.0) / (total_time / 1000000.0);
-
-        printf("\n=== Best-Case Performance Summary (%d blocks = %d KB) ===\n", SPEEDTEST_NUM_BLOCKS, total_bytes / 1024);
-        printf("Average per block:\n");
-        printf("  Command:   %lu us\n", avg_cmd);
-        printf("  DMA start: %lu us\n", avg_dma_start);
-        printf("  Poll:      %lu us\n", avg_poll);
-        printf("  Total:     %lu us\n", avg_total);
-        printf("Total time: %lu us\n", total_time);
-        printf("Throughput: %.2f KB/s (%.2f MB/s)\n\n", throughput_kbps, throughput_kbps / 1024.0);
-
-        printf("SDIO speed test passed.\n");
-        return SD_ERR_NOERR;
+        total_cmd_time += cmd_time;
+        total_dma_start_time += dma_start_time;
+        total_poll_time += poll_time;
+        total_time += (cmd_time + dma_start_time + poll_time);
     }
 
-    // --------------------------------------------------------------------------------------------
-    // Wait for SD card to be ready before starting a new operation.
-    // This prevents issues when the card is still internally busy from a previous write.
-    // Returns the wait time in microseconds (0 if card was already ready).
-    uint32_t SdCardSDIO::waitForCardReady(uint32_t timeout_us)
-    {
-        uint32_t start = time_us_32();
-        bool first_check = true;
+    // Calculate statistics
+    uint32_t avg_cmd = total_cmd_time / SPEEDTEST_NUM_BLOCKS;
+    uint32_t avg_dma_start = total_dma_start_time / SPEEDTEST_NUM_BLOCKS;
+    uint32_t avg_poll = total_poll_time / SPEEDTEST_NUM_BLOCKS;
+    uint32_t avg_total = total_time / SPEEDTEST_NUM_BLOCKS;
+    uint32_t total_bytes = 512 * SPEEDTEST_NUM_BLOCKS;
+    float throughput_kbps = (total_bytes / 1024.0) / (total_time / 1000000.0);
 
-        while ((time_us_32() - start) < timeout_us) {
-            // Check if DAT0 is high (card not busy)
-            if (gpio_get(SD_DAT0) == 0) {
-                // Card is busy (DAT0 low), wait and retry
-                first_check = false;
-                busy_wait_us_32(50);
-                continue;
-            }
+    printf("\n=== Best-Case Performance Summary (%d blocks = %d KB) ===\n", SPEEDTEST_NUM_BLOCKS, total_bytes / 1024);
+    printf("Average per block:\n");
+    printf("  Command:   %lu us\n", avg_cmd);
+    printf("  DMA start: %lu us\n", avg_dma_start);
+    printf("  Poll:      %lu us\n", avg_poll);
+    printf("  Total:     %lu us\n", avg_total);
+    printf("Total time: %lu us\n", total_time);
+    printf("Throughput: %.2f KB/s (%.2f MB/s)\n\n", throughput_kbps, throughput_kbps / 1024.0);
 
-            // DAT0 is high, verify with CMD13 that card is ready
-            uint32_t card_status;
-            if (rp2350_sdio_command_u32(CMD13, rca, &card_status, 0) == SDIO_OK) {
-                // Extract CURRENT_STATE field (bits [12:9])
-                // States: 0=idle, 1=ready, 2=ident, 3=stby, 4=tran, 5=data, 6=rcv, 7=prg
-                int state = (card_status >> 9) & 0x0F;
+    printf("SDIO speed test passed.\n");
+    return SD_ERR_NOERR;
+}
 
-                // State 4 (tran) is ready for new commands
-                // States 5 (data), 6 (rcv), 7 (prg) mean card is still busy
-                if (state == 4) {
-                    uint32_t elapsed = time_us_32() - start;
-                    if (!first_check && elapsed > 0) {
-                        // We had to wait - update debug counters
-                        g_sdio_busy_wait_count++;
-                        g_sdio_busy_wait_total_us += elapsed;
-                        if (elapsed > g_sdio_busy_wait_max_us) {
-                            g_sdio_busy_wait_max_us = elapsed;
-                        }
-                    }
-                    return elapsed;
-                }
-            }
+// --------------------------------------------------------------------------------------------
+// Wait for SD card to be ready before starting a new operation.
+// This prevents issues when the card is still internally busy from a previous write.
+// Returns the wait time in microseconds (0 if card was already ready).
+uint32_t SdCardSDIO::waitForCardReady(uint32_t timeout_us)
+{
+    uint32_t start = time_us_32();
+    bool first_check = true;
 
+    while ((time_us_32() - start) < timeout_us) {
+        // Check if DAT0 is high (card not busy)
+        if (gpio_get(SD_DAT0) == 0) {
+            // Card is busy (DAT0 low), wait and retry
             first_check = false;
             busy_wait_us_32(50);
+            continue;
         }
 
-        // Timeout - card did not become ready
-        uint32_t elapsed = time_us_32() - start;
-        printf("waitForCardReady: timeout after %lu us\n", elapsed);
-        return elapsed;
-    }
+        // DAT0 is high, verify with CMD13 that card is ready
+        uint32_t card_status;
+        if (rp2350_sdio_command_u32(CMD13, rca, &card_status, 0) == SDIO_OK) {
+            // Extract CURRENT_STATE field (bits [12:9])
+            // States: 0=idle, 1=ready, 2=ident, 3=stby, 4=tran, 5=data, 6=rcv, 7=prg
+            int state = (card_status >> 9) & 0x0F;
 
-    // --------------------------------------------------------------------------------------------
-    // SDIO read implementation following library reference code pattern
-    SdErr_t SdCardSDIO::readSectors(uint32_t sector_num, uint32_t num_sectors, void *buffer)
-    {
-        if (!operational()) {
-            return SD_ERR_NOT_OPERATIONAL;
-        }
-
-        // Check alignment: buffer must be 4-byte aligned (library requirement)
-        if (((uintptr_t)buffer & 3) != 0) {
-            return SD_ERR_BAD_ARG;
-        }
-
-        // Wait for card to be ready (may still be busy from previous write)
-        waitForCardReady(500000);  // 500ms timeout
-
-        uint32_t reply;
-        sdio_status_t status;
-
-        // Use block addressing for SDHC, byte addressing for SDSC
-        uint32_t addr = isSDHC ? sector_num : (sector_num * 512);
-
-        if (num_sectors == 1) {
-            // Single-block read: CMD16 (SET_BLOCKLEN) + CMD17 (READ_SINGLE_BLOCK)
-            // Pattern from library's read_single_sector() at lines 142-164
-            if (rp2350_sdio_command_u32(CMD16, 512, &reply, 0) != SDIO_OK ||
-            rp2350_sdio_command_u32(CMD17, addr, &reply, SDIO_FLAG_STOP_CLK) != SDIO_OK ||
-            rp2350_sdio_rx_start((uint8_t*)buffer, 1, 512) != SDIO_OK) {
-                rp2350_sdio_stop();
-                return SD_ERR_IO;
-            }
-
-            do {
-                status = rp2350_sdio_rx_poll(nullptr);
-            } while (status == SDIO_BUSY);
-
-            rp2350_sdio_stop();
-
-            if (status != SDIO_OK) {
-                return SD_ERR_DATA_ERROR;
-            }
-        } else {
-            // Multi-block read: CMD18 (READ_MULTIPLE_BLOCK)
-            // Pattern from library's readStart() + readData() at lines 711, 1159
-            if (rp2350_sdio_command_u32(CMD18, addr, &reply, SDIO_FLAG_STOP_CLK) != SDIO_OK) {
-                rp2350_sdio_stop();
-                return SD_ERR_IO;
-            }
-
-            // Start DMA reception for all blocks
-            if (rp2350_sdio_rx_start((uint8_t*)buffer, num_sectors, 512) != SDIO_OK) {
-                rp2350_sdio_stop();
-                return SD_ERR_IO;
-            }
-
-            // Poll until complete
-            do {
-                status = rp2350_sdio_rx_poll(nullptr);
-            } while (status == SDIO_BUSY);
-
-            // Send CMD12 (STOP_TRANSMISSION) for multi-block reads
-            rp2350_sdio_command_u32(CMD12, 0, &reply, SDIO_FLAG_NO_LOGMSG);
-            rp2350_sdio_stop();
-
-            if (status != SDIO_OK) {
-                return SD_ERR_DATA_ERROR;
-            }
-        }
-
-        return SD_ERR_NOERR;
-    }
-
-    // --------------------------------------------------------------------------------------------
-    // SDIO write implementation following library reference code pattern
-    SdErr_t SdCardSDIO::writeSectors(uint32_t sector_num, uint32_t num_sectors, const void *buffer)
-    {
-        uint32_t t0 = time_us_32();
-
-        if (!operational()) {
-            return SD_ERR_NOT_OPERATIONAL;
-        }
-
-        // Check alignment: buffer must be 4-byte aligned (library requirement)
-        if (((uintptr_t)buffer & 3) != 0) {
-            return SD_ERR_BAD_ARG;
-        }
-
-        // Wait for card to be ready (may still be busy from previous write)
-        waitForCardReady(500000);  // 500ms timeout
-
-        uint32_t reply;
-        sdio_status_t status;
-
-        // Use block addressing for SDHC, byte addressing for SDSC
-        uint32_t addr = isSDHC ? sector_num : (sector_num * 512);
-
-        if (num_sectors == 1) {
-            // Single-block write: CMD16 (SET_BLOCKLEN) + CMD24 (WRITE_BLOCK)
-            // Pattern from library's write_single_sector() at lines 190-201
-            if (rp2350_sdio_command_u32(CMD16, 512, &reply, 0) != SDIO_OK ||
-            rp2350_sdio_command_u32(CMD24, addr, &reply, SDIO_FLAG_STOP_CLK) != SDIO_OK ||
-            rp2350_sdio_tx_start((const uint8_t*)buffer, 1, 512) != SDIO_OK) {
-                rp2350_sdio_stop();
-                return SD_ERR_IO;
-            }
-
-            do {
-                status = rp2350_sdio_tx_poll(nullptr);
-            } while (status == SDIO_BUSY);
-
-            rp2350_sdio_stop();
-
-            if (status != SDIO_OK) {
-                return SD_ERR_WRITE_FAILURE;
-            }
-        } else {
-            // Multi-block write: CMD25 (WRITE_MULTIPLE_BLOCK)
-            // Pattern from library's writeStart() + writeData() at lines 861, 1026
-            if (rp2350_sdio_command_u32(CMD25, addr, &reply, SDIO_FLAG_STOP_CLK) != SDIO_OK) {
-                rp2350_sdio_stop();
-                return SD_ERR_IO;
-            }
-
-            // Start DMA transmission for all blocks
-            if (rp2350_sdio_tx_start((const uint8_t*)buffer, num_sectors, 512) != SDIO_OK) {
-                rp2350_sdio_stop();
-                return SD_ERR_IO;
-            }
-
-            // Poll until complete
-            do {
-                status = rp2350_sdio_tx_poll(nullptr);
-            } while (status == SDIO_BUSY);
-
-            if (status != SDIO_OK) {
-                rp2350_sdio_stop();
-                return SD_ERR_WRITE_FAILURE;
-            }
-
-            // Send CMD12 (STOP_TRANSMISSION) to terminate multi-block write
-            // Pattern from library's stopTransmission() at line 799
-            rp2350_sdio_command_u32(CMD12, 0, &reply, SDIO_FLAG_NO_LOGMSG);
-            rp2350_sdio_stop();
-
-            // Wait for card to exit data state and be ready for next operation
-            // Pattern from library's stopTransmission() blocking wait at lines 812-822
-            uint32_t start = time_us_32();
-            while ((time_us_32() - start) < 1000000) {  // 1 second timeout
-                // Check if DAT0 is high (card not busy)
-                if (gpio_get(SD_DAT0) == 0) {
-                    busy_wait_us_32(100);  // Wait a bit if still busy
-                    continue;
-                }
-
-                // Get card status via CMD13
-                uint32_t card_status;
-                if (rp2350_sdio_command_u32(CMD13, rca, &card_status, 0) == SDIO_OK) {
-                    // Extract CURRENT_STATE field (bits [12:9])
-                    int state = (card_status >> 9) & 0x0F;
-                    if (state != 5) {
-                        // Card is out of data state (state 5), all done: ready for next operation
-                        goto done;
+            // State 4 (tran) is ready for new commands
+            // States 5 (data), 6 (rcv), 7 (prg) mean card is still busy
+            if (state == 4) {
+                uint32_t elapsed = time_us_32() - start;
+                if (!first_check && elapsed > 0) {
+                    // We had to wait - update debug counters
+                    g_sdio_busy_wait_count++;
+                    g_sdio_busy_wait_total_us += elapsed;
+                    if (elapsed > g_sdio_busy_wait_max_us) {
+                        g_sdio_busy_wait_max_us = elapsed;
                     }
                 }
-                busy_wait_us_32(100);
+                return elapsed;
             }
+        }
+        else {
+            // Temp while we debug cmd13 timeouts
+            static volatile int cmd13_timeout_count = 0;
+            cmd13_timeout_count++;   // ← set breakpoint here
+        }
 
-            printf("writeSectors: timeout waiting for card to exit data state after multi-block write\n");
+        first_check = false;
+        busy_wait_us_32(50);
+    }
+
+    // Timeout - card did not become ready
+    uint32_t elapsed = time_us_32() - start;
+    printf("waitForCardReady: timeout after %lu us\n", elapsed);
+    return elapsed;
+}
+
+// --------------------------------------------------------------------------------------------
+// SDIO read implementation following library reference code pattern
+SdErr_t SdCardSDIO::readSectors(uint32_t sector_num, uint32_t num_sectors, void *buffer)
+{
+    if (!operational()) {
+        return SD_ERR_NOT_OPERATIONAL;
+    }
+
+    // Check alignment: buffer must be 4-byte aligned (library requirement)
+    if (((uintptr_t)buffer & 3) != 0) {
+        return SD_ERR_BAD_ARG;
+    }
+
+    // Wait for card to be ready (may still be busy from previous write)
+    waitForCardReady(500000);  // 500ms timeout
+
+    uint32_t reply;
+    sdio_status_t status;
+
+    // Use block addressing for SDHC, byte addressing for SDSC
+    uint32_t addr = isSDHC ? sector_num : (sector_num * 512);
+
+    if (num_sectors == 1) {
+        // Single-block read: CMD16 (SET_BLOCKLEN) + CMD17 (READ_SINGLE_BLOCK)
+        // Pattern from library's read_single_sector() at lines 142-164
+        if (rp2350_sdio_command_u32(CMD16, 512, &reply, 0) != SDIO_OK ||
+        rp2350_sdio_command_u32(CMD17, addr, &reply, SDIO_FLAG_STOP_CLK) != SDIO_OK ||
+        rp2350_sdio_rx_start((uint8_t*)buffer, 1, 512) != SDIO_OK) {
+            rp2350_sdio_stop();
+            return SD_ERR_IO;
+        }
+
+        do {
+            status = rp2350_sdio_rx_poll(nullptr);
+        } while (status == SDIO_BUSY);
+
+        rp2350_sdio_stop();
+
+        if (status != SDIO_OK) {
+            return SD_ERR_DATA_ERROR;
+        }
+    } else {
+        // Multi-block read: CMD18 (READ_MULTIPLE_BLOCK)
+        // Pattern from library's readStart() + readData() at lines 711, 1159
+        if (rp2350_sdio_command_u32(CMD18, addr, &reply, SDIO_FLAG_STOP_CLK) != SDIO_OK) {
+            rp2350_sdio_stop();
+            return SD_ERR_IO;
+        }
+
+        // Start DMA reception for all blocks
+        if (rp2350_sdio_rx_start((uint8_t*)buffer, num_sectors, 512) != SDIO_OK) {
+            rp2350_sdio_stop();
+            return SD_ERR_IO;
+        }
+
+        // Poll until complete
+        do {
+            status = rp2350_sdio_rx_poll(nullptr);
+        } while (status == SDIO_BUSY);
+
+        // Send CMD12 (STOP_TRANSMISSION) for multi-block reads
+        rp2350_sdio_command_u32(CMD12, 0, &reply, SDIO_FLAG_NO_LOGMSG);
+        rp2350_sdio_stop();
+
+        if (status != SDIO_OK) {
+            return SD_ERR_DATA_ERROR;
+        }
+    }
+
+    return SD_ERR_NOERR;
+}
+
+// --------------------------------------------------------------------------------------------
+// SDIO write implementation following library reference code pattern
+SdErr_t SdCardSDIO::writeSectors(uint32_t sector_num, uint32_t num_sectors, const void *buffer)
+{
+    uint32_t t0 = time_us_32();
+
+    if (!operational()) {
+        return SD_ERR_NOT_OPERATIONAL;
+    }
+
+    // Check alignment: buffer must be 4-byte aligned (library requirement)
+    if (((uintptr_t)buffer & 3) != 0) {
+        return SD_ERR_BAD_ARG;
+    }
+
+    // Wait for card to be ready (may still be busy from previous write)
+    waitForCardReady(500000);  // 500ms timeout
+
+    uint32_t reply;
+    sdio_status_t status;
+
+    // Use block addressing for SDHC, byte addressing for SDSC
+    uint32_t addr = isSDHC ? sector_num : (sector_num * 512);
+
+    if (num_sectors == 1) {
+        // Single-block write: CMD16 (SET_BLOCKLEN) + CMD24 (WRITE_BLOCK)
+        // Pattern from library's write_single_sector() at lines 190-201
+        if (rp2350_sdio_command_u32(CMD16, 512, &reply, 0) != SDIO_OK ||
+        rp2350_sdio_command_u32(CMD24, addr, &reply, SDIO_FLAG_STOP_CLK) != SDIO_OK ||
+        rp2350_sdio_tx_start((const uint8_t*)buffer, 1, 512) != SDIO_OK) {
+            rp2350_sdio_stop();
+            return SD_ERR_IO;
+        }
+
+        do {
+            status = rp2350_sdio_tx_poll(nullptr);
+        } while (status == SDIO_BUSY);
+
+        rp2350_sdio_stop();
+
+        if (status != SDIO_OK) {
+            return SD_ERR_WRITE_FAILURE;
+        }
+    } else {
+        // Multi-block write: CMD25 (WRITE_MULTIPLE_BLOCK)
+        // Pattern from library's writeStart() + writeData() at lines 861, 1026
+        if (rp2350_sdio_command_u32(CMD25, addr, &reply, SDIO_FLAG_STOP_CLK) != SDIO_OK) {
+            rp2350_sdio_stop();
+            return SD_ERR_IO;
+        }
+
+        // Start DMA transmission for all blocks
+        if (rp2350_sdio_tx_start((const uint8_t*)buffer, num_sectors, 512) != SDIO_OK) {
+            rp2350_sdio_stop();
+            return SD_ERR_IO;
+        }
+
+        // Poll until complete
+        do {
+            status = rp2350_sdio_tx_poll(nullptr);
+        } while (status == SDIO_BUSY);
+
+        if (status != SDIO_OK) {
+            rp2350_sdio_stop();
             return SD_ERR_WRITE_FAILURE;
         }
 
-        done:
-        uint32_t elapsed = time_us_32() - t0;
-        if (false) {
-            printf("%s: wrote %u sectors in %u us (%.2f KB/s)\n", __FUNCTION__, num_sectors, elapsed,
-                (num_sectors * 512.0f) / (elapsed / 1000000.0f) / 1024.0f);
+        // Send CMD12 (STOP_TRANSMISSION) to terminate multi-block write
+        // Pattern from library's stopTransmission() at line 799
+        rp2350_sdio_command_u32(CMD12, 0, &reply, SDIO_FLAG_NO_LOGMSG);
+        rp2350_sdio_stop();
+
+        // Wait for card to exit data state and be ready for next operation
+        // Pattern from library's stopTransmission() blocking wait at lines 812-822
+        uint32_t start = time_us_32();
+        while ((time_us_32() - start) < 1000000) {  // 1 second timeout
+            // Check if DAT0 is high (card not busy)
+            if (gpio_get(SD_DAT0) == 0) {
+                busy_wait_us_32(100);  // Wait a bit if still busy
+                continue;
             }
 
-            return SD_ERR_NOERR;
+            // Get card status via CMD13
+            uint32_t card_status;
+            if (rp2350_sdio_command_u32(CMD13, rca, &card_status, 0) == SDIO_OK) {
+                // Extract CURRENT_STATE field (bits [12:9])
+                int state = (card_status >> 9) & 0x0F;
+                if (state != 5) {
+                    // Card is out of data state (state 5), all done: ready for next operation
+                    goto done;
+                }
+            }
+            busy_wait_us_32(100);
         }
+
+        printf("writeSectors: timeout waiting for card to exit data state after multi-block write\n");
+        return SD_ERR_WRITE_FAILURE;
+    }
+
+    done:
+    uint32_t elapsed = time_us_32() - t0;
+    if (false) {
+        printf("%s: wrote %u sectors in %u us (%.2f KB/s)\n", __FUNCTION__, num_sectors, elapsed,
+            (num_sectors * 512.0f) / (elapsed / 1000000.0f) / 1024.0f);
+    }
+
+    return SD_ERR_NOERR;
+}
+
+// ----------------------------------------------------------------------------------
+// Warning: This routine is meant to be executed as a FreeRTOS task: it never returns!
+void SdCardSDIO::hotPlugManager(void* arg)
+{
+    hotPlugMgrCfg_t* hotPlug_cfg;
+    SdCardBase* sdCard;
+
+    int32_t verifyPresenceCount;
+    SdErr_t sdErr;
+    int32_t initRetries;
+
+    hotPlug_cfg = static_cast<hotPlugMgrCfg_t*>(arg);
+    if (!hotPlug_cfg) {
+        panic("hotPlugManager: null hotPlug_cfg ptr");
+    }
+
+    sdCard = hotPlug_cfg->sdCard;
+    if (!sdCard) {
+        panic("hotPlugManager: null SdCard ptr");
+    }
+
+    sdCard->state = NO_CARD;
+
+    while (1) {
+        switch (sdCard->state) {
+            case NO_CARD:
+            // Turn the card power off
+            // Turn the LED RED
+            rgb_led->neoPixelSetValue(0, 16, 0, 0, true);
+
+            // The 'card present' signal indicates that a card is physically present in the socket.
+            if (sdCard->cardPresent()) {
+                verifyPresenceCount = 20;
+                sdCard->state = MAYBE_CARD;
+            }
+            else {
+                // If no card is present, we poll 10 times a second in case one gets inserted
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            break;
+
+            case MAYBE_CARD:
+            if (!sdCard->cardPresent()) {
+                sdCard->state = NO_CARD;
+            }
+            else {
+                // Delay between presence checks
+                vTaskDelay(pdMS_TO_TICKS(10));
+                verifyPresenceCount--;
+                if (verifyPresenceCount<0) {
+                    // The socket has reported a card being 'present' for enough times that we trust
+                    // it and are ready to boot it up.
+                    sdCard->state = POWER_UP;
+                }
+            }
+            break;
+
+            case POWER_UP:
+            // V9 Spec 6.1.4.2
+            // When power-cycling a card, the host needs to keep card supply voltage below 0.5V for more than 1 mSec.
+            // Turn LED WHITE
+            rgb_led->neoPixelSetValue(0, 10, 10, 10, true);
+            vTaskDelay(pdMS_TO_TICKS(200));
+
+            // From a hardware perspective, the card supply voltage needs to ramp up
+            // no faster than 100 uSec and no slower than 35 mSec.
+            // Once the supply voltage is stable, we need to wait at least 1 mSec
+            // before talking to the card.
+            //poweron();
+            vTaskDelay(pdMS_TO_TICKS(50));
+            sdCard->state = INIT_CARD;
+            break;
+
+            case INIT_CARD:
+            initRetries = 10;
+            do {
+                // BLUE indicates we are init'ing the card
+                rgb_led->neoPixelSetValue(0, 0, 0, 16, true);
+                vTaskDelay(pdMS_TO_TICKS(200));
+                sdErr = sdCard->init();
+
+                if (sdErr == SD_ERR_NOERR) {
+                    // No error after init turns LED GREEN
+                    rgb_led->neoPixelSetValue(0, 0, 16, 0, true);
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                    break;
+                }
+                else {
+                    // error: set the LED RED
+                    rgb_led->neoPixelSetValue(0, 10, 0, 0, true);
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                }
+            } while (--initRetries >= 0);
+
+            if (sdErr != SD_ERR_NOERR) {
+                // Multiple attempts at card initialization failed.
+                // Power cycle the card (if possible), and keep retrying the init
+                sdCard->state = NO_CARD;
+            }
+            else {
+                sdCard->state = VERIFYING;
+            }
+            break;
+
+            case VERIFYING:
+            // The card intialized properly.
+            // Run a few simple tests to verify that it seems operational.
+            sdErr = sdCard->testCard();
+            if (sdErr == SD_ERR_NOERR) {
+                // The tests passed: invoke the callback to tell the system that a card is now online and usable
+                if (hotPlug_cfg->comingUp(sdCard)) {
+                    // PURPLE is GOOD!
+                    rgb_led->neoPixelSetValue(0, 16, 0, 16, true);
+                    sdCard->state = OPERATIONAL;
+                }
+                else {
+                    // Give the card a long 5-second rest before retrying.
+                    // This should never happen...
+                    vTaskDelay(pdMS_TO_TICKS(5000));
+                    sdCard->state = NO_CARD;
+                }
+            }
+            else {
+                sdCard->state = NO_CARD;
+            }
+            break;
+
+            case OPERATIONAL:
+            // Check periodically to make sure the card is still present
+            if (!sdCard->cardPresent()) {
+                sdCard->state = NO_CARD;
+                hotPlug_cfg->goingDown(sdCard);
+            }
+            else {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+            break;
+
+            default:
+            panic("vFsTask: Illegal state");
+        }
+    }
+}

@@ -1,0 +1,33 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // Erase only slot 0 (the image selector, 64KB at 0x10200000).
+            // Sufficient to force EP into limp mode without touching slot data.
+            // Use before launching EP when you want to test the empty-store boot path.
+            "label": "EP: Erase Image Store Selector",
+            "type": "shell",
+            "command": "openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg -c 'adapter speed 5000; init; reset halt; flash erase_address pad 0x10200000 0x10000; reset run; exit'",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            // Erase the entire image store partition (128 slots × 64KB = 8MB).
+            // Use for a full factory reset of the image store.
+            // Warning: takes ~30 seconds for 8MB of flash erase.
+            "label": "EP: Erase Full Image Store (8MB)",
+            "type": "shell",
+            "command": "openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg -c 'adapter speed 5000; init; reset halt; flash erase_address pad 0x10200000 0x800000; reset run; exit'",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

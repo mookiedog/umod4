@@ -2,25 +2,27 @@
 #include "string.h"
 #include "ctype.h"
 
-#include "SdCardBase.h"
+#include "lfsMgr.h"
 #include "umod4_EP.h"
 
 #include "FlashEp.h"
+#include "FlashConfig.h"
+#include "ota_flash_task.h"
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
-#if 1
-    #include "Swd.h"
-#else
-    #include "swd_load.hpp"
-#endif
+#include "Swd.h"
 #include "swdreflash_binary.h"
 
+#include "Logger.h"
 
 // The tiny_regex_c interface library:
 #include "re.h"
 
 // Access to filesystem mounted flag from main.cpp
-extern bool lfs_mounted;
+
+extern void show_heap_stats(bool);
+extern flash_config_t g_flash_config;
+
 
 // ----------------------------------------------------------------------------------
 extern "C" void start_shell_task(void *pvParameters);
@@ -45,7 +47,7 @@ Shell::Shell(lfs_t* _lfs)
     // For the moment, our current working directory is hardcoded to be the top level directory '/'
     cwd = "/";
 
-    xTaskCreate(start_shell_task, "Shell", 4096 /* words */, this, TASK_NORMAL_PRIORITY, &shell_taskHandle);
+    xTaskCreate(start_shell_task, "Shell", 1024 /* words */, this, TASK_NORMAL_PRIORITY, &shell_taskHandle);
 }
 
 
@@ -684,28 +686,6 @@ void Shell::cmd_pwd(char* args)
     printf("%s\n", cwd);
 }
 
-// Performance stats structure (defined in main.cpp)
-typedef struct {
-    uint32_t read_count;
-    uint64_t read_bytes;      // Use 64-bit to prevent overflow
-    uint64_t read_time_us;    // Use 64-bit to prevent overflow
-    uint32_t read_min_us;
-    uint32_t read_max_us;
-    uint32_t write_count;
-    uint64_t write_bytes;     // Use 64-bit to prevent overflow
-    uint64_t write_time_us;   // Use 64-bit to prevent overflow
-    uint32_t write_min_us;
-    uint32_t write_max_us;
-} sd_perf_stats_t;
-
-extern sd_perf_stats_t sd_perf_stats;
-
-// SD card object (defined in main.cpp)
-extern SdCardBase* sdCard;
-
-// LittleFS configuration (defined in main.cpp)
-extern struct lfs_config lfs_cfg;
-
 // ----------------------------------------------------------------------------------
 void Shell::cmd_flashEp(char* args)
 {
@@ -726,18 +706,15 @@ void Shell::cmd_flashEp(char* args)
 void Shell::cmd_dumpEp(char* args)
 {
     uint32_t startAddr = 0;
-    uint32_t length = 0;
+    uint32_t totalLength = 0;
 
     // Parse start address
     char* addrArg = decompose(&args, " ");
     if (!addrArg || *addrArg == 0) {
         printf("Usage: dumpep <start_addr> <length>\n");
-        printf("  start_addr: hex address (e.g., 0x10000000 or 10000000)\n");
-        printf("  length: bytes to dump (decimal or hex)\n");
         return;
     }
 
-    // Parse address (accept with or without 0x prefix)
     if (sscanf(addrArg, "%i", &startAddr) != 1) {
         printf("Error: Invalid start address '%s'\n", addrArg);
         return;
@@ -750,86 +727,129 @@ void Shell::cmd_dumpEp(char* args)
         return;
     }
 
-    if (sscanf(lenArg, "%i", &length) != 1) {
+    if (sscanf(lenArg, "%i", &totalLength) != 1) {
         printf("Error: Invalid length '%s'\n", lenArg);
         return;
     }
 
-    if (length == 0) {
-        printf("Error: Length must be > 0\n");
-        return;
-    }
+    if (totalLength == 0) return;
 
-    // Limit to reasonable size to avoid hogging memory
-    const uint32_t maxLength = 4096;
-    if (length > maxLength) {
-        printf("Warning: Limiting dump to %u bytes\n", maxLength);
-        length = maxLength;
-    }
-
-    // Check if SWD is available
     if (!swd) {
         printf("Error: SWD not initialized\n");
         return;
     }
 
-    printf("Dumping EP memory: 0x%08X, %u bytes\n", startAddr, length);
-
-    // Connect to EP (don't halt - just read memory)
+    // Connect to EP
     if (!swd->connect_target(0, false)) {
         printf("Error: Failed to connect to EP via SWD\n");
         return;
     }
 
-    // Round up length to multiple of 4 for word-aligned reads
-    uint32_t alignedLen = (length + 3) & ~3;
-    uint32_t* buffer = (uint32_t*)malloc(alignedLen);
-    if (!buffer) {
-        printf("Error: Failed to allocate %u bytes\n", alignedLen);
-        return;
-    }
+    printf("Dumping EP memory: 0x%08X, %u bytes\n", startAddr, totalLength);
 
-    // Read memory from EP
-    if (!swd->read_target_mem(startAddr, buffer, alignedLen)) {
-        printf("Error: Failed to read EP memory\n");
-        free(buffer);
-        return;
-    }
-
-    // Hex dump output (16 bytes per line)
-    const int lineWidth = 16;
+    // Use a small stack-based buffer (64 bytes = 16 words)
+    const uint32_t CHUNK_SIZE = 64;
+    uint32_t buffer[CHUNK_SIZE / sizeof(uint32_t)];
     uint8_t* byteBuffer = (uint8_t*)buffer;
 
-    for (uint32_t offset = 0; offset < length; offset += lineWidth) {
-        // Address
-        printf("%08X: ", startAddr + offset);
+    for (uint32_t offset = 0; offset < totalLength; offset += CHUNK_SIZE) {
+        uint32_t remaining = totalLength - offset;
+        uint32_t bytesToRead = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
 
-        // Hex bytes
-        for (int i = 0; i < lineWidth; i++) {
-            if (offset + i < length) {
-                printf("%02X ", byteBuffer[offset + i]);
-            } else {
-                printf("   ");
-            }
+        // SWD reads usually require word alignment/multiples.
+        // We read a full chunk or the remaining aligned amount.
+        uint32_t readLenAligned = (bytesToRead + 3) & ~3;
+
+        if (!swd->read_target_mem(startAddr + offset, buffer, readLenAligned)) {
+            printf("\nError: Failed to read EP memory at 0x%08X\n", startAddr + offset);
+            return;
         }
 
-        // ASCII representation
-        for (int i = 0; i < lineWidth; i++) {
-            if (offset + i < length) {
-                uint8_t c = byteBuffer[offset + i];
-                if (isprint(c) && !iscntrl(c)) {
-                    printf("%c", c);
+        // Hex dump the current chunk
+        for (uint32_t lineOffset = 0; lineOffset < bytesToRead; lineOffset += 16) {
+            uint32_t absAddr = startAddr + offset + lineOffset;
+            printf("%08X: ", absAddr);
+
+            // Hex bytes
+            for (int i = 0; i < 16; i++) {
+                if (lineOffset + i < bytesToRead) {
+                    printf("%02X ", byteBuffer[lineOffset + i]);
                 } else {
-                    printf(".");
+                    printf("   ");
                 }
             }
-        }
-        printf("\n");
-    }
 
-    free(buffer);
+            // ASCII
+            printf(" ");
+            for (int i = 0; i < 16; i++) {
+                if (lineOffset + i < bytesToRead) {
+                    uint8_t c = byteBuffer[lineOffset + i];
+                    printf("%c", (isprint(c) && !iscntrl(c)) ? c : '.');
+                }
+            }
+            printf("\n");
+        }
+    }
 }
 
+// ----------------------------------------------------------------------------------
+// Set WiFi credentials and reboot (saves config to flash via OTA task).
+// Usage: wifi <ssid> <password>
+// Password may contain spaces without quoting (everything after the SSID is taken verbatim).
+// To embed spaces in the SSID itself, quote it: wifi "My Network" password123
+void Shell::cmd_wifi(char* args)
+{
+    char* ssid = decompose(&args, " ");
+    // Take everything remaining as the password (allows spaces without quoting)
+    char* password = args ? skipWhite(args) : nullptr;
+
+    if (!ssid || *ssid == 0) {
+        printf("Usage: wifi <ssid> <password>\n");
+        printf("  Sets WiFi credentials in flash config and reboots.\n");
+        return;
+    }
+
+    if (!password || *password == 0) {
+        printf("wifi: password required\n");
+        return;
+    }
+
+    if (strlen(ssid) >= sizeof(g_flash_config.wifi_ssid)) {
+        printf("wifi: SSID too long (max %d chars)\n", (int)sizeof(g_flash_config.wifi_ssid) - 1);
+        return;
+    }
+
+    if (strlen(password) >= sizeof(g_flash_config.wifi_password)) {
+        printf("wifi: password too long (max %d chars)\n", (int)sizeof(g_flash_config.wifi_password) - 1);
+        return;
+    }
+
+    strncpy(g_flash_config.wifi_ssid, ssid, sizeof(g_flash_config.wifi_ssid) - 1);
+    g_flash_config.wifi_ssid[sizeof(g_flash_config.wifi_ssid) - 1] = '\0';
+    strncpy(g_flash_config.wifi_password, password, sizeof(g_flash_config.wifi_password) - 1);
+    g_flash_config.wifi_password[sizeof(g_flash_config.wifi_password) - 1] = '\0';
+
+    printf("wifi: SSID='%s', password set (%d chars) — queuing save+reboot\n",
+           g_flash_config.wifi_ssid, (int)strlen(g_flash_config.wifi_password));
+
+    if (!ota_reboot_with_config_save_request()) {
+        printf("wifi: reboot request failed (OTA already in progress?)\n");
+    }
+}
+
+// ----------------------------------------------------------------------------------
+void Shell::cmd_heap()
+{
+    show_heap_stats(true);
+}
+
+// ----------------------------------------------------------------------------------
+void Shell::cmd_tasks()
+{
+    char buffer[1024];
+    vTaskList(buffer);
+    printf("\n%s\n", buffer);
+}
 
 // ----------------------------------------------------------------------------------
 void Shell::cmd_sdperf(char* args)
@@ -894,6 +914,7 @@ void Shell::cmd_sdperf(char* args)
                 printf("  Max time:  %lu us\n", sd_perf_stats.write_max_us);
                 printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
                 printf("  Throughput: %.2f KB/s\n", throughput_kbps);
+                printf("  Logger high-water: %d/%d\n", logger->get_inUse_max(), logger->get_log_size());
             }
 
             printf("\nUsage: sdperf [reset]\n");
@@ -933,6 +954,12 @@ void Shell::cmd_sdperf(char* args)
                             else if (strcmp(cmd, "hd") == 0) {
                                 cmd_hd(args);
                             }
+                            else if (strcmp(cmd, "heap") == 0) {
+                                cmd_heap();
+                            }
+                            else if (strcmp(cmd, "tasks") == 0) {
+                                cmd_tasks();
+                            }
                             else if (strcmp(cmd, "pwd") == 0) {
                                 cmd_pwd(args);
                             }
@@ -944,6 +971,9 @@ void Shell::cmd_sdperf(char* args)
                             }
                             else if (strcmp(cmd, "dumpep") == 0) {
                                 cmd_dumpEp(args);
+                            }
+                            else if (strcmp(cmd, "wifi") == 0) {
+                                cmd_wifi(args);
                             }
                             #if 0
                             else if (strcmp(cmd, "cp") == 0) {

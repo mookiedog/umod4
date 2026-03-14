@@ -12,7 +12,7 @@
 ; the MS1 wire effectively didn't do anything.
 
 
-        #include "ECU_log.h"
+        #include "log_ids.h"
 
 ; The symbol LW defines the start address of the 256 byte Log Window in the HC11 address space.
 ; It must be on a 256-byte boundary.

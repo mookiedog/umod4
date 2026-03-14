@@ -14,6 +14,7 @@ class Gps : public Psm
     Gps(Uart* uart);
 
     bool getLocation(float* latitude_degrees, float* longitude_degrees);
+    float getSpeedMph() const { return speed_mph_; }
 
     void sendUbxMsg(uint8_t ubxClass, uint8_t ubxId, const uint8_t* payload, uint16_t payloadLength);
     void sendUbxMsg(uint8_t* buffer, uint16_t bufferLen);
@@ -46,6 +47,7 @@ class Gps : public Psm
     float latitude_degrees;
     float longitude_degrees;
     bool locationKnown;
+    float speed_mph_;
 
     Uart* uart;
     TaskHandle_t gps_taskHandle;

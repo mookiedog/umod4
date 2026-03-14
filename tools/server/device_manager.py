@@ -137,6 +137,11 @@ class DeviceManager:
 
         print(f"DeviceManager: Device has {len(files)} log files")
 
+        # Create date subdirectory for today's downloads
+        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+        date_subdir = os.path.join(log_storage_path, date_str)
+        os.makedirs(date_subdir, exist_ok=True)
+
         # Check which files are new (not already downloaded)
         for file_info in files:
             filename = file_info['filename']
@@ -146,7 +151,7 @@ class DeviceManager:
             if not (filename.endswith('.um4') or filename.endswith('.log')):
                 continue
 
-            local_path = os.path.join(log_storage_path, filename)
+            local_path = os.path.join(date_subdir, filename)
 
             # Check if file already exists
             if os.path.exists(local_path):

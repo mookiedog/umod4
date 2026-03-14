@@ -16,7 +16,7 @@
 #include "pico/time.h"
 
 #include "Logger.h"
-#include "WP_log.h"
+#include "log_ids.h"
 
 uint32_t msgCount;
 uint32_t cksumErrorCount;
@@ -94,7 +94,8 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
     locationKnown = false;
     latitude_degrees = 0.0;
     longitude_degrees = 0.0;
-    xTaskCreate(start_gps_rxTask, "Gps", 2048 /* words */, this, TASK_HIGH_PRIORITY, &gps_taskHandle);
+    speed_mph_ = 0.0f;
+    xTaskCreate(start_gps_rxTask, "Gps", 1024 /* words */, this, TASK_HIGH_PRIORITY, &gps_taskHandle);
 
     uart->notifyOnRx(gps_taskHandle);
 
@@ -430,6 +431,7 @@ void Gps::process_NAV_PVT(uint8_t* payload)
 
         int32_t gSpeed_mm_per_sec = get_int32_t(payload, 60);
         float gSpeed_mph = gSpeed_mm_per_sec / 447.04f;
+        speed_mph_ = gSpeed_mph;
 
         // We will log our current velocity as an integer in terms of tenths of MPH, so 128 means 12.8 MPH
         int16_t velocity = (gSpeed_mph + 0.05) * 10;

@@ -1,0 +1,47 @@
+{
+    // RP58 Family Well-Known Table Definitions
+    //
+    // These tables define the memory map shared by all RP58 map-style EPROMs.
+    // Any EPROM with "map-style": "RP58" in its .dsc metadata uses this table layout.
+    //
+    // At build time, this file is converted to BSON and placed in the EP's BSON partition.
+    // At runtime, the EP loader searches the BSON partition for a document matching
+    // the EPROM's map-style and uses these definitions for table name resolution.
+
+    "map-style": "RP58",
+
+    "tables": {
+        // --- Aggregate tables ---
+        "MAPBLOB_RP58": { "start": "0x0000", "length": 7168, "description": "All RP58 map-style map data" },
+
+        // --- Fuel: MAP/N, Restricted ---
+        "FUEL_M/N_R":   { "start": "0x00A2", "length": 928,  "layout": "16x58", "description": "Fuel: MAP/N, Restricted, Cyls 1&2" },
+        "FUEL_M/N_R_1": { "start": "0x00A2", "length": 464,  "layout": "16x29", "description": "Fuel: MAP/N, Restricted, Cyl 1" },
+        "FUEL_M/N_R_2": { "start": "0x0272", "length": 464,  "layout": "16x29", "description": "Fuel: MAP/N, Restricted, Cyl 2" },
+
+        // --- Fuel: ALPHA/N, Restricted ---
+        "FUEL_A/N_R":   { "start": "0x0442", "length": 1044, "layout": "18x58", "description": "Fuel: ALPHA/N, Restricted, Cyls 1&2" },
+        "FUEL_A/N_R_1": { "start": "0x0442", "length": 522,  "layout": "18x29", "description": "Fuel: ALPHA/N, Restricted, Cyl 1" },
+        "FUEL_A/N_R_2": { "start": "0x064C", "length": 522,  "layout": "18x29", "description": "Fuel: ALPHA/N, Restricted, Cyl 2" },
+
+        // --- Fuel: MAP/N, Derestricted ---
+        "FUEL_M/N_D":   { "start": "0x0856", "length": 928,  "layout": "16x58", "description": "Fuel: MAP/N, Derestricted, Cyls 1&2" },
+        "FUEL_M/N_D_1": { "start": "0x0856", "length": 464,  "layout": "16x29", "description": "Fuel: MAP/N, Derestricted, Cyl 1" },
+        "FUEL_M/N_D_2": { "start": "0x0A26", "length": 464,  "layout": "16x29", "description": "Fuel: MAP/N, Derestricted, Cyl 2" },
+
+        // --- Fuel: ALPHA/N, Derestricted ---
+        "FUEL_A/N_D":   { "start": "0x0BF6", "length": 1044, "layout": "18x58", "description": "Fuel: ALPHA/N, Derestricted, Cyls 1&2" },
+        "FUEL_A/N_D_1": { "start": "0x0BF6", "length": 522,  "layout": "18x29", "description": "Fuel: ALPHA/N, Derestricted, Cyl 1" },
+        "FUEL_A/N_D_2": { "start": "0x0E00", "length": 522,  "layout": "18x29", "description": "Fuel: ALPHA/N, Derestricted, Cyl 2" },
+
+        // --- Ignition: ALPHA/N, Restricted ---
+        "IGN_A/N_R":    { "start": "0x11E5", "length": 1044, "layout": "18x58", "description": "Ignition: ALPHA/N, Restricted, Cyls 1&2" },
+        "IGN_A/N_R_1":  { "start": "0x11E5", "length": 522,  "layout": "18x29", "description": "Ignition: ALPHA/N, Restricted, Cyl 1" },
+        "IGN_A/N_R_2":  { "start": "0x13EF", "length": 522,  "layout": "18x29", "description": "Ignition: ALPHA/N, Restricted, Cyl 2" },
+
+        // --- Ignition: ALPHA/N, Derestricted ---
+        "IGN_A/N_D":    { "start": "0x15F9", "length": 1044, "layout": "18x58", "description": "Ignition: ALPHA/N, Derestricted, Cyls 1&2" },
+        "IGN_A/N_D_1":  { "start": "0x15F9", "length": 522,  "layout": "18x29", "description": "Ignition: ALPHA/N, Derestricted, Cyl 1" },
+        "IGN_A/N_D_2":  { "start": "0x1803", "length": 522,  "layout": "18x29", "description": "Ignition: ALPHA/N, Derestricted, Cyl 2" }
+    }
+}

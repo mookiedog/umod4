@@ -116,11 +116,10 @@
 
         .thumb_func
 
-// The epromTask code will be placed by the linker into its own exclusive RP2040 SRAM bank, currently scratch_y.
-// In addition, the EPROM image to be served to the ECU is placed in its own private SRAM bank.
-// These steps are necessary (but sadly, not sufficient) to prevent core0 operation from causing any bus fabric
-// contention events that would impact the accuracy of the cycleCounting inside the epromTask.
-// The remaining source of contention  is that the epromTask needs to clear an interrupt inside the GPIO unit.
+// The epromTask code lives in scratch_y, copied from flash by the SDK crt0 at boot.
+// The EPROM image data is in the lower 32K of non-striped SRAM bank0 (RAM_CORE1_EPROM).
+// Bank0 is exclusive to core1, preventing bus fabric contention from core0.
+// The remaining source of contention is that the epromTask needs to clear an interrupt inside the GPIO unit.
 // This means that if core0 accesses *anything* behind the APB bridge on the crossbar (like the UART!),
 // bad things could happen...
 
@@ -141,7 +140,7 @@ epromTask:
         ldr     r_SIO_BASE_PTR, =#SIO_BASE
 
 // Load a permanent pointer to the start address of EPROM data
-        ldr     r_EPROM_DATA_PTR, =#0x21030000          // default to image #0 at the start of unstriped SRAM bank 3  FIXME: this should not be hardcoded!
+        ldr     r_EPROM_DATA_PTR, =__ram_core1_eprom_start__  // lower 32K of bank0: EPROM image buffer
 
 // Load up the bitmask we will need for manipulating the HC11 data bus output drivers in the SIO GPIO direction control register
         ldr     r_HC11_DATA_MSK, =#HC11_DB_BITS

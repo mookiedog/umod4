@@ -34,7 +34,7 @@ static uint16_t pio_change_exclusive_program(PIO pio, const pio_program* prog)
 }
 
 // --------------------------------------------------------------------------------
-Swd::Swd(PIO pio, uint32_t swdClk_gpio, uint32_t swdIo_gpio, bool verbose)
+Swd::Swd(PIO pio, uint32_t swdClk_gpio, uint32_t swdIo_gpio, bool verbose, uint32_t swd_inhibit_gpio)
     : swd_pio(pio),
       swc(swdClk_gpio),
       swd(swdIo_gpio),
@@ -43,8 +43,20 @@ Swd::Swd(PIO pio, uint32_t swdClk_gpio, uint32_t swdIo_gpio, bool verbose)
       pio_prog(nullptr),
       pio_clkdiv(1.0f),
       verbose(verbose),
-      is_initialized(false)
-{}
+      is_initialized(false),
+      swd_inhibit(false)
+{
+    if (swd_inhibit_gpio < NUM_BANK0_GPIOS) {
+        gpio_init(swd_inhibit_gpio);
+        gpio_set_pulls(swd_inhibit_gpio, true, false);
+        busy_wait_us(5);
+        if (!gpio_get(swd_inhibit_gpio)) {
+            swd_inhibit = true;
+            printf("%s: *** SPARE2/GPIO%u is low: SWD usage is inhibited!\n",
+                                __FUNCTION__, swd_inhibit_gpio);
+        }
+    }
+}
 
 // --------------------------------------------------------------------------------
 void Swd::wait_for_idle() {
@@ -159,11 +171,15 @@ void Swd::idle()
 // --------------------------------------------------------------------------------
 bool Swd::connect_target(uint32_t core, bool halt)
 {
+    if (swd_inhibit) {
+        return false;
+    }
+
     if (!is_initialized) {
-        gpio_init(2);
-        gpio_init(3);
-        gpio_disable_pulls(2);
-        gpio_pull_up(3);
+        gpio_init(swc);
+        gpio_init(swd);
+        gpio_disable_pulls(swc);
+        gpio_pull_up(swd);
 
         uint32_t sys_clk_hz = clock_get_hz(clk_sys);
         pio_clkdiv = sys_clk_hz / (1 * MHZ);
@@ -410,5 +426,13 @@ void Swd::unload()
     pio_sm_set_enabled(swd_pio, pio_sm, false);
     pio_remove_exclusive_program(swd_pio);
     pio_sm_unclaim(swd_pio, pio_sm);
+
+    // Release SWD GPIOs back to high-impedance inputs so they don't
+    // interfere with an external debug probe on the same lines.
+    gpio_set_function(swc, GPIO_FUNC_SIO);
+    gpio_set_function(swd, GPIO_FUNC_SIO);
+    gpio_set_dir(swc, GPIO_IN);
+    gpio_set_dir(swd, GPIO_IN);
+
     is_initialized = false;
 }

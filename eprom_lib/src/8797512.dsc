@@ -2,7 +2,7 @@
     "eprom": {
         "name": "8797512",
         "daughterboard": "A",
-        "RP58-compatible": "Y",
+        "map-style": "RP58",
         "info": {
             "models": [
                 "All"

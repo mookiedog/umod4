@@ -26,7 +26,7 @@ This project uses CMake's **ExternalProject_Add** superbuild pattern because the
 
 **Critical Build Constraints:**
 - Never try to build this as a single unified CMake project
-- Each external project (tools, ecu, eprom_lib, EP, WP) has its own build namespace
+- Each external project (tools, ecu, eprom_lib, EP, WP) has its own build namespace.
 - Build dependencies: `EP` depends on `tools`, `ecu`, `eprom_lib`; `WP` depends on `tools`, `EP`
 
 ### Building the Project
@@ -124,7 +124,7 @@ build/.venv/bin/python3 tools/logtools/viz/viz.py output.h5
 
 **Key Tools:**
 - **Build-time tools** (in `tools/src/`):
-  - `bin-to-bson.py` - Converts EPROM .bin + .dsc (JSON) to BSON
+  - `build-image-store.py` - Builds image store artifacts (slot files, image_store.bin) from image_store_config.json
   - `h2py.py` - Converts C header log IDs to Python
   - `generate_encoder.py` - Generates log encoding code
 - **Runtime log analysis tools** (in `tools/logtools/`):
@@ -134,7 +134,7 @@ build/.venv/bin/python3 tools/logtools/viz/viz.py output.h5
 
 ### EPROM Library (eprom_lib)
 
-JSON description files for stock Aprilia EPROMs (549USA, RP58, etc.). Build system converts `.dsc` (JSON) + `.bin` files to BSON documents embedded in EP firmware.
+JSON description files for stock Aprilia EPROMs (549USA, RP58, etc.).
 
 **Note:** Repository does not include .bin files - users must source separately.
 
@@ -170,6 +170,7 @@ umod4/
 - Uses Raspberry Pi Debug Probe (CMSIS-DAP)
 - VS Code launch.json configured for OpenOCD debugging
 - On WSL2: Use usbipd to attach debug probe to WSL
+- When debugging WP on 4V1 PCB, SPARE2 must be grounded to inhibit WP from using SWD to talk to EP
 
 **Flashing:**
 ```bash
@@ -210,16 +211,10 @@ Edit top-level `CMakeLists.txt`, set `PICO_SDK_VERSION` variable, ensure SDK exi
 Edit `cmake/toolchains/arm-none-eabi.cmake`, update `ARM_NONE_EABI_VERSION` variable.
 
 **Modifying Log Event IDs:**
-1. Edit appropriate `*_log.h` file (ECU_log.h, EP_log.h, or WP_log.h)
+1. Edit `lib/inc/log_ids.h` file
 2. Run `build/.venv/bin/python3 tools/src/h2py.py` to regenerate Python constants
 3. Update `tools/logtools/decoder/decodelog.py` decoder logic for new events
 4. Rebuild affected components (all components include log headers from same directory)
-
-**Adding New EPROM:**
-1. Create `.dsc` JSON file in `eprom_lib/src/` describing EPROM metadata
-2. Optionally add corresponding `.bin` file (not in repo, sourced separately)
-3. CMake automatically converts to BSON at build time
-4. BSON embedded in EP firmware flash partition
 
 ## Key Technical Details
 
@@ -230,12 +225,11 @@ Edit `cmake/toolchains/arm-none-eabi.cmake`, update `ARM_NONE_EABI_VERSION` vari
 - All 27 GPIO pins used for address/data/control lines
 
 **UART Communication:**
-- EP → WP: 921600 baud, character pairs or packets up to 32 bytes
-- WP RX timeout interrupt: ~35μs (32-bit period at 921600 baud)
+- EP → WP: 2.5 megabaud baud, 32-bit transfers (log ID + up to 2 bytes of data)
 
 **Filesystem:**
 - LittleFS on micro SD card (wear-leveling, power-fail resilient)
-- Faster and more reliable than FAT for embedded flash
+- More reliable than FAT for embedded systems, but can get extremely slow when it gets a lot of data in the filesystem.
 
 **GPS:**
 - uBlox NEO-8 module
@@ -243,12 +237,6 @@ Edit `cmake/toolchains/arm-none-eabi.cmake`, update `ARM_NONE_EABI_VERSION` vari
 - UART interface to WP
 
 ## Known Issues & Limitations
-
-**From ToDo.md:**
-- Missing FC_OFF log events during engine operation (investigate why not all ignition events logged)
-- Missing log data at start of some files (likely timing issue with LittleFS writes)
-- Need to track time when engine not rotating (80ms scheduler should emit timestamp if no crank events)
-- Hardware.h only defines PCB 4V0 (needs update for 4V1)
 
 **VS Code/CMake Bug:**
 Cannot select debug targets normally due to ExternalProject_Add() preventing VS Code from finding executables. Workaround: Use F1 -> "Debug: Select And Start Debugging" and manually pick launch configuration.

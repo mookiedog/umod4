@@ -1,7 +1,7 @@
 {
     "eprom": {
         "name": "549EuroKatD",
-        "RP58-Compatible": "Y",
+        "map-style": "RP58",
         "info": {
             "models": [
                 "Tuono 2004-2005 (Europe only, black muffler with catalytic converter)"

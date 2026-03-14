@@ -49,6 +49,10 @@ class UnitConverter:
         if '_voltage_v' in name_lower or '_v' == name_lower[-2:]:
             return ('voltage', 'volts')
 
+        # Data rate detection
+        if '_bps' in name_lower or '_data_rate' in name_lower:
+            return ('data_rate', 'bytes_per_sec')
+
         return (None, None)
 
     @staticmethod
@@ -140,7 +144,7 @@ class UnitConverter:
         # Remove unit suffixes from name
         readable_parts = []
         for part in parts:
-            if part not in ['c', 'f', 'mph', 'kph', 'psi', 'bar', 'v']:
+            if part not in ['c', 'f', 'mph', 'kph', 'psi', 'bar', 'v', 'bps']:
                 readable_parts.append(part.capitalize())
 
         readable_name = ' '.join(readable_parts)
@@ -160,5 +164,7 @@ class UnitConverter:
             return f"{readable_name} (bar)"
         elif display_units == 'volts':
             return f"{readable_name} (V)"
+        elif display_units == 'bytes_per_sec':
+            return f"{readable_name} (B/s)"
         else:
             return readable_name

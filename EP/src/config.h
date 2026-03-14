@@ -4,7 +4,7 @@
 // The epromTask will log every single bus access the ECU makes. The accesses get stored
 // in a circular buffer whose length is defined by the next symbol.
 // Buffer can be any length, not just a power of two.
-#define ECU_BUSLOG_LENGTH_BYTES    65536
+#define ECU_BUSLOG_LENGTH_BYTES    32768
 
 // Consider redesigning things so that the firmware can allocate as much RAM to the
 // RAM window in the EPROM space. Perhaps this firmware can define a max, and the ECU

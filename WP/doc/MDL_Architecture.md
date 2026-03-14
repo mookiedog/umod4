@@ -1715,7 +1715,7 @@ This section provides a practical roadmap for implementing the MDL system, broke
    <!DOCTYPE html>
    <html><head><title>umod4</title></head>
    <body>
-     <h1>umod4 Data Logger</h1>
+     <h1>Umod4 Data Logger</h1>
      <p>Status: Connected via WiFi</p>
      <p>Uptime: <span id="uptime">...</span></p>
      <script>

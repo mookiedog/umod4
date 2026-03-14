@@ -13,6 +13,45 @@ import os
 import subprocess
 
 
+def _open_url(url):
+    """Open URL in the system default browser.
+
+    On WSL2, http:// URLs can't be opened directly from a Qt GUI app via
+    Start-Process or QDesktopServices. Use the same file:// redirect trick
+    that viz.py uses for maps: write a tiny HTML redirect and open that.
+    """
+    try:
+        with open('/proc/version', 'r') as version_file:
+            if 'microsoft' not in version_file.read().lower():
+                raise OSError("not WSL2")
+    except OSError:
+        import webbrowser
+        webbrowser.open(url)
+        return
+
+    # WSL2 path
+    if subprocess.run(['which', 'wslview'], capture_output=True).returncode == 0:
+        subprocess.Popen(['wslview', url])
+        return
+
+    # Let PowerShell create and open a redirect HTML on the Windows side entirely.
+    # This avoids WSL2 filesystem bridging (wslpath, UNC paths, etc.) which is
+    # unreliable from a Qt GUI app context.
+    ps_script = (
+        f"$f = [System.IO.Path]::GetTempFileName() + '.html';"
+        f"[System.IO.File]::WriteAllText($f, '<html><head><meta http-equiv=\"refresh\" content=\"0; url={url}\"></head><body></body></html>');"
+        f"Start-Process $f"
+    )
+    try:
+        result = subprocess.run(
+            ['powershell.exe', '-NoProfile', '-Command', ps_script],
+            capture_output=True, text=True
+        )
+        print(f"_open_url: ps rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}")
+    except Exception as e:
+        print(f"_open_url: exception {type(e).__name__}: {e}")
+
+
 def format_wp_version(version_str: str) -> str:
     """Format WP version string for display.
 
@@ -64,9 +103,9 @@ class DeviceListWidget(QWidget):
 
         # Device table
         self.device_table = QTableWidget()
-        self.device_table.setColumnCount(8)
+        self.device_table.setColumnCount(9)
         self.device_table.setHorizontalHeaderLabels([
-            "●", "Name", "MAC Address", "Status", "WP Version", "EP Version", "Last Seen", "Log Path"
+            "●", "Name", "IP Address", "MAC Address", "Status", "WP Version", "EP Version", "Last Seen", "Log Path"
         ])
         # Make status indicator column narrow
         self.device_table.setColumnWidth(0, 30)
@@ -111,8 +150,11 @@ class DeviceListWidget(QWidget):
                 name_item.setData(Qt.ItemDataRole.UserRole, device.mac_address)
                 self.device_table.setItem(row, 1, name_item)
 
+                # IP Address column
+                self.device_table.setItem(row, 2, QTableWidgetItem(device.last_ip or "-"))
+
                 # MAC Address column
-                self.device_table.setItem(row, 2, QTableWidgetItem(device.mac_address))
+                self.device_table.setItem(row, 3, QTableWidgetItem(device.mac_address))
 
                 # Determine status text (online if last_seen within 6 minutes = 360 seconds)
                 # This matches the TimeoutMonitor threshold
@@ -134,9 +176,9 @@ class DeviceListWidget(QWidget):
                 # Color the status red if there's a filesystem problem
                 if fs_status and fs_status != 'ok':
                     status_item.setForeground(Qt.GlobalColor.red)
-                self.device_table.setItem(row, 3, status_item)
-                self.device_table.setItem(row, 4, QTableWidgetItem(format_wp_version(device.wp_version)))
-                self.device_table.setItem(row, 5, QTableWidgetItem(device.ep_version or "-"))
+                self.device_table.setItem(row, 4, status_item)
+                self.device_table.setItem(row, 5, QTableWidgetItem(format_wp_version(device.wp_version)))
+                self.device_table.setItem(row, 6, QTableWidgetItem(device.ep_version or "-"))
 
                 # Convert last_seen from UTC to local time
                 if device.last_seen:
@@ -146,10 +188,10 @@ class DeviceListWidget(QWidget):
                     last_seen = local_time.strftime("%Y-%m-%d %H:%M:%S")
                 else:
                     last_seen = "-"
-                self.device_table.setItem(row, 6, QTableWidgetItem(last_seen))
+                self.device_table.setItem(row, 7, QTableWidgetItem(last_seen))
 
                 # Log path column
-                self.device_table.setItem(row, 7, QTableWidgetItem(device.log_storage_path or "-"))
+                self.device_table.setItem(row, 8, QTableWidgetItem(device.log_storage_path or "-"))
 
         finally:
             session.close()
@@ -196,15 +238,25 @@ class DeviceListWidget(QWidget):
         view_logs_action.triggered.connect(self._open_log_folder)
         menu.addAction(view_logs_action)
 
-        # Add "Manage Files on Device" option (only if device is online)
+        # Add online-only options (only if device is online)
         from models.database import Device
         session = self.database.get_session()
         try:
             device = session.query(Device).filter_by(mac_address=self.selected_mac).first()
             if device and device.is_online and device.last_ip:
+                device_ip = device.last_ip
+
+                open_web_action = QAction("Open Web Interface", self)
+                open_web_action.triggered.connect(lambda: _open_url(f"http://{device_ip}/"))
+                menu.addAction(open_web_action)
+
                 manage_files_action = QAction("Manage Files on Device", self)
                 manage_files_action.triggered.connect(self._manage_device_files)
                 menu.addAction(manage_files_action)
+
+                reboot_action = QAction("Reboot Device", self)
+                reboot_action.triggered.connect(lambda: self._reboot_device(device_ip))
+                menu.addAction(reboot_action)
         finally:
             session.close()
 
@@ -324,7 +376,11 @@ class DeviceListWidget(QWidget):
                     device.last_ip,
                     parent=self
                 )
-                dialog.exec()
+                self.refresh_timer.stop()
+                try:
+                    dialog.exec()
+                finally:
+                    self.refresh_timer.start(2000)
             else:
                 QMessageBox.warning(
                     self,
@@ -333,6 +389,27 @@ class DeviceListWidget(QWidget):
                 )
         finally:
             session.close()
+
+    def _reboot_device(self, device_ip: str):
+        """Reboot the device at the given IP after user confirmation."""
+        from device_client import DeviceClient
+
+        reply = QMessageBox.question(
+            self, "Confirm Reboot",
+            f"Reboot the device at {device_ip}?\n\n"
+            "The device will shut down gracefully and reboot.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        client = DeviceClient(device_ip)
+        success, error = client.reboot()
+        if success:
+            QMessageBox.information(self, "Reboot", "Device is rebooting.")
+        else:
+            QMessageBox.warning(self, "Reboot Failed", f"Could not reboot device:\n{error}")
 
     def _delete_device(self):
         """Delete selected device from database."""
@@ -850,9 +927,10 @@ class TransferHistoryWidget(QWidget):
 class ManageDeviceWidget(QWidget):
     """Widget for managing the selected device."""
 
-    def __init__(self, database):
+    def __init__(self, database, connectivity_checker=None):
         super().__init__()
         self.database = database
+        self.connectivity_checker = connectivity_checker
         self.selected_mac = None
         self.device_is_online = False
         self._setup_ui()
@@ -926,9 +1004,19 @@ class ManageDeviceWidget(QWidget):
         online_group = QGroupBox("Online Operations (device must be online)")
         online_layout = QHBoxLayout(online_group)
 
+        self.web_interface_button = QPushButton("Web Interface")
+        self.web_interface_button.setToolTip("Open device home page in web browser")
+        self.web_interface_button.clicked.connect(self._open_web_interface)
+        online_layout.addWidget(self.web_interface_button)
+
         self.manage_files_button = QPushButton("Manage Files on Device")
         self.manage_files_button.clicked.connect(self._manage_files)
         online_layout.addWidget(self.manage_files_button)
+
+        self.reboot_button = QPushButton("Reboot Device")
+        self.reboot_button.setToolTip("Gracefully shut down and reboot the device")
+        self.reboot_button.clicked.connect(self._reboot_device)
+        online_layout.addWidget(self.reboot_button)
 
         self.upload_button = QPushButton("Upload File")
         self.upload_button.clicked.connect(self._upload_file)
@@ -1016,7 +1104,9 @@ class ManageDeviceWidget(QWidget):
 
         # Online operations - require selection AND online
         online_enabled = has_selection and self.device_is_online
+        self.web_interface_button.setEnabled(online_enabled)
         self.manage_files_button.setEnabled(online_enabled)
+        self.reboot_button.setEnabled(online_enabled)
         self.upload_button.setEnabled(online_enabled)
         self.reflash_ep_button.setEnabled(online_enabled)
         self.reflash_wp_button.setEnabled(online_enabled)
@@ -1131,6 +1221,57 @@ class ManageDeviceWidget(QWidget):
         finally:
             session.close()
 
+    def _reboot_device(self):
+        """Reboot the selected device after user confirmation."""
+        from device_client import DeviceClient
+
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(self, "Device Offline", "Device must be online to reboot.")
+                return
+
+            device_name = device.display_name
+            device_ip = device.last_ip
+        finally:
+            session.close()
+
+        reply = QMessageBox.question(
+            self, "Confirm Reboot",
+            f"Reboot '{device_name}' ({device_ip})?\n\n"
+            "The device will shut down gracefully and reboot.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        client = DeviceClient(device_ip)
+        success, error = client.reboot()
+        if success:
+            QMessageBox.information(self, "Reboot", f"'{device_name}' is rebooting.")
+        else:
+            QMessageBox.warning(self, "Reboot Failed", f"Could not reboot device:\n{error}")
+
+    def _open_web_interface(self):
+        """Open device home page in web browser."""
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            if device.last_ip:
+                _open_url(f"http://{device.last_ip}/")
+        finally:
+            session.close()
+
     def _manage_files(self):
         """Open file management dialog for selected device."""
         from gui.device_files_dialog import DeviceFilesDialog
@@ -1152,7 +1293,11 @@ class ManageDeviceWidget(QWidget):
                 device.last_ip,
                 self
             )
-            dialog.exec()
+            self.refresh_timer.stop()
+            try:
+                dialog.exec()
+            finally:
+                self.refresh_timer.start(2000)
         finally:
             session.close()
 
@@ -1204,14 +1349,21 @@ class ManageDeviceWidget(QWidget):
             progress.setMinimumDuration(0)
 
             client = DeviceClient(device.last_ip)
+            device_mac = device.mac_address
 
-            def update_progress(bytes_sent, total_bytes):
+            def update_progress(bytes_sent, total_bytes, rate_kbps=None):
                 percent = int((bytes_sent / total_bytes) * 100)
                 progress.setValue(percent)
-                progress.setLabelText(
+
+                # Build progress text with optional data rate
+                progress_text = (
                     f"Uploading {destination_filename}...\n"
                     f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
                 )
+                if rate_kbps is not None:
+                    progress_text += f"\nXfer rate: {rate_kbps:.0f} KB/s"
+
+                progress.setLabelText(progress_text)
                 QApplication.processEvents()
                 if progress.wasCanceled():
                     raise Exception("Upload cancelled by user")
@@ -1228,6 +1380,10 @@ class ManageDeviceWidget(QWidget):
             session.add(upload_record)
             session.commit()
             upload_id = upload_record.id
+
+            # Suspend connectivity checking for this device during upload
+            if self.connectivity_checker:
+                self.connectivity_checker.suspend_device(device_mac)
 
             try:
                 start_time = datetime.utcnow()
@@ -1249,6 +1405,10 @@ class ManageDeviceWidget(QWidget):
                     upload_record.error_message = error_msg
                     session.commit()
 
+                # Update last_seen - we communicated with the device
+                device.last_seen = datetime.utcnow()
+                session.commit()
+
                 if success:
                     QMessageBox.information(
                         self, "Upload Complete",
@@ -1268,6 +1428,9 @@ class ManageDeviceWidget(QWidget):
                     session.commit()
                 if "cancelled" not in str(e).lower():
                     QMessageBox.critical(self, "Upload Error", f"An error occurred:\n\n{str(e)}")
+            finally:
+                if self.connectivity_checker:
+                    self.connectivity_checker.resume_device(device_mac)
 
         finally:
             session.close()
@@ -1321,6 +1484,7 @@ class ManageDeviceWidget(QWidget):
                 return
 
             client = DeviceClient(device.last_ip)
+            device_mac = device.mac_address
 
             progress = QProgressDialog(
                 f"Uploading {destination_filename}...", "Cancel", 0, 100, self
@@ -1331,18 +1495,28 @@ class ManageDeviceWidget(QWidget):
 
             upload_cancelled = False
 
-            def update_progress(bytes_sent, total_bytes):
+            def update_progress(bytes_sent, total_bytes, rate_kbps=None):
                 nonlocal upload_cancelled
                 percent = int((bytes_sent / total_bytes) * 100)
                 progress.setValue(percent)
-                progress.setLabelText(
+
+                # Build progress text with optional data rate
+                progress_text = (
                     f"Uploading {destination_filename}...\n"
                     f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
                 )
+                if rate_kbps is not None:
+                    progress_text += f"\nXfer rate: {rate_kbps:.0f} KB/s"
+
+                progress.setLabelText(progress_text)
                 QApplication.processEvents()
                 if progress.wasCanceled():
                     upload_cancelled = True
                     raise Exception("Upload cancelled")
+
+            # Suspend connectivity checking for this device during reflash
+            if self.connectivity_checker:
+                self.connectivity_checker.suspend_device(device_mac)
 
             try:
                 success, sha256, error_msg = client.upload_file(
@@ -1356,6 +1530,10 @@ class ManageDeviceWidget(QWidget):
                 if not success:
                     QMessageBox.critical(self, "Upload Failed", f"Failed to upload firmware:\n\n{error_msg}")
                     return
+
+                # Update last_seen - we communicated with the device
+                device.last_seen = datetime.utcnow()
+                session.commit()
 
                 progress = QProgressDialog(
                     "Reflashing EP processor...\n\nDo not power off the device!",
@@ -1378,6 +1556,9 @@ class ManageDeviceWidget(QWidget):
                 progress.close()
                 if "cancelled" not in str(e).lower():
                     QMessageBox.critical(self, "Reflash Error", f"An error occurred:\n\n{str(e)}")
+            finally:
+                if self.connectivity_checker:
+                    self.connectivity_checker.resume_device(device_mac)
 
         finally:
             session.close()
@@ -1434,6 +1615,7 @@ class ManageDeviceWidget(QWidget):
                 return
 
             client = DeviceClient(device.last_ip)
+            device_mac = device.mac_address
 
             progress = QProgressDialog(
                 f"Uploading {destination_filename}...", "Cancel", 0, 100, self
@@ -1444,18 +1626,28 @@ class ManageDeviceWidget(QWidget):
 
             upload_cancelled = False
 
-            def update_progress(bytes_sent, total_bytes):
+            def update_progress(bytes_sent, total_bytes, rate_kbps=None):
                 nonlocal upload_cancelled
                 percent = int((bytes_sent / total_bytes) * 100)
                 progress.setValue(percent)
-                progress.setLabelText(
+
+                # Build progress text with optional data rate
+                progress_text = (
                     f"Uploading {destination_filename}...\n"
                     f"{bytes_sent:,} / {total_bytes:,} bytes ({percent}%)"
                 )
+                if rate_kbps is not None:
+                    progress_text += f"\nXfer rate: {rate_kbps:.0f} KB/s"
+
+                progress.setLabelText(progress_text)
                 QApplication.processEvents()
                 if progress.wasCanceled():
                     upload_cancelled = True
                     raise Exception("Upload cancelled")
+
+            # Suspend connectivity checking for this device during reflash
+            if self.connectivity_checker:
+                self.connectivity_checker.suspend_device(device_mac)
 
             try:
                 success, sha256, error_msg = client.upload_file(
@@ -1469,6 +1661,10 @@ class ManageDeviceWidget(QWidget):
                 if not success:
                     QMessageBox.critical(self, "Upload Failed", f"Failed to upload firmware:\n\n{error_msg}")
                     return
+
+                # Update last_seen - we communicated with the device
+                device.last_seen = datetime.utcnow()
+                session.commit()
 
                 success, error_msg = client.reflash_wp(destination_filename, timeout=30)
 
@@ -1491,6 +1687,9 @@ class ManageDeviceWidget(QWidget):
                 progress.close()
                 if "cancelled" not in str(e).lower():
                     QMessageBox.critical(self, "Reflash Error", f"An error occurred:\n\n{str(e)}")
+            finally:
+                if self.connectivity_checker:
+                    self.connectivity_checker.resume_device(device_mac)
 
         finally:
             session.close()
@@ -1499,12 +1698,13 @@ class ManageDeviceWidget(QWidget):
 class MainWindow(QMainWindow):
     """Main window for umod4 server application."""
 
-    def __init__(self, database, server):
+    def __init__(self, database, server, connectivity_checker=None):
         super().__init__()
         self.database = database
         self.server = server
+        self.connectivity_checker = connectivity_checker
         self.setWindowTitle("umod4 Server")
-        self.resize(1000, 700)
+        self.resize(1200, 700)
         self._setup_ui()
         self._setup_menu()
 
@@ -1548,7 +1748,7 @@ class MainWindow(QMainWindow):
         self.transfer_history = TransferHistoryWidget(self.database)
         tab_widget.addTab(self.transfer_history, "Transfer History")
 
-        self.manage_device = ManageDeviceWidget(self.database)
+        self.manage_device = ManageDeviceWidget(self.database, self.connectivity_checker)
         tab_widget.addTab(self.manage_device, "Manage Device")
 
         splitter.addWidget(tab_widget)

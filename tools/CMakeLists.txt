@@ -45,10 +45,7 @@ add_custom_command(
 # This section creates the log_sym.py source code.
 
 set(SOURCE_FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/inc/log_base.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ecu/src/ECU_log.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../EP/src/EP_log.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../WP/src/WP_log.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/inc/log_ids.h
 )
 
 # The C header to Python constant converter script:

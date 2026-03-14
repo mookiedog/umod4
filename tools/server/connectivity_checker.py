@@ -27,6 +27,7 @@ class ConnectivityChecker:
         self.running = False
         self.thread = None
         self.on_status_changed = None  # Callback(device_mac, is_online)
+        self._suspended_devices = set()  # MAC addresses to skip checking
 
     def start(self):
         """Start the connectivity checker in a background thread."""
@@ -48,6 +49,16 @@ class ConnectivityChecker:
             self.thread.join(timeout=5)
 
         print("ConnectivityChecker: Stopped")
+
+    def suspend_device(self, mac_address: str):
+        """Suspend connectivity checking for a device (e.g., during upload)."""
+        self._suspended_devices.add(mac_address)
+        print(f"ConnectivityChecker: Suspended checking for {mac_address}")
+
+    def resume_device(self, mac_address: str):
+        """Resume connectivity checking for a device."""
+        self._suspended_devices.discard(mac_address)
+        print(f"ConnectivityChecker: Resumed checking for {mac_address}")
 
     def _check_loop(self):
         """Main connectivity checking loop (runs in background thread)."""
@@ -73,6 +84,10 @@ class ConnectivityChecker:
             for device in devices:
                 # Skip devices with no known IP
                 if not device.last_ip:
+                    continue
+
+                # Skip devices that are suspended (e.g., during upload)
+                if device.mac_address in self._suspended_devices:
                     continue
 
                 # Check if device is reachable and get device info

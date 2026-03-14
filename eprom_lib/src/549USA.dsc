@@ -1,7 +1,7 @@
 {
     "eprom": {
         "name": "549USA",
-        "RP58-Compatible": "Y",
+        "map-style": "RP58",
         "info": {
             "models": [
                 "Tuono 2003-2005"

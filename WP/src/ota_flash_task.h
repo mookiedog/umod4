@@ -18,8 +18,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
 #endif
 
 /**
@@ -50,14 +48,36 @@ void ota_flash_task_init(void);
 bool ota_flash_request(const char* uf2_path);
 
 /**
+ * Request a clean system reboot without flashing.
+ *
+ * Goes through the same shutdown sequence as OTA (logger, WiFi), then
+ * performs a watchdog reset back to the current firmware partition.
+ * Returns immediately; the reboot happens ~200ms later after HTTP response flush.
+ *
+ * @return true if reboot was queued successfully
+ *         false if OTA already in progress or queue error
+ */
+bool ota_reboot_request(void);
+
+/**
+ * Request a clean system reboot, saving g_flash_config to flash first.
+ *
+ * Identical to ota_reboot_request() but the flash config save is performed
+ * AFTER WiFi is shut down, so disabling interrupts for flash erase/program
+ * does not corrupt the CYW43 driver state.
+ *
+ * Callers must NOT call flash_config_save() themselves before calling this —
+ * the OTA task owns the save.
+ *
+ * @return true if reboot was queued successfully
+ *         false if OTA already in progress or queue error
+ */
+bool ota_reboot_with_config_save_request(void);
+
+/**
  * Check if an OTA operation is currently in progress.
  *
  * @return true if OTA is in progress (task is processing a request)
  */
 bool ota_flash_in_progress(void);
 
-#ifdef __cplusplus
-}
-#endif
-
-#endif // OTA_FLASH_TASK_H

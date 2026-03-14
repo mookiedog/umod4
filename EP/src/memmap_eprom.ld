@@ -21,53 +21,43 @@
     __stack (== StackTop)
 */
 
-/* Define the size of our flash, and how much we are reserving for code.
- * The rest of the space will be used to store eprom image_t structs
- */
-__FLASH_SIZE_BYTES                    = 16*1024K;
-__CODE_SIZE_BYTES                     =  1*1024K;
-__BSON_IMAGE_PARTITION_SIZE_BYTES     =  1*1024K;
-__FS_SIZE_BYTES                       = __FLASH_SIZE_BYTES - (__CODE_SIZE_BYTES + __BSON_IMAGE_PARTITION_SIZE_BYTES);
+/* Define how the flash gets allocated */
+__FLASH_SIZE_BYTES                    =  16*1024K;      /* Total size of flash */
+__CODE_SIZE_BYTES                     =   2*1024K;      /* 2 megabytes for code */
+__IMAGE_STORE_PARTITION_SIZE_BYTES    = 128*64K;        /* 8 megabytes for image store (max 128 slots, each slot is 64K (32K BSON header + 32K image)) */
+                                                        /* 6 megabytes remains unused */
 
-/* These next symbols can also be used by the codebase.
- * Note that the EPROM images and the FS must be spec'd to reside in
- * the non-cacheable, non-allocating EPROM address space 0x13xxxxxx
- *
-  * TODO: oops, what about the 0x13000000 mentioned above??
- */
-__BSON_IMAGE_PARTITION_START_ADDR = 0x10000000 + __CODE_SIZE_BYTES;
-__FS_PARTITION_START_ADDR = __BSON_IMAGE_PARTITION_START_ADDR + __BSON_IMAGE_PARTITION_SIZE_BYTES;
+__IMAGE_STORE_PARTITION_START_ADDR = 0x10000000 + __CODE_SIZE_BYTES;
 
 /* We will be using RAM in a non-striped configuration.
  * The banks will be assigned exclusively to a core to avoid RAM contention.
- * This is the general layout for the SRAM:
- *   Striped RAM:           0x20000000..0x20040000  256K
- *   Nonstriped RAM bank0:  0x21000000..0x2100FFFF   64K
- *   Nonstriped RAM bank1:  0x21010000..0x2101FFFF   64K
- *   Nonstriped RAM bank2:  0x21020000..0x2102FFFF   64K
- *   Nonstriped RAM bank3:  0x21030000..0x2103FFFF   64K
+ * Non-striped SRAM layout:
+ *   Bank0:  0x21000000..0x2100FFFF   64K  (core1: EPROM image + bus log)
+ *   Bank1:  0x21010000..0x2101FFFF   64K  (core0)
+ *   Bank2:  0x21020000..0x2102FFFF   64K  (core0)
+ *   Bank3:  0x21030000..0x2103FFFF   64K  (core0)
+ * Core1 is in bank0 so that core0 overflow stays in its own banks.
  */
 MEMORY
 {
-    FLASH(rx)           : ORIGIN = 0x10000000, LENGTH = __CODE_SIZE_BYTES
-    BSON_IMAGES(r)      : ORIGIN = __BSON_IMAGE_PARTITION_START_ADDR,   LENGTH = __BSON_IMAGE_PARTITION_SIZE_BYTES
-    FS(rw)              : ORIGIN = __FS_PARTITION_START_ADDR,           LENGTH = __FS_SIZE_BYTES
-    RAM(rwx)            : ORIGIN = 0x21000000, LENGTH = 128K    /* Assign non-striped bank0/1 fo use by core0 */
-    SCRATCH_X(rwx)      : ORIGIN = 0x20040000, LENGTH = 4K
-    SCRATCH_Y(rwx)      : ORIGIN = 0x20041000, LENGTH = 4K      /* Core1: Holds the EPROM task */
-    USB_DPORT(rwx)      : ORIGIN = 0x50100000, LENGTH = 4K      /* Would be nice to stick Core1 in here, but I get hardfaults! */
+    FLASH(rx)               : ORIGIN = 0x10000000, LENGTH = __CODE_SIZE_BYTES
+    IMAGE_STORE(rw)         : ORIGIN = __IMAGE_STORE_PARTITION_START_ADDR,  LENGTH = __IMAGE_STORE_PARTITION_SIZE_BYTES
+    RAM_CORE1_EPROM(rwx)    : ORIGIN = 0x21000000, LENGTH = 32K     /* Bank0 lower half: EPROM image served by core1 */
+    RAM_CORE1_BUSLOG(rwx)   : ORIGIN = 0x21008000, LENGTH = 32K     /* Bank0 upper half: bus log */
+    RAM(rwx)                : ORIGIN = 0x21010000, LENGTH = 192K    /* Non-striped banks 1/2/3 for core0 */
+    SCRATCH_X(rwx)          : ORIGIN = 0x20040000, LENGTH = 4K      /* Core0 stack */
+    SCRATCH_Y(rwx)          : ORIGIN = 0x20041000, LENGTH = 4K      /* epromTask code (copied from flash by SDK crt0) */
+    USB_DPORT(rwx)          : ORIGIN = 0x50100000, LENGTH = 4K      /* Would be nice to stick Core1 code in here, but I get hardfaults! */
 }
 
 ENTRY(_entry_point)
 
 SECTIONS
 {
-    /* todo: should this be 0x13xxxxxx?? As mentioned above?? */
-    .bsonStore (__BSON_IMAGE_PARTITION_START_ADDR) :
+    .image_store (__IMAGE_STORE_PARTITION_START_ADDR) :
     {
-      KEEP(*(.bsonStore))
-    } > BSON_IMAGES =0xFF
-
+        KEEP(*(.image_store))
+    } > IMAGE_STORE
 
     /* Second stage bootloader is prepended to the image. It must be 256 bytes big
        and checksummed. It is usually built by the boot_stage2 target
@@ -224,13 +214,10 @@ SECTIONS
     } > SCRATCH_X AT > FLASH
     __scratch_x_source__ = LOADADDR(.scratch_x);
 
-    /* This is based on us putting the EPROM code in scratch_y at the start, followed by a stack for the rest of scratch_y.
-     * Note that the EPROM code basically uses no stack at all during operation so this should be pretty safe.
-     */
     .scratch_y : {
         __scratch_y_start__ = .;
         *(.scratch_y.*)
-        . = ALIGN(16);
+        . = ALIGN(4);
         __scratch_y_end__ = .;
     } > SCRATCH_Y AT > FLASH
     __scratch_y_source__ = LOADADDR(.scratch_y);
@@ -242,6 +229,22 @@ SECTIONS
         __usb_dport_end__ = .;
     } > USB_DPORT AT > FLASH
     __usb_dport_source__ = LOADADDR(.usb_dport);
+
+    /* EPROM image buffer (32K). Populated at runtime by EpromLoader, not from flash. */
+    .ram_core1_eprom (NOLOAD) : {
+        __ram_core1_eprom_start__ = .;
+        . += LENGTH(RAM_CORE1_EPROM);
+        __ram_core1_eprom_end__ = .;
+    } > RAM_CORE1_EPROM
+
+    /* ECU bus log (32K). Written by core1's epromTask, read only by debugger.
+     * Core1's boot stack (2K at top) overlaps, but is unused once epromTask starts.
+     */
+    .ram_core1_buslog (NOLOAD) : {
+        __ram_core1_buslog_start__ = .;
+        . += LENGTH(RAM_CORE1_BUSLOG);
+        __ram_core1_buslog_end__ = .;
+    } > RAM_CORE1_BUSLOG
 
     .bss  : {
         . = ALIGN(4);
@@ -275,23 +278,19 @@ SECTIONS
     } > FLASH
 
 
-    /* We make a tiny stack for core1 just to get the process booted - it is not used otherwise.
-     * We put the stack at the end of our codespace in SCXRATCH_Y.
-     */
+    /* Core1 boot stack at end of SCRATCH_Y. Overlaps epromTask code growing up from bottom,
+     * but the stack is only used briefly to launch core1; once epromTask starts it never returns. */
     __StackOneTop = ORIGIN(SCRATCH_Y) + LENGTH(SCRATCH_Y);
-    __StackOneBottom = ORIGIN(SCRATCH_Y) + SIZEOF(.scratch_y);
+    __StackOneBottom = __StackOneTop - 0x800;
 
-    /* The core0 stack goes at the end of RAM, where RAM is defined to be for the exclusive use of core0.
-     * The rest of the ram address space is for core1.
-     * I'll reserve 16K for the stack which is probably way overkill.
-     */
-    __StackLimit = ORIGIN(RAM) + LENGTH(RAM) - 16K;
-    __StackTop = ORIGIN(RAM) + LENGTH(RAM);
+    /* Core0 stack in SCRATCH_X (4K). */
+    __StackLimit = ORIGIN(SCRATCH_X);
+    __StackTop = ORIGIN(SCRATCH_X) + LENGTH(SCRATCH_X);
     __StackBottom = __StackTop - SIZEOF(.stack_dummy);
     PROVIDE(__stack = __StackTop);
 
-    /* Check if data + heap + stack exceeds RAM limit */
-    ASSERT(__StackLimit >= __HeapLimit, "region RAM overflowed")
+    /* Check if data + heap exceeds RAM limit */
+    ASSERT(__HeapLimit <= ORIGIN(RAM) + LENGTH(RAM), "region RAM overflowed")
 
     ASSERT( __binary_info_header_end - __logical_binary_start <= 256, "Binary info must be in first 256 bytes of the binary")
     /* todo assert on extra code */

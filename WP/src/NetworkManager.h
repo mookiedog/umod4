@@ -34,7 +34,9 @@ private:
     State state_;
     bool httpd_running_;
     bool mdns_running_;
+    bool lwip_services_initialized_;
 
+    void init_lwip_services();
     void start_http_server();
     void stop_http_server();
     void start_mdns();

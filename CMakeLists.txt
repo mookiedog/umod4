@@ -207,27 +207,6 @@ ExternalProject_Add(ecu
     INSTALL_COMMAND ""
 )
 
-# Inform the other external projects where the eprom library files end up:
-set(EPROM_LIB_DIR ${CMAKE_BINARY_DIR}/eprom_lib)
-
-# ---------------------------------------------------------------------------------------------
-message(STATUS "Adding the 'eprom_lib' project")
-
-set(EPROM_LIB_CMAKE_ARG_LIST
-    -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
-    ${PYTHON_DEFS}
-)
-
-ExternalProject_Add(eprom_lib
-    PREFIX ${CMAKE_BINARY_DIR}/eprom_lib
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/eprom_lib
-    BINARY_DIR ${EPROM_LIB_DIR}
-    CMAKE_GENERATOR ${generator}
-    CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${EPROM_LIB_CMAKE_ARG_LIST}
-    BUILD_ALWAYS true
-    INSTALL_COMMAND ""
-)
-
 # ---------------------------------------------------------------------------------------------
 message(STATUS "Adding the 'EP' project")
 
@@ -235,8 +214,9 @@ set(EP_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
     -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
     -DLIB_DIR=${LIB_DIR}
-    -DEPROM_LIB_DIR=${EPROM_LIB_DIR}
+    -DEPROM_LIB_SRC_DIR=${CMAKE_SOURCE_DIR}/eprom_lib
     -DECU_BINARY_DIR=${CMAKE_BINARY_DIR}/ecu
+    -DECU_SOURCE_DIR=${CMAKE_SOURCE_DIR}/ecu
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
@@ -245,7 +225,7 @@ set(EP_CMAKE_ARG_LIST
 )
 
 ExternalProject_Add(EP
-    DEPENDS tools ecu eprom_lib
+    DEPENDS tools ecu
     PREFIX ${CMAKE_BINARY_DIR}/EP
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/EP
     BINARY_DIR ${CMAKE_BINARY_DIR}/EP

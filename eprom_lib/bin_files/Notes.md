@@ -1,6 +1,6 @@
 # Comparing EPROM Maps
 
-The entire set of RP58-compatible restricted and derestricted tables can be dumped as shown below.
+The entire set of RP58 map-style restricted and derestricted tables can be dumped as shown below.
 The dump command leaves out the address info because it would obviously be different between the two table sets.
 
 The idea is to dump the tables as hex characters so that a diff command can be used to tell if there are differences.

@@ -483,9 +483,9 @@ Once tar completes, the cross-compilation executable tools will be located at /o
 Verify that the new tools are functioning by running gcc directly from its bin directory:
 
 ```bash
-$ ./bin/arm-none-eabi-gdb --version
-GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git
-Copyright (C) 2024 Free Software Foundation, Inc.
+$ ./bin/arm-none-eabi-gcc --version
+arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
+Copyright (C) 2025 Free Software Foundation, Inc.
 ```
 
 Do __not__ add the cross-compiler's bin directory to your PATH variable.
@@ -888,7 +888,7 @@ The information takes the form of JSON documents because that makes them fairly 
 From a rider's standpoint, it means that every umod4 board can contain many, many EPROM images.
 Things are set up so that the actual image that is presented to the ECU can be combined from more than one EPROM.
 Typically, one would combine the UM4 ECU logging firmware with the maps from some other EPROM.
-This effectively converts an any RP58-compatible stock EPROM into a data-logging EPROM.
+This effectively converts any RP58 map-style stock EPROM into a data-logging EPROM.
 Of course, the system also supports running any .bin file for whatever EPROM you happen to have laying around.
 
 ## Running Umod4

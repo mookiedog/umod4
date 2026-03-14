@@ -1,7 +1,7 @@
 {
     "eprom": {
         "name": "549EuroC",
-        "RP58-Compatible": "Y",
+        "map-style": "RP58",
         "info": {
             "models": [
                 "Tuono 2003 (Europe only, shiny muffler without catalytic converter)"

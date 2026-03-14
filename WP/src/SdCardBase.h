@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+// FreeRTOS task configuration for hotPlugManager
+#define HOTPLUG_MGR_STACK_SIZE_WORDS 1024
+
 // SD errors are broadly defined as 0 means OK, negative numbers are errors
 typedef int32_t SdErr_t;
 #define SD_ERR_NOERR             0
@@ -32,6 +35,26 @@ typedef int32_t SdErr_t;
 
 #define SD_ERR_NOINIT   -99
 
+// CSD (Card Specific Data) register field definitions
+// These define bit positions in the CSD register (big-endian format)
+#define REG_CSD_BITLEN                (16*8)            // CSD register is 16 bytes long
+#define CSD_STRUCTURE_START           127
+#define CSD_STRUCTURE_LENGTH          2
+#define CSD_MAX_DATA_XFER_RATE        103
+#define CSD_MAX_DATA_XFER_LENGTH      8
+#define CSD_RD_BLK_LEN_START          83
+#define CSD_RD_BLK_LEN_LENGTH         4
+
+// CSD Version 2 (SDHC/SDXC) specific fields
+#define CSD_V2_CSIZE_START            69
+#define CSD_V2_CSIZE_LENGTH           22
+
+// CSD Version 1 (SDSC) specific fields
+#define CSD_V1_CSIZE_START            73
+#define CSD_V1_CSIZE_LENGTH           12
+#define CSD_V1_CSIZE_MULT_START       49
+#define CSD_V1_CSIZE_MULT_LENGTH      3
+
 /// @brief Abstract base class for SD card access
 /// Provides common interface for both SPI and SDIO implementations
 /// Interface is filesystem-agnostic - works with 512-byte sectors
@@ -49,6 +72,7 @@ class SdCardBase {
 
     virtual SdErr_t init() = 0;
     virtual SdErr_t testCard() = 0;
+    virtual SdErr_t shutdown() = 0;
 
     // Pure sector-based interface (512-byte sectors)
     virtual SdErr_t readSectors(uint32_t sector_num, uint32_t num_sectors, void *buffer) = 0;

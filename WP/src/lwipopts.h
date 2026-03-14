@@ -10,13 +10,13 @@
 #define LWIP_NETCONN                1
 
 // FreeRTOS thread and mailbox settings (required for NO_SYS=0)
-#define TCPIP_THREAD_STACKSIZE      2048
-#define TCPIP_THREAD_PRIO           (configMAX_PRIORITIES - 2)  // High priority for network stack
+#define TCPIP_THREAD_STACKSIZE      4096
+#define TCPIP_THREAD_PRIO           3  // Priority 3 = TASK_HIGH_PRIORITY, below CYW43 (priority 4)
 #define DEFAULT_THREAD_STACKSIZE    2048
 #define DEFAULT_RAW_RECVMBOX_SIZE   8
 #define DEFAULT_TCP_RECVMBOX_SIZE   8
 #define DEFAULT_UDP_RECVMBOX_SIZE   8
-#define TCPIP_MBOX_SIZE             8
+#define TCPIP_MBOX_SIZE             16  // increased from 8: parallel page loads generate burst of ACKs
 
 // Prevent lwIP from redefining struct timeval (already defined in newlib)
 #define LWIP_TIMEVAL_PRIVATE        0
@@ -24,17 +24,38 @@
 // Provide errno from newlib
 #define LWIP_PROVIDE_ERRNO          0
 
-// Since we have implemented a thread-safe __malloc_lock,
-// we can safely use the standard libc malloc for lwIP.
-#define MEM_LIBC_MALLOC             1
+// Use static memory instead of malloc. Malloc was causing fragmentation issues
+// over time as well as making it hard to know how much RAM was really being used.
 
-// Use mem_malloc/mem_free instead of the lwip pool allocator.
-// May make the system run slower, but simplifies memory management.
-#define MEMP_MEM_MALLOC             1
+// MEM_LIBC_MALLOC = 0 (Use lwIP static pool)
+// Prevents "sbrk ratchet" OOM. Previously, setting this to 1 caused malloc to
+// permanently claim heap space for PBUF_RAM and httpd buffers (~16KB/transfer).
+// Static allocation ensures the linker accounts for this memory and prevents
+// runtime heap exhaustion. Ensure MEM_SIZE covers peak TCP_SND_BUF demand.
+#define MEM_LIBC_MALLOC 0
+
+// MEMP_MEM_MALLOC = 0 (Use lwIP fixed-size static arrays)
+// Ensures zero fragmentation and predictable memory usage for PCBs and pbufs.
+// NOTE: Requires cyw43_arch_init() (which calls memp_init()) to run BEFORE
+// any service initialization (e.g., httpd_init()). Services are now deferred
+// to NetworkManager::init_lwip_services() to satisfy this ordering.
+// CAUTION: Re-initializing the CYW43 architecture may corrupt these live pools.
+#define MEMP_MEM_MALLOC 0
 
 #define MEM_ALIGNMENT               4
-#define MEM_SIZE                    16384
-#define MEMP_NUM_TCP_SEG            32
+// MEM_SIZE: static pool for lwIP's mem_malloc (PBUF_RAM pbufs + hs->buf per connection).
+// Peak demand = 2 connections × (TCP_SND_BUF for hs->buf + TCP_SND_BUF for PBUF_RAMs)
+//             = 2 × (5840 + 5840) = ~23KB. 32KB gives comfortable headroom.
+#define MEM_SIZE                    32768
+// MEMP_NUM_SYS_TIMEOUT: lwIP auto-calculates this from enabled features (TCP, ARP, DHCP×2,
+// IGMP, DNS, IP_REASSEMBLY, mDNS×(1+MAX_SERVICES), netif_client_data) giving ~10.
+// With MEMP_MEM_MALLOC=0, the pool is now a fixed static array so the auto value is just
+// barely enough and mdns_resp_add_netif() overflows it. Set explicitly with headroom.
+#define MEMP_NUM_SYS_TIMEOUT        20
+#define MEMP_NUM_TCP_PCB            20  // Increased from 5→10→20 to handle connection churn
+                                        // With TCP_MSL=1000ms (2s TIME_WAIT), 20 PCBs allows
+                                        // 10 new connections/second sustained throughput
+#define MEMP_NUM_TCP_SEG            32  // 20 PCBs × 4×MSS window (halved from 64 with 8×MSS)
 #define MEMP_NUM_ARP_QUEUE          10
 #define PBUF_POOL_SIZE              24
 #define LWIP_ARP                    1
@@ -42,17 +63,21 @@
 #define LWIP_ICMP                   1
 #define LWIP_IGMP                   1
 #define LWIP_RAW                    1
-#define TCP_WND                     (8 * TCP_MSS)
+// TCP window and send buffer: reduced from 8×MSS to 4×MSS.
+// Halves peak mem_malloc demand during file transfers (~6KB hs->buf + ~6KB PBUF_RAMs
+// per connection) so the MEM_SIZE=32KB pool covers 2 concurrent connections with margin.
+// Local WiFi RTT is ~1ms so a 5840-byte window still achieves multi-MB/s throughput.
+#define TCP_WND                     (4 * TCP_MSS)
 #define TCP_MSS                     1460
-#define TCP_SND_BUF                 (8 * TCP_MSS)
+#define TCP_SND_BUF                 (4 * TCP_MSS)
 #define TCP_SND_QUEUELEN            ((4 * (TCP_SND_BUF) + (TCP_MSS - 1)) / (TCP_MSS))
 #define LWIP_NETIF_STATUS_CALLBACK  1
 #define LWIP_NETIF_LINK_CALLBACK    1
 #define LWIP_NETIF_HOSTNAME         1
 #define LWIP_NUM_NETIF_CLIENT_DATA  1
-#define MEM_STATS                   0
+#define MEM_STATS                   1  // debug: count mem_malloc failures
 #define SYS_STATS                   0
-#define MEMP_STATS                  0
+#define MEMP_STATS                  1  // debug: count per-pool failures and track peak usage
 #define LINK_STATS                  0
 // #define ETH_PAD_SIZE                2
 #define LWIP_CHKSUM_ALGORITHM       3
@@ -75,6 +100,7 @@
 #define LWIP_HTTPD_DYNAMIC_FILE_READ    1
 #define LWIP_HTTPD_DYNAMIC_HEADERS      1
 #define LWIP_HTTPD_SUPPORT_POST         1
+#define LWIP_HTTPD_SUPPORT_11_KEEPALIVE 1
 #define LWIP_HTTPD_MAX_TAG_NAME_LEN     16
 #define LWIP_HTTPD_MAX_TAG_INSERT_LEN   256
 #define HTTPD_SERVER_PORT               80
@@ -86,10 +112,27 @@
 #define HTTPD_FSDATA_FILE               "fsdata.c"
 #endif
 
+// TCP TIME_WAIT configuration
+// TIME_WAIT duration = 2 * TCP_MSL (Maximum Segment Lifetime)
+// Default TCP_MSL is 60000ms (60s), giving 120s TIME_WAIT - way too long!
+// With 20 PCBs and connection reuse, 2s TIME_WAIT is aggressive but acceptable
+// Reduced from default to prevent PCB pool exhaustion during uploads
+#define TCP_MSL                         1000  // 1 second (TIME_WAIT = 2 seconds)
+
 // HTTP server polling interval (X * 500ms)
-// Default is 4 (2 seconds), which causes slow response times
-// Set to 1 for 500ms polling (fast enough for interactive use)
+// Reduced from 4 (2s) to 1 (500ms): the 2s value caused consistent ~1.8s TTFB
+// delays when http_send() stalled (tcp_write ERR_MEM on pages > TCP_SND_BUF).
+// With no bytes in flight, http_sent never fires; http_poll is the only recovery path.
 #define HTTPD_POLL_INTERVAL             1
+
+// Maximum retries before closing Keep-Alive connection
+// With HTTPD_POLL_INTERVAL=1, each retry is 500ms, so 1 retry = ~500ms idle timeout.
+// I have noticed that if HTTPD_MAX_RETRIES is 1, then firmware uploads quit working!
+// 2 retries seems to be the minimum.
+// Shorter idle window prevents browser/server FIN race on connection reuse:
+// if the user navigates before the idle timer fires, the connection is still alive;
+// if after, the connection is already cleanly closed so Chrome opens a fresh one.
+#define HTTPD_MAX_RETRIES               2
 
 // mDNS responder for device discovery (motorcycle.local)
 #define LWIP_MDNS_RESPONDER             1
@@ -99,7 +142,7 @@
 #ifndef NDEBUG
 #define LWIP_DEBUG                  1
 #define LWIP_STATS                  1
-#define LWIP_STATS_DISPLAY          1
+#define LWIP_STATS_DISPLAY          0
 #endif
 
 #define ETHARP_DEBUG                LWIP_DBG_OFF
