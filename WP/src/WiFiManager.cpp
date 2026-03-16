@@ -198,15 +198,6 @@ void WiFiManager::WiFiManager_task()
             while (1);
         }
 
-        // Global Safety: Check if WiFi is allowed via VBUS GPIO
-        // Only check if we are beyond the initial setup state
-        if (state_ > State::CHECK_WIFI_ALLOWED) {
-            bool wifiAllowed = (cyw43_arch_gpio_get(CYW43_WL_GPIO_VBUS_PIN) != 0);
-            if (!wifiAllowed) {
-                printf("WiFiMgr: VBUS power lost, disconnecting\n");
-                state_ = State::DISCONNECTING;
-            }
-        }
 
         switch (state_) {
             case State::UNINITIALIZED:
@@ -246,17 +237,12 @@ void WiFiManager::WiFiManager_task()
                 break;
 
             case State::CHECK_WIFI_ALLOWED:
-                if (cyw43_arch_gpio_get(CYW43_WL_GPIO_VBUS_PIN) != 0) {
-                    if (wifiSsid_[0] == '\0') {
-                        printf("WiFiMgr: No WiFi credentials — entering AP mode\n");
-                        state_ = State::AP_STARTING;
-                    } else {
-                        printf("WiFiMgr: Power OK, enabling Station Mode\n");
-                        state_ = State::WIFI_POWERING_UP;
-                    }
+                if (wifiSsid_[0] == '\0') {
+                    printf("WiFiMgr: No WiFi credentials — entering AP mode\n");
+                    state_ = State::AP_STARTING;
                 } else {
-                    // Poll slowly while waiting for USB power
-                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    printf("WiFiMgr: Enabling Station Mode\n");
+                    state_ = State::WIFI_POWERING_UP;
                 }
                 break;
 
@@ -305,8 +291,8 @@ void WiFiManager::WiFiManager_task()
                         cyw43_wifi_pm(&cyw43_state, CYW43_PERFORMANCE_PM);
                         state_ = State::CONNECTED;
 
-                        // Send initial check-in notification to server
-                        sendCheckInNotification();
+                        // NOTE: check-in is sent by NetworkManager after httpd_init()
+                        // to avoid a race where the server tries HTTP before port 80 is listening.
 
                         // Start periodic heartbeat timer (5 minutes)
                         if (heartbeatTimer_ != NULL) {

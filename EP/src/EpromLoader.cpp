@@ -275,6 +275,7 @@ void EpromLoader::loadImage()
         // ---------------------------------------------------------------
         // Optional: If "mapblob" specified, find, verify, and overlay on top of code image
         if (mapblobName) {
+            logEpromName_load(mapblobName);
             const SlotInfo* mapSlot = nullptr;
             for (uint8_t d = 0; d < slot_dir_count; d++) {
                 if (strcmp(slot_dir[d].name, mapblobName) == 0) {
@@ -300,6 +301,7 @@ void EpromLoader::loadImage()
                 append_fail();
                 continue;
             }
+            enqueue(LOGID_EP_LOAD_IMAGESLOT_TYPE_U8, mapSlot->index);
 
             // Overlay mapblob bytes 0x0000–0x1BFF directly onto EPROM_IMAGE_BASE
             loadSlotImage(mapSlot->index, (uint8_t*)EPROM_IMAGE_BASE, mapSlot->protection, 0, MAPBLOB_SIZE);
@@ -330,7 +332,6 @@ void EpromLoader::loadImage()
             const char* p = imgsel_str;
             char c;
             do { c = *p++; enqueue(LOGID_EP_IMGSEL_TYPE_CS, c); } while (c != '\0');
-            enqueue(LOGID_EP_LOADED_SLOT_TYPE_U8, codeSlot->index);
             printf("%s: %s\n", __FUNCTION__, imgsel_str);
             return;
         }
@@ -359,7 +360,6 @@ limp_mode:
     const char* p = imgsel_str;
     char c;
     do { c = *p++; enqueue(LOGID_EP_IMGSEL_TYPE_CS, c); } while (c != '\0');
-    enqueue(LOGID_EP_LOADED_SLOT_TYPE_U8, 0);
 }
 
 

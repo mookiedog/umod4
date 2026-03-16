@@ -333,7 +333,7 @@
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 updateEcuBadge(d.ecu_alive);
-                updateEpBadge(d.status, d.loaded_slot);
+                updateEpBadge(d.status);
                 updateEngineBadge(d.engine_running);
                 updateBootStatus(d);
             }).catch(function() {});
@@ -353,7 +353,7 @@
         }
     }
 
-    function updateEpBadge(status, slot) {
+    function updateEpBadge(status) {
         var el = document.getElementById('badge-ep');
         if (status === 'ok') {
             el.className = 'badge badge-ok';
@@ -400,7 +400,7 @@
             var e = entries[i];
             var code = esc(e.code || e.name || '?');
             var mapblob = e.mapblob ? ' + <em>' + esc(e.mapblob) + '</em>' : '';
-            var loaded = (d.loaded_slot > 0 && i === 0);  // first entry is the active one
+            var loaded = (d.status === 'ok' && i === 0);  // first entry is the active one
             html += '<div style="padding:5px 2px; border-bottom:1px solid #f0f0f0; font-size:0.9em;'
                   + (loaded ? ' background:#d4edda; border-radius:4px; margin:0 -4px; padding:5px 8px;' : '') + '">'
                   + '<span style="color:#aaa; font-size:0.85em; margin-right:8px;">' + (i+1) + '</span>'
@@ -425,10 +425,10 @@
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 g_slots = (d.slots || []).slice().sort(function(a, b) {
-                    var cmp = a.name.localeCompare(b.name);
+                    var cmp = (a.name || '').localeCompare(b.name || '');
                     return g_lib_sort_asc ? cmp : -cmp;
                 });
-                g_slot_names = g_slots.map(function(s) { return s.name; });
+                g_slot_names = g_slots.filter(function(s) { return s.name; }).map(function(s) { return s.name; });
                 // Auto-select a pending name (e.g. after upload)
                 g_lib_selected = -1;
                 if (g_lib_pending_select) {
@@ -462,16 +462,30 @@
         var html = '';
         g_slots.forEach(function(s, i) {
             var sel = (i === g_lib_selected);
-            var prot = s.protection || 'N';
-            html += '<div class="lib-row' + (sel ? ' lib-selected' : '') + '" onclick="libSelect(' + i + ')">'
-                + '<div><div class="lib-name">' + esc(s.name) + '</div>'
-                + '<div class="lib-desc">' + esc(s.description || '') + '</div></div>'
-                + '</div>';
-            if (sel) {
-                html += '<div class="lib-details">'
-                    + '<span>Hash: <span style="font-family:monospace;">' + esc(s.hash || '\u2014') + '</span></span>'
-                    + '<span>Protection: <span class="prot-badge prot-' + esc(prot) + '">' + esc(prot) + '</span></span>'
+            if (s.error) {
+                html += '<div class="lib-row' + (sel ? ' lib-selected' : '') + '" onclick="libSelect(' + i + ')">'
+                    + '<div><div class="lib-name" style="color:#9b2c2c;">Slot ' + esc(s.index) + ' \u2014 corrupt</div>'
+                    + '<div class="lib-desc" style="color:#c53030;">' + esc(s.error) + '</div></div>'
                     + '</div>';
+                if (sel) {
+                    html += '<div class="lib-details">'
+                        + '<span>Slot: <span style="font-family:monospace;">' + esc(s.index) + '</span></span>'
+                        + '<span style="color:#9b2c2c;">Error: ' + esc(s.error) + '</span>'
+                        + '</div>';
+                }
+            } else {
+                var prot = s.protection || 'N';
+                html += '<div class="lib-row' + (sel ? ' lib-selected' : '') + '" onclick="libSelect(' + i + ')">'
+                    + '<div><div class="lib-name">' + esc(s.name) + '</div>'
+                    + '<div class="lib-desc">' + esc(s.description || '') + '</div></div>'
+                    + '</div>';
+                if (sel) {
+                    html += '<div class="lib-details">'
+                        + '<span>Slot: <span style="font-family:monospace;">' + esc(s.index) + '</span></span>'
+                        + '<span>Hash: <span style="font-family:monospace;">' + esc(s.hash || '\u2014') + '</span></span>'
+                        + '<span>Protection: <span class="prot-badge prot-' + esc(prot) + '">' + esc(prot) + '</span></span>'
+                        + '</div>';
+                }
             }
         });
         container.innerHTML = html;
@@ -494,10 +508,10 @@
         var selName = (g_lib_selected >= 0 && g_slots[g_lib_selected])
                     ? g_slots[g_lib_selected].name : '';
         g_slots.sort(function(a, b) {
-            var cmp = a.name.localeCompare(b.name);
+            var cmp = (a.name || '').localeCompare(b.name || '');
             return g_lib_sort_asc ? cmp : -cmp;
         });
-        g_slot_names = g_slots.map(function(s) { return s.name; });
+        g_slot_names = g_slots.filter(function(s) { return s.name; }).map(function(s) { return s.name; });
         g_lib_selected = -1;
         if (selName) {
             for (var i = 0; i < g_slots.length; i++) {
@@ -509,10 +523,11 @@
 
     function updateLibControls() {
         var noSel = g_engine_running || g_lib_selected < 0;
+        var isBad = !noSel && g_slots[g_lib_selected] && g_slots[g_lib_selected].error;
         var delBtn = document.getElementById('btn-lib-del');
         if (delBtn) delBtn.disabled = noSel;
         var editBtn = document.getElementById('btn-lib-edit');
-        if (editBtn) editBtn.disabled = noSel;
+        if (editBtn) editBtn.disabled = noSel || isBad;
     }
 
     // ── Delete ────────────────────────────────────────────────────────────
@@ -535,7 +550,7 @@
         .then(function(d) {
             var resEl = document.getElementById('delete-result');
             resEl.style.color = '#155724';
-            resEl.textContent = '\u2714 "' + slot.name + '" deleted \u2014 EP rebooting\u2026';
+            resEl.textContent = '\u2714 "' + (slot.name || ('slot ' + slot.index)) + '" deleted \u2014 EP rebooting\u2026';
             g_lib_selected = -1;
             btn.textContent = '\u2715 Delete';
             doScan();
@@ -560,8 +575,10 @@
             var slot = g_slots[g_lib_selected];
             g_edit_slot_index = slot.index;
             document.getElementById('upload-panel-title').textContent = 'Edit Image';
-            document.getElementById('upload-file-row').style.display = 'none';
-            document.getElementById('upload-file-hint').style.display = 'none';
+            document.getElementById('upload-file-row').style.display = '';
+            document.getElementById('upload-file-hint').style.display = '';
+            document.getElementById('upload-file-hint').textContent =
+                'Optional \u2014 select to replace the binary; leave blank to keep existing';
             document.getElementById('upload-name').value = slot.name;
             document.getElementById('upload-desc').value = slot.description || '';
             document.getElementById('upload-prot').value = slot.protection || 'N';
@@ -570,6 +587,8 @@
             document.getElementById('upload-panel-title').textContent = 'Upload New Image';
             document.getElementById('upload-file-row').style.display = '';
             document.getElementById('upload-file-hint').style.display = '';
+            document.getElementById('upload-file-hint').textContent =
+                'Must be exactly 32768 bytes (.bin EPROM image)';
             document.getElementById('upload-name').value = '';
             document.getElementById('upload-desc').value = '';
             document.getElementById('upload-prot').value = 'N';
@@ -588,9 +607,11 @@
     function onUploadFileChange(input) {
         var f = input.files && input.files[0];
         if (!f) return;
-        // Strip extension, truncate to maxlength, populate name field
-        var base = f.name.replace(/\.[^.]+$/, '').slice(0, 31);
-        document.getElementById('upload-name').value = base;
+        // In add mode only: populate name from filename (strip extension, truncate)
+        if (g_edit_slot_index < 0) {
+            var base = f.name.replace(/\.[^.]+$/, '').slice(0, 31);
+            document.getElementById('upload-name').value = base;
+        }
     }
 
     function doUpload() {
@@ -605,8 +626,11 @@
             return;
         }
 
-        // Edit mode: save updated metadata, keep existing binary
-        if (g_edit_slot_index >= 0) {
+        var fileInput = document.getElementById('upload-file');
+        var hasFile = !!(fileInput.files && fileInput.files[0]);
+
+        // Edit mode, no new file: metadata-only update
+        if (g_edit_slot_index >= 0 && !hasFile) {
             resultEl.style.display = '';
             resultEl.className = 'result-msg badge-neutral';
             resultEl.textContent = 'Saving\u2026';
@@ -640,18 +664,21 @@
             return;
         }
 
-        // Upload mode: require a .bin file
-        var fileInput = document.getElementById('upload-file');
-        if (!fileInput.files || !fileInput.files[0]) {
+        // Add mode: require a .bin file
+        if (g_edit_slot_index < 0 && !hasFile) {
             showResult('upload-result', false, 'Please select a .bin file.');
             return;
         }
 
-        // Duplicate name check
-        var existing = g_slots.find(function(s) { return s.name === name; });
-        if (existing) {
-            if (!confirm('"' + name + '" already exists in the Image Library.\nProceed and overwrite it?')) {
-                return;
+        // Add mode: check for duplicate name and confirm overwrite
+        var overwriteSlot = (g_edit_slot_index >= 0) ? g_edit_slot_index : null;
+        if (overwriteSlot === null) {
+            var existing = g_slots.find(function(s) { return s.name === name; });
+            if (existing) {
+                if (!confirm('"' + name + '" already exists in the Image Library.\nProceed and overwrite it?')) {
+                    return;
+                }
+                overwriteSlot = existing.index;
             }
         }
 
@@ -671,14 +698,19 @@
             resultEl.textContent = 'Uploading\u2026';
             document.getElementById('btn-upload').disabled = true;
 
+            var headers = {
+                'Content-Type': 'application/octet-stream',
+                'X-IS-Name': name,
+                'X-IS-Description': desc,
+                'X-IS-Protection': prot
+            };
+            if (overwriteSlot !== null) {
+                headers['X-IS-Slot'] = String(overwriteSlot);
+            }
+
             return fetch('/api/image-store/upload', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/octet-stream',
-                    'X-IS-Name': name,
-                    'X-IS-Description': desc,
-                    'X-IS-Protection': prot
-                },
+                headers: headers,
                 body: buf
             });
         }).then(function(r) {
@@ -688,7 +720,8 @@
             if (!d) return;
             document.getElementById('btn-upload').disabled = false;
             hideUploadPanel();
-            showResult('delete-result', true, '\u2714 "' + esc(name) + '" uploaded \u2014 EP rebooting\u2026');
+            var verb = (overwriteSlot !== null && g_edit_slot_index < 0) ? 'updated' : 'uploaded';
+            showResult('delete-result', true, '\u2714 "' + esc(name) + '" ' + verb + ' \u2014 EP rebooting\u2026');
             setTimeout(function() {
                 document.getElementById('delete-result').textContent = '';
             }, 5000);

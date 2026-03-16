@@ -156,6 +156,9 @@ void NetworkManager::NetworkManager_task()
                 init_lwip_services();   // no-op after first call; safe here (lwIP pools initialized)
                 start_mdns();
                 start_http_server();
+                // Send check-in NOW — httpd is bound to port 80 so the server can
+                // immediately query /api/info without getting Connection Refused.
+                wifiMgr_->triggerCheckIn();
                 state_ = State::RUNNING;
                 break;
 

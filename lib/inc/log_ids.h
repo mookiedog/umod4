@@ -365,20 +365,19 @@
 #define     LOGID_EP_LOAD_ERR_VAL_BAD_HASH              0x24                            //   * The hash in the image selector did not match the data in the slot
 #define     LOGID_EP_LOAD_ERR_VAL_LIMP_MODE             0x25                            //   * The EP is in limp mode, unable to load any other images
 
-#define LOGID_EP_IMGSEL_TYPE_CS                         ((LOGID_EP_BASE) + 0x0C)        // Per-image load results as a compact JSON array string, NULL-terminated char stream.
-#define LOGID_EP_IMGSEL_DLEN                            1                               // Sent once after the loading pass completes (success or failsafe).
-
 #define LOGID_EP_LOAD_IMAGESLOT_TYPE_U8                 ((LOGID_EP_BASE) + 0x07)        // Report the image slot number that we are loading (max is 255, slot 0 reserved for built-in fallback image)
 #define LOGID_EP_LOAD_IMAGESLOT_DLEN                    1
 
 #define LOGID_EP_INFO_TYPE_CS                           ((LOGID_EP_BASE) + 0x08)        // Generic informational string, NULL terminated. Content is self-describing (e.g. "dsc: user text")
 #define LOGID_EP_INFO_DLEN                              1
 
-#define LOGID_EP_LOADED_SLOT_TYPE_U8                    ((LOGID_EP_BASE) + 0x09)        // The slot that was ultimately loaded (1..255), or 0 if EP fell back to the built-in failsafe image.
-#define LOGID_EP_LOADED_SLOT_DLEN                       1
 
 #define LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16              ((LOGID_EP_BASE) + 0x0A)        // The EPROM load map blob, written as a sequence of 2-byte values, LSB first.
 #define LOGID_EP_LOAD_RP58MAPBLOB_DLEN                  2                               // The number of elements written to the log will be (RP58_MAPBLOB_LENGTH)/2
+
+#define LOGID_EP_IMGSEL_TYPE_CS                         ((LOGID_EP_BASE) + 0x0C)        // Per-image load results as a compact JSON array string, NULL-terminated char stream.
+#define LOGID_EP_IMGSEL_DLEN                            1                               // Sent once after the loading pass completes (success or failsafe).
+
 
 // ====================================================================================================
 // Define the LOGID space reserved for the WP.

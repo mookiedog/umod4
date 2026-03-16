@@ -101,6 +101,7 @@ typedef struct {
     char   description[64];
     char   protection[4];
     uint32_t bytes_received;
+    uint32_t target_slot_addr;  // 0 = find first empty slot; non-zero = overwrite this address
     bool   overflow;
     bool   file_open;  // true while /tmp_imgstore.bin is open via file_io upload
 } imgstore_upload_session_t;
@@ -423,6 +424,16 @@ err_t upload_post_begin(void *connection, const char *uri,
         if (!extract_header_value(http_request, "X-IS-Protection:", imgstore_upload_session.protection,
                                   sizeof(imgstore_upload_session.protection))) {
             strncpy(imgstore_upload_session.protection, "N", sizeof(imgstore_upload_session.protection));
+        }
+        {
+            char slot_str[8] = {0};
+            if (extract_header_value(http_request, "X-IS-Slot:", slot_str, sizeof(slot_str))) {
+                int si = atoi(slot_str);
+                if (si >= 1 && si <= 127) {
+                    imgstore_upload_session.target_slot_addr =
+                        0x10200000u + (uint32_t)si * 65536u;
+                }
+            }
         }
         if (imgstore_upload_session.name[0] == '\0') {
             UPLOAD_ERROR("u_p_b: /api/image-store/upload: missing X-IS-Name\n");
@@ -1157,8 +1168,10 @@ void upload_post_finished(void *connection, char *response_uri, u16_t response_u
         }
         imgstore_upload_session.file_open = false;
 
-        // Find first empty slot via SWD
-        uint32_t slot_addr = find_empty_slot();
+        // Use specified slot address, or find first empty slot via SWD
+        uint32_t slot_addr = imgstore_upload_session.target_slot_addr
+                           ? imgstore_upload_session.target_slot_addr
+                           : find_empty_slot();
         if (slot_addr == 0) {
             UPLOAD_ERROR("u_p_f: /api/image-store/upload: no empty slot found\n");
             file_io_delete(IMGSTORE_TMP_PATH, FILE_IO_TIMEOUT_MS, &io_result);

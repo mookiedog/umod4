@@ -353,6 +353,8 @@ class HDF5Writer:
         self.current_eprom_name = ""
         self.current_eprom_addr = None
         self.current_eprom_len = None
+        self.imgsel_string = None  # LOGID_EP_IMGSEL_TYPE_CS: compact JSON array of per-image load results
+        self.mapblob_bytes = None  # LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16: raw RP58 map blob bytes
 
         # GPS back-calculation
         self.gps_sync_time_ns = None
@@ -647,6 +649,14 @@ class HDF5Writer:
             self.h5file.attrs['log_start_timestamp_utc'] = log_start_unix
             self.h5file.attrs['log_start_timestamp_iso'] = datetime.fromtimestamp(log_start_unix, tz=timezone.utc).isoformat()
 
+        # Image selector result string (compact JSON array of per-image load results)
+        if self.imgsel_string is not None:
+            self.h5file.attrs['imgsel'] = self.imgsel_string
+
+        # RP58 map blob (raw bytes logged by EP at startup)
+        if self.mapblob_bytes is not None:
+            self.h5file.create_dataset('ep_mapblob', data=np.frombuffer(self.mapblob_bytes, dtype=np.uint8))
+
         # EPROM loads as a dataset (not attribute, to avoid VLEN string issues)
         if self.eprom_loads:
             dt = np.dtype([('name', 'S64'), ('address', np.uint16), ('length', np.uint16), ('error_status', np.uint8)])
@@ -680,6 +690,7 @@ crid = -1
 epromIdString = ""
 currentEpromId = epromIdString
 ecuMetadataString = ""
+mapblobBytes = bytearray()
 rpm_avg = 0.0
 secs=-1
 
@@ -1659,12 +1670,12 @@ def main():
                     # Each write to this address appends the next byte as a char to the ECU metadata string
                     c = read(f, L.LOGID_ECU_METADATA_DLEN)[0]
                     if (c != 0):
-                        # Print intermediate bytes (log ID + data byte)
-                        if showBinData:
+                        # Print first byte only (skip intermediate bytes)
+                        if showBinData and ecuMetadataString == "":
                             print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
                         ecuMetadataString = "".join([ecuMetadataString, chr(c)])
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} META:   {ecuMetadataString}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} BUILD_INFO: \"{ecuMetadataString}\"")
                         ecuMetadataString = ""
 
                 elif byte == L.LOGID_ECU_T1_OFLO_TYPE_TS:
@@ -2242,8 +2253,8 @@ def main():
                     # Each write to this address appends the next byte as a char to the EPROM_ID_STR
                     c = read(f, L.LOGID_EP_FIND_NAME_DLEN)[0]
                     if (c != 0):
-                        # Print intermediate bytes (log ID + data byte)
-                        if showBinData:
+                        # Print first byte only (skip intermediate bytes)
+                        if showBinData and epromIdString == "":
                             print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
                         epromIdString = "".join([epromIdString, chr(c)])
                         #if h5_writer:
@@ -2251,14 +2262,14 @@ def main():
                     else:
                         currentEpromId = epromIdString
                         epromIdString = ""
-                        print(f"{fmt_record(recordCnt, timekeeper)} FIND:   {currentEpromId}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} FIND:   \"{currentEpromId}\"")
 
                 elif byte == L.LOGID_EP_LOAD_NAME_TYPE_CS:
                     # Each write to this address appends the next byte as a char to the EPROM_ID_STR
                     c = read(f, L.LOGID_EP_LOAD_NAME_DLEN)[0]
                     if (c != 0):
-                        # Print intermediate bytes (log ID + data byte)
-                        if showBinData:
+                        # Print first byte only (skip intermediate bytes)
+                        if showBinData and epromIdString == "":
                             print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
                         epromIdString = "".join([epromIdString, chr(c)])
                         if h5_writer:
@@ -2266,7 +2277,7 @@ def main():
                     else:
                         currentEpromId = epromIdString
                         epromIdString = ""
-                        print(f"{fmt_record(recordCnt, timekeeper)} LD_NAME:   {currentEpromId}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_NAME:   \"{currentEpromId}\"")
 
                 elif byte == L.LOGID_EP_LOAD_ADDR_TYPE_U16:
                     epromStartAddr = int.from_bytes(read(f, L.LOGID_EP_LOAD_ADDR_DLEN), byteorder='little', signed=False)
@@ -2355,12 +2366,35 @@ def main():
                 elif byte == L.LOGID_EP_INFO_TYPE_CS:
                     c = read(f, L.LOGID_EP_INFO_DLEN)[0]
                     if (c != 0):
-                        if showBinData:
+                        # Print first byte only (skip intermediate bytes)
+                        if showBinData and epromIdString == "":
                             print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
                         epromIdString = "".join([epromIdString, chr(c)])
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} LD_DSC:    {epromIdString}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} LD_DSC:    \"{epromIdString}\"")
                         epromIdString = ""
+
+                elif byte == L.LOGID_EP_IMGSEL_TYPE_CS:
+                    c = read(f, L.LOGID_EP_IMGSEL_DLEN)[0]
+                    if (c != 0):
+                        # Print first byte only (skip intermediate bytes)
+                        if showBinData and epromIdString == "":
+                            print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
+                        epromIdString = "".join([epromIdString, chr(c)])
+                    else:
+                        print(f"{fmt_record(recordCnt, timekeeper)} IMGSEL:    \"{epromIdString}\"")
+                        if h5_writer:
+                            h5_writer.imgsel_string = epromIdString
+                        epromIdString = ""
+
+                elif byte == L.LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16:
+                    rd = read(f, L.LOGID_EP_LOAD_RP58MAPBLOB_DLEN)
+                    if len(mapblobBytes) == 0:
+                        print(f"{fmt_record(recordCnt, timekeeper)} MAPBLOB:   receiving {L.LOGID_EP_LOAD_RP58MAPBLOB_DLEN * (0x1C00 // 2)} bytes...")
+                    mapblobBytes.extend(rd)
+                    if h5_writer and len(mapblobBytes) == L.LOGID_EP_LOAD_RP58MAPBLOB_DLEN * (0x1C00 // 2):
+                        h5_writer.mapblob_bytes = bytes(mapblobBytes)
+                        print(f"{fmt_record(recordCnt, timekeeper)} MAPBLOB:   complete ({len(mapblobBytes)} bytes)")
 
                 # WP-specific events
                 elif byte == L.LOGID_GEN_WP_LOG_VER_TYPE_U8:

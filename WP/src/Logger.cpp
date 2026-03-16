@@ -202,7 +202,7 @@ bool Logger::openNewLog()
 //  - bits 24..31 this byte will be logged if length == 3
 
 // temporary error counters for debugging
-uint32_t isr1_err_cnt, isr2_err_cnt, isr3_err_cnt;
+uint32_t isr1_err_cnt, isr2_err_cnt, isr3_err_cnt, g_total_received;
 
 bool __time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
 {
@@ -212,6 +212,8 @@ bool __time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
         isr1_err_cnt++;
         return false;
     }
+
+    g_total_received += len;
 
     // Don't use spin_lock_blocking() in ISR - it would save/restore interrupt state unnecessarily
     // In ISR context, the CPU already manages interrupt masking appropriately
@@ -264,6 +266,7 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* 
     // Enter critical section first to prevent FreeRTOS from preempting this task
     // This ensures we hold the spinlock for only a brief, atomic period
     taskENTER_CRITICAL();
+    g_total_received += len;
 
     // Now take the spinlock to synchronize with ISR on potentially different core
     // ISR will only wait microseconds because we can't be preempted while in critical section

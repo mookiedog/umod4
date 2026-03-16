@@ -304,7 +304,7 @@ void startCore1(void)
 // --------------------------------------------------------------------------------------------
 void __time_critical_func(enqueue)(uint8_t id, uint8_t data)
 {
-    if (inUse < sizeof(streamBuffer)-8) {
+    if (inUse < (int32_t)(sizeof(streamBuffer)/sizeof(streamBuffer[0]))-4) {
         uint16_t event = (data << 8) | id;
 
         streamBuffer[head] = event;
@@ -333,10 +333,12 @@ static inline void __time_critical_func(logMapblob)()
     // At this point, the buffer is known to be almost totally empty.
     assert(sizeof(streamBuffer) >= RP58_MAPBLOB_LENGTH);
 
-    uint16_t* mapblobP = (uint16_t*)EPROM_IMAGE_BASE;
-    for (uint32_t i=RP58_MAPBLOB_OFFSET; i<(RP58_MAPBLOB_LENGTH)/2; i++) {
+    // Get a pointer to the start of the mapblob
+    uint16_t* mapblobP = (uint16_t*)(EPROM_IMAGE_BASE + RP58_MAPBLOB_OFFSET);
+    for (uint32_t i=0; i<(RP58_MAPBLOB_LENGTH)/2; i++) {
         uint16_t w = *mapblobP++;
-        enqueue(LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16, w);
+        enqueue(LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16,   (w >> 8) & 0xFF);
+        enqueue(LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16+1, w & 0xFF);
     }
 }
 

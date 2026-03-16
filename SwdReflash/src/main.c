@@ -19,6 +19,7 @@
 #include "hardware/sync.h"
 #include "pico/bootrom.h"
 #include "FlashBuffer.h"
+#include "murmur3.h"
 
 #include "umod4_EP.h"   // For EP flash size
 #include "hardware.h"   // From EP/src/hardware.h for DBG_BSY_LSB
@@ -154,13 +155,18 @@ int main(void)
                 flash_range_erase(offset, flash_length);
                 mbox->status = -2;
 
-                // Verify that every byte is now in the erased state (all 1's)
-                uint32_t* sa = (uint32_t*)(mbox->target_addr);
-                uint32_t* ea = (uint32_t*)(mbox->target_addr + mbox->length);
-                for (uint32_t* fp=sa; fp<ea; fp++) {
-                    if (*fp != 0xFFFFFFFF) {
-                        status  = MAILBOX_STATUS_ERR_ERASE;
-                        goto abort;
+                // Verify erase via XIP_NOCACHE_BASE to bypass cache and read
+                // actual flash contents. flash_range_erase() flushes the cache,
+                // but XIP_NOCACHE guarantees we never get a cached value.
+                {
+                    uint32_t nc = mbox->target_addr - XIP_BASE + XIP_NOCACHE_BASE;
+                    uint32_t* ev_sa = (uint32_t*)(nc);
+                    uint32_t* ev_ea = (uint32_t*)(nc + mbox->length);
+                    for (uint32_t* fp = ev_sa; fp < ev_ea; fp++) {
+                        if (*fp != 0xFFFFFFFF) {
+                            status = MAILBOX_STATUS_ERR_ERASE;
+                            goto abort;
+                        }
                     }
                 }
 
@@ -169,19 +175,52 @@ int main(void)
                 gpio_put(DBG_BSY_LSB, LED_ON);          // LED is ON while programming
                 flash_range_program(offset, (uint8_t*)mbox->buffer_addr, mbox->length);
 
-                // Verify the flash
+                // Verify program via XIP_NOCACHE_BASE against the source buffer.
                 mbox->status = -4;
-                sa = (uint32_t*)(mbox->target_addr);
-                ea = (uint32_t*)(mbox->target_addr + mbox->length);
-                uint32_t* rp = (uint32_t*)mbox->target_addr;
-                for (uint32_t* fp=sa; fp<ea; rp++,fp++) {
-                    if (*fp != *rp) {
-                        status  = MAILBOX_STATUS_ERR_ERASE;
-                        goto abort;
+                {
+                    uint32_t nc = mbox->target_addr - XIP_BASE + XIP_NOCACHE_BASE;
+                    uint32_t* sa = (uint32_t*)(nc);
+                    uint32_t* ea = (uint32_t*)(nc + mbox->length);
+                    uint32_t* rp = (uint32_t*)mbox->buffer_addr;
+                    for (uint32_t* fp=sa; fp<ea; rp++,fp++) {
+                        if (*fp != *rp) {
+                            status  = MAILBOX_STATUS_ERR_VERIFY;
+                            goto abort;
+                        }
                     }
                 }
 
                 // Verification passed!
+                status = MAILBOX_STATUS_SUCCESS;
+            }
+            else if (mbox->cmd == MAILBOX_CMD_M3) {
+                // Compute murmur3 hash of a flash region.
+                // XIP was disabled at startup by init_flash_for_reflash(). Re-enable
+                // it in slow 03h mode (no boot2 needed), read via NOCACHE alias to
+                // bypass stale cache, then exit XIP again for subsequent PGM commands.
+                typedef void (*rom_flash_enter_cmd_xip_fn)(void);
+                typedef void (*rom_flash_exit_xip_fn2)(void);
+
+                rom_flash_enter_cmd_xip_fn enter_xip =
+                    (rom_flash_enter_cmd_xip_fn)rom_func_lookup_inline(ROM_FUNC_FLASH_ENTER_CMD_XIP);
+                rom_flash_exit_xip_fn2 exit_xip =
+                    (rom_flash_exit_xip_fn2)rom_func_lookup_inline(ROM_FUNC_FLASH_EXIT_XIP);
+
+                if (!enter_xip || !exit_xip) {
+                    status = MAILBOX_STATUS_ERR_CMD;
+                    goto abort;
+                }
+
+                uint32_t xip_offset = mbox->target_addr - XIP_BASE;
+                uint32_t hash_len   = mbox->length;
+
+                enter_xip();
+
+                uint8_t* data = (uint8_t*)(XIP_NOCACHE_BASE + xip_offset);
+                mbox->buffer_addr = murmur3_32(data, hash_len, ~0x0u);
+
+                exit_xip();
+
                 status = MAILBOX_STATUS_SUCCESS;
             }
             else {

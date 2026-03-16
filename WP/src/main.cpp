@@ -190,19 +190,16 @@ void startGps()
 
 // ---- Image selector capture (populated from EP log stream at boot) ----
 // EP sends the entire image_selector as one compact JSON array string via
-// LOGID_EP_IMGSEL_TYPE_CS, then sends LOGID_EP_LOADED_SLOT_TYPE_U8 to
-// indicate which slot was actually loaded (0 = fell back to failsafe image).
+// LOGID_EP_IMGSEL_TYPE_CS after the loading pass completes.
 
 #define EP_IMGSEL_STR_LEN  512
 
 static char             ep_imgsel_str[EP_IMGSEL_STR_LEN] = "";
 static int              ep_imgsel_str_pos  = 0;
 static volatile bool    ep_imgsel_complete = false;
-static volatile uint8_t ep_loaded_slot     = 0xFF;  // 0xFF=not yet received, 0=limp, 1-255=slot
 
 const char* get_ep_imgsel_str(void)   { return ep_imgsel_str; }
 bool        get_ep_imgsel_complete(void) { return ep_imgsel_complete; }
-uint8_t     get_ep_loaded_slot(void)  { return ep_loaded_slot; }
 
 uint32_t elapsed_max;
 void __time_critical_func(isr_rx32)()
@@ -242,8 +239,6 @@ void __time_critical_func(isr_rx32)()
                 ep_imgsel_str[ep_imgsel_str_pos] = '\0';
                 ep_imgsel_complete = true;
             }
-        } else if (logId == LOGID_EP_LOADED_SLOT_TYPE_U8) {
-            ep_loaded_slot = data8;
         }
 
         uint32_t elapsed = time_us_32() - t0;

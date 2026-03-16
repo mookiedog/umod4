@@ -448,20 +448,17 @@ void generate_api_system_json(char* buffer, size_t size)
 
 /**
  * Build JSON response for /api/eprom-info
- * Returns the image_selector contents captured from the EP log stream at boot,
- * plus which slot was actually loaded (0 = fell back to failsafe image).
+ * Returns the image_selector contents captured from the EP log stream at boot.
  */
 
 // Getters defined in main.cpp
 extern const char* get_ep_imgsel_str(void);
 extern bool        get_ep_imgsel_complete(void);
-extern uint8_t     get_ep_loaded_slot(void);
 
 void generate_api_eprom_info_json(char* buffer, size_t size)
 {
     const char* imgsel  = get_ep_imgsel_str();
     bool        ready   = get_ep_imgsel_complete();
-    uint8_t     loaded  = get_ep_loaded_slot();
 
     uint32_t age_ms = (time_us_32() - get_last_ecu_data_us()) / 1000;
     bool ecu_alive  = (age_ms < 200);
@@ -475,9 +472,7 @@ void generate_api_eprom_info_json(char* buffer, size_t size)
     const char* status;
     if (!ready) {
         status = "waiting";
-    } else if (loaded == 0xFF) {
-        status = "waiting";
-    } else if (loaded == 0) {
+    } else if (strstr(imgsel, "\"code\":\"limp-mode\"")) {
         status = "limp_mode";
     } else {
         status = "ok";
@@ -487,13 +482,11 @@ void generate_api_eprom_info_json(char* buffer, size_t size)
     snprintf(buffer, size,
              "{\n"
              "  \"image_selector\": %s,\n"
-             "  \"loaded_slot\": %u,\n"
              "  \"status\": \"%s\",\n"
              "  \"ecu_alive\": %s,\n"
              "  \"engine_running\": %s\n"
              "}",
              ready ? imgsel : "[]",
-             (unsigned)(loaded == 0xFF ? 0 : loaded),
              status,
              ecu_alive ? "true" : "false",
              engine_running ? "true" : "false");
@@ -1022,7 +1015,14 @@ static void do_image_store_scan(void)
 
         // Validate as BSON document size
         uint32_t doc_size = Bson::read_unaligned_uint32((const uint8_t*)&first_word);
-        if (doc_size < 5 || doc_size > 32768) continue;
+        if (doc_size < 5 || doc_size > 32768) {
+            len += snprintf(g_imgstore_scan_json + len, sizeof(g_imgstore_scan_json) - len,
+                            "%s{\"index\":%d,\"error\":\"bad_size\"}",
+                            first ? "" : ",", slot);
+            first = false;
+            if (len >= (int)sizeof(g_imgstore_scan_json) - 64) break;
+            continue;
+        }
 
         // Read enough of the header to parse all fields
         uint32_t read_bytes = (doc_size < HEADER_PROBE) ? ((doc_size + 3) & ~3u) : HEADER_PROBE;
@@ -1034,7 +1034,14 @@ static void do_image_store_scan(void)
                 ok = false; break;
             }
         }
-        if (!ok) continue;
+        if (!ok) {
+            len += snprintf(g_imgstore_scan_json + len, sizeof(g_imgstore_scan_json) - len,
+                            "%s{\"index\":%d,\"error\":\"swd_error\"}",
+                            first ? "" : ",", slot);
+            first = false;
+            if (len >= (int)sizeof(g_imgstore_scan_json) - 64) break;
+            continue;
+        }
         hdr[HEADER_PROBE - 1] = 0;  // guard against strlen overrun in bsonlib
 
         element_t e;
@@ -1052,7 +1059,14 @@ static void do_image_store_scan(void)
         if (Bson::findElement(hdr, "protection", e) && e.elementType == BSON_TYPE_UTF8)
             protection = (const char*)e.data + 4;
 
-        if (!name) continue;  // slot header is malformed — skip
+        if (!name) {
+            len += snprintf(g_imgstore_scan_json + len, sizeof(g_imgstore_scan_json) - len,
+                            "%s{\"index\":%d,\"error\":\"no_name\"}",
+                            first ? "" : ",", slot);
+            first = false;
+            if (len >= (int)sizeof(g_imgstore_scan_json) - 64) break;
+            continue;
+        }
 
         char hash_str[12];
         snprintf(hash_str, sizeof(hash_str), "0x%08X", image_m3);

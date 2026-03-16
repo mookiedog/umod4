@@ -927,10 +927,11 @@ class TransferHistoryWidget(QWidget):
 class ManageDeviceWidget(QWidget):
     """Widget for managing the selected device."""
 
-    def __init__(self, database, connectivity_checker=None):
+    def __init__(self, database, connectivity_checker=None, device_manager=None):
         super().__init__()
         self.database = database
         self.connectivity_checker = connectivity_checker
+        self.device_manager = device_manager
         self.selected_mac = None
         self.device_is_online = False
         self._setup_ui()
@@ -1032,6 +1033,11 @@ class ManageDeviceWidget(QWidget):
         self.reflash_wp_button.clicked.connect(self._reflash_wp)
         online_layout.addWidget(self.reflash_wp_button)
 
+        self.sync_logs_button = QPushButton("Sync Logs Now")
+        self.sync_logs_button.setToolTip("Download any new log files from the device immediately")
+        self.sync_logs_button.clicked.connect(self._sync_logs)
+        online_layout.addWidget(self.sync_logs_button)
+
         online_layout.addStretch()
         layout.addWidget(online_group)
 
@@ -1110,6 +1116,7 @@ class ManageDeviceWidget(QWidget):
         self.upload_button.setEnabled(online_enabled)
         self.reflash_ep_button.setEnabled(online_enabled)
         self.reflash_wp_button.setEnabled(online_enabled)
+        self.sync_logs_button.setEnabled(online_enabled and self.device_manager is not None)
 
     def _get_device(self):
         """Get the selected device from database. Returns (session, device) tuple."""
@@ -1435,6 +1442,34 @@ class ManageDeviceWidget(QWidget):
         finally:
             session.close()
 
+    def _sync_logs(self):
+        """Download any new log files from the selected device immediately."""
+        import threading
+
+        session, device = self._get_device()
+        if not device:
+            if session:
+                session.close()
+            return
+
+        try:
+            if not device.is_online or not device.last_ip:
+                QMessageBox.warning(self, "Device Offline", "Device must be online to sync logs.")
+                return
+
+            device_mac = device.mac_address
+            device_ip = device.last_ip
+        finally:
+            session.close()
+
+        print(f"ManageDeviceWidget: Manual sync triggered for {device_mac} at {device_ip}")
+        thread = threading.Thread(
+            target=self.device_manager.handle_device_checkin,
+            args=(device_mac, device_ip),
+            daemon=True
+        )
+        thread.start()
+
     def _reflash_ep(self):
         """Reflash the EP processor on the selected device."""
         from device_client import DeviceClient
@@ -1698,11 +1733,12 @@ class ManageDeviceWidget(QWidget):
 class MainWindow(QMainWindow):
     """Main window for umod4 server application."""
 
-    def __init__(self, database, server, connectivity_checker=None):
+    def __init__(self, database, server, connectivity_checker=None, device_manager=None):
         super().__init__()
         self.database = database
         self.server = server
         self.connectivity_checker = connectivity_checker
+        self.device_manager = device_manager
         self.setWindowTitle("umod4 Server")
         self.resize(1200, 700)
         self._setup_ui()
@@ -1748,7 +1784,7 @@ class MainWindow(QMainWindow):
         self.transfer_history = TransferHistoryWidget(self.database)
         tab_widget.addTab(self.transfer_history, "Transfer History")
 
-        self.manage_device = ManageDeviceWidget(self.database, self.connectivity_checker)
+        self.manage_device = ManageDeviceWidget(self.database, self.connectivity_checker, self.device_manager)
         tab_widget.addTab(self.manage_device, "Manage Device")
 
         splitter.addWidget(tab_widget)

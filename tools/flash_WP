@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# flash_WP: Attach RP2350 boot device via usbipd, then flash WP firmware.
+#
+# Usage: flash_WP [-e] <directory_path>
+#   -e  Erase flash before programming
+
+# Default values
+DO_ERASE=false
+TARGET_DIR=""
+
+# Parse options
+while getopts "e" opt; do
+  case $opt in
+    e) DO_ERASE=true ;;
+    *) echo "Usage: $0 [-e] <directory_path>"; exit 1 ;;
+  esac
+done
+
+shift $((OPTIND -1))
+TARGET_DIR=$1
+
+if [ -z "$TARGET_DIR" ]; then
+    echo "Error: Please provide a directory path."
+    echo "Usage: $0 [-e] <directory_path>"
+    exit 1
+fi
+
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "Error: Directory '$TARGET_DIR' does not exist."
+    exit 1
+fi
+
+PARTITION_TABLE="$TARGET_DIR/partition_table.uf2"
+WP_IMAGE="$TARGET_DIR/WP.uf2"
+
+for file in "$PARTITION_TABLE" "$WP_IMAGE"; do
+    if [ ! -f "$file" ]; then
+        echo "Error: $(basename "$file") not found in $TARGET_DIR"
+        exit 1
+    fi
+done
+
+# --- usbipd: find and attach RP2350 Boot device ---
+
+echo "Scanning for RP2350 Boot device via usbipd..."
+USBIPD_LINE=$(usbipd.exe list 2>/dev/null | grep "RP2350 Boot")
+
+if [ -z "$USBIPD_LINE" ]; then
+    echo "Error: No 'RP2350 Boot' device found in usbipd list."
+    echo "Make sure the WP is plugged in while holding the BOOTSEL button."
+    exit 1
+fi
+
+BUSID=$(echo "$USBIPD_LINE" | awk '{print $1}' | tr -d '\r')
+STATE=$(echo "$USBIPD_LINE" | awk '{print $NF}' | tr -d '\r')
+
+echo "Found RP2350 Boot device: BUSID=$BUSID  STATE=$STATE"
+
+if [ "$STATE" = "Attached" ]; then
+    echo "Device is already attached to WSL."
+elif [ "$STATE" = "Shared" ]; then
+    echo "Attaching BUSID $BUSID to WSL..."
+    usbipd.exe attach --wsl --busid="$BUSID"
+    if [ $? -ne 0 ]; then
+        echo "Error: usbipd attach failed."
+        exit 1
+    fi
+    echo "Waiting for device to enumerate..."
+    sleep 2
+else
+    echo "Error: Device STATE is '$STATE'. Expected 'Shared' or 'Attached'."
+    echo "Run: usbipd.exe bind --busid=$BUSID  (from an elevated Windows prompt)"
+    exit 1
+fi
+
+# --- Flash ---
+
+~/.local/bin/picotool info
+sleep 1
+
+if [ "$DO_ERASE" = true ]; then
+    echo "Erasing Pico flash..."
+    ~/.local/bin/picotool erase
+    sleep 1
+fi
+
+echo "Loading partition table from $TARGET_DIR..."
+~/.local/bin/picotool load -f "$PARTITION_TABLE"
+echo
+sleep 1
+
+~/.local/bin/picotool info
+echo
+sleep 1
+
+echo "Loading WP image to slot 1..."
+~/.local/bin/picotool load -p 1 "$WP_IMAGE" -v
+echo
+sleep 1
+
+echo "Rebooting device..."
+~/.local/bin/picotool reboot

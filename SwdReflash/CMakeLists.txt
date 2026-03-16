@@ -62,10 +62,12 @@ pico_sdk_init()
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../EP/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/inc
 )
 
 add_executable(${PROJECT_NAME}
     src/main.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/src/murmur3.cpp
 )
 
 # Try an minmize the amount of needless crap that would otherwise get pulled into this build.

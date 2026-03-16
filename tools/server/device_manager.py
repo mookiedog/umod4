@@ -83,6 +83,7 @@ class DeviceManager:
             # Get device info before closing session
             device_mac = device.mac_address
             log_storage_path = device.log_storage_path
+            device_display_name = device.display_name
 
         finally:
             session.close()
@@ -119,9 +120,9 @@ class DeviceManager:
                 session.close()
 
         # Download new log files
-        self._download_new_logs(device_mac, log_storage_path, client)
+        self._download_new_logs(device_mac, log_storage_path, device_display_name, client)
 
-    def _download_new_logs(self, device_mac: str, log_storage_path: str, client: DeviceClient):
+    def _download_new_logs(self, device_mac: str, log_storage_path: str, device_name: str, client: DeviceClient):
         """Download new log files from device.
 
         Args:
@@ -138,7 +139,7 @@ class DeviceManager:
         print(f"DeviceManager: Device has {len(files)} log files")
 
         # Create date subdirectory for today's downloads
-        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+        date_str = datetime.now().strftime("%Y-%m-%d")
         date_subdir = os.path.join(log_storage_path, date_str)
         os.makedirs(date_subdir, exist_ok=True)
 
@@ -233,7 +234,7 @@ class DeviceManager:
                     transfer_speed_mbps=speed_mbps,
                     sha256=sha256_hash
                 )
-                print(f"DeviceManager: Downloaded {filename} successfully ({speed_mbps:.2f} MB/s)")
+                print(f"DeviceManager: Downloaded {filename} successfully ({speed_mbps:.2f} MB/s) -> {local_path}")
             else:
                 self.database.update_transfer(
                     transfer.id,

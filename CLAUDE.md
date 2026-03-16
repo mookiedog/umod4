@@ -87,6 +87,7 @@ The build system creates a virtual environment at `build/.venv` and installs req
 - Forwards ECU data stream to WP via UART at 921600 baud
 - Logs all HC11 accesses to circular buffer (16,384 entries) for debugging
 - BSON document-based EPROM library with metadata
+- has RTT debug output, NOT UART!
 
 **Important Files:**
 - `EP/src/epromEmulator.h` - Core EPROM emulation on Core 1
@@ -104,6 +105,7 @@ The build system creates a virtual environment at `build/.venv` and installs req
 - GPS integration (uBlox NEO-8, 10Hz position/velocity)
 - Logs to micro SD card using LittleFS filesystem
 - Future: WiFi log upload, Bluetooth UI, OTA updates
+- has RTT debug output, NOT UART!
 
 **Important Files:**
 - `WP/src/` - WP firmware source

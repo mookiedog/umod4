@@ -50,6 +50,9 @@ const uint32_t MAGIC_1 = 0x17583653;    // defines that we are using flashBuffer
 enum {
     MAILBOX_CMD_NONE            = 0x00,
     MAILBOX_CMD_PGM             = 0x01,   // Do everything: Erase, Program, Verify result afterwards
+    MAILBOX_CMD_M3              = 0x02,   // Compute murmur3 hash of a flash region
+                                          //   Input:  target_addr = XIP address, length = byte count
+                                          //   Output: buffer_addr = computed hash, status = SUCCESS/ERR
     MAILBOX_CMD_MAX
 };
 

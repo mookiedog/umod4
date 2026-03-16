@@ -677,7 +677,7 @@ int32_t FlashEp::flashSlotFromFile(lfs_t* lfs_ptr, const char* img_path,
         }
 
         murmur3_state_t m3;
-        murmur3_begin(&m3, 0);
+        murmur3_begin(&m3, ~0x0);
 
         for (uint32_t off = 0; off < IMAGE_SIZE; off += SWD_CHUNK) {
             uint32_t to_read = IMAGE_SIZE - off;
@@ -769,115 +769,200 @@ abort:
 }
 
 // ---------------------------------------------------------------------------
+// bson_find_int32: scan a BSON document for an int32 field by name.
+// Returns true and writes value to *out if found. No bounds checking beyond
+// doc_len — caller must ensure buf is at least doc_len bytes.
+static bool bson_find_int32(const uint8_t* buf, uint32_t doc_len,
+                             const char* key, int32_t* out)
+{
+    if (doc_len < 5) return false;
+    uint32_t pos = 4;  // skip document length field
+    while (pos + 1 < doc_len) {
+        uint8_t type = buf[pos++];
+        if (type == 0x00) break;  // end of document
+        // read key (c-string)
+        uint32_t key_start = pos;
+        while (pos < doc_len && buf[pos] != 0) pos++;
+        if (pos >= doc_len) break;
+        pos++;  // skip null terminator
+        if (type == 0x10) {  // int32
+            if (pos + 4 > doc_len) break;
+            int32_t v = (int32_t)( (uint32_t)buf[pos]
+                                 | ((uint32_t)buf[pos+1] << 8)
+                                 | ((uint32_t)buf[pos+2] << 16)
+                                 | ((uint32_t)buf[pos+3] << 24) );
+            if (strcmp((const char*)(buf + key_start), key) == 0) {
+                *out = v;
+                return true;
+            }
+            pos += 4;
+        } else if (type == 0x02) {  // UTF-8 string
+            if (pos + 4 > doc_len) break;
+            uint32_t slen = (uint32_t)buf[pos] | ((uint32_t)buf[pos+1] << 8)
+                          | ((uint32_t)buf[pos+2] << 16) | ((uint32_t)buf[pos+3] << 24);
+            pos += 4 + slen;
+        } else {
+            break;  // unknown type; stop
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // rewriteSlotHeader: overwrite the BSON header of an existing image-store slot
-// while preserving the existing 32KB image binary.
-// - Starts the EP flasher.
-// - Reads existing image from EP flash (slot+32768) in 1KB SWD chunks,
-//   writes to EP SRAM image half, computing murmur3 in parallel.
-// - Builds new BSON header on stack.
-// - Writes BSON header + zero padding to EP SRAM header half.
-// - Issues mailbox flash command, waits, resets EP.
-// No LFS file I/O — purely SWD operations.
+// while preserving the existing 32KB image binary (untouched in flash).
+//
+// The slot is two independent 32KB flash regions. Only the header half is
+// erased and reprogrammed; the image half is left intact.
+//
+// The existing image_m3 is read from the current BSON header (a small SWD
+// read while EP is running normally, before the flasher starts). This avoids
+// reading 32KB of image binary entirely.
+//
+// Sequence:
+// 1. Connect to EP via SWD without halting (XIP valid). Read 512 bytes from
+//    slot start. Extract image_m3 from existing BSON. Disconnect.
+// 2. Build new BSON header with preserved m3 + updated metadata.
+// 3. start_flasher() — resets EP, loads flasher, SPI enters command mode.
+// 4. Write new BSON header + zero padding to EP SRAM (32KB).
+// 5. Issue mailbox cmd with length=32768 (header half only). Wait.
 
 int32_t FlashEp::rewriteSlotHeader(uint32_t slot_flash_addr,
                                     const char* name, const char* description,
                                     const char* protection)
 {
-    const uint32_t IMAGE_OFFSET = 32768;
-    const uint32_t IMAGE_SIZE   = 32768;
     const uint32_t HEADER_SIZE  = 32768;
-    const uint32_t SLOT_SIZE    = 65536;
     const uint32_t SWD_CHUNK    = 1024;
 
     int32_t res = 0;
     mailbox_t mbox;
     int32_t flash_status;
     uint32_t t0, timeout;
+    uint8_t bson_buf[512];
+    int32_t existing_m3 = 0;
+    size_t hdr_size;
 
     printf("%s: slot=0x%08X name='%s'\n", __FUNCTION__, slot_flash_addr, name);
 
+    // --- Step 1: Read existing BSON header to extract image_m3 ---
+    // Connect without halting; EP is running normally, XIP is fully operational.
+    if (!swd->connect_target(0, false)) {
+        printf("%s: connect_target (pre-read) failed\n", __FUNCTION__);
+        return -1;
+    }
+    memset(bson_buf, 0, sizeof(bson_buf));
+    if (!swd->read_target_mem(slot_flash_addr, (uint32_t*)bson_buf, sizeof(bson_buf))) {
+        printf("%s: SWD read existing header failed\n", __FUNCTION__);
+        swd->unload();
+        return -2;
+    }
+    swd->unload();
+
+    bool need_m3_from_flasher = false;
+    if (!bson_find_int32(bson_buf, sizeof(bson_buf), "image_m3", &existing_m3)) {
+        // No m3 in existing header (old format). Will ask the flasher to compute it.
+        printf("%s: image_m3 not in header, will use MAILBOX_CMD_M3\n", __FUNCTION__);
+        need_m3_from_flasher = true;
+    } else {
+        printf("%s: existing image_m3=0x%08X\n", __FUNCTION__, (uint32_t)existing_m3);
+    }
+
+    // --- Step 2: Build new BSON header with preserved m3 ---
+    memset(bson_buf, 0, sizeof(bson_buf));
+    hdr_size = feb_build_slot_bson(bson_buf, sizeof(bson_buf),
+                                    name, description, (uint32_t)existing_m3, protection);
+    if (hdr_size == 0) {
+        printf("%s: BSON header overflow\n", __FUNCTION__);
+        return -4;
+    }
+
+    // --- Step 3: Start flasher (EP resets; SPI bus enters command mode) ---
     res = start_flasher();
     if (res != 0) {
         printf("%s: start_flasher failed: %d\n", __FUNCTION__, res);
         goto abort;
     }
 
-    // --- Read existing image from EP flash in 1KB chunks, copy to EP SRAM
-    //     image half, computing murmur3 in parallel ---
-    {
-        murmur3_state_t m3;
-        murmur3_begin(&m3, 0);
-
-        for (uint32_t off = 0; off < IMAGE_SIZE; off += SWD_CHUNK) {
-            uint32_t bytes = IMAGE_SIZE - off;
-            if (bytes > SWD_CHUNK) bytes = SWD_CHUNK;
-
-            // Read from EP flash (readable via XIP even while flasher runs)
-            if (!swd->read_target_mem(slot_flash_addr + IMAGE_OFFSET + off,
-                                       (uint32_t*)s_chunk_buf, bytes)) {
-                printf("%s: SWD read failed at off=%u\n", __FUNCTION__, off);
-                res = -8; goto abort;
-            }
-            murmur3_update(&m3, s_chunk_buf, bytes);
-
-            // Write to EP SRAM staging buffer (image half)
-            if (!swd->write_target_mem(fbi_1.bufferStartAddr + HEADER_SIZE + off,
-                                       (const uint32_t*)s_chunk_buf, bytes)) {
-                printf("%s: SWD write failed at off=%u\n", __FUNCTION__, off);
+    // --- Step 3b: If m3 wasn't in the existing header, ask the flasher to compute it ---
+    if (need_m3_from_flasher) {
+        const uint32_t IMAGE_OFFSET = 32768;
+        const uint32_t IMAGE_SIZE   = 32768;
+        mailbox_t m3_mbox;
+        m3_mbox.cmd         = MAILBOX_CMD_M3;
+        m3_mbox.target_addr = slot_flash_addr + IMAGE_OFFSET;
+        m3_mbox.length      = IMAGE_SIZE;
+        m3_mbox.buffer_addr = 0;
+        m3_mbox.status      = 0;
+        if (!swd->write_target_mem(fbi_1.mailboxAddr, (uint32_t*)&m3_mbox, sizeof(m3_mbox))) {
+            printf("%s: write M3 mailbox failed\n", __FUNCTION__);
+            res = -8; goto abort;
+        }
+        uint32_t t0m = time_us_32();
+        while (1) {
+            if (!swd->read_target_mem(fbi_1.mailboxAddr, (uint32_t*)&m3_mbox, sizeof(m3_mbox))) {
                 res = -9; goto abort;
             }
+            if (m3_mbox.status > MAILBOX_STATUS_BUSY) break;
+            if (time_us_32() - t0m > 5000000) {
+                printf("%s: M3 command timeout\n", __FUNCTION__); res = -10; goto abort;
+            }
+            busy_wait_us_32(10000);
         }
+        if (m3_mbox.status != MAILBOX_STATUS_SUCCESS) {
+            printf("%s: M3 command failed: %d\n", __FUNCTION__, (int)m3_mbox.status);
+            res = -11; goto abort;
+        }
+        existing_m3 = (int32_t)m3_mbox.buffer_addr;
+        printf("%s: computed image_m3=0x%08X\n", __FUNCTION__, (uint32_t)existing_m3);
 
-        uint32_t image_m3 = murmur3_finish(&m3);
-        printf("%s: image m3=0x%08X\n", __FUNCTION__, image_m3);
-
-        // Build new BSON header on stack
-        uint8_t bson_buf[256];
+        // Rebuild BSON header with freshly computed m3
         memset(bson_buf, 0, sizeof(bson_buf));
-        size_t hdr_size = feb_build_slot_bson(bson_buf, sizeof(bson_buf),
-                                               name, description, image_m3, protection);
+        hdr_size = feb_build_slot_bson(bson_buf, sizeof(bson_buf),
+                                        name, description, (uint32_t)existing_m3, protection);
         if (hdr_size == 0) {
-            printf("%s: BSON header overflow\n", __FUNCTION__);
-            res = -10; goto abort;
+            printf("%s: BSON header overflow (rebuild)\n", __FUNCTION__);
+            res = -12; goto abort;
         }
+    }
 
-        // Write BSON header to EP SRAM[0..hdr_write_size], zero-fill the rest
+    // --- Step 4: Write BSON header to EP SRAM, zero-fill remainder of 32KB ---
+    {
         uint32_t hdr_write_size = ((uint32_t)hdr_size + 3) & ~3u;
         if (!swd->write_target_mem(fbi_1.bufferStartAddr,
                                    (const uint32_t*)bson_buf, hdr_write_size)) {
-            res = -11; goto abort;
+            res = -8; goto abort;
         }
         memset(s_chunk_buf, 0, SWD_CHUNK);
         for (uint32_t pad = hdr_write_size; pad < HEADER_SIZE; pad += SWD_CHUNK) {
-            uint32_t bytes2 = HEADER_SIZE - pad;
-            if (bytes2 > SWD_CHUNK) bytes2 = SWD_CHUNK;
+            uint32_t bytes = HEADER_SIZE - pad;
+            if (bytes > SWD_CHUNK) bytes = SWD_CHUNK;
             if (!swd->write_target_mem(fbi_1.bufferStartAddr + pad,
-                                       (const uint32_t*)s_chunk_buf, bytes2)) {
-                res = -12; goto abort;
+                                       (const uint32_t*)s_chunk_buf, bytes)) {
+                res = -9; goto abort;
             }
         }
     }
 
-    // --- Issue flash command ---
-    printf("%s: issuing mailbox cmd\n", __FUNCTION__);
+    // --- Step 5: Issue flash command for header half only ---
+    printf("%s: issuing mailbox cmd (header half only)\n", __FUNCTION__);
     mbox.cmd         = MAILBOX_CMD_PGM;
     mbox.buffer_addr = fbi_1.bufferStartAddr;
     mbox.target_addr = slot_flash_addr;
-    mbox.length      = SLOT_SIZE;
+    mbox.length      = HEADER_SIZE;     // 32KB — header only, image untouched
     mbox.status      = 0;
     if (!swd->write_target_mem(fbi_1.mailboxAddr, (uint32_t*)&mbox, sizeof(mbox))) {
-        res = -13; goto abort;
+        res = -10; goto abort;
     }
 
     t0 = time_us_32(); timeout = 10000000;
     while (1) {
         if (!swd->read_target_mem(fbi_1.mailboxAddr,
                                    (uint32_t*)&flash_status, sizeof(flash_status))) {
-            res = -14; goto abort;
+            res = -11; goto abort;
         }
         if (flash_status > MAILBOX_STATUS_BUSY) break;
         if (time_us_32() - t0 > timeout) {
-            printf("%s: flash timeout\n", __FUNCTION__); res = -15; goto abort;
+            printf("%s: flash timeout\n", __FUNCTION__); res = -12; goto abort;
         }
         busy_wait_us_32(100000);
     }
@@ -885,7 +970,7 @@ int32_t FlashEp::rewriteSlotHeader(uint32_t slot_flash_addr,
         printf("%s: success!\n", __FUNCTION__);
     } else {
         printf("%s: flash error %d\n", __FUNCTION__, flash_status);
-        res = -16;
+        res = -13;
     }
 
 abort:

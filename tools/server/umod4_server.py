@@ -129,7 +129,7 @@ def main():
     app.setOrganizationName("umod4")
 
     # Create main window
-    window = MainWindow(database, server, connectivity_checker=connectivity_checker)
+    window = MainWindow(database, server, connectivity_checker=connectivity_checker, device_manager=device_manager)
 
     # --- Background thread callbacks (just put events on the queue) ---
 

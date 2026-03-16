@@ -16,9 +16,6 @@ set(OUTPUTS
   ${NAME}.lst
   ${NAME}.s19
   ${NAME}.bin
-  ${NAME}.json
-  ${NAME}.bson
-  ${NAME}.c
 )
 add_custom_target(${PROJECT_NAME} ALL
   DEPENDS
@@ -33,6 +30,7 @@ add_custom_command(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.S
     ${LIB_DIR}/inc/log_ids.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/custom_eprom.ld
+    ${SYSTEM_METADATA_JSON_PATH}
 
   COMMENT "Building and Patching UM4.bin"
   VERBATIM
@@ -50,4 +48,10 @@ add_custom_command(
 
     # 5. Generate Binary
     COMMAND m68hc11-elf-objcopy ${NAME}.elf --output-target=binary ${NAME}.bin
+
+    # 6. Patch build metadata into binary
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/patch_metadata.py"
+            "${SYSTEM_METADATA_JSON_PATH}"
+            "${NAME}.elf"
+            "${NAME}.bin"
 )
