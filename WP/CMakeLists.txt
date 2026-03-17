@@ -243,6 +243,9 @@ add_executable(${PROJECT_NAME}
     src/dhcpserver.c
     src/dns_server.c
 
+    # Shared lib
+    ${LIB_DIR}/src/log_meta.c
+
     # MDL (Motorbike Data Link) files
     src/FlashConfig.cpp
     src/NetworkManager.cpp

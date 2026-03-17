@@ -119,7 +119,7 @@ void generate_api_sd_info_json(char* buffer, size_t size);
  * Per-slot log ID selection: 0-255 = ecuLiveLog index to display, -1 = empty slot.
  * Initialized to compile-time defaults; overwritten by ecu_live_config_load().
  */
-extern int8_t g_ecu_live_items[ECU_LIVE_ITEMS_MAX];
+extern int16_t g_ecu_live_items[ECU_LIVE_ITEMS_MAX];
 
 /**
  * Load ECU live config from /ecu_live.json on LittleFS.
@@ -138,6 +138,13 @@ void generate_api_ecu_live_config_json(char* buffer, size_t size);
  * Returns all 10 slots with current ecuLiveLog[] values (null for empty slots).
  */
 void generate_api_ecu_live_data_json(char* buffer, size_t size);
+
+/**
+ * Generate JSON for GET /api/ecu-live-meta.
+ * Returns {"channels":[{"id":N,"name":"...","units":"..."},...]} for all
+ * displayable log IDs (g_log_id_meta entries with display == true).
+ */
+void generate_api_ecu_live_meta_json(char* buffer, size_t size);
 
 /**
  * Generate JSON for GET /api/reformat-filesystem endpoint.

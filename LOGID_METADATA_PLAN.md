@@ -13,6 +13,39 @@ Python tooling.
 
 ---
 
+## Limitations
+
+Live data sounds cool, but what use is it really?
+Most of the ECU data stream goes by too fast to be of use to view as a live stream.
+A web page might only update every second or two, so viewing things like crankshaft or cam events is pointless.
+
+Slower changing data lends itself to a webpage, but what data might be useful?
+
+Slower Changing Data:
+
+* THW/THA
+* AAP, MAP
+* Battery voltage
+* Trim pot settings
+* GPS fix
+* GPS time
+
+Diagnostic data
+
+* VTA (for setting TPS)
+* Trim pot settings
+
+Error Data:
+
+* Error flag bytes L000C through L000F
+* crank and cam error counts (would need to be calculated by rx isr)
+* nospark error count
+
+I think what I am learning here is that a general mechanism to select any data from the ecu data stream would be overkill since most of the data is changing too fast to be useful.
+It would potentially be easier to implement as a static, predefined set of data to be displayed on the page.
+
+---
+
 ## Architecture Overview
 
 ```

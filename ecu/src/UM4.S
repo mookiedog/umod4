@@ -295,7 +295,7 @@ L000A   =       0x000A
 L000B   =       0x000B
 
 ;-----------------------------------------------------------------
-;I have a feeling that these bits are set if the associated
+;These bits are set if the associated
 ;sensor is detectably "broken" in some fashion:
 ;xxxxxxx1 AAP           ambient air pressure
 ;xxxxxx1x THA           air temp
@@ -308,11 +308,11 @@ L000B   =       0x000B
 L000C   =       0x000C
 
 ;-----------------------------------------------------------------
-;xxxxxxx1 DON_BAD       1 means DON sensor is disconnected (or open)
-;xxxxxx1x               1 means REAR  ign coil IG22 is bad
-;xxxxx1xx               1 means REAR  ign coil IG21 is bad
-;xxxx1xxx               1 means FRONT ign coil IG12 is bad
-;xxx1xxxx               1 means FRONT ign coil IG11 is bad
+;xxxxxxx1 DON           1 means DON sensor is disconnected (or open)
+;xxxxxx1x IG22          1 means REAR  ign coil IG22 is bad
+;xxxxx1xx IG21          1 means REAR  ign coil IG21 is bad
+;xxxx1xxx IG12          1 means FRONT ign coil IG12 is bad
+;xxx1xxxx IG11          1 means FRONT ign coil IG11 is bad
 ;xx1xxxxx               <not used>
 ;x1xxxxxx               <not used>
 ;1xxxxxxx               <not used>

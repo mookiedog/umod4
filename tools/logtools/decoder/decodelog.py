@@ -16,6 +16,12 @@ import math
 import argparse
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from log_convert import (
+    logconv_ecu_raw_thw, logconv_ecu_raw_tha,
+    logconv_ecu_raw_map, logconv_ecu_raw_aap,
+    logconv_ecu_raw_vm, logconv_ecu_ign_dly,
+    convertApriliaTempSensorAdcToDegC, convertPressureSensorAdcToKpa,
+)
 
 # HDF5 support - only imported if needed
 try:
@@ -1348,79 +1354,7 @@ def decodeL000D(byte):
         print(f"Bad DON", end="")
     print()
 
-# This function converts a raw 8-bit ADC reading of an Aprilia temperature sensor back to degrees C.
-#
-# An excellent calculator of NTC thermistor response can be found here:
-#   https://www.thinksrs.com/downloads/programs/therm%20calc/ntccalibrator/ntccalculator.html
-#
-# This thermistor data was published in Aprilia's "Mille Training Manual":
-#  - At 20 degrees centigrade the resistance must be about 2450 Ohms
-#  - At 40 degrees centigrade the resistance must be about 1114 Ohms
-#  - At 60 degrees centigrade the resistance must be about 584 Ohms
-#  - At 90 degrees centigrade the resistance must be about 245 Ohms
-
-def convertApriliaTempSensorAdcToDegC(adc):
-    # Work backwards to get the voltage we must have measured.
-    # Vref is nominally 5.0V, and the ADC is 8 bits (255 max value)
-    Vref = 5.0
-    Vmeas = adc * Vref / 255.0
-
-    # Based on color code, Rtop (R751 or R781) is 2.70K 0.5% (red/violet/black/brown/green).
-    # It measures out at 2.70K, so that is accurate.
-    Rtop = 2700
-
-    # Work out what the resistance of the thermistor must have been to generate the Voltage we measured
-    Rntc = (Vmeas * Rtop) / (Vref - Vmeas)
-
-    # Convert an NTC resistor to a temperature using the Beta method
-    #
-    # The Beta constant was calculated from the ntccalculator website, above
-    # The resistances for the Beta calculation came from measurements of sensor resistances at 0C, 25C, and 90C.
-    # I am making an assumption that the NTC resistor in the Aprilia sensor is rated 2K Ohms at 25C.
-    # I measured it at 1992 Ohms at 25C. 2K is a standard NTC value, so this seems reasonable.
-    R25 = 1992
-    Beta = 3526
-    degC_Beta = (1/((1/Beta)*math.log(Rntc/R25)+(1/(25+273.15))))-273.15
-
-    # The Steinhart-Hart coefficients come from the same calculator website, as above
-    # Resistance/temperature Measurements come from an experiment I ran a long time ago.
-    # I will try to find that data and get it republished. In the meantime:
-    A = 1.142579776e-3          # 5880 Ohms at 0C
-    B = 2.941596847e-4          # 1992 Ohms at 25C
-    C = -0.5305974726e-7        #  249 Ohms at 90C
-    logR = math.log(Rntc)
-    degC_SH = (1/(A + (B * logR) + (C * (logR**3)))) - 273.15
-
-    global maxDiff
-    diff = abs((degC_Beta - degC_SH))
-    if diff > maxDiff:
-        maxDiff = diff
-    # print(f"beta: {degC_Beta:.1f}, SH: {degC_SH:.1f}")
-
-    # Experiments show that S_H and Beta differ by about 1 degree at most, so it probably does not matter which
-    # one to use. Nonetheless, the S-H method is known to be more accurate so we use it.
-    return degC_SH
-
-
-def convertPressureSensorAdcToKpa(adc_counts):
-    """
-    Convert Aprilia MAP/AAP pressure sensor ADC counts to kPa.
-
-    Sensor output formula: Vo = Vcc * (0.006*Pi + 0.12)
-    Solving for pressure: Pi = [Vo - (0.12*Vcc)] / (0.006*Vcc)
-    Where Vo = (ADC/256) * Vref
-    and Vref = Vcc = 5.0V
-
-    Args:
-        adc_counts: ADC value (0-255)
-
-    Returns:
-        Pressure in kPa (float)
-    """
-    Vref = 5.0
-    Vo = (adc_counts / 256.0) * Vref
-    pressure_kpa = (Vo - (0.12 * Vref)) / (0.006 * Vref)
-    return pressure_kpa
+# Sensor conversion functions are in log_convert.py (imported at the top of this file).
 
 
 def read(f, readCount, showAddress=False, newLine=True):
@@ -1843,14 +1777,14 @@ def main():
 
                 elif byte == L.LOGID_ECU_F_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_F_IGN_DLY_DLEN)[0]
-                    advance = ((b/256)*90.0) - 18
+                    advance = logconv_ecu_ign_dly(b)
                     print(f"{fmt_record(recordCnt, timekeeper)} FIA:    {advance:.1f}")
                     if h5_writer:
                         h5_writer.append_data('ecu_front_ign_delay', [timekeeper.get_time_ns(), advance])
 
                 elif byte == L.LOGID_ECU_R_IGN_DLY_TYPE_0P8:
                     b = read(f, L.LOGID_ECU_R_IGN_DLY_DLEN)[0]
-                    advance = ((b/256)*90.0) - 18
+                    advance = logconv_ecu_ign_dly(b)
                     print(f"{fmt_record(recordCnt, timekeeper)} RIA:    {advance:.1f}")
                     if h5_writer:
                         h5_writer.append_data('ecu_rear_ign_delay', [timekeeper.get_time_ns(), advance])
@@ -2001,7 +1935,7 @@ def main():
                     # The VM input divides the input voltage by 4 via resistor divider
                     # then feeds it to an ADC where 5V represents the max ADC value 0xFF.
                     adc = read(f, L.LOGID_ECU_RAW_VM_DLEN)[0]
-                    vm_V = (adc/256) * 5 * 4
+                    vm_V = logconv_ecu_raw_vm(adc)
                     print(f"{fmt_record(recordCnt, timekeeper)} VM:     {vm_V:.2f} V")
                     if h5_writer:
                         h5_writer.append_data('ecu_battery_voltage_v', [timekeeper.get_time_ns(), vm_V])

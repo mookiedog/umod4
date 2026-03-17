@@ -23,6 +23,7 @@ extern void generate_api_wifi_reset_json(char* buffer, size_t size);
 extern void generate_api_ping_json(char* buffer, size_t size);
 extern void generate_api_ecu_live_config_json(char* buffer, size_t size);
 extern void generate_api_ecu_live_data_json(char* buffer, size_t size);
+extern void generate_api_ecu_live_meta_json(char* buffer, size_t size);
 extern void generate_api_reformat_filesystem_json(char* buffer, size_t size);
 extern void generate_api_sd_info_json(char* buffer, size_t size);
 extern void generate_api_image_store_json(char* buffer, size_t size);
@@ -121,7 +122,9 @@ int fs_open_custom(struct fs_file *file, const char *name)
                                   (strcmp(api_name, "image-store/scan") == 0 ||
                                    strcmp(api_name, "wifi-scan") == 0) ? 4096 :
                                   (strcmp(api_name, "image-store") == 0 ||
-                                   strcmp(api_name, "image-store/selector") == 0) ? 1024 : 512;
+                                   strcmp(api_name, "image-store/selector") == 0 ||
+                                   strcmp(api_name, "ecu-live-data") == 0) ? 1024 :
+                                  (strcmp(api_name, "ecu-live-meta") == 0) ? 2048 : 512;
 
         api_file->data = (char*)malloc(api_buffer_size);
         if (!api_file->data) {
@@ -171,6 +174,8 @@ int fs_open_custom(struct fs_file *file, const char *name)
             generate_api_ecu_live_config_json(api_file->data, api_buffer_size);
         } else if (strcmp(api_name, "ecu-live-data") == 0) {
             generate_api_ecu_live_data_json(api_file->data, api_buffer_size);
+        } else if (strcmp(api_name, "ecu-live-meta") == 0) {
+            generate_api_ecu_live_meta_json(api_file->data, api_buffer_size);
         } else if (strcmp(api_name, "sd-info") == 0) {
             generate_api_sd_info_json(api_file->data, api_buffer_size);
         } else if (strcmp(api_name, "reformat-filesystem") == 0) {
@@ -597,19 +602,25 @@ void fs_close_custom(struct fs_file *file)
             // LittleFS file - close the file
             lfs_file_close(g_lfs, &lfs_file->file);
 
-            // Finalize SHA-256 hash and cache it
-            if (lfs_file->sha_enabled && lfs_file->bytes_read == lfs_file->file_size) {
+            // Finalize SHA-256 hash - MUST always call finish() to release hardware
+            if (lfs_file->sha_enabled) {
                 sha256_result_t result;
                 pico_sha256_finish(&lfs_file->sha_state, &result);
+                lfs_file->sha_enabled = false;
 
-                // Cache the hash for this file
-                strncpy(g_file_hash_cache.filename, lfs_file->sha_filename, sizeof(g_file_hash_cache.filename) - 1);
-                g_file_hash_cache.filename[sizeof(g_file_hash_cache.filename) - 1] = '\0';
-                memcpy(&g_file_hash_cache.hash, &result, sizeof(sha256_result_t));
-                g_file_hash_cache.valid = true;
+                if (lfs_file->bytes_read == lfs_file->file_size) {
+                    // Full file transferred - cache the hash
+                    strncpy(g_file_hash_cache.filename, lfs_file->sha_filename, sizeof(g_file_hash_cache.filename) - 1);
+                    g_file_hash_cache.filename[sizeof(g_file_hash_cache.filename) - 1] = '\0';
+                    memcpy(&g_file_hash_cache.hash, &result, sizeof(sha256_result_t));
+                    g_file_hash_cache.valid = true;
 
-                printf("fs_custom: Closed file '%s' (%zu/%zu bytes), SHA-256 cached\n",
-                       lfs_file->sha_filename, lfs_file->bytes_read, lfs_file->file_size);
+                    printf("fs_custom: Closed file '%s' (%zu/%zu bytes), SHA-256 cached\n",
+                           lfs_file->sha_filename, lfs_file->bytes_read, lfs_file->file_size);
+                } else {
+                    printf("fs_custom: Closed file '%s' (%zu/%zu bytes, aborted), SHA-256 released\n",
+                           lfs_file->sha_filename, lfs_file->bytes_read, lfs_file->file_size);
+                }
             } else {
                 printf("fs_custom: Closed file (%zu/%zu bytes transferred)\n",
                        lfs_file->bytes_read, lfs_file->file_size);

@@ -1,4 +1,5 @@
 #include "api_handlers.h"
+#include "log_meta.h"
 #include "WiFiManager.h"
 #include "bsonlib.h"
 #include "Swd.h"
@@ -41,7 +42,8 @@ typedef struct {
 extern file_hash_cache_t g_file_hash_cache;
 
 // Buffer for JSON responses (reused across requests to save space)
-static char json_response_buffer[512];
+// 1024 bytes needed for ecu-live-data: 10 slots × ~80 bytes + header
+static char json_response_buffer[1024];
 
 // Larger buffer for file listing (can hold ~100 log files at ~60 bytes each)
 static char file_list_buffer[8192];
@@ -728,8 +730,9 @@ void api_handlers_register(void)
 // ---------------------------------------------------------------------------
 // ECU Live Stream configuration
 
-int8_t g_ecu_live_items[ECU_LIVE_ITEMS_MAX] = {
-    0x56, 0x57, 0x64, 0x66, -1, -1, -1, -1, -1, -1
+int16_t g_ecu_live_items[ECU_LIVE_ITEMS_MAX] = {
+    // Battery Voltage, Manifold Pressure, Coolant Temp, Air Temp, Trim Pot 1, Trim Pot 2
+    0x66, 0x62, 0x64, 0x65, 0x56, 0x57, -1, -1, -1, -1
 };
 
 void ecu_live_config_load(void)
@@ -769,7 +772,7 @@ void ecu_live_config_load(void)
     }
     p++;
 
-    int8_t items[ECU_LIVE_ITEMS_MAX];
+    int16_t items[ECU_LIVE_ITEMS_MAX];
     for (int i = 0; i < ECU_LIVE_ITEMS_MAX; i++) {
         items[i] = -1;
     }
@@ -816,16 +819,38 @@ void generate_api_ecu_live_data_json(char* buffer, size_t size)
                        (unsigned long)age_ms);
     for (int i = 0; i < ECU_LIVE_ITEMS_MAX; i++) {
         if (i > 0) len += snprintf(buffer + len, size - len, ",");
-        int8_t logid = g_ecu_live_items[i];
+        int16_t logid = g_ecu_live_items[i];
         if (logid < 0) {
             len += snprintf(buffer + len, size - len,
-                            "{\"slot\":%d,\"logid\":-1,\"value\":null}", i);
+                            "{\"slot\":%d,\"logid\":-1,\"name\":null,\"units\":null,\"raw\":null}",
+                            i);
         } else {
+            uint8_t id = (uint8_t)logid;
+            const log_id_meta_t* m = &g_log_id_meta[id];
+            const char* name  = m->name  ? m->name  : "";
+            const char* units = m->units ? m->units : "";
             len += snprintf(buffer + len, size - len,
-                            "{\"slot\":%d,\"logid\":%d,\"value\":%u}",
-                            i, (int)(uint8_t)logid,
-                            (unsigned)ecuLiveLog[(uint8_t)logid]);
+                            "{\"slot\":%d,\"logid\":%d,\"name\":\"%s\",\"units\":\"%s\",\"raw\":%u}",
+                            i, (int)id, name, units,
+                            (unsigned)ecuLiveLog[id]);
         }
+    }
+    snprintf(buffer + len, size - len, "]}");
+}
+
+void generate_api_ecu_live_meta_json(char* buffer, size_t size)
+{
+    int len = snprintf(buffer, size, "{\"channels\":[");
+    bool first = true;
+    for (int i = 0; i < 256; i++) {
+        const log_id_meta_t* m = &g_log_id_meta[i];
+        if (!m->display || !m->name) continue;
+        const char* units = m->units ? m->units : "";
+        if (!first) len += snprintf(buffer + len, size - len, ",");
+        first = false;
+        len += snprintf(buffer + len, size - len,
+                        "{\"id\":%d,\"name\":\"%s\",\"units\":\"%s\"}",
+                        i, m->name, units);
     }
     snprintf(buffer + len, size - len, "]}");
 }

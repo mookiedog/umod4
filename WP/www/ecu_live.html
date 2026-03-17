@@ -47,16 +47,19 @@
         }
         .status-item {
             background: #f8f9fa;
-            padding: 20px;
+            padding: 16px 20px;
             border-radius: 8px;
             border: 1px solid #edf2f7;
         }
-        .status-label {
+        .status-name {
             font-weight: 700;
             color: #718096;
             font-size: 0.75em;
             text-transform: uppercase;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .status-value {
             font-size: 1.6em;
@@ -64,7 +67,20 @@
             font-family: 'Courier New', monospace;
             font-weight: 700;
         }
+        .status-units {
+            font-size: 0.6em;
+            color: #718096;
+            font-weight: 400;
+            margin-left: 3px;
+        }
+        .status-id {
+            font-size: 0.7em;
+            color: #b0bec5;
+            margin-top: 4px;
+            font-family: monospace;
+        }
 
+        /* ── Edit mode ── */
         #edit-panel { display: none; margin-top: 20px; }
         .edit-grid {
             display: grid;
@@ -72,23 +88,82 @@
             gap: 12px;
             margin-bottom: 20px;
         }
-        .edit-slot {
+        .edit-slot-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 2px;
+            background: #f8f9fa;
+            border: 1px solid #cbd5e0;
+            border-radius: 8px;
+            padding: 10px 14px;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.15s, border-color 0.15s;
+            width: 100%;
+        }
+        .edit-slot-btn:hover { background: #edf2f7; border-color: #a0aec0; }
+        .edit-slot-label { font-size: 0.7em; color: #a0aec0; font-weight: 600; text-transform: uppercase; }
+        .edit-slot-name  { font-size: 0.9em; color: #2d3748; font-weight: 600; }
+        .edit-slot-id    { font-size: 0.7em; color: #b0bec5; font-family: monospace; }
+
+        /* ── Picker modal ── */
+        #picker-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+        #picker-backdrop.open { display: flex; }
+        #picker-modal {
+            background: white;
+            border-radius: 12px;
+            padding: 0;
+            width: 320px;
+            max-width: 92vw;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        #picker-header {
+            padding: 16px 20px 12px;
+            border-bottom: 1px solid #edf2f7;
+            font-weight: 700;
+            font-size: 0.95em;
+            color: #2d3748;
+        }
+        #picker-list {
+            overflow-y: auto;
+            flex: 1;
+            padding: 8px 0;
+        }
+        .picker-item {
             display: flex;
             align-items: center;
+            justify-content: space-between;
+            padding: 10px 20px;
+            cursor: pointer;
             gap: 10px;
-            background: #f8f9fa;
-            padding: 12px;
-            border-radius: 8px;
         }
-        .edit-slot label { font-size: 0.8em; color: #4a5568; width: 50px; }
-        .edit-slot input {
-            flex: 1;
-            padding: 6px;
-            border: 1px solid #cbd5e0;
-            border-radius: 4px;
-            font-family: monospace;
+        .picker-item:hover { background: #f7fafc; }
+        .picker-item.selected { background: #ebf8ff; }
+        .picker-item-name  { font-size: 0.9em; color: #2d3748; font-weight: 600; }
+        .picker-item-right { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+        .picker-item-units { font-size: 0.75em; color: #718096; }
+        .picker-item-id    { font-size: 0.7em; color: #b0bec5; font-family: monospace; }
+        #picker-footer {
+            padding: 10px 20px;
+            border-top: 1px solid #edf2f7;
+            display: flex;
+            gap: 8px;
         }
-        .edit-slot input.error { border-color: #e53e3e; background: #fff5f5; }
+        .picker-clear { flex: 1; background: #fff5f5; color: #c53030; border: 1px solid #feb2b2; border-radius: 6px; padding: 7px; font-size: 0.85em; font-weight: 600; cursor: pointer; }
+        .picker-cancel { flex: 1; background: #f7fafc; color: #4a5568; border: 1px solid #e2e8f0; border-radius: 6px; padding: 7px; font-size: 0.85em; font-weight: 600; cursor: pointer; }
 
         @media (max-width: 600px) {
             .edit-grid { grid-template-columns: 1fr; }
@@ -120,146 +195,375 @@
         </div>
 
         <div class="status-grid" id="live-grid"></div>
-        <p id="no-items-msg" style="display:none">No items configured. Click Edit to add log IDs.</p>
+        <p id="no-items-msg" style="display:none">No items configured. Click Edit to add channels.</p>
 
         <div id="edit-panel">
-            <p style="font-size: 0.9em; color: #718096; margin-bottom: 15px;">Enter hex IDs (e.g. 0x56) to monitor specific ECU channels.</p>
+            <p style="font-size: 0.9em; color: #718096; margin-bottom: 15px;">Click a slot to choose which channel to display there.</p>
             <div class="edit-grid" id="edit-grid"></div>
         </div>
 
         </div>
     </div>
 
+    <!-- Channel picker modal -->
+    <div id="picker-backdrop" onclick="onBackdropClick(event)">
+        <div id="picker-modal">
+            <div id="picker-header">Choose Channel — Slot <span id="picker-slot-label"></span></div>
+            <div id="picker-list"></div>
+            <div id="picker-footer">
+                <button class="picker-clear" onclick="clearSlot()">Clear slot</button>
+                <button class="picker-cancel" onclick="closePicker()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        var currentItems = [];
-        var pollTimer = null;
+    'use strict';
 
-        fetch('/api/info')
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
-            })
-            .catch(function() {});
+    // ── Sensor converter functions (raw ADC → engineering units) ─────────────
+    var CONVERTERS = {
+        // VTA: Throttle position — strip timer bits, keep lower 10 bits
+        0x60: function(r) { return r & 0x3FF; },
 
-        fetchConfig();
+        // MAP / AAP: Manifold / ambient pressure (kPa)
+        0x62: function(r) { var v = (r / 256) * 5; return (v - 0.6) / 0.03; },
+        0x63: function(r) { var v = (r / 256) * 5; return (v - 0.6) / 0.03; },
 
-        function fetchConfig() {
-            fetch('/api/ecu-live-config')
-                .then(function(r) { return r.json(); })
-                .then(function(cfg) {
-                    currentItems = cfg.items;
-                    buildDisplay();
-                    startPolling();
-                })
-                .catch(function(e) { console.error('Config fetch error:', e); });
+        // THW / THA: NTC temperature (°C) via Steinhart-Hart
+        0x64: function(r) {
+            if (r === 0 || r >= 255) return NaN;
+            var v = r * 5 / 255;
+            var R = (v * 2700) / (5 - v);
+            var L = Math.log(R);
+            var A = 1.142579776e-3, B = 2.941596847e-4, C = -5.305974726e-8;
+            return 1 / (A + B * L + C * L * L * L) - 273.15;
+        },
+        0x65: function(r) { return CONVERTERS[0x64](r); },
+
+        // VM: Battery voltage (V) — resistor divider ×4
+        0x66: function(r) { return (r / 256) * 5 * 4; },
+
+        // F_IGN_DLY / R_IGN_DLY: Ignition advance (deg) — 0.8 fixed point
+        0x40: function(r) { return (r / 256) * 90 - 18; },
+        0x42: function(r) { return (r / 256) * 90 - 18; },
+
+        // L000C / L000E: sensor fault bits (L000E is sticky)
+        // Bit layout (LSB→MSB): AAP THA THW VTA AN2 MAP CRANK CAM
+        0x50: function(r) {
+            if (!r) return 'OK';
+            var b = [];
+            if (r & 0x01) b.push('AAP');
+            if (r & 0x02) b.push('THA');
+            if (r & 0x04) b.push('THW');
+            if (r & 0x08) b.push('VTA');
+            if (r & 0x10) b.push('AN2');
+            if (r & 0x20) b.push('MAP');
+            if (r & 0x40) b.push('CRANK');
+            if (r & 0x80) b.push('CAM');
+            return b.join(' ');
+        },
+        0x52: function(r) { return CONVERTERS[0x50](r); },
+
+        // L000D / L000F: sensor faults B (L000F is sticky)
+        // Bit layout (LSB→MSB): DON(tip-over) IG22 IG21 IG12 IG11(coil feedback sensors)
+        0x51: function(r) {
+            if (!r) return 'OK';
+            var b = [];
+            if (r & 0x01) b.push('DON');
+            if (r & 0x02) b.push('IG22');
+            if (r & 0x04) b.push('IG21');
+            if (r & 0x08) b.push('IG12');
+            if (r & 0x10) b.push('IG11');
+            return b.join(' ');
+        },
+        0x53: function(r) { return CONVERTERS[0x51](r); },
+
+        // GPS Fix type (uBlox fixType)
+        0xE8: function(r) {
+            return ['No Fix', 'Dead Reck', '2D Fix', '3D Fix', 'GNSS+DR', 'Time Only'][r] || 'Unknown';
         }
+    };
 
-        function buildDisplay() {
-            var grid = document.getElementById('live-grid');
-            var noMsg = document.getElementById('no-items-msg');
-            grid.innerHTML = '';
-            var hasItems = false;
-            for (var i = 0; i < currentItems.length; i++) {
-                if (currentItems[i] >= 0) {
-                    hasItems = true;
-                    var hex = '0x' + (currentItems[i] & 0xFF).toString(16).toUpperCase();
-                    var div = document.createElement('div');
-                    div.className = 'status-item';
-                    div.innerHTML = '<div class="status-label">' + hex + '</div>' +
-                                    '<div class="status-value" id="val-' + i + '">--</div>';
-                    grid.appendChild(div);
-                }
+    // ── Default slot configuration ───────────────────────────────────────────
+    var DEFAULT_SLOTS = [0x66, 0x62, 0x64, 0x65, 0x56, 0x57, -1, -1, -1, -1];
+    var LS_KEY = 'ecuLiveSlots';
+
+    // ── State ────────────────────────────────────────────────────────────────
+    var currentItems = loadSlots();
+    var pollTimer = null;
+    var editItems = null;       // working copy while in edit mode
+    var editingSlot = -1;       // slot index with picker open
+    var channelMeta = null;     // [{id, name, units}, ...] from /api/ecu-live-meta
+
+    // ── Slot persistence ─────────────────────────────────────────────────────
+
+    function loadSlots() {
+        try {
+            var saved = localStorage.getItem(LS_KEY);
+            if (saved) {
+                var arr = JSON.parse(saved);
+                if (Array.isArray(arr) && arr.length === 10) return arr;
             }
-            noMsg.style.display = hasItems ? 'none' : 'block';
-        }
+        } catch (e) {}
+        return DEFAULT_SLOTS.slice();
+    }
 
-        function startPolling() {
-            if (pollTimer) clearInterval(pollTimer);
-            pollTimer = setInterval(pollData, 2000);
-            pollData();
-        }
+    function saveSlots(items) {
+        try { localStorage.setItem(LS_KEY, JSON.stringify(items)); } catch (e) {}
+    }
 
-        function pollData() {
-            fetch('/api/ecu-live-data')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    var badge = document.getElementById('ecu-status');
-                    if (data.ecu_alive) {
-                        badge.className = 'online';
-                        badge.textContent = '● ECU Online';
-                    } else {
-                        badge.className = 'offline';
-                        badge.textContent = '○ ECU Offline — Turn Ignition ON';
-                    }
-                    document.getElementById('live-grid').style.opacity = data.ecu_alive ? '1' : '0.5';
+    function pushConfigToDevice(items) {
+        fetch('/api/ecu-live-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: items })
+        }).catch(function() {});
+    }
 
-                    data.items.forEach(function(entry) {
-                        var el = document.getElementById('val-' + entry.slot);
-                        if (el) el.textContent = (entry.value !== null) ? entry.value : '--';
-                    });
-                })
-                .catch(function(e) { console.error('Poll error:', e); });
-        }
+    // ── Startup ──────────────────────────────────────────────────────────────
 
-        function startEdit() {
-            if (pollTimer) clearInterval(pollTimer);
-            document.getElementById('btn-edit').style.display = 'none';
-            document.getElementById('btn-save').style.display = '';
-            document.getElementById('btn-cancel').style.display = '';
-            document.getElementById('live-grid').style.display = 'none';
-            document.getElementById('no-items-msg').style.display = 'none';
-            document.getElementById('edit-panel').style.display = 'block';
+    fetch('/api/info')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
+        })
+        .catch(function() {});
 
-            var editGrid = document.getElementById('edit-grid');
-            editGrid.innerHTML = '';
-            for (var i = 0; i < 10; i++) {
-                var val = currentItems[i] >= 0 ? '0x' + (currentItems[i] & 0xFF).toString(16).toUpperCase() : '';
-                var slot = document.createElement('div');
-                slot.className = 'edit-slot';
-                slot.innerHTML = '<label>Slot ' + i + '</label><input type="text" id="slot-' + i + '" value="' + val + '" placeholder="0x00">';
-                editGrid.appendChild(slot);
+    // Pre-fetch channel metadata so the picker opens instantly
+    fetch('/api/ecu-live-meta')
+        .then(function(r) { return r.json(); })
+        .then(function(d) { channelMeta = d.channels || []; })
+        .catch(function() {});
+
+    pushConfigToDevice(currentItems);
+    buildDisplay();
+    startPolling();
+
+    // ── Live display ─────────────────────────────────────────────────────────
+
+    function buildDisplay() {
+        var grid = document.getElementById('live-grid');
+        var noMsg = document.getElementById('no-items-msg');
+        grid.innerHTML = '';
+        var hasItems = false;
+        for (var i = 0; i < currentItems.length; i++) {
+            var id = currentItems[i];
+            if (id >= 0) {
+                hasItems = true;
+                var hex = '0x' + (id & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+                var div = document.createElement('div');
+                div.className = 'status-item';
+                div.innerHTML =
+                    '<div class="status-name" id="name-' + i + '">' + hex + '</div>' +
+                    '<div class="status-value" id="val-' + i + '">--<span class="status-units" id="units-' + i + '"></span></div>' +
+                    '<div class="status-id">' + hex + '</div>';
+                grid.appendChild(div);
             }
         }
+        noMsg.style.display = hasItems ? 'none' : 'block';
+    }
 
-        function cancelEdit() {
-            document.getElementById('btn-edit').style.display = '';
-            document.getElementById('btn-save').style.display = 'none';
-            document.getElementById('btn-cancel').style.display = 'none';
-            document.getElementById('edit-panel').style.display = 'none';
-            document.getElementById('live-grid').style.display = '';
-            buildDisplay();
-            startPolling();
-        }
+    function esc(s) {
+        return String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
 
-        function parseSlot(s) {
-            s = s.trim();
-            if (s === '') return -1;
-            var n = (s.toLowerCase().startsWith('0x')) ? parseInt(s, 16) : parseInt(s, 10);
-            return (isNaN(n) || n < 0 || n > 255) ? null : n;
-        }
+    // ── Polling ──────────────────────────────────────────────────────────────
 
-        function saveConfig() {
-            var items = [];
-            var valid = true;
-            for (var i = 0; i < 10; i++) {
-                var input = document.getElementById('slot-' + i);
-                var v = parseSlot(input.value);
-                if (v === null) { input.classList.add('error'); valid = false; }
-                else { input.classList.remove('error'); items.push(v); }
-            }
-            if (!valid) return;
+    function startPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(pollData, 2000);
+        pollData();
+    }
 
-            fetch('/api/ecu-live-config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ items: items })
-            })
+    function pollData() {
+        fetch('/api/ecu-live-data')
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (data.success) { currentItems = items; cancelEdit(); }
-                else { alert('Save failed'); }
-            });
+                var badge = document.getElementById('ecu-status');
+                if (data.ecu_alive) {
+                    badge.className = 'online';
+                    badge.textContent = '\u25cf ECU Online';
+                } else {
+                    badge.className = 'offline';
+                    badge.textContent = '\u25cb ECU Offline \u2014 Turn Ignition ON';
+                }
+                document.getElementById('live-grid').style.opacity = data.ecu_alive ? '1' : '0.5';
+
+                data.items.forEach(function(entry) {
+                    var nameEl  = document.getElementById('name-'  + entry.slot);
+                    var valEl   = document.getElementById('val-'   + entry.slot);
+                    var unitsEl = document.getElementById('units-' + entry.slot);
+                    if (!valEl) return;
+
+                    if (nameEl && entry.name) nameEl.textContent = entry.name;
+
+                    if (entry.raw === null || entry.raw === undefined) {
+                        valEl.childNodes[0].nodeValue = '--';
+                        valEl.style.fontSize = '';
+                        valEl.style.color = '';
+                        if (unitsEl) unitsEl.textContent = '';
+                        return;
+                    }
+
+                    var id = entry.logid;
+                    var displayVal;
+                    if (CONVERTERS[id]) {
+                        var converted = CONVERTERS[id](entry.raw);
+                        if (typeof converted === 'string') {
+                            displayVal = converted;
+                            valEl.style.fontSize = '1.0em';
+                            valEl.style.color = (converted === 'OK') ? '#38a169' : '#e53e3e';
+                        } else {
+                            displayVal = isNaN(converted) ? '--' : converted.toFixed(1);
+                            valEl.style.fontSize = '';
+                            valEl.style.color = '';
+                        }
+                    } else {
+                        displayVal = String(entry.raw);
+                        valEl.style.fontSize = '';
+                        valEl.style.color = '';
+                    }
+                    valEl.childNodes[0].nodeValue = displayVal;
+
+                    if (unitsEl && entry.units !== undefined && entry.units !== null) {
+                        unitsEl.textContent = entry.units ? ' ' + entry.units : '';
+                    }
+                });
+            })
+            .catch(function(e) { console.error('Poll error:', e); });
+    }
+
+    // ── Edit mode ─────────────────────────────────────────────────────────────
+
+    function startEdit() {
+        if (pollTimer) clearInterval(pollTimer);
+        editItems = currentItems.slice();
+
+        document.getElementById('btn-edit').style.display = 'none';
+        document.getElementById('btn-save').style.display = '';
+        document.getElementById('btn-cancel').style.display = '';
+        document.getElementById('live-grid').style.display = 'none';
+        document.getElementById('no-items-msg').style.display = 'none';
+        document.getElementById('edit-panel').style.display = 'block';
+
+        renderEditGrid();
+    }
+
+    function renderEditGrid() {
+        var grid = document.getElementById('edit-grid');
+        grid.innerHTML = '';
+        for (var i = 0; i < 10; i++) {
+            var id = editItems[i];
+            var meta = idToMeta(id);
+            var btn = document.createElement('button');
+            btn.className = 'edit-slot-btn';
+            btn.setAttribute('data-slot', i);
+            btn.onclick = (function(idx) { return function() { openPicker(idx); }; })(i);
+
+            var hex = id >= 0 ? '0x' + (id & 0xFF).toString(16).toUpperCase().padStart(2, '0') : '';
+            var name = meta ? esc(meta.name) : (id >= 0 ? hex : '<em style="color:#b0bec5">Empty</em>');
+            var idLabel = id >= 0 ? hex : '';
+
+            btn.innerHTML =
+                '<span class="edit-slot-label">Slot ' + i + '</span>' +
+                '<span class="edit-slot-name">' + name + '</span>' +
+                (idLabel ? '<span class="edit-slot-id">' + idLabel + '</span>' : '');
+            grid.appendChild(btn);
         }
+    }
+
+    function idToMeta(id) {
+        if (!channelMeta || id < 0) return null;
+        for (var i = 0; i < channelMeta.length; i++) {
+            if (channelMeta[i].id === id) return channelMeta[i];
+        }
+        return null;
+    }
+
+    function cancelEdit() {
+        editItems = null;
+        document.getElementById('btn-edit').style.display = '';
+        document.getElementById('btn-save').style.display = 'none';
+        document.getElementById('btn-cancel').style.display = 'none';
+        document.getElementById('edit-panel').style.display = 'none';
+        document.getElementById('live-grid').style.display = '';
+        buildDisplay();
+        startPolling();
+    }
+
+    function saveConfig() {
+        currentItems = editItems.slice();
+        saveSlots(currentItems);
+        pushConfigToDevice(currentItems);
+        cancelEdit();
+    }
+
+    // ── Picker ────────────────────────────────────────────────────────────────
+
+    function openPicker(slotIdx) {
+        editingSlot = slotIdx;
+        document.getElementById('picker-slot-label').textContent = slotIdx;
+
+        var list = document.getElementById('picker-list');
+        list.innerHTML = '';
+
+        var channels = channelMeta || [];
+        var currentId = editItems[slotIdx];
+
+        for (var i = 0; i < channels.length; i++) {
+            var ch = channels[i];
+            var item = document.createElement('div');
+            item.className = 'picker-item' + (ch.id === currentId ? ' selected' : '');
+            item.setAttribute('data-id', ch.id);
+            var hex = '0x' + (ch.id & 0xFF).toString(16).toUpperCase().padStart(2, '0');
+            var unitsHtml = ch.units ? '<span class="picker-item-units">' + esc(ch.units) + '</span>' : '';
+            item.innerHTML =
+                '<span class="picker-item-name">' + esc(ch.name) + '</span>' +
+                '<span class="picker-item-right">' + unitsHtml +
+                '<span class="picker-item-id">' + hex + '</span></span>';
+            item.onclick = (function(id) { return function() { selectChannel(id); }; })(ch.id);
+            list.appendChild(item);
+        }
+
+        if (channels.length === 0) {
+            list.innerHTML = '<div style="padding:20px;color:#718096;font-size:0.9em">Loading channel list...</div>';
+            // Retry fetch if it failed earlier
+            fetch('/api/ecu-live-meta')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    channelMeta = d.channels || [];
+                    openPicker(slotIdx);
+                })
+                .catch(function() {
+                    list.innerHTML = '<div style="padding:20px;color:#e53e3e;font-size:0.9em">Failed to load channel list.</div>';
+                });
+        }
+
+        document.getElementById('picker-backdrop').classList.add('open');
+    }
+
+    function selectChannel(id) {
+        editItems[editingSlot] = id;
+        closePicker();
+        renderEditGrid();
+    }
+
+    function clearSlot() {
+        editItems[editingSlot] = -1;
+        closePicker();
+        renderEditGrid();
+    }
+
+    function closePicker() {
+        document.getElementById('picker-backdrop').classList.remove('open');
+        editingSlot = -1;
+    }
+
+    function onBackdropClick(e) {
+        if (e.target === document.getElementById('picker-backdrop')) closePicker();
+    }
     </script>
 </body>
 </html>

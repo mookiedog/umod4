@@ -88,9 +88,43 @@ add_custom_command(
     VERBATIM
 )
 
+####################################################################################################
+# Generate LogMeta.py (name/units metadata) from log_ids.h _NAME/_UNITS macros.
+# Runs after Logsyms.py so the dependency chain is: log_ids.h → Logsyms.py → LogMeta.py.
+
+set(LOGMETA_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/src/gen_logmeta.py)
+
+set(LOGMETA_PACKAGE_DIR ${CMAKE_BINARY_DIR}/python_packages/LogMeta/src)
+set(LOGMETA_PY_FILE     ${LOGMETA_PACKAGE_DIR}/LogMeta.py)
+set(LOGMETA_INIT_FILE   ${LOGMETA_PACKAGE_DIR}/__init__.py)
+
+add_custom_command(
+    OUTPUT ${LOGMETA_PACKAGE_DIR}/.dir_created
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LOGMETA_PACKAGE_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${LOGMETA_PACKAGE_DIR}/.dir_created
+    COMMENT "Creating LogMeta package directory"
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${LOGMETA_PY_FILE}
+    DEPENDS ${SOURCE_FILES} ${LOGMETA_SCRIPT} ${LOGSYMS_PY_FILE} ${LOGMETA_PACKAGE_DIR}/.dir_created
+    COMMENT "Generating LogMeta.py"
+    COMMAND ${Python3_EXECUTABLE} ${LOGMETA_SCRIPT} ${SOURCE_FILES} -o ${LOGMETA_PY_FILE}
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${LOGMETA_INIT_FILE}
+    DEPENDS ${LOGMETA_PY_FILE}
+    COMMENT "Creating LogMeta __init__.py"
+    COMMAND ${CMAKE_COMMAND} -E echo "from .LogMeta import *" > ${LOGMETA_INIT_FILE}
+    VERBATIM
+)
+
 # Create a custom target that depends on all the package files
 add_custom_target(update_log_symbols ALL
-    DEPENDS ${LOGSYMS_PY_FILE} ${INIT_PY_FILE}
+    DEPENDS ${LOGSYMS_PY_FILE} ${INIT_PY_FILE} ${LOGMETA_PY_FILE} ${LOGMETA_INIT_FILE}
 )
 
 ####################################################################################################
@@ -113,6 +147,9 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${PYTHON_SITEPACKAGES}/Logsyms
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LOGSYMS_PY_FILE} ${PYTHON_SITEPACKAGES}/Logsyms/
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${INIT_PY_FILE} ${PYTHON_SITEPACKAGES}/Logsyms/
-    COMMENT "Installing Logsyms package to virtual environment (Python ${PYTHON_VERSION})"
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PYTHON_SITEPACKAGES}/LogMeta
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LOGMETA_PY_FILE} ${PYTHON_SITEPACKAGES}/LogMeta/
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LOGMETA_INIT_FILE} ${PYTHON_SITEPACKAGES}/LogMeta/
+    COMMENT "Installing Logsyms and LogMeta packages to virtual environment (Python ${PYTHON_VERSION})"
     VERBATIM
 )

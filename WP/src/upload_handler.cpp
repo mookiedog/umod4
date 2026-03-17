@@ -1099,7 +1099,7 @@ void upload_post_finished(void *connection, char *response_uri, u16_t response_u
         }
         p++;
 
-        int8_t items[ECU_LIVE_ITEMS_MAX];
+        int16_t items[ECU_LIVE_ITEMS_MAX];
         for (int i = 0; i < ECU_LIVE_ITEMS_MAX; i++) items[i] = -1;
 
         bool parse_ok = true;
@@ -1110,7 +1110,7 @@ void upload_post_finished(void *connection, char *response_uri, u16_t response_u
             long val = strtol(p, &endp, 10);
             if (endp == p) { parse_ok = false; break; }
             if (val < -1 || val > 255) { parse_ok = false; break; }
-            items[i] = (int8_t)val;
+            items[i] = (int16_t)val;
             p = endp;
             while (*p == ' ' || *p == '\t') p++;
             if (*p == ',') p++;

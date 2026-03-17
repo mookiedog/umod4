@@ -73,7 +73,7 @@ typedef struct {
 
         // For WRITE_ECU_LIVE_CONFIG
         struct {
-            int8_t items[10];   // ECU live log IDs (-1 = empty slot, 0-255 = log ID)
+            int16_t items[10];  // ECU live log IDs (-1 = empty slot, 0-255 = log ID)
         } ecu_live_config_op;
 
         // For FLASH_EP_SLOT
@@ -254,7 +254,7 @@ bool file_io_reflash_ep(const char* path, bool verbose, uint32_t timeout_ms, fil
  * @param result Pointer to result structure
  * @return true if request was processed (check result.success for actual outcome)
  */
-bool file_io_write_ecu_live_config(const int8_t items[10], uint32_t timeout_ms, file_io_result_t* result);
+bool file_io_write_ecu_live_config(const int16_t items[10], uint32_t timeout_ms, file_io_result_t* result);
 
 /**
  * Convenience function: Flash a 64KB slot to the EP image store.

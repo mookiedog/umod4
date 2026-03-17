@@ -220,9 +220,13 @@
 
 #define   LOGID_ECU_F_IGN_DLY_TYPE_0P8              ((LOGID_ECU_BASE) + 0x30)           // 0.8 fraction of 90 degrees (the value of L00DC during CR3)
 #define   LOGID_ECU_F_IGN_DLY_DLEN                  1
+#define   LOGID_ECU_F_IGN_DLY_NAME                  "Front Ign Advance"
+#define   LOGID_ECU_F_IGN_DLY_UNITS                 "deg"
 
 #define   LOGID_ECU_R_IGN_DLY_TYPE_0P8              ((LOGID_ECU_BASE) + 0x32)           // 0.8 fraction of 90 degrees (the value of L00DF during CR8)
 #define   LOGID_ECU_R_IGN_DLY_DLEN                  1
+#define   LOGID_ECU_R_IGN_DLY_NAME                  "Rear Ign Advance"
+#define   LOGID_ECU_R_IGN_DLY_UNITS                 "deg"
 
 // Here are various other ungrouped events:
 #define   LOGID_ECU_5MILLISEC_EVENT_TYPE_V          ((LOGID_ECU_BASE) + 0x38)           // indicates every time the 5 msec routine runs
@@ -236,15 +240,23 @@
 
 #define   LOGID_ECU_ECU_ERROR_L000C_TYPE_U8         ((LOGID_ECU_BASE) + 0x40)           // the 8 error bits stored in L000C
 #define   LOGID_ECU_ECU_ERROR_L000C_DLEN            1
+#define   LOGID_ECU_ECU_ERROR_L000C_NAME            "Sensor Faults A"
+#define   LOGID_ECU_ECU_ERROR_L000C_UNITS           ""
 
-#define   LOGID_ECU_ECU_ERROR_L000D_TYPE_U8         ((LOGID_ECU_BASE) + 0x41)           // the 8 error bits stored in L000D
+#define   LOGID_ECU_ECU_ERROR_L000D_TYPE_U8         ((LOGID_ECU_BASE) + 0x41)           // the 8 error bits stored in L000D: DON tip-over sensor + ignition coil feedback sensors
 #define   LOGID_ECU_ECU_ERROR_L000D_DLEN            1
+#define   LOGID_ECU_ECU_ERROR_L000D_NAME            "Sensor Faults B"
+#define   LOGID_ECU_ECU_ERROR_L000D_UNITS           ""
 
-#define   LOGID_ECU_ECU_ERROR_L000E_TYPE_U8         ((LOGID_ECU_BASE) + 0x42)           // the 8 error bits stored in L000E
+#define   LOGID_ECU_ECU_ERROR_L000E_TYPE_U8         ((LOGID_ECU_BASE) + 0x42)           // the 8 error bits stored in L000E (sticky version of L000C)
 #define   LOGID_ECU_ECU_ERROR_L000E_DLEN            1
+#define   LOGID_ECU_ECU_ERROR_L000E_NAME            "Sensor Faults A (hist)"
+#define   LOGID_ECU_ECU_ERROR_L000E_UNITS           ""
 
-#define   LOGID_ECU_ECU_ERROR_L000F_TYPE_U8         ((LOGID_ECU_BASE) + 0x43)           // the 8 error bits stored in L000F
+#define   LOGID_ECU_ECU_ERROR_L000F_TYPE_U8         ((LOGID_ECU_BASE) + 0x43)           // the 8 error bits stored in L000F (sticky version of L000D)
 #define   LOGID_ECU_ECU_ERROR_L000F_DLEN            1
+#define   LOGID_ECU_ECU_ERROR_L000F_NAME            "Sensor Faults B (hist)"
+#define   LOGID_ECU_ECU_ERROR_L000F_UNITS           ""
 
 #define   LOGID_ECU_TP_CO1_RAW_TYPE_U8              ((LOGID_ECU_BASE) + 0x44)           // Trim Pot CO1 raw ADC value
 #define   LOGID_ECU_TP_CO1_RAW_DLEN                 1
@@ -254,9 +266,13 @@
 
 #define   LOGID_ECU_TP_CO1_DB_TYPE_U8               ((LOGID_ECU_BASE) + 0x46)           // Trim Pot CO1 ADC value after deadband processing
 #define   LOGID_ECU_TP_CO1_DB_DLEN                  1
+#define   LOGID_ECU_TP_CO1_DB_NAME                  "Trim Pot 1"
+#define   LOGID_ECU_TP_CO1_DB_UNITS                 ""
 
 #define   LOGID_ECU_TP_CO2_DB_TYPE_U8               ((LOGID_ECU_BASE) + 0x47)           // Trim Pot CO2 ADC value after deadband processing
 #define   LOGID_ECU_TP_CO2_DB_DLEN                  1
+#define   LOGID_ECU_TP_CO2_DB_NAME                  "Trim Pot 2"
+#define   LOGID_ECU_TP_CO2_DB_UNITS                 ""
 
 #define   LOGID_ECU_TP_RPM_FACTOR_TYPE_U8           ((LOGID_ECU_BASE) + 0x48)           // RPM factor for trimp pot calculations
 #define   LOGID_ECU_TP_RPM_FACTOR_DLEN              1
@@ -270,24 +286,38 @@
 
 #define   LOGID_ECU_RAW_VTA_TYPE_U16                ((LOGID_ECU_BASE) + 0x50)           // Throttle angle
 #define   LOGID_ECU_RAW_VTA_DLEN                    2
+#define   LOGID_ECU_RAW_VTA_NAME                    "Throttle Position"
+#define   LOGID_ECU_RAW_VTA_UNITS                   "ADC"
 
 #define   LOGID_ECU_RAW_MAP_TYPE_U8                 ((LOGID_ECU_BASE) + 0x52)           // Manifold air pressure
 #define   LOGID_ECU_RAW_MAP_DLEN                    1
+#define   LOGID_ECU_RAW_MAP_NAME                    "Manifold Pressure"
+#define   LOGID_ECU_RAW_MAP_UNITS                   "kPa"
 
 #define   LOGID_ECU_RAW_AAP_TYPE_U8                 ((LOGID_ECU_BASE) + 0x53)           // Ambient air pressure
 #define   LOGID_ECU_RAW_AAP_DLEN                    1
+#define   LOGID_ECU_RAW_AAP_NAME                    "Ambient Pressure"
+#define   LOGID_ECU_RAW_AAP_UNITS                   "kPa"
 
 #define   LOGID_ECU_RAW_THW_TYPE_U8                 ((LOGID_ECU_BASE) + 0x54)           // Coolant Temp
 #define   LOGID_ECU_RAW_THW_DLEN                    1
+#define   LOGID_ECU_RAW_THW_NAME                    "Coolant Temp"
+#define   LOGID_ECU_RAW_THW_UNITS                   "°C"
 
 #define   LOGID_ECU_RAW_THA_TYPE_U8                 ((LOGID_ECU_BASE) + 0x55)           // Air Temp
 #define   LOGID_ECU_RAW_THA_DLEN                    1
+#define   LOGID_ECU_RAW_THA_NAME                    "Air Temp"
+#define   LOGID_ECU_RAW_THA_UNITS                   "°C"
 
 #define   LOGID_ECU_RAW_VM_TYPE_U8                  ((LOGID_ECU_BASE) + 0x56)           // Voltage Monitor
 #define   LOGID_ECU_RAW_VM_DLEN                     1
+#define   LOGID_ECU_RAW_VM_NAME                     "Battery Voltage"
+#define   LOGID_ECU_RAW_VM_UNITS                    "V"
 
 #define   LOGID_ECU_PORTG_DB_TYPE_U8                ((LOGID_ECU_BASE) + 0x57)           // the state of PORTG (debounced)
 #define   LOGID_ECU_PORTG_DB_DLEN                   1
+#define   LOGID_ECU_PORTG_DB_NAME                   "Port G"
+#define   LOGID_ECU_PORTG_DB_UNITS                  ""
 
 #define   LOGID_ECU_CRANKREF_START_TYPE_TS          ((LOGID_ECU_BASE) + 0x60)           // Timestamp of the start of the most recent crankshaft sub-rotation (6 crankrefs per full crank rotation)
 #define   LOGID_ECU_CRANKREF_START_DLEN             2
@@ -297,6 +327,8 @@
 
 #define   LOGID_ECU_CAM_ERR_TYPE_U8                 ((LOGID_ECU_BASE) + 0x63)           // Error while processing CAM ISR
 #define   LOGID_ECU_CAM_ERR_DLEN                    1
+#define   LOGID_ECU_CAM_ERR_NAME                    "Cam Error Count"
+#define   LOGID_ECU_CAM_ERR_UNITS                   ""
 
 #define   LOGID_ECU_CAMSHAFT_TYPE_TS                ((LOGID_ECU_BASE) + 0x64)           // Timestamp of most recent camshaft sensor falling-edge event
 #define   LOGID_ECU_CAMSHAFT_DLEN                   2
@@ -309,6 +341,8 @@
 
 #define   LOGID_ECU_NOSPARK_TYPE_U8                 ((LOGID_ECU_BASE) + 0x74)           // U8 value indicates the coil that did not spark: 0x11, 0x12, 0x21, 0x22
 #define   LOGID_ECU_NOSPARK_DLEN                    1
+#define   LOGID_ECU_NOSPARK_NAME                    "No Spark Error Count"
+#define   LOGID_ECU_NOSPARK_UNITS                   ""
 
 // ====================================================================================================
 // Define the LOGID space reserved for the EP.
@@ -385,15 +419,23 @@
 
 #define LOGID_WP_CSECS_TYPE_U8                          ((LOGID_WP_BASE) + 0x01)
 #define LOGID_WP_CSECS_DLEN                             1
+#define LOGID_WP_CSECS_NAME                             "GPS Centiseconds"
+#define LOGID_WP_CSECS_UNITS                            "cs"
 
 #define LOGID_WP_SECS_TYPE_U8                           ((LOGID_WP_BASE) + 0x02)
 #define LOGID_WP_SECS_DLEN                              1
+#define LOGID_WP_SECS_NAME                              "GPS Seconds"
+#define LOGID_WP_SECS_UNITS                             "s"
 
 #define LOGID_WP_MINS_TYPE_U8                           ((LOGID_WP_BASE) + 0x03)
 #define LOGID_WP_MINS_DLEN                              1
+#define LOGID_WP_MINS_NAME                              "GPS Minutes"
+#define LOGID_WP_MINS_UNITS                             "min"
 
 #define LOGID_WP_HOURS_TYPE_U8                          ((LOGID_WP_BASE) + 0x04)
 #define LOGID_WP_HOURS_DLEN                             1
+#define LOGID_WP_HOURS_NAME                             "GPS Hours"
+#define LOGID_WP_HOURS_UNITS                            "h"
 
 #define LOGID_WP_DATE_TYPE_U8                           ((LOGID_WP_BASE) + 0x05)
 #define LOGID_WP_DATE_DLEN                              1
@@ -406,6 +448,8 @@
 
 #define LOGID_WP_FIXTYPE_TYPE_U8                        ((LOGID_WP_BASE) + 0x08)
 #define LOGID_WP_FIXTYPE_DLEN                           1
+#define LOGID_WP_FIXTYPE_NAME                           "GPS Fix"
+#define LOGID_WP_FIXTYPE_UNITS                          ""
 
 // Position is stored together as lat/long
 #define LOGID_WP_GPS_POSN_TYPE_8B                       ((LOGID_WP_BASE) + 0x09)
@@ -414,6 +458,8 @@
 // Velocity is stored separate to make it easier to graph by itself
 #define LOGID_WP_GPS_VELO_TYPE_U16                      ((LOGID_WP_BASE) + 0x0A)
 #define LOGID_WP_GPS_VELO_DLEN                          2
+#define LOGID_WP_GPS_VELO_NAME                          "GPS Speed"
+#define LOGID_WP_GPS_VELO_UNITS                         "mm/s"
 
 // Mark the fact that we saw a PPS event
 #define LOGID_WP_GPS_PPS_TYPE_V                         ((LOGID_WP_BASE) + 0x0B)

@@ -647,11 +647,11 @@ bool file_io_reflash_ep(const char* path, bool verbose, uint32_t timeout_ms, fil
     return file_io_execute(&req, timeout_ms, result);
 }
 
-bool file_io_write_ecu_live_config(const int8_t items[10], uint32_t timeout_ms, file_io_result_t* result)
+bool file_io_write_ecu_live_config(const int16_t items[10], uint32_t timeout_ms, file_io_result_t* result)
 {
     file_io_request_t req = {};
     req.op = FILE_IO_OP_WRITE_ECU_LIVE_CONFIG;
-    memcpy(req.ecu_live_config_op.items, items, 10);
+    memcpy(req.ecu_live_config_op.items, items, 10 * sizeof(int16_t));
     return file_io_execute(&req, timeout_ms, result);
 }
 
