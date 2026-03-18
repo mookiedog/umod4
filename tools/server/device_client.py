@@ -7,6 +7,7 @@ acts as an HTTP client to download logs from the device's HTTP server.
 import requests
 import hashlib
 import os
+import time
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
@@ -79,59 +80,140 @@ class DeviceClient:
             print(f"Error listing files from {self.device_ip}: {e}")
             return None
 
+    # Chunk size must match CHUNK_DOWNLOAD_MAX_SIZE in WP/src/fs_custom.cpp
+    CHUNK_DOWNLOAD_SIZE = 16 * 1024  # TEST: doubled from 8KB to match larger TCP window
+
     def download_log_file(
         self,
         filename: str,
         destination_path: str,
         progress_callback=None
     ) -> Tuple[bool, Optional[str]]:
-        """Download a log file from device.
+        """Download a log file from device using resumable chunked transfer.
+
+        Each chunk is an independent GET /api/chunks/<filename>/<offset> request.
+        The device returns the chunk data with an X-Chunk-SHA256 header for
+        integrity checking.  On failure the partial file is preserved as
+        <destination_path>.partial so the next call resumes from the last
+        successfully written chunk boundary.
 
         Args:
-            filename: Name of file to download (e.g., "ride_001.um4")
-            destination_path: Local path to save file
+            filename: Name of file to download (e.g., "log_16.um4")
+            destination_path: Local path for the completed file
             progress_callback: Optional callback(bytes_downloaded, total_bytes)
 
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
         """
+        partial_path = destination_path + '.partial'
+
+        # Resume from last complete chunk boundary if a partial file exists
+        resume_offset = 0
+        if os.path.exists(partial_path):
+            raw_size = os.path.getsize(partial_path)
+            resume_offset = (raw_size // self.CHUNK_DOWNLOAD_SIZE) * self.CHUNK_DOWNLOAD_SIZE
+            if resume_offset > 0:
+                print(f"  Resuming {filename} from byte {resume_offset:,}")
+            elif raw_size > 0:
+                # Partial file smaller than one chunk — discard and restart
+                resume_offset = 0
+
+        total_size = 0
+        bytes_downloaded = resume_offset
+
         try:
-            url = f"{self.base_url}/logs/{filename}"
-            response = requests.get(url, stream=True, timeout=self.timeout)
-            response.raise_for_status()
+            open_mode = 'ab' if resume_offset > 0 else 'wb'
+            with open(partial_path, open_mode) as f:
+                # Truncate to the last clean chunk boundary when resuming
+                if resume_offset > 0:
+                    f.seek(resume_offset)
+                    f.truncate()
 
-            # Get total file size from Content-Length header
-            total_size = int(response.headers.get('content-length', 0))
+                MAX_CHUNK_RETRIES = 8
+                CHUNK_RETRY_DELAY = 3.0  # seconds between retries
 
-            # Download file in chunks
-            bytes_downloaded = 0
-            chunk_size = 65536  # 64KB chunks
+                while True:
+                    url = f"{self.base_url}/api/chunks/{filename}/{bytes_downloaded}"
 
-            with open(destination_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        f.write(chunk)
-                        bytes_downloaded += len(chunk)
+                    # Retry loop for transient connection errors (IncompleteRead, etc.)
+                    response = None
+                    chunk_data = None
+                    last_error = None
+                    for attempt in range(MAX_CHUNK_RETRIES):
+                        try:
+                            t_start = time.monotonic()
+                            response = requests.get(url, stream=True, timeout=(10, 60))
+                            t_headers = time.monotonic()
+                            chunk_data = response.content
+                            t_done = time.monotonic()
+                            t_get  = int((t_headers - t_start)  * 1000)
+                            t_recv = int((t_done    - t_headers) * 1000)
+                            print(f"CHK off={bytes_downloaded} get={t_get}ms recv={t_recv}ms total={t_get+t_recv}ms")
+                            last_error = None
+                            break
+                        except Exception as e:
+                            last_error = e
+                            print(f"  Chunk retry {attempt + 1}/{MAX_CHUNK_RETRIES} at offset "
+                                  f"{bytes_downloaded}: {type(e).__name__}: {e}")
+                            time.sleep(CHUNK_RETRY_DELAY)
 
-                        if progress_callback:
-                            progress_callback(bytes_downloaded, total_size)
+                    if last_error is not None:
+                        return False, (
+                            f"Error downloading chunk at offset {bytes_downloaded} "
+                            f"after {MAX_CHUNK_RETRIES} retries: {last_error}"
+                        )
 
-            # Verify file size matches
-            actual_size = os.path.getsize(destination_path)
-            if total_size > 0 and actual_size != total_size:
-                error_msg = f"Size mismatch: expected {total_size}, got {actual_size}"
-                os.remove(destination_path)  # Delete incomplete file
-                return False, error_msg
+                    if response.status_code != 200:
+                        return False, f"HTTP {response.status_code} at offset {bytes_downloaded}"
 
+                    # Capture total file size from first response
+                    if total_size == 0:
+                        total_size = int(response.headers.get('X-File-Size', 0))
+
+                    if not chunk_data:
+                        break  # Empty response means offset is at/past EOF
+
+                    # Verify chunk integrity
+                    expected_sha = response.headers.get('X-Chunk-SHA256', '')
+                    if expected_sha and expected_sha != 'none':
+                        actual_sha = hashlib.sha256(chunk_data).hexdigest()
+                        if actual_sha.lower() != expected_sha.lower():
+                            return False, (
+                                f"SHA-256 mismatch at offset {bytes_downloaded}: "
+                                f"expected {expected_sha[:16]}... got {actual_sha[:16]}..."
+                            )
+
+                    f.write(chunk_data)
+                    bytes_downloaded += len(chunk_data)
+
+                    if progress_callback:
+                        progress_callback(bytes_downloaded, total_size)
+
+                    # Done when we have the whole file
+                    if total_size > 0 and bytes_downloaded >= total_size:
+                        break
+
+                    # Also done if server returned a short chunk (last chunk)
+                    if len(chunk_data) < self.CHUNK_DOWNLOAD_SIZE:
+                        break
+
+            # Rename partial → final
+            try:
+                if os.path.exists(destination_path):
+                    os.remove(destination_path)
+                os.rename(partial_path, destination_path)
+            except FileNotFoundError:
+                # Another concurrent download of this file already renamed the partial.
+                # If the final file now exists with the right size, treat as success.
+                if total_size > 0 and os.path.exists(destination_path) and \
+                        os.path.getsize(destination_path) == total_size:
+                    return True, None
+                raise
             return True, None
 
         except Exception as e:
-            error_msg = f"Error downloading {filename}: {e}"
-            print(error_msg)
-            # Clean up partial file
-            if os.path.exists(destination_path):
-                os.remove(destination_path)
-            return False, error_msg
+            # Do NOT delete partial_path — preserve it for next resume attempt
+            return False, f"Error downloading {filename}: {e}"
 
     def calculate_file_sha256(self, filepath: str) -> str:
         """Calculate SHA256 hash of a file.

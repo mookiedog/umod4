@@ -528,9 +528,10 @@ class DeviceListWidget(QWidget):
 class TransferHistoryWidget(QWidget):
     """Widget showing transfer history."""
 
-    def __init__(self, database):
+    def __init__(self, database, device_manager=None):
         super().__init__()
         self.database = database
+        self.device_manager = device_manager
         self.selected_device_mac = None
         self._setup_ui()
 
@@ -606,36 +607,54 @@ class TransferHistoryWidget(QWidget):
                 size_mb = transfer.size_bytes / (1024 * 1024)
                 self.transfer_table.setItem(row, 3, QTableWidgetItem(f"{size_mb:.2f} MB"))
 
-                # Calculate progress for in-progress transfers
+                # Calculate progress and speed for in-progress transfers
                 progress_str = "-"
+                speed_str = "-"
                 if transfer.status == 'in_progress':
-                    # Check actual file size on disk
-                    try:
-                        if transfer.device and transfer.device.log_storage_path:
-                            import os
-                            file_path = os.path.join(transfer.device.log_storage_path, transfer.filename)
-                            if os.path.exists(file_path):
-                                actual_size = os.path.getsize(file_path)
-                                if transfer.size_bytes > 0:
-                                    percent = (actual_size / transfer.size_bytes) * 100
-                                    progress_str = f"{actual_size/(1024*1024):.2f}/{size_mb:.2f} MB ({percent:.1f}%)"
-                                else:
-                                    progress_str = f"{actual_size/(1024*1024):.2f} MB"
-                    except:
-                        pass
+                    # First check live state from device_manager (most accurate)
+                    live = None
+                    if self.device_manager:
+                        active = self.device_manager.get_active_downloads()
+                        live = active.get((transfer.device_mac, transfer.filename))
+
+                    if live:
+                        bd = live['bytes_downloaded']
+                        tb = live['total_bytes']
+                        if tb > 0:
+                            percent = (bd / tb) * 100
+                            progress_str = f"{bd/(1024*1024):.2f}/{tb/(1024*1024):.2f} MB ({percent:.1f}%)"
+                        else:
+                            progress_str = f"{bd/(1024*1024):.2f} MB"
+                        rate = live['rate_kbps']
+                        if rate > 0:
+                            speed_str = f"{rate:.0f} KB/s"
+                    else:
+                        # Fall back to reading the .partial file from disk
+                        try:
+                            if transfer.device and transfer.device.log_storage_path:
+                                import os
+                                # Chunked downloads write to filename.partial during transfer
+                                partial_path = os.path.join(transfer.device.log_storage_path, transfer.filename + '.partial')
+                                final_path = os.path.join(transfer.device.log_storage_path, transfer.filename)
+                                check_path = partial_path if os.path.exists(partial_path) else final_path
+                                if os.path.exists(check_path):
+                                    actual_size = os.path.getsize(check_path)
+                                    if transfer.size_bytes > 0:
+                                        percent = (actual_size / transfer.size_bytes) * 100
+                                        progress_str = f"{actual_size/(1024*1024):.2f}/{size_mb:.2f} MB ({percent:.1f}%)"
+                                    else:
+                                        progress_str = f"{actual_size/(1024*1024):.2f} MB"
+                        except:
+                            pass
                 elif transfer.status == 'success':
                     progress_str = "100%"
+                    if transfer.transfer_speed_mbps:
+                        speed_kbps = transfer.transfer_speed_mbps * 1024
+                        speed_str = f"{speed_kbps:.0f} KB/s"
                 elif transfer.status == 'failed':
                     progress_str = "Failed"
 
                 self.transfer_table.setItem(row, 4, QTableWidgetItem(progress_str))
-
-                # Format speed (convert MB/s to KB/s)
-                if transfer.transfer_speed_mbps:
-                    speed_kbps = transfer.transfer_speed_mbps * 1024
-                    speed_str = f"{speed_kbps:.2f} KB/s"
-                else:
-                    speed_str = "-"
                 self.transfer_table.setItem(row, 5, QTableWidgetItem(speed_str))
 
                 # Status
@@ -1781,7 +1800,7 @@ class MainWindow(QMainWindow):
         # Bottom: Tabs for transfer history and device management
         tab_widget = QTabWidget()
 
-        self.transfer_history = TransferHistoryWidget(self.database)
+        self.transfer_history = TransferHistoryWidget(self.database, device_manager=self.device_manager)
         tab_widget.addTab(self.transfer_history, "Transfer History")
 
         self.manage_device = ManageDeviceWidget(self.database, self.connectivity_checker, self.device_manager)

@@ -59,18 +59,39 @@ file_hash_cache_t g_file_hash_cache = {};
  */
 struct lfs_custom_file {
     lfs_file_t file;          // LittleFS file handle (only for real files)
-    char* data;               // In-memory data (for API responses)
+    char* data;               // In-memory data (for API responses or pre-read chunk data)
     size_t file_size;         // Total file size
     size_t bytes_read;        // Bytes read so far
     bool is_open;             // Track if file is open
-    bool is_api;              // True if this is an API response (in-memory)
+    bool is_api;              // True if this is an API response or pre-read chunk (in-memory)
+    bool is_chunk;            // True if data points to s_chunk_data_buf (do not free; clear busy flag)
     pico_sha256_state_t sha_state;  // SHA-256 state for calculating hash during transfer
     bool sha_enabled;         // True if SHA-256 calculation is in progress
     char sha_filename[64];    // Filename for this transfer (for caching)
-    char header_buf[200];     // HTTP response headers (for HEADER_INCLUDED streaming)
+    char header_buf[300];     // HTTP response headers (for HEADER_INCLUDED streaming)
     size_t header_len;        // Bytes in header_buf (0 = not used)
     size_t header_sent;       // Bytes of header already sent
 };
+
+#define CHUNK_DOWNLOAD_MAX_SIZE (16 * 1024)
+// The full HTTP response (headers + chunk data) must fit in one TCP send buffer to avoid
+// multi-round sends, which cause IncompleteRead errors on the client when the gap between
+// rounds coincides with a delayed-ACK window. header_buf is 300 bytes max.
+static_assert(CHUNK_DOWNLOAD_MAX_SIZE + 300 <= TCP_SND_BUF,
+    "CHUNK_DOWNLOAD_MAX_SIZE + header overhead exceeds TCP_SND_BUF - reduce chunk size or increase TCP_SND_BUF");
+static uint8_t s_chunk_data_buf[CHUNK_DOWNLOAD_MAX_SIZE];
+static bool s_chunk_in_progress = false;
+
+// Timing instrumentation — populated in fs_open_custom, printed in fs_close_custom.
+// Produces one "CHK ..." line per chunk on the RTT console.
+static uint32_t s_chunk_lfs_us;       // LFS open+seek+read+close duration
+static uint32_t s_chunk_sha_us;       // SHA-256 duration
+static uint32_t s_chunk_gap_us;       // gap since previous chunk closed
+static uint32_t s_chunk_t_ready;      // absolute time when chunk was fully prepared
+static uint32_t s_chunk_sz;           // bytes actually read
+static uint32_t s_chunk_off;          // byte offset of this chunk
+static uint32_t s_chunk_t_prev_close; // absolute time of last fs_close_custom
+static bool     s_chunk_has_prev;     // true once first chunk has closed
 
 void fs_custom_init(lfs_t* lfs_ptr)
 {
@@ -102,6 +123,136 @@ int fs_open_custom(struct fs_file *file, const char *name)
 
     if (false) printf("fs_custom: Opening '%s'\n", path);
 
+    // Chunked file download: /api/chunks/<filename>/<offset>
+    // Returns up to CHUNK_DOWNLOAD_MAX_SIZE bytes of the file starting at <offset>,
+    // with X-Chunk-SHA256 and X-File-Size response headers.
+    // Each request is independent: LFS is opened, seeked, read, and closed in one shot.
+    if (strncmp(path, "api/chunks/", 11) == 0) {
+        if (!g_lfs) {
+            printf("fs_custom: chunks: LittleFS not initialized\n");
+            return 0;
+        }
+        if (s_chunk_in_progress) {
+            printf("fs_custom: chunks: busy (previous chunk still streaming)\n");
+            return 0;
+        }
+
+        // Parse "<filename>/<offset>" — last '/' separates them
+        const char* chunks_arg = path + 11;
+        const char* last_slash = strrchr(chunks_arg, '/');
+        if (!last_slash || last_slash == chunks_arg) {
+            printf("fs_custom: chunks: bad URL '%s'\n", path);
+            return 0;
+        }
+
+        size_t filename_len = (size_t)(last_slash - chunks_arg);
+        if (filename_len == 0 || filename_len >= 64) {
+            printf("fs_custom: chunks: filename length invalid\n");
+            return 0;
+        }
+
+        char filename[64];
+        memcpy(filename, chunks_arg, filename_len);
+        filename[filename_len] = '\0';
+
+        uint32_t offset = (uint32_t)strtoul(last_slash + 1, NULL, 10);
+
+        uint32_t t0 = time_us_32();
+        s_chunk_gap_us = s_chunk_has_prev ? (t0 - s_chunk_t_prev_close) : 0;
+
+        // Open, seek, read, close — LFS mutex held only for this brief window
+        lfs_file_t lfs_f;
+        int err = lfs_file_open(g_lfs, &lfs_f, filename, LFS_O_RDONLY);
+        if (err < 0) {
+            printf("fs_custom: chunks: failed to open '%s': %d\n", filename, err);
+            return 0;
+        }
+
+        lfs_soff_t file_size = lfs_file_size(g_lfs, &lfs_f);
+        if (file_size < 0) {
+            lfs_file_close(g_lfs, &lfs_f);
+            return 0;
+        }
+
+        if (offset > 0) {
+            lfs_soff_t pos = lfs_file_seek(g_lfs, &lfs_f, (lfs_soff_t)offset, LFS_SEEK_SET);
+            if (pos < 0) {
+                printf("fs_custom: chunks: seek failed for '%s' offset %lu\n", filename, (unsigned long)offset);
+                lfs_file_close(g_lfs, &lfs_f);
+                return 0;
+            }
+        }
+
+        lfs_ssize_t bytes_read = lfs_file_read(g_lfs, &lfs_f, s_chunk_data_buf, CHUNK_DOWNLOAD_MAX_SIZE);
+        lfs_file_close(g_lfs, &lfs_f);
+
+        if (bytes_read < 0) {
+            printf("fs_custom: chunks: read error %ld for '%s'\n", (long)bytes_read, filename);
+            return 0;
+        }
+
+        uint32_t t_lfs = time_us_32();
+
+        // Compute SHA-256 of this chunk (hardware acquired and released here)
+        char sha256_hex[65] = "none";
+        if (bytes_read > 0) {
+            pico_sha256_state_t sha_state;
+            if (pico_sha256_try_start(&sha_state, SHA256_BIG_ENDIAN, true) == PICO_OK) {
+                sha256_result_t sha_result;
+                pico_sha256_update_blocking(&sha_state, s_chunk_data_buf, (size_t)bytes_read);
+                pico_sha256_finish(&sha_state, &sha_result);
+                for (int i = 0; i < SHA256_RESULT_BYTES; i++) {
+                    snprintf(sha256_hex + (i * 2), 3, "%02x", sha_result.bytes[i]);
+                }
+                sha256_hex[64] = '\0';
+            } else {
+                printf("fs_custom: chunks: SHA-256 hardware busy for '%s'\n", filename);
+            }
+        }
+
+        uint32_t t_sha = time_us_32();
+        s_chunk_lfs_us  = t_lfs - t0;
+        s_chunk_sha_us  = t_sha - t_lfs;
+        s_chunk_sz      = (uint32_t)bytes_read;
+        s_chunk_off     = offset;
+        s_chunk_t_ready = t_sha;
+
+        struct lfs_custom_file* chunk_file =
+            (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file));
+        if (!chunk_file) return 0;
+        memset(chunk_file, 0, sizeof(*chunk_file));
+
+        chunk_file->header_len = (size_t)snprintf(
+            chunk_file->header_buf, sizeof(chunk_file->header_buf),
+            "HTTP/1.0 200 OK\r\n"
+            "Content-Type: application/octet-stream\r\n"
+            "Content-Length: %ld\r\n"
+            "X-Chunk-SHA256: %s\r\n"
+            "X-File-Size: %ld\r\n"
+            "\r\n",
+            (long)bytes_read, sha256_hex, (long)file_size);
+
+        chunk_file->data       = (char*)s_chunk_data_buf;
+        chunk_file->file_size  = (size_t)bytes_read;
+        chunk_file->bytes_read = 0;
+        chunk_file->is_open    = true;
+        chunk_file->is_api     = true;   // use in-memory read path in fs_read_custom
+        chunk_file->is_chunk   = true;   // data points to s_chunk_data_buf — do not free
+        chunk_file->sha_enabled = false;
+        chunk_file->header_sent = 0;
+
+        file->data       = NULL;  // streaming via fs_read_custom
+        file->len        = (int)(chunk_file->header_len + (size_t)bytes_read);
+        file->index      = 0;
+        file->pextension = chunk_file;
+        file->flags      = FS_FILE_FLAGS_HEADER_INCLUDED |
+                           FS_FILE_FLAGS_HEADER_PERSISTENT |
+                           FS_FILE_FLAGS_CUSTOM;
+
+        s_chunk_in_progress = true;
+        return 1;
+    }
+
     // Check if this is an API endpoint (/api/*)
     if (strncmp(path, "api/", 4) == 0) {
         const char* api_name = path + 4;  // Skip "api/" prefix
@@ -112,6 +263,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
             printf("fs_custom: Failed to allocate API file structure\n");
             return 0;
         }
+        memset(api_file, 0, sizeof(*api_file));
 
         // Allocate buffer for API response
         // info and sha256 need 512 bytes, list and sd-info need 8KB for ~100 files
@@ -252,6 +404,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
             printf("fs_custom: Failed to allocate file structure\n");
             return 0;
         }
+        memset(lfs_file, 0, sizeof(*lfs_file));
 
         // Open file from LittleFS
         int err = lfs_file_open(g_lfs, &lfs_file->file, filename, LFS_O_RDONLY);
@@ -595,7 +748,21 @@ void fs_close_custom(struct fs_file *file)
     struct lfs_custom_file* lfs_file = (struct lfs_custom_file*)file->pextension;
 
     if (lfs_file->is_open) {
-        if (lfs_file->is_api) {
+        if (lfs_file->is_chunk) {
+            // Chunk download — data points to static s_chunk_data_buf, do not free
+            uint32_t t_close = time_us_32();
+            uint32_t send_us = t_close - s_chunk_t_ready;
+            printf("CHK off=%lu lfs=%luus sha=%luus send=%luus gap=%luus sz=%lu\n",
+                   (unsigned long)s_chunk_off,
+                   (unsigned long)s_chunk_lfs_us,
+                   (unsigned long)s_chunk_sha_us,
+                   (unsigned long)send_us,
+                   (unsigned long)s_chunk_gap_us,
+                   (unsigned long)s_chunk_sz);
+            s_chunk_t_prev_close = t_close;
+            s_chunk_has_prev     = true;
+            s_chunk_in_progress  = false;
+        } else if (lfs_file->is_api) {
             // API response - free the data buffer
             free(lfs_file->data);
         } else {

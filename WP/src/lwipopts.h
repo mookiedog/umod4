@@ -45,8 +45,9 @@
 #define MEM_ALIGNMENT               4
 // MEM_SIZE: static pool for lwIP's mem_malloc (PBUF_RAM pbufs + hs->buf per connection).
 // Peak demand = 2 connections × (TCP_SND_BUF for hs->buf + TCP_SND_BUF for PBUF_RAMs)
-//             = 2 × (5840 + 5840) = ~23KB. 32KB gives comfortable headroom.
-#define MEM_SIZE                    32768
+//             = 2 × (17520 + 17520) = ~70KB. 80KB gives comfortable headroom.
+// TEST: increased from 48KB to match doubled TCP_SND_BUF.
+#define MEM_SIZE                    81920
 // MEMP_NUM_SYS_TIMEOUT: lwIP auto-calculates this from enabled features (TCP, ARP, DHCP×2,
 // IGMP, DNS, IP_REASSEMBLY, mDNS×(1+MAX_SERVICES), netif_client_data) giving ~10.
 // With MEMP_MEM_MALLOC=0, the pool is now a fixed static array so the auto value is just
@@ -55,7 +56,7 @@
 #define MEMP_NUM_TCP_PCB            20  // Increased from 5→10→20 to handle connection churn
                                         // With TCP_MSL=1000ms (2s TIME_WAIT), 20 PCBs allows
                                         // 10 new connections/second sustained throughput
-#define MEMP_NUM_TCP_SEG            32  // 20 PCBs × 4×MSS window (halved from 64 with 8×MSS)
+#define MEMP_NUM_TCP_SEG            64  // TCP_SND_QUEUELEN = ceil(4×17520/1460) = 49; 64 gives headroom
 #define MEMP_NUM_ARP_QUEUE          10
 #define PBUF_POOL_SIZE              24
 #define LWIP_ARP                    1
@@ -63,13 +64,14 @@
 #define LWIP_ICMP                   1
 #define LWIP_IGMP                   1
 #define LWIP_RAW                    1
-// TCP window and send buffer: reduced from 8×MSS to 4×MSS.
-// Halves peak mem_malloc demand during file transfers (~6KB hs->buf + ~6KB PBUF_RAMs
-// per connection) so the MEM_SIZE=32KB pool covers 2 concurrent connections with margin.
-// Local WiFi RTT is ~1ms so a 5840-byte window still achieves multi-MB/s throughput.
-#define TCP_WND                     (4 * TCP_MSS)
+// TCP window and send buffer: 12×MSS = 17520 bytes.
+// Must be large enough to hold one full chunk response (CHUNK_DOWNLOAD_MAX_SIZE + ~300 byte
+// headers) in a single tcp_write to avoid multi-round sends that cause IncompleteRead errors.
+// Peak mem_malloc demand = 2 × (17520 + 17520) = ~70KB, covered by MEM_SIZE=80KB.
+// TEST: doubled from 6×MSS to measure whether WiFi throughput improves with larger window.
+#define TCP_WND                     (12 * TCP_MSS)
 #define TCP_MSS                     1460
-#define TCP_SND_BUF                 (4 * TCP_MSS)
+#define TCP_SND_BUF                 (12 * TCP_MSS)
 #define TCP_SND_QUEUELEN            ((4 * (TCP_SND_BUF) + (TCP_MSS - 1)) / (TCP_MSS))
 #define LWIP_NETIF_STATUS_CALLBACK  1
 #define LWIP_NETIF_LINK_CALLBACK    1

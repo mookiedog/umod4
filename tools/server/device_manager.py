@@ -4,6 +4,8 @@ This module handles device check-ins and automatically downloads new log files.
 """
 
 import os
+import time
+import threading
 from datetime import datetime
 from typing import Optional, Callable
 from device_client import DeviceClient
@@ -23,6 +25,24 @@ class DeviceManager:
         self.on_download_started = None  # Callback(device_mac, filename)
         self.on_download_progress = None  # Callback(device_mac, filename, bytes_downloaded, total_bytes)
         self.on_download_completed = None  # Callback(device_mac, filename, success, error_msg)
+        self._device_locks: dict = {}       # mac → Lock; prevents concurrent downloads per device
+        self._device_locks_mutex = threading.Lock()
+        # Live download state: (mac, filename) → {bytes, total, start_time, rate_kbps}
+        self._active_downloads: dict = {}
+        self._active_downloads_lock = threading.Lock()
+
+    def get_active_downloads(self) -> dict:
+        """Return a snapshot of all currently active downloads.
+
+        Returns:
+            Dict keyed by (device_mac, filename) with values:
+                bytes_downloaded: int
+                total_bytes: int
+                start_time: float (monotonic)
+                rate_kbps: float (rolling average)
+        """
+        with self._active_downloads_lock:
+            return dict(self._active_downloads)
 
     def handle_device_checkin(self, device_mac: str, device_ip: str):
         """Handle device check-in notification.
@@ -130,11 +150,42 @@ class DeviceManager:
             log_storage_path: Local directory to save logs
             client: DeviceClient instance
         """
+        # Prevent concurrent downloads for the same device (e.g. two rapid check-ins)
+        with self._device_locks_mutex:
+            if device_mac not in self._device_locks:
+                self._device_locks[device_mac] = threading.Lock()
+            lock = self._device_locks[device_mac]
+
+        if not lock.acquire(blocking=False):
+            print(f"DeviceManager: Download already in progress for {device_mac}, skipping check-in")
+            return
+
+        RETRY_DELAY = 30   # seconds between retries after a failure
+        MAX_RETRIES = 10   # give up after this many consecutive failures
+
+        try:
+            for attempt in range(MAX_RETRIES):
+                had_failure = self._download_new_logs_locked(device_mac, log_storage_path, device_name, client)
+                if not had_failure:
+                    break
+                print(f"DeviceManager: Download had failures for {device_mac}, "
+                      f"retrying in {RETRY_DELAY}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                time.sleep(RETRY_DELAY)
+        finally:
+            lock.release()
+
+    def _download_new_logs_locked(self, device_mac: str, log_storage_path: str, device_name: str, client: DeviceClient) -> bool:
+        """Inner download loop, called only when the per-device lock is held.
+
+        Returns True if any download failed (so the caller can retry).
+        """
+        had_failure = False
+
         # Get list of files on device
         files = client.list_log_files()
         if not files:
             print(f"DeviceManager: No log files found on device {device_mac}")
-            return
+            return False
 
         print(f"DeviceManager: Device has {len(files)} log files")
 
@@ -150,6 +201,11 @@ class DeviceManager:
 
             # Only sync log files (skip uploaded files like .uf2, etc.)
             if not (filename.endswith('.um4') or filename.endswith('.log')):
+                continue
+
+            # Skip files with no size — likely the currently-open active log
+            if file_size == 0:
+                print(f"DeviceManager: Skipping {filename} (size 0, probably active log)")
                 continue
 
             local_path = os.path.join(date_subdir, filename)
@@ -171,20 +227,61 @@ class DeviceManager:
             if self.on_download_started:
                 self.on_download_started(device_mac, filename)
 
-            # Create transfer record
-            transfer = self.database.add_transfer(
-                device_mac=device_mac,
-                filename=filename,
-                size_bytes=file_size,
-                status='in_progress'
-            )
+            # Reuse an existing in_progress record if one exists (retry case),
+            # otherwise create a fresh one.
+            from models.database import Transfer
+            existing_session = self.database.get_session()
+            try:
+                existing = existing_session.query(Transfer).filter_by(
+                    device_mac=device_mac, filename=filename, status='in_progress'
+                ).first()
+                if existing:
+                    transfer_id = existing.id
+                else:
+                    transfer_id = None
+            finally:
+                existing_session.close()
+
+            if transfer_id is not None:
+                transfer = type('_T', (), {'id': transfer_id})()  # lightweight holder
+            else:
+                transfer = self.database.add_transfer(
+                    device_mac=device_mac,
+                    filename=filename,
+                    size_bytes=file_size,
+                    status='in_progress'
+                )
 
             start_time = datetime.utcnow()
+            mono_start = time.monotonic()
 
-            # Define progress callback
-            def progress_callback(bytes_downloaded, total_bytes):
+            # Register active download for live progress/speed tracking
+            dl_key = (device_mac, filename)
+            with self._active_downloads_lock:
+                self._active_downloads[dl_key] = {
+                    'bytes_downloaded': 0,
+                    'total_bytes': file_size,
+                    'start_time': mono_start,
+                    'rate_kbps': 0.0,
+                }
+
+            # Define progress callback — updates live state and forwards to external callback
+            # Rate is calculated only over bytes transferred in this session (not resume offset).
+            _session_start_bytes = [None]  # set on first call
+
+            def progress_callback(bytes_downloaded, total_bytes, _fn=filename, _mac=device_mac, _key=dl_key):
+                if _session_start_bytes[0] is None:
+                    _session_start_bytes[0] = bytes_downloaded
+                elapsed = time.monotonic() - mono_start
+                session_bytes = bytes_downloaded - _session_start_bytes[0]
+                rate_kbps = (session_bytes / 1024) / elapsed if elapsed > 0 and session_bytes > 0 else 0.0
+                with self._active_downloads_lock:
+                    if _key in self._active_downloads:
+                        self._active_downloads[_key]['bytes_downloaded'] = bytes_downloaded
+                        self._active_downloads[_key]['total_bytes'] = total_bytes
+                        self._active_downloads[_key]['rate_kbps'] = rate_kbps
                 if self.on_download_progress:
-                    self.on_download_progress(device_mac, filename, bytes_downloaded, total_bytes)
+                    self.on_download_progress(_mac, _fn, bytes_downloaded, total_bytes)
 
             # Download file
             success, error_msg = client.download_log_file(
@@ -192,6 +289,10 @@ class DeviceManager:
                 local_path,
                 progress_callback=progress_callback
             )
+
+            # Remove from active downloads
+            with self._active_downloads_lock:
+                self._active_downloads.pop(dl_key, None)
 
             # Calculate transfer speed
             end_time = datetime.utcnow()
@@ -236,6 +337,7 @@ class DeviceManager:
                 )
                 print(f"DeviceManager: Downloaded {filename} successfully ({speed_mbps:.2f} MB/s) -> {local_path}")
             else:
+                had_failure = True
                 self.database.update_transfer(
                     transfer.id,
                     status='failed',
@@ -247,3 +349,5 @@ class DeviceManager:
             # Notify callback
             if self.on_download_completed:
                 self.on_download_completed(device_mac, filename, success, error_msg)
+
+        return had_failure

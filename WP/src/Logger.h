@@ -16,7 +16,9 @@
 // overflow, remember that there is a dedicated 16K write buffer
 // *after* this buffer where is extracted before writing to filesystem.
 // This buffer does not need to be a power of two.
-#define LOG_BUFFER_SIZE ((96*1024)-16384)
+// TEST: temporarily shrunk from (96*1024) to (56*1024) to free 40KB for TCP buffer test.
+// Restore to (96*1024) after test.
+#define LOG_BUFFER_SIZE ((56*1024)-16384)
 
 class Logger {
     public:

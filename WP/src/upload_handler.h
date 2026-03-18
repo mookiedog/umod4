@@ -13,7 +13,7 @@
  * Maximum number of concurrent upload sessions.
  * Each session consumes ~200 bytes of RAM for metadata + 16KB for ping-pong buffers.
  */
-#define MAX_UPLOAD_SESSIONS 2
+#define MAX_UPLOAD_SESSIONS 1
 
 /**
  * Ping-pong buffer size (8KB each).

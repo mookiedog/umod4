@@ -41,13 +41,6 @@ typedef struct {
 
 extern file_hash_cache_t g_file_hash_cache;
 
-// Buffer for JSON responses (reused across requests to save space)
-// 1024 bytes needed for ecu-live-data: 10 slots × ~80 bytes + header
-static char json_response_buffer[1024];
-
-// Larger buffer for file listing (can hold ~100 log files at ~60 bytes each)
-static char file_list_buffer[8192];
-
 /**
  * Build JSON response for /api/info
  * Called from fs_open_custom()
