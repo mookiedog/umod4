@@ -40,12 +40,8 @@ The latest V4 hardware supports the following features:
   * WiFi interface for:
     * OTA Firmware upgrades (WP and EP)
     * Automatic log uploading to a local network server after a ride
-
-In the future, the WP will be extended with more features:
-
-* Bluetooth - The main user interface to the Umod4
-  * EPROM image selection
-  * real time ECU and system status
+    * EPROM selection before a ride
+    * Live View of selected ECU data stream items
 
 ## Umod4 Server
 
@@ -55,7 +51,7 @@ A user can also use the server to push OTA (Over The Air) firmware upgrades via 
 
 Here is the version 0 server.
 It will change a lot over the next while.
-While simple, it currently does the job:
+It may be simple right now, but it gets the job done:
 
 ![umod4 server](images/server-v0.png)
 
@@ -102,9 +98,9 @@ The SD card is used to log the data stream arriving from the ECU. The NEO-8 GPS 
 The GPS module is a generic uBlox NEO-8 from Aliexpress. The NEO-8 can report position and velocity data 10 times a second.
 
 The board also contains a socketed Micro SD card.
-Now that WiFi is working, the SD card can be treated as essentially non-removable.
+Now that WiFi is working, I can treat the SD card as being essentially non-removable.
 This is partly because it is a bit of a pain to physically access it when the ECU is mounted on the bike.
-It is mainly because the WiFi interface allows access to anything on the SD card filesystem, so there really is no reason to remove it to do things like transfer files to a home PC.
+It is mainly because the WiFi interface allows access to anything on the SD card filesystem, so there really is no reason to remove it anymore.
 
 ## PCB Hardware
 
@@ -119,8 +115,7 @@ It works better to spend a few bucks and have JLCPCB perform the fabrication pro
 I am developing software using the second revision of the PCB, named 4V1.
 It contains all the changes and improvements found while doing the 4V0 bringup.
 While developing the software, a list of changes for a potential 4V2 board is becoming clear.
-There has been no critical need to make the 4V2 yet since the 4V1 is serving well so far.
-A 4V2 PCB update would be essentially feature-driven, not for bug fixes.
+There are no critical 4V1 bugs, so as things stand, a 4V2 PCB update would be feature-driven.
 
 ### Installation
 
@@ -170,36 +165,16 @@ As always, things are in a state of flux. On the plus side:
 * Data logging works: ECU data and GPS data are written to a single, time-correlated logfile, currently using LittleFS as the file system.
 * The WP module is now using a Pico2W. The extra speed and RAM space is much appreciated.
 * A log [Visualizer](./tools/README_Visualizer.md) exists!
-* WiFi is real! Automatic log downloading works. OTA firmware upgrades work!
+* WiFi is real!
+  * Automatic log downloading works.
+  * OTA firmware upgrades work!
+  * A web-based control mechanism allows a user to select EPROM images
+  * The bike creates its own local wifi network to allow a user to control the system away from home
 * A new [4V2 revision](https://github.com/mookiedog/umod4-PCB) of the PCB is being planned
 
-Since the Bluetooth interface is not yet developed, the choice of what EPROM or combination of EPROMs to run is a built-time option.
+
 The loader can "mix and match" my special data-logging firmware with the maps out of any Aprilia EPROM that is compatible with the RP58 codebase.
 In short, that means that basically any Aprilia EPROM codebase except the early small valve engines can be converted to have data-logging capabilities.
-
-### Next Steps
-
-The next steps mostly revolve around getting the Visualizer features fleshed out.
-
-## Getting the Visualizer
-
-The data visualizer is a GUI application for viewing log files.
-If you do not want to go to the trouble of installing all of the project software and getting it to build, then pre-built executables are available for Windows, Linux, and macOS (ARM-only!):
-
-1. Go to [Releases](https://github.com/mookiedog/umod4/releases)
-1. Download the latest `viz-vX.Y.Z` release for your platform:
-   * `DataVisualizer-Windows-vX.Y.Z.zip` - Windows 10+
-   * `DataVisualizer-Linux-vX.Y.Z.zip` - Ubuntu 20.04+ or similar
-   * `DataVisualizer-macOS-vX.Y.Z.zip` - macOS 10.13+ (ARM ONLY!)
-1. Extract the files from the zip into a directory. There is a README in there.
-1. Run the DataVisualizer executable
-
-There is no installation to perform, or Python setup needed.
-If you don't want the program anymore, just delete the directory where you unzipped the files and it is all gone.
-
-A sample log file is included for testing.
-
-See the [Visualizer documentation](tools/README_Visualizer.md) for detailed usage instructions.
 
 ## Further Reading
 
@@ -209,7 +184,9 @@ At the moment, this repository contains a number of pieces that make up the proj
 * The [WP](WP/README.md) (Wireless Processor): the system that provides the user interface control over the Umod4
 * The [ECU](ecu/README.md): this is the special data-logging firmware
 * The [eprom_lib](eprom_lib/README.md): contains JSON descriptions of a number of stock Aprilia EPROMs. These get converted into BSON documents containing the original description, plus the binary data for the EPROM, should you have a .bin file for an EPROM.
-* The log [decoder](tools/README_LogDecoder.md) and [visualizer](tools/README_Visualizer.md) tools
+* The [log decoder](tools/README_LogDecoder.md) tool
+* The [visualizer](tools/README_Visualizer.md) tool
+* The server does not have a README yet. Just run it - it is pretty self explanitory
 
 Check out the README.md files in each of the repository subdirectories.
 
@@ -217,7 +194,7 @@ The [umod4 hardware design](https://github.com/mookiedog/umod4-PCB) can also be 
 
 For a real challenge, try [building the software system](BUILDING.md) yourself.
 It's not much use without a circuit board, but if you are a software person, you might give it a shot just for fun.
-If you do, let me know how it goes and I can update the docs for anything that is broken, or not clear.
+If you do, let me know how it goes so I can update the docs for anything that is broken, or not clear.
 
 ## Clarity
 

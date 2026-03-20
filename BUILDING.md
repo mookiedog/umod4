@@ -425,6 +425,22 @@ Now that the toolchain has a place to live, it's time to get it, then install it
 
 #### Downloading ARM Tools For x86 PC
 
+The umod4 uses a pair of ARM processors.
+They need a "cross compiler" which means that the compiler runs on an x86-style Intel processor, but generates code for an ARM processor.
+This next section explains how to get an appropriate ARM cross-compiler toolchain loaded onto your PC.
+
+**Important:**
+
+The build system for umod4 assumes that the various versions of the ARM toolchains that get installed on your system will be stored in a directory structure that looks like this:
+
+```text
+/opt/arm
+└── arm-none-eabi
+    ├── 14.2.rel1
+    └── 15.2.rel1
+```
+If you install the ARM toolchains somewhere else, you will need to symlink some directories to make your installation look like this, or else CMake will not be able to find them!
+
 To get the Arm cross-compiler software installed, start off by downloading an appropriate toolchain from the Arm download page located [here](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
 Click that link to view the download page.
 Assuming that your PC host is an x86 machine capable of running linux/WSL2, scroll down until you see the section called:
@@ -489,7 +505,7 @@ Copyright (C) 2025 Free Software Foundation, Inc.
 ```
 
 Do __not__ add the cross-compiler's bin directory to your PATH variable.
-We will be using CMake's 'toolchain' mechanism to tell the build system how to find the ARM tools so they do not need to go on your PATH.
+By default, CMake will look for the most recent ARM compiler version it can find underneath /opt/arm/arm-none-eabi.
 
 Verify that GDB runs, too:
 
@@ -498,18 +514,6 @@ $ ./bin/arm-none-eabi-gdb --version
 GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git
 Copyright (C) 2024 Free Software Foundation, Inc.
 ```
-
-#### Updates When Installing a New Version of ARM tools
-
-_This section only applies if you install a new version of the ARM tools, or if you ever need to update a project to use different tools._
-
-The project will contain a toolchain file, which explains where to find the ARM toolchain you just installed.
-For the project we will be installing later, the toolchain file will be located at 'cmake/toolchains/arm-none-eabi.cmake'.
-If you were to install new ARM tools, you could change your toolchain file to use them by editing the 'arm-none-eabi.cmake' file to point at the new tools.
-
-If the version number of the tools has changed for you, edit the toolchain file to reflect your new version number and save it.
-
-After upgrading to a new toolchain, you should delete your umod4 build directory and rebuild everything. If this is the first time you have installed tools, this does not apply so just keep reading.
 
 ### Install OpenOCD
 
@@ -710,7 +714,7 @@ find . -name '*picotool.rules'
 
 ## Getting the Umod4 Source Code
 
-It is finally time to get the umod4 code loaded onto your system!
+Now that all the tools are in place, it is finally time to get the umod4 code loaded onto your system!
 
 Before getting started, make sure that your git configuration is to not mess with the line endings when it works with repositories.
 In your terminal window, type the following:
@@ -727,7 +731,7 @@ Still inside ~/projects, type:
 git clone https://github.com/mookiedog/umod4.git
 ```
 
-You should see output like this:
+You should see some output taking this general form:
 ```bash
 Cloning into 'umod4'...
 remote: Enumerating objects: 1766, done.
@@ -884,12 +888,8 @@ The WP takes the incoming ECU data stream from the EP and logs it to a micro SD 
 Simultaneously, it logs position and velocity data from an on-board GPS module.
 In the future, the WP will be extended to dump logs off the bike via WiFi, and add features like EPROM image selection.
 * **eprom_lib**: This sub-project contains information about many of the stock EPROMs used by the Gen1 ECU.
-The information takes the form of JSON documents because that makes them fairly human-readable, but easily processed into machine-readable BSON documents that get included into the EP build.
-From a rider's standpoint, it means that every umod4 board can contain many, many EPROM images.
-Things are set up so that the actual image that is presented to the ECU can be combined from more than one EPROM.
-Typically, one would combine the UM4 ECU logging firmware with the maps from some other EPROM.
-This effectively converts any RP58 map-style stock EPROM into a data-logging EPROM.
-Of course, the system also supports running any .bin file for whatever EPROM you happen to have laying around.
+The information takes the form of JSON documents because that makes them fairly human-readable.
+These images used to get built into the EP itself, but that has now been retired in favor of the Image Library controls built into the server and the WP's web interface available from a phone or PC.
 
 ## Running Umod4
 
@@ -902,7 +902,7 @@ In the meantime, thanks for checking out this project.
 ## Debugging
 
 *For documentation purposes, here's some of the next steps.
-From here on, you would need a umod4 PCB and a slightly modified ECU.*
+From here on, you would need a umod4 PCB and a slightly modified ECU*
 
 The umod4 project contains a '.vscode/launch.json' file which tells VS Code how to work with the debugger hardware.
 
@@ -997,70 +997,13 @@ The EP processor is ready to load an EPROM image and start feeding those instruc
 
 Congratulations if you made it this far.
 
-I know it was not a simple process to replicate, or to create in the first place.
+I know it was not a simple process to replicate.
+I can assure you that it was a lot harder to create though, so it's not all bad.
 I only got it working due to tons of people on the internet who ran into all the same problems as I did, but somehow were smart enough to figure out the issues, and more critically, to document their successes in places where DuckDuckGo could find them for me.
 
 ## Whats Next
 
-Short version: For all that has happened so far, there is still a long way to go.
-
-### ECU Firmware
-
-At the moment, the ECU data logging firmware logs a certain amount of stuff as the bike runs.
-I would really like to mod the firmware so that it logs the exact table entries it is using as it performs its calculations.
-That way, if the engine does something you don't like, you would have the ability to look back and see what part of the maps it was using when the bad behavior happened.
-
-### EP Firmware
-
-The EP firmware is in good shape.
-It needs a two-way communication mechanism to be created so that the WP can send it commands.
-These commands would be used for things like EPROM selection or map updates.
-Right now, that gets done at build time.
-Ultimately, it would be better if the WiFi/Bluetooth capabilities of the WP could be extended to allow a user to use their phone to pick an EPROM to run, or a set of maps to use before a ride.
-
-### WP Firmware
-
-The WP is an experimental work in progress.
-It has minimal capabilities right now.
-It can configure the GPS and log the GPS position and velocity data.
-Or at least, it used to be able to do so.
-I have not debugged SD card code yet since it ran on the umod version 3.
-I am in the process of switching over from using FAT-formatted micro SD cards to using LittleFS.
-LittleFS is designed for flash file systems, and is significantly more reliable than FAT.
-I need to do some performance testing before making the change.
-
-The biggest issue is that I'm not sure that the RPi Pico-W board I am using as the WP will have enough WiFi horsepower to do all the wifi work that I am imagining.
-An obvious solution would be to use a more powerful board like a Pi Zero 2W, but boards like that draw so much power that it worries me that the ECU power supply would not be able to handle it.
-The initial goal will be to see if the current Pico-W design can get the job done, even if it is kind of slow.
-If so, the ECU power supply will be fine.
-Time (and experiments) will tell.
-
-### EPROM Library
-
-I would like to get the .dsc files that describe the various EPROMs that exist in the world up to date, as far as possible.
-If nothing else, the .dsc files will be a useful historical record for people I see googling "what is this XYZ Aprilia Eprom?"
-
-### Umod4 PCB Hardware
-
-Another big area to work on.
-The good news is that I have created version 1 PCBs, and with a couple of cuts and jumpers, they do work.
-The EP hardware has been proven to work perfectly, fooling the ECU's processor into thinking that it is just another EPROM in the ECU's EPROM socket.
-The ECU has no idea that it's a very special "EPROM", at that!
-I'm proud of that.
-
-The less good news is that in the time that has elapsed since my first boards were made, I'm sure that some of the parts on the board have gone out of stock, or worse yet, become obsolete at the fab house I use to make the boards.
-It will be a bunch of tedious work to go through every part on the board, verify its current availability, spec a new part if not, and finally get a new set of boards built.
-
-I was holding off on making any more boards until I knew if the WP would be powerful enough.
-If not, it will take a major board redesign to spec and design in a more powerful wireless processor.
-I'm running into physical space limitations too, so just because I can find a more powerful wireless processor does not mean that it will fit on the board.
-So I would like to write some code and do some experiments to see if the Pico W is up to the task.
-
-Another big job is that the board's CAD design should get ported from using Eagle to using something like Kicad.
-I've used Eagle forever, but it is not supported anymore and it is not open-source.
-In some regards, I don't care because my old version of Eagle still works great and produces files that the fab houses accept and process correctly.
-But if this project is still around in another 20 years, the design really should get migrated into Kicad at some point.
-That will be another ton of work, ...for some other day.
+See the [STATUS](./STATUS.md) document.
 
 ## Final Thoughts
 
