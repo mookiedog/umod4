@@ -74,24 +74,27 @@ struct lfs_custom_file {
 };
 
 #define CHUNK_DOWNLOAD_MAX_SIZE (16 * 1024)
-// The full HTTP response (headers + chunk data) must fit in one TCP send buffer to avoid
-// multi-round sends, which cause IncompleteRead errors on the client when the gap between
-// rounds coincides with a delayed-ACK window. header_buf is 300 bytes max.
-static_assert(CHUNK_DOWNLOAD_MAX_SIZE + 300 <= TCP_SND_BUF,
-    "CHUNK_DOWNLOAD_MAX_SIZE + header overhead exceeds TCP_SND_BUF - reduce chunk size or increase TCP_SND_BUF");
-static uint8_t s_chunk_data_buf[CHUNK_DOWNLOAD_MAX_SIZE];
+#define CHUNK_HEADER_RESERVE    300  // max HTTP header size for chunk responses
+// Single static buffer: [HTTP headers][chunk data]. Header is built at the front,
+// data read at CHUNK_HEADER_RESERVE offset, then memmoved to close the gap.
+static uint8_t s_chunk_buf[CHUNK_HEADER_RESERVE + CHUNK_DOWNLOAD_MAX_SIZE];
 static bool s_chunk_in_progress = false;
 
 // Timing instrumentation — populated in fs_open_custom, printed in fs_close_custom.
 // Produces one "CHK ..." line per chunk on the RTT console.
-static uint32_t s_chunk_lfs_us;       // LFS open+seek+read+close duration
-static uint32_t s_chunk_sha_us;       // SHA-256 duration
+static uint32_t s_chunk_lfs_us;       // lfs_file_read duration
 static uint32_t s_chunk_gap_us;       // gap since previous chunk closed
-static uint32_t s_chunk_t_ready;      // absolute time when chunk was fully prepared
+static uint32_t s_chunk_t_ready;      // absolute time when chunk was handed to lwIP
 static uint32_t s_chunk_sz;           // bytes actually read
 static uint32_t s_chunk_off;          // byte offset of this chunk
 static uint32_t s_chunk_t_prev_close; // absolute time of last fs_close_custom
 static bool     s_chunk_has_prev;     // true once first chunk has closed
+
+// Persistent LFS state: file handle kept open across sequential chunks to avoid
+// per-chunk open/seek/close overhead.
+static lfs_file_t        s_lfs_file;
+static char              s_lfs_open_filename[64];  // filename currently open ("" = none)
+static lfs_soff_t        s_lfs_next_offset;        // expected file position after last read
 
 void fs_custom_init(lfs_t* lfs_ptr)
 {
@@ -160,95 +163,111 @@ int fs_open_custom(struct fs_file *file, const char *name)
         uint32_t t0 = time_us_32();
         s_chunk_gap_us = s_chunk_has_prev ? (t0 - s_chunk_t_prev_close) : 0;
 
-        // Open, seek, read, close — LFS mutex held only for this brief window
-        lfs_file_t lfs_f;
-        int err = lfs_file_open(g_lfs, &lfs_f, filename, LFS_O_RDONLY);
-        if (err < 0) {
-            printf("fs_custom: chunks: failed to open '%s': %d\n", filename, err);
-            return 0;
-        }
+        // Open or seek only when necessary. For sequential downloads the handle
+        // stays open and lfs_file_read advances the position automatically.
+        bool need_open = (strcmp(filename, s_lfs_open_filename) != 0);
+        bool need_seek = !need_open && ((lfs_soff_t)offset != s_lfs_next_offset);
 
-        lfs_soff_t file_size = lfs_file_size(g_lfs, &lfs_f);
-        if (file_size < 0) {
-            lfs_file_close(g_lfs, &lfs_f);
-            return 0;
-        }
-
-        if (offset > 0) {
-            lfs_soff_t pos = lfs_file_seek(g_lfs, &lfs_f, (lfs_soff_t)offset, LFS_SEEK_SET);
-            if (pos < 0) {
-                printf("fs_custom: chunks: seek failed for '%s' offset %lu\n", filename, (unsigned long)offset);
-                lfs_file_close(g_lfs, &lfs_f);
+        if (need_open) {
+            if (s_lfs_open_filename[0] != '\0') {
+                lfs_file_close(g_lfs, &s_lfs_file);
+                s_lfs_open_filename[0] = '\0';
+            }
+            int err = lfs_file_open(g_lfs, &s_lfs_file, filename, LFS_O_RDONLY);
+            if (err < 0) {
+                printf("fs_custom: chunks: open '%s': %d\n", filename, err);
                 return 0;
+            }
+            strncpy(s_lfs_open_filename, filename, sizeof(s_lfs_open_filename) - 1);
+            s_lfs_open_filename[sizeof(s_lfs_open_filename) - 1] = '\0';
+            s_lfs_next_offset = 0;
+        }
+        if (need_open || need_seek) {
+            if ((lfs_soff_t)offset != s_lfs_next_offset) {
+                if (lfs_file_seek(g_lfs, &s_lfs_file,
+                                  (lfs_soff_t)offset, LFS_SEEK_SET) < 0) {
+                    lfs_file_close(g_lfs, &s_lfs_file);
+                    s_lfs_open_filename[0] = '\0';
+                    printf("fs_custom: chunks: seek '%s' @%lu failed\n",
+                           filename, (unsigned long)offset);
+                    return 0;
+                }
+                s_lfs_next_offset = (lfs_soff_t)offset;
             }
         }
 
-        lfs_ssize_t bytes_read = lfs_file_read(g_lfs, &lfs_f, s_chunk_data_buf, CHUNK_DOWNLOAD_MAX_SIZE);
-        lfs_file_close(g_lfs, &lfs_f);
-
-        if (bytes_read < 0) {
-            printf("fs_custom: chunks: read error %ld for '%s'\n", (long)bytes_read, filename);
+        lfs_soff_t file_size = lfs_file_size(g_lfs, &s_lfs_file);
+        if (file_size < 0) {
+            lfs_file_close(g_lfs, &s_lfs_file);
+            s_lfs_open_filename[0] = '\0';
             return 0;
         }
 
-        uint32_t t_lfs = time_us_32();
+        // Read data at the header-reservation offset, then memmove to close the gap.
+        uint8_t* const data_start = s_chunk_buf + CHUNK_HEADER_RESERVE;
+        uint32_t t_read = time_us_32();
+        lfs_ssize_t bytes_read = lfs_file_read(
+            g_lfs, &s_lfs_file, data_start, CHUNK_DOWNLOAD_MAX_SIZE);
+        s_chunk_lfs_us = time_us_32() - t_read;
 
-        // Compute SHA-256 of this chunk (hardware acquired and released here)
-        char sha256_hex[65] = "none";
+        if (bytes_read < 0) {
+            lfs_file_close(g_lfs, &s_lfs_file);
+            s_lfs_open_filename[0] = '\0';
+            printf("fs_custom: chunks: read '%s': %ld\n", filename, (long)bytes_read);
+            return 0;
+        }
+        s_lfs_next_offset += bytes_read;
+
+        char sha[65] = "none";
         if (bytes_read > 0) {
             pico_sha256_state_t sha_state;
             if (pico_sha256_try_start(&sha_state, SHA256_BIG_ENDIAN, true) == PICO_OK) {
-                sha256_result_t sha_result;
-                pico_sha256_update_blocking(&sha_state, s_chunk_data_buf, (size_t)bytes_read);
-                pico_sha256_finish(&sha_state, &sha_result);
-                for (int i = 0; i < SHA256_RESULT_BYTES; i++) {
-                    snprintf(sha256_hex + (i * 2), 3, "%02x", sha_result.bytes[i]);
-                }
-                sha256_hex[64] = '\0';
-            } else {
-                printf("fs_custom: chunks: SHA-256 hardware busy for '%s'\n", filename);
+                sha256_result_t result;
+                pico_sha256_update_blocking(&sha_state, data_start, (size_t)bytes_read);
+                pico_sha256_finish(&sha_state, &result);
+                for (int i = 0; i < SHA256_RESULT_BYTES; i++)
+                    snprintf(sha + i * 2, 3, "%02x", result.bytes[i]);
+                sha[64] = '\0';
             }
         }
 
-        uint32_t t_sha = time_us_32();
-        s_chunk_lfs_us  = t_lfs - t0;
-        s_chunk_sha_us  = t_sha - t_lfs;
+        size_t header_len = (size_t)snprintf(
+            (char*)s_chunk_buf, CHUNK_HEADER_RESERVE,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/octet-stream\r\n"
+            "Content-Length: %ld\r\n"
+            "Connection: keep-alive\r\n"
+            "X-Chunk-SHA256: %s\r\n"
+            "X-File-Size: %ld\r\n"
+            "\r\n",
+            (long)bytes_read, sha, (long)file_size);
+        // header_len (~215B) < CHUNK_HEADER_RESERVE (300B): source > dest, safe forward move.
+        if (header_len < CHUNK_HEADER_RESERVE && bytes_read > 0)
+            memmove(s_chunk_buf + header_len, data_start, (size_t)bytes_read);
+
+        size_t total_len = header_len + (size_t)bytes_read;
+
         s_chunk_sz      = (uint32_t)bytes_read;
         s_chunk_off     = offset;
-        s_chunk_t_ready = t_sha;
+        s_chunk_t_ready = time_us_32();
 
         struct lfs_custom_file* chunk_file =
             (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file));
         if (!chunk_file) return 0;
         memset(chunk_file, 0, sizeof(*chunk_file));
+        chunk_file->is_open  = true;
+        chunk_file->is_chunk = true;
 
-        chunk_file->header_len = (size_t)snprintf(
-            chunk_file->header_buf, sizeof(chunk_file->header_buf),
-            "HTTP/1.0 200 OK\r\n"
-            "Content-Type: application/octet-stream\r\n"
-            "Content-Length: %ld\r\n"
-            "X-Chunk-SHA256: %s\r\n"
-            "X-File-Size: %ld\r\n"
-            "\r\n",
-            (long)bytes_read, sha256_hex, (long)file_size);
-
-        chunk_file->data       = (char*)s_chunk_data_buf;
-        chunk_file->file_size  = (size_t)bytes_read;
-        chunk_file->bytes_read = 0;
-        chunk_file->is_open    = true;
-        chunk_file->is_api     = true;   // use in-memory read path in fs_read_custom
-        chunk_file->is_chunk   = true;   // data points to s_chunk_data_buf — do not free
-        chunk_file->sha_enabled = false;
-        chunk_file->header_sent = 0;
-
-        file->data       = NULL;  // streaming via fs_read_custom
-        file->len        = (int)(chunk_file->header_len + (size_t)bytes_read);
-        file->index      = 0;
+        // In-memory path: file->data != NULL tells httpd to send directly from our buffer.
+        // file->index = file->len signals "all data accounted for" so httpd does not
+        // call fs_read_custom after the send (avoids double-send, see OOM fix notes).
+        file->data       = (char*)s_chunk_buf;
+        file->len        = (int)total_len;
+        file->index      = (int)total_len;
         file->pextension = chunk_file;
         file->flags      = FS_FILE_FLAGS_HEADER_INCLUDED |
                            FS_FILE_FLAGS_HEADER_PERSISTENT |
                            FS_FILE_FLAGS_CUSTOM;
-
         s_chunk_in_progress = true;
         return 1;
     }
@@ -685,6 +704,21 @@ int fs_read_custom(struct fs_file *file, char *buffer, int count)
         return FS_READ_EOF;
     }
 
+    // Chunk download: with file->data = s_serve_buf, httpd uses the in-memory send path
+    // (hs->left = file->len) and should never call fs_read_custom for chunks.
+    // This block is a defensive fallback only — should never be reached.
+    if (lfs_file->is_chunk) {
+        size_t total = (size_t)file->len;
+        if ((size_t)count >= total) {
+            memcpy(buffer, s_chunk_buf, total);
+            file->index = (int)total;
+            return (int)total;
+        }
+        printf("fs_custom: chunk fallback path taken (count=%d total=%u) — unexpected!\n",
+               count, (unsigned)total);
+        // Fall through to two-phase path.
+    }
+
     // Phase 1: emit HTTP headers before file data (for HEADER_INCLUDED files, e.g. background.jpg)
     if (lfs_file->header_sent < lfs_file->header_len) {
         size_t remaining = lfs_file->header_len - lfs_file->header_sent;
@@ -752,15 +786,15 @@ void fs_close_custom(struct fs_file *file)
             // Chunk download — data points to static s_chunk_data_buf, do not free
             uint32_t t_close = time_us_32();
             uint32_t send_us = t_close - s_chunk_t_ready;
-            printf("CHK off=%lu lfs=%luus sha=%luus send=%luus gap=%luus sz=%lu\n",
+            printf("CHK off=%lu gap=%luus lfs=%luus send=%luus sz=%lu\n",
                    (unsigned long)s_chunk_off,
-                   (unsigned long)s_chunk_lfs_us,
-                   (unsigned long)s_chunk_sha_us,
-                   (unsigned long)send_us,
                    (unsigned long)s_chunk_gap_us,
+                   (unsigned long)s_chunk_lfs_us,
+                   (unsigned long)send_us,
                    (unsigned long)s_chunk_sz);
             s_chunk_t_prev_close = t_close;
             s_chunk_has_prev     = true;
+
             s_chunk_in_progress  = false;
         } else if (lfs_file->is_api) {
             // API response - free the data buffer

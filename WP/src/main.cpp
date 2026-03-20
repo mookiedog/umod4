@@ -416,8 +416,8 @@ void boot_system(void* args)
 
     // The logger may be started early since it has a big buffer to handle extremely long LittleFS write times.
     printf("%s: Creating the logger\n", __FUNCTION__);
-    static uint8_t logBuf[LOG_BUFFER_SIZE];
-    logger = new Logger(logBuf, LOG_BUFFER_SIZE);
+    static uint8_t mergeBuf[LOG_BUFFER_SIZE];
+    logger = new Logger(mergeBuf, LOG_BUFFER_SIZE);
 
     // First thing we log is what version of the log we are generating:
     uint8_t v = LOGID_GEN_WP_LOG_VER_VAL_V0;

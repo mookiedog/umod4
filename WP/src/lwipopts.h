@@ -43,11 +43,11 @@
 #define MEMP_MEM_MALLOC 0
 
 #define MEM_ALIGNMENT               4
-// MEM_SIZE: static pool for lwIP's mem_malloc (PBUF_RAM pbufs + hs->buf per connection).
-// Peak demand = 2 connections × (TCP_SND_BUF for hs->buf + TCP_SND_BUF for PBUF_RAMs)
-//             = 2 × (17520 + 17520) = ~70KB. 80KB gives comfortable headroom.
-// TEST: increased from 48KB to match doubled TCP_SND_BUF.
-#define MEM_SIZE                    81920
+// MEM_SIZE: static pool for lwIP's mem_malloc (PBUF_RAM pbufs per connection).
+// With file->data set (in-memory path), httpd never allocates hs->buf — only PBUF_RAM pbufs.
+// Peak demand = 2 connections × TCP_SND_BUF in PBUF_RAMs = 2 × ~18KB = 36KB.
+// 48KB gives comfortable headroom for mDNS/DHCP and fragmentation.
+#define MEM_SIZE                    49152
 // MEMP_NUM_SYS_TIMEOUT: lwIP auto-calculates this from enabled features (TCP, ARP, DHCP×2,
 // IGMP, DNS, IP_REASSEMBLY, mDNS×(1+MAX_SERVICES), netif_client_data) giving ~10.
 // With MEMP_MEM_MALLOC=0, the pool is now a fixed static array so the auto value is just
@@ -67,7 +67,6 @@
 // TCP window and send buffer: 12×MSS = 17520 bytes.
 // Must be large enough to hold one full chunk response (CHUNK_DOWNLOAD_MAX_SIZE + ~300 byte
 // headers) in a single tcp_write to avoid multi-round sends that cause IncompleteRead errors.
-// Peak mem_malloc demand = 2 × (17520 + 17520) = ~70KB, covered by MEM_SIZE=80KB.
 // TEST: doubled from 6×MSS to measure whether WiFi throughput improves with larger window.
 #define TCP_WND                     (12 * TCP_MSS)
 #define TCP_MSS                     1460

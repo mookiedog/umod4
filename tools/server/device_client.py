@@ -25,6 +25,9 @@ class DeviceClient:
         self.device_ip = device_ip
         self.timeout = timeout
         self.base_url = f"http://{device_ip}"
+        # Session reuses TCP connections (HTTP keep-alive) across chunk downloads.
+        # urllib3 reconnects transparently if the device closes an idle connection.
+        self._session = requests.Session()
 
     def get_device_info(self) -> Optional[Dict]:
         """Get device information via /api/info endpoint.
@@ -82,6 +85,11 @@ class DeviceClient:
 
     # Chunk size must match CHUNK_DOWNLOAD_MAX_SIZE in WP/src/fs_custom.cpp
     CHUNK_DOWNLOAD_SIZE = 16 * 1024  # TEST: doubled from 8KB to match larger TCP window
+    # Write buffering: accumulate chunks before flushing to disk.
+    # Without this, the per-chunk write syscall (~3-5ms in WSL2) adds directly to
+    # the gap time between receiving a chunk and sending the next GET request.
+    # On interruption, at most WRITE_FLUSH_SIZE bytes must be re-downloaded.
+    WRITE_FLUSH_SIZE = 1 * 1024 * 1024  # 1 MB
 
     def download_log_file(
         self,
@@ -129,6 +137,9 @@ class DeviceClient:
                     f.seek(resume_offset)
                     f.truncate()
 
+                write_buffer = []
+                write_buffer_bytes = 0
+
                 MAX_CHUNK_RETRIES = 8
                 CHUNK_RETRY_DELAY = 3.0  # seconds between retries
 
@@ -142,7 +153,7 @@ class DeviceClient:
                     for attempt in range(MAX_CHUNK_RETRIES):
                         try:
                             t_start = time.monotonic()
-                            response = requests.get(url, stream=True, timeout=(10, 60))
+                            response = self._session.get(url, stream=True, timeout=(10, 60))
                             t_headers = time.monotonic()
                             chunk_data = response.content
                             t_done = time.monotonic()
@@ -183,18 +194,22 @@ class DeviceClient:
                                 f"expected {expected_sha[:16]}... got {actual_sha[:16]}..."
                             )
 
-                    f.write(chunk_data)
+                    write_buffer.append(chunk_data)
+                    write_buffer_bytes += len(chunk_data)
                     bytes_downloaded += len(chunk_data)
+
+                    is_done = ((total_size > 0 and bytes_downloaded >= total_size) or
+                               len(chunk_data) < self.CHUNK_DOWNLOAD_SIZE)
+
+                    if write_buffer_bytes >= self.WRITE_FLUSH_SIZE or is_done:
+                        f.write(b''.join(write_buffer))
+                        write_buffer = []
+                        write_buffer_bytes = 0
 
                     if progress_callback:
                         progress_callback(bytes_downloaded, total_size)
 
-                    # Done when we have the whole file
-                    if total_size > 0 and bytes_downloaded >= total_size:
-                        break
-
-                    # Also done if server returned a short chunk (last chunk)
-                    if len(chunk_data) < self.CHUNK_DOWNLOAD_SIZE:
+                    if is_done:
                         break
 
             # Rename partial → final
