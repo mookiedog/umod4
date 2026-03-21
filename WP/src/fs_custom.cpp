@@ -78,6 +78,8 @@ struct lfs_custom_file {
 // Single static buffer: [HTTP headers][chunk data]. Header is built at the front,
 // data read at CHUNK_HEADER_RESERVE offset, then memmoved to close the gap.
 static uint8_t s_chunk_buf[CHUNK_HEADER_RESERVE + CHUNK_DOWNLOAD_MAX_SIZE];
+// Static file struct for chunk downloads — safe because s_chunk_in_progress serialises access.
+static struct lfs_custom_file s_chunk_file;
 static bool s_chunk_in_progress = false;
 
 // Timing instrumentation — populated in fs_open_custom, printed in fs_close_custom.
@@ -251,9 +253,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
         s_chunk_off     = offset;
         s_chunk_t_ready = time_us_32();
 
-        struct lfs_custom_file* chunk_file =
-            (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file));
-        if (!chunk_file) return 0;
+        struct lfs_custom_file* chunk_file = &s_chunk_file;
         memset(chunk_file, 0, sizeof(*chunk_file));
         chunk_file->is_open  = true;
         chunk_file->is_chunk = true;
@@ -276,15 +276,8 @@ int fs_open_custom(struct fs_file *file, const char *name)
     if (strncmp(path, "api/", 4) == 0) {
         const char* api_name = path + 4;  // Skip "api/" prefix
 
-        // Allocate structure for API response
-        struct lfs_custom_file* api_file = (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file));
-        if (!api_file) {
-            printf("fs_custom: Failed to allocate API file structure\n");
-            return 0;
-        }
-        memset(api_file, 0, sizeof(*api_file));
-
-        // Allocate buffer for API response
+        // Allocate struct and data buffer in a single block to avoid two separate heap
+        // allocations per request, which accumulate fragmentation over many requests.
         // info and sha256 need 512 bytes, list and sd-info need 8KB for ~100 files
         // image-store/scan needs 4KB for up to ~127 slot entries
         // image-store and image-store/selector need 1KB for the selector JSON
@@ -297,12 +290,15 @@ int fs_open_custom(struct fs_file *file, const char *name)
                                    strcmp(api_name, "ecu-live-data") == 0) ? 1024 :
                                   (strcmp(api_name, "ecu-live-meta") == 0) ? 2048 : 512;
 
-        api_file->data = (char*)malloc(api_buffer_size);
-        if (!api_file->data) {
-            printf("fs_custom: Failed to allocate API buffer (%zu bytes)\n", api_buffer_size);
-            free(api_file);
+        struct lfs_custom_file* api_file =
+            (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file) + api_buffer_size);
+        if (!api_file) {
+            printf("fs_custom: Failed to allocate API file+buffer (%zu bytes)\n",
+                   sizeof(struct lfs_custom_file) + api_buffer_size);
             return 0;
         }
+        memset(api_file, 0, sizeof(*api_file));
+        api_file->data = (char*)(api_file + 1);  // data immediately follows struct
 
         // Generate JSON based on API endpoint
         if (strcmp(api_name, "info") == 0) {
@@ -479,16 +475,13 @@ int fs_open_custom(struct fs_file *file, const char *name)
         strcmp(path, "upload_error.json") == 0 ||
         strcmp(path, "upload_progress.json") == 0) {
 
-        struct lfs_custom_file* api_file = (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file));
+        struct lfs_custom_file* api_file =
+            (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file) + 64);
         if (!api_file) {
             return 0;
         }
-
-        api_file->data = (char*)malloc(256);
-        if (!api_file->data) {
-            free(api_file);
-            return 0;
-        }
+        memset(api_file, 0, sizeof(*api_file));
+        api_file->data = (char*)(api_file + 1);
 
         // Generate JSON body
         const char* json_body;
@@ -797,8 +790,7 @@ void fs_close_custom(struct fs_file *file)
 
             s_chunk_in_progress  = false;
         } else if (lfs_file->is_api) {
-            // API response - free the data buffer
-            free(lfs_file->data);
+            // data is part of the same allocation as the struct; freed below with free(lfs_file)
         } else {
             // LittleFS file - close the file
             lfs_file_close(g_lfs, &lfs_file->file);
@@ -830,6 +822,9 @@ void fs_close_custom(struct fs_file *file)
         lfs_file->is_open = false;
     }
 
-    free(lfs_file);
+    // Chunk structs use the static s_chunk_file — never heap-allocated, never freed.
+    if (!lfs_file->is_chunk) {
+        free(lfs_file);
+    }
     file->pextension = NULL;
 }

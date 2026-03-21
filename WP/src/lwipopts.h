@@ -43,11 +43,11 @@
 #define MEMP_MEM_MALLOC 0
 
 #define MEM_ALIGNMENT               4
-// MEM_SIZE: static pool for lwIP's mem_malloc (PBUF_RAM pbufs per connection).
-// With file->data set (in-memory path), httpd never allocates hs->buf — only PBUF_RAM pbufs.
-// Peak demand = 2 connections × TCP_SND_BUF in PBUF_RAMs = 2 × ~18KB = 36KB.
-// 48KB gives comfortable headroom for mDNS/DHCP and fragmentation.
-#define MEM_SIZE                    49152
+// MEM_SIZE: static pool for lwIP's mem_malloc (PBUF_RAM pbufs + hs->buf for streaming files).
+// For API/chunk responses (file->data set), httpd never allocates hs->buf — only PBUF_RAMs.
+// For streaming log files (/logs/*), httpd allocates hs->buf = TCP_SND_BUF = 17520 bytes.
+// Peak demand = 1 streaming + pbufs ≈ 22KB. 40KB gives comfortable headroom.
+#define MEM_SIZE                    40960
 // MEMP_NUM_SYS_TIMEOUT: lwIP auto-calculates this from enabled features (TCP, ARP, DHCP×2,
 // IGMP, DNS, IP_REASSEMBLY, mDNS×(1+MAX_SERVICES), netif_client_data) giving ~10.
 // With MEMP_MEM_MALLOC=0, the pool is now a fixed static array so the auto value is just
