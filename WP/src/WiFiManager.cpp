@@ -52,32 +52,32 @@ WiFiManager::WiFiManager()
     scan_countdown_ = 60;
     home_ssid_found_ = false;
 
-    BaseType_t err = xTaskCreate(
+    static StackType_t  s_stack[1024];
+    static StaticTask_t s_tcb;
+    taskHandle_ = xTaskCreateStatic(
         start_wifiMgr_task,
         "WiFiMgrTask",
         1024,
         this,
         TASK_NORMAL_PRIORITY,
-        &taskHandle_
+        s_stack, &s_tcb
     );
 
-    if (err != pdPASS) {
+    if (taskHandle_ == NULL) {
         printf("WiFiMgr: Critical - Task creation failed\n");
         panic("Unable to create WiFiManager task");
     }
 
     // Create periodic heartbeat timer (5 minutes, repeating)
-    heartbeatTimer_ = xTimerCreate(
+    static StaticTimer_t s_heartbeat_timer;
+    heartbeatTimer_ = xTimerCreateStatic(
         "HeartbeatTimer",
         pdMS_TO_TICKS(5 * 60 * 1000),  // 5 minutes
         pdTRUE,  // Auto-reload (repeat)
         this,    // Pass 'this' pointer as timer ID
-        heartbeatTimerCallback
+        heartbeatTimerCallback,
+        &s_heartbeat_timer
     );
-
-    if (heartbeatTimer_ == NULL) {
-        printf("WiFiMgr: Warning - Failed to create heartbeat timer\n");
-    }
 }
 
 WiFiManager::~WiFiManager()
@@ -288,7 +288,10 @@ void WiFiManager::WiFiManager_task()
 
                         // Disable WiFi power save for minimum latency
                         printf("WiFiMgr: Disabling WiFi power save\n");
-                        cyw43_wifi_pm(&cyw43_state, CYW43_PERFORMANCE_PM);
+                        // CYW43_NONE_PM: Pure performance, no power savings
+                        // CYW43_PERFORMANCE_PM: performance oriented, with some power savings
+                        // CYW43_AGGRESSIVE_PM: aggressive power management, at cost of performance
+                        cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM);
                         state_ = State::CONNECTED;
 
                         // NOTE: check-in is sent by NetworkManager after httpd_init()
@@ -532,25 +535,19 @@ void WiFiManager::sendCheckInNotification()
 
     printf("WiFiMgr: Resolving server hostname: %s\n", serverHostname_);
 
-    // Create UDP PCB (Protocol Control Block)
-    struct udp_pcb* pcb = udp_new();
-    if (!pcb) {
-        printf("WiFiMgr: Failed to create UDP PCB\n");
-        return;
-    }
-
-    // Resolve server hostname to IP address (supports both IPs and DNS/mDNS names)
+    // Resolve address before acquiring the lwIP lock.
+    // netconn_gethostbyname() posts to the tcpip thread and blocks waiting for
+    // the reply — calling it while holding the lwIP lock would deadlock because
+    // the tcpip thread can't run while we hold the mutex.
     ip_addr_t server_addr;
 
-    // First try to parse as literal IP address
     if (!ip4addr_aton(serverHostname_, &server_addr)) {
         // Not a literal IP, resolve via DNS/mDNS
         printf("WiFiMgr: Not a literal IP, resolving via DNS...\n");
 
-        err_t err = netconn_gethostbyname(serverHostname_, &server_addr);
-        if (err != ERR_OK) {
-            printf("WiFiMgr: Failed to resolve %s (err=%d)\n", serverHostname_, err);
-            udp_remove(pcb);
+        err_t dns_err = netconn_gethostbyname(serverHostname_, &server_addr);
+        if (dns_err != ERR_OK) {
+            printf("WiFiMgr: Failed to resolve %s (err=%d)\n", serverHostname_, dns_err);
             return;
         }
 
@@ -562,11 +559,26 @@ void WiFiManager::sendCheckInNotification()
     printf("WiFiMgr: Sending check-in to %s:%u\n", ip4addr_ntoa(&server_addr), serverPort_);
     printf("WiFiMgr: Payload: %s\n", payload);
 
+    // All lwIP raw API calls must be made with the lwIP lock held.
+    // This function is called from the WiFiMgr task and from the FreeRTOS timer
+    // daemon task (heartbeatTimerCallback) — neither is the lwIP tcpip thread,
+    // so cyw43_arch_lwip_begin()/end() is required to prevent racing with the
+    // tcpip thread and corrupting lwIP's internal memory structures.
+    cyw43_arch_lwip_begin();
+
+    struct udp_pcb* pcb = udp_new();
+    if (!pcb) {
+        printf("WiFiMgr: Failed to create UDP PCB\n");
+        cyw43_arch_lwip_end();
+        return;
+    }
+
     // Allocate pbuf for payload
     struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, strlen(payload), PBUF_RAM);
     if (!p) {
         printf("WiFiMgr: Failed to allocate pbuf\n");
         udp_remove(pcb);
+        cyw43_arch_lwip_end();
         return;
     }
 
@@ -584,6 +596,8 @@ void WiFiManager::sendCheckInNotification()
     // Clean up
     pbuf_free(p);
     udp_remove(pcb);
+
+    cyw43_arch_lwip_end();
 }
 
 void WiFiManager::triggerCheckIn()

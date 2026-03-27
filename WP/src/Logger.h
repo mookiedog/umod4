@@ -7,20 +7,21 @@
 
 #include "lfs.h"
 #include "pico/sync.h"
+#include "lfsMgr.h"
 
 
 // The log buffer needs to be able to absorb incoming data while data in the
 // buffer is being written to the file system. The LittleFS file system can
 // be extremely slow under certain circumstances.
 // For the purposes of calculating how many bytes can be buffered before we
-// overflow, remember that there is a dedicated 16K write buffer
-// *after* this buffer where is extracted before writing to filesystem.
+// overflow, remember that there is a dedicated LFS_BLOCK_SIZE write buffer
+// *after* this buffer where data is extracted before writing to filesystem.
 // This buffer does not need to be a power of two.
-#define LOG_BUFFER_SIZE ((96*1024)-16384)
+#define LOG_BUFFER_SIZE ((96*1024)-LFS_BLOCK_SIZE)
 
 class Logger {
     public:
-        Logger(uint8_t* buffer, int32_t size);
+        Logger(uint8_t* buffer, int32_t size, uint8_t* write_buffer);
 
         bool init(lfs_t* lfs);
         void deinit();
@@ -44,6 +45,8 @@ class Logger {
         char logName[16];
         bool tempName;
         lfs_file_t logf;
+        lfs_file_config logf_cfg;           // config passed to lfs_file_opencfg
+        uint8_t logf_cache[LFS_CACHE_SIZE]; // static file cache: eliminates per-open malloc
 
         struct lfs_fsinfo fsinfo;
 
@@ -63,12 +66,12 @@ class Logger {
         volatile uint8_t* headP;        // needs to be volatile since RX32 ISR updates it
         uint8_t* tailP;
 
-        // FIXME: get this from lfs_config somehow!!
         // This buffer is used to hold data from the circular buffer before calling lfs_write.
         // The issue is if the data to be written as a chunk spans the end of the circular buffer.
         // It is way cheaper to call memcpy twice than to call lfs_write twice
         // so all writes get copied into a buffer where it is guaranteed we can write it with one call.
-        uint8_t write_buff[16384];
+        // Size is LFS_BLOCK_SIZE — matches the LittleFS block size for one-write-per-block efficiency.
+        uint8_t* write_buff;   // points to caller-allocated LFS_BLOCK_SIZE buffer
 
         // Hardware spinlock for protecting buffer access from both cores and ISR context
         spin_lock_t* bufferLock;

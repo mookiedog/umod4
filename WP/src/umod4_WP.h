@@ -23,12 +23,11 @@
 // Pio Unit allocations:
 // PIO0: SWD driver. Can't share: it uses all available instruction memory.
 // PIO1: SDIO driver. Can't share: it uses all available instruction memory.
-// PIO2: Will be shared among:
+// PIO2: Will be shared among 3 of the 4 available state machines:
 //         - WiFi (6 instructions)
 //         - WS2812 NeoPixel (4 instructions)
 //         - UART_RX32 (9 instructions)
-//         - UART_TX32 (4 instructions)
-//          - 9 instructions free for future use
+//         - <spare> (13 instructions)
 
 #define PIO_SWD             pio0
 
@@ -51,7 +50,12 @@
 #define GPS_RX_PIN          9           // WP receives from the GPS on this pin
 #define GPS_PPS_PIN         7
 
+// Note: This pin can be left undefined to turn it into a general purpose IO.
+// This feature has been used to allow transitions on this pin to control
+// the HC11 bus logging feature, for example. Obviously, you would lose the flow
+// control mechanism, but that's the tradeoff for debugging some other issue.
 #define EPLOG_FLOWCTRL_PIN  0           // POR default is '1'. WP drives this GPIO to '0' to indicate it is ready for ECU log data
+
 #define EPLOG_RX_PIN        1           // WP receives 16-bit PIO UART data on this GPIO
 
 // WP can drive the EP's SWD port using these GPIOs

@@ -236,8 +236,7 @@ bool comingOnline(SdCardBase* sdCard)
     // better, but not fix it totally.
 
     // Large blocks are the first line of defence in keeping LittleFS from disappearing during write operations.
-    const uint32_t LFS_BLOCK_SIZE = 16384;              // big blocks are written efficiently using multisector writes
-    const uint32_t LFS_CACHE_SIZE = 16384;
+    // LFS_CACHE_SIZE comes from lfsMgr.h (shared with Logger and others)
     const uint32_t LFS_LOOKAHEAD_SIZE_BITS  = 8192;
 
     // Statically allocate the main read/prog/lookahead buffers.
@@ -280,7 +279,8 @@ bool comingOnline(SdCardBase* sdCard)
     // Create FreeRTOS semaphore for LittleFS locking (once only)
     // (don't use pico_sync mutex - it uses event groups which fail in ISR context)
     if (lfs_semaphore == NULL) {
-        lfs_semaphore = xSemaphoreCreateMutex();
+        static StaticSemaphore_t s_mutex_buf;
+        lfs_semaphore = xSemaphoreCreateMutexStatic(&s_mutex_buf);
         configASSERT(lfs_semaphore != NULL);
     }
 
@@ -440,16 +440,18 @@ void startFileSystem(void)
     // If it runs on core1, there is a chance that core1 can be testing an SD card at the same time
     // as an LFS operation starts running on core0.
     printf("%s: Starting hotPlugManager task\n", __FUNCTION__);
-    BaseType_t err = xTaskCreateAffinitySet(
+    static StackType_t  s_hotplug_stack[HOTPLUG_MGR_STACK_SIZE_WORDS];
+    static StaticTask_t s_hotplug_tcb;
+    TaskHandle_t hotplug_handle = xTaskCreateStaticAffinitySet(
         SdCardSDIO::hotPlugManager,
         "HotPlugMgr",
         HOTPLUG_MGR_STACK_SIZE_WORDS,
         &cfg,
         TASK_HIGH_PRIORITY,
-        (1<<0),
-        NULL);
+        s_hotplug_stack, &s_hotplug_tcb,
+        (1<<0));
 
-    if (err != pdPASS) {
+    if (hotplug_handle == NULL) {
         panic("Unable to create hotPlugManager task");
     }
 }

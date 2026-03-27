@@ -95,7 +95,9 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
     latitude_degrees = 0.0;
     longitude_degrees = 0.0;
     speed_mph_ = 0.0f;
-    xTaskCreate(start_gps_rxTask, "Gps", 1024 /* words */, this, TASK_HIGH_PRIORITY, &gps_taskHandle);
+    static StackType_t  s_stack[1024];
+    static StaticTask_t s_tcb;
+    gps_taskHandle = xTaskCreateStatic(start_gps_rxTask, "Gps", 1024, this, TASK_HIGH_PRIORITY, s_stack, &s_tcb);
 
     uart->notifyOnRx(gps_taskHandle);
 

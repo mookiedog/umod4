@@ -24,10 +24,11 @@ void start_logger_task(void *pvParameters)
 
 
 // ----------------------------------------------------------------------------------
-Logger::Logger(uint8_t* _buffer, int32_t _size)
+Logger::Logger(uint8_t* _buffer, int32_t _size, uint8_t* _write_buffer)
 {
     buffer = _buffer;
     bufferLen = _size;
+    write_buff = _write_buffer;
 
     lastBufferP = buffer + _size - 1;
     headP = tailP = buffer;
@@ -38,13 +39,15 @@ Logger::Logger(uint8_t* _buffer, int32_t _size)
     int spinlock_num = spin_lock_claim_unused(true);
     bufferLock = spin_lock_init(spinlock_num);
 
-    xTaskCreate(
+    static StackType_t  s_stack[1024+512];
+    static StaticTask_t s_tcb;
+    log_taskHandle = xTaskCreateStatic(
         start_logger_task,
         "Log",
         1024+512,
         this,
         TASK_NORMAL_PRIORITY,
-        &log_taskHandle);
+        s_stack, &s_tcb);
 }
 
 // ----------------------------------------------------------------------------------
@@ -166,7 +169,9 @@ bool Logger::openNewLog()
 
         snprintf(logName, sizeof(logName), "%s%d%s", prefix, maxValue+1, suffix);
         printf("%s: Creating logfile with temporary name \"%s\"\n", __FUNCTION__, logName);
-        lfs_err = lfs_file_open(lfs, &logf, logName, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR);
+        logf_cfg = {};
+        logf_cfg.buffer = logf_cache;
+        lfs_err = lfs_file_opencfg(lfs, &logf, logName, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR, &logf_cfg);
         if (lfs_err != LFS_ERR_OK) {
             printf("%sw: Unable to open new logfile\"%s\": err=%d\n", __FUNCTION__, logName, lfs_err);
         } else {

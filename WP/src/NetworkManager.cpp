@@ -46,16 +46,18 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
     // cyw43_arch_init() runs inside WiFiManager_task(). Calling them here, in the
     // boot task before WiFiMgrTask runs, would crash with MEMP_MEM_MALLOC=0.
 
-    BaseType_t err = xTaskCreate(
+    static StackType_t  s_stack[1024];
+    static StaticTask_t s_tcb;
+    taskHandle_ = xTaskCreateStatic(
         start_networkMgr_task,
         "NetMgrTask",
         1024,
         this,
         TASK_NORMAL_PRIORITY,
-        &taskHandle_
+        s_stack, &s_tcb
     );
 
-    if (err != pdPASS) {
+    if (taskHandle_ == NULL) {
         printf("NetworkMgr: Critical - Task creation failed\n");
         panic("Unable to create NetworkManager task");
     }

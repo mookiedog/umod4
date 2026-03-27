@@ -207,10 +207,12 @@ void EpromLoader::loadImage()
         if (Bson::findElement(entry.data, "code", codeElem) && codeElem.elementType == BSON_TYPE_UTF8) {
             codeName = (const char*)codeElem.data + 4;
         }
-        if (!codeName || codeName[0] == '\0') {
-            printf("%s: Entry %s: missing \"code\" field, skipping\n", __FUNCTION__, indexStr);
-            continue;
+        if (!codeName || codeName[0] == '\0' || strcmp(codeName, "limp-mode") == 0) {
+            printf("%s: Entry %s: limp-mode selected\n", __FUNCTION__, indexStr);
+            goto limp_mode;
         }
+
+        bool use_builtin = (strcmp(codeName, "UM4 (built in)") == 0);
 
         element_t mapblobElem;
         const char* mapblobName = nullptr;
@@ -235,42 +237,50 @@ void EpromLoader::loadImage()
             imgsel_first = false;
         };
 
-        // ---------------------------------------------------------------
-        // Find the code slot in slot_dir[].
-        const SlotInfo* codeSlot = nullptr;
-        for (uint8_t d = 0; d < slot_dir_count; d++) {
-            if (strcmp(slot_dir[d].name, codeName) == 0) {
-                codeSlot = &slot_dir[d];
-                break;
+        if (use_builtin) {
+            // ---------------------------------------------------------------
+            // "UM4 (built in)": intentionally use the UM4 image compiled into EP firmware.
+            // No slot lookup or hash check needed — the image is part of EP itself.
+            printf("%s: Loading built-in UM4 image\n", __FUNCTION__);
+            memcpy((uint8_t*)EPROM_IMAGE_BASE, limp_mode_image, EPROM_IMAGE_SIZE_BYTES);
+        } else {
+            // ---------------------------------------------------------------
+            // Find the code slot in slot_dir[].
+            const SlotInfo* codeSlot = nullptr;
+            for (uint8_t d = 0; d < slot_dir_count; d++) {
+                if (strcmp(slot_dir[d].name, codeName) == 0) {
+                    codeSlot = &slot_dir[d];
+                    break;
+                }
             }
-        }
-        if (!codeSlot) {
-            printf("%s: Code slot \"%s\" not found\n", __FUNCTION__, codeName);
-            enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
-            append_fail();
-            continue;
-        }
+            if (!codeSlot) {
+                printf("%s: Code slot \"%s\" not found\n", __FUNCTION__, codeName);
+                enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
+                append_fail();
+                continue;
+            }
 
-        // ---------------------------------------------------------------
-        // Verify code slot hash.
-        const uint8_t* codeImagePtr = (const uint8_t*)(image_store_PartitionStart_addr
-                                                        + (uint32_t)codeSlot->index * SLOT_SIZE_BYTES
-                                                        + SLOT_IMAGE_OFFSET);
-        uint32_t codeHash = murmur3_32(codeImagePtr, EPROM_IMAGE_SIZE_BYTES, ~0x0);
-        if (codeHash != codeSlot->image_m3) {
-            printf("%s: Code slot \"%s\" hash mismatch: expected 0x%08X, got 0x%08X\n",
-                    __FUNCTION__, codeName, codeSlot->image_m3, codeHash);
-            enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_BAD_HASH);
-            append_fail();
-            continue;
-        }
+            // ---------------------------------------------------------------
+            // Verify code slot hash.
+            const uint8_t* codeImagePtr = (const uint8_t*)(image_store_PartitionStart_addr
+                                                            + (uint32_t)codeSlot->index * SLOT_SIZE_BYTES
+                                                            + SLOT_IMAGE_OFFSET);
+            uint32_t codeHash = murmur3_32(codeImagePtr, EPROM_IMAGE_SIZE_BYTES, ~0x0);
+            if (codeHash != codeSlot->image_m3) {
+                printf("%s: Code slot \"%s\" hash mismatch: expected 0x%08X, got 0x%08X\n",
+                        __FUNCTION__, codeName, codeSlot->image_m3, codeHash);
+                enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_BAD_HASH);
+                append_fail();
+                continue;
+            }
 
-        // ---------------------------------------------------------------
-        // Load code image into EPROM_IMAGE_BASE.
-        enqueue(LOGID_EP_LOAD_IMAGESLOT_TYPE_U8, codeSlot->index);
-        loadSlotImage(codeSlot->index, (uint8_t*)EPROM_IMAGE_BASE, codeSlot->protection);
-        printf("%s: Loaded code \"%s\" from slot %u (prot=%c)\n",
-                __FUNCTION__, codeName, codeSlot->index, codeSlot->protection);
+            // ---------------------------------------------------------------
+            // Load code image into EPROM_IMAGE_BASE.
+            enqueue(LOGID_EP_LOAD_IMAGESLOT_TYPE_U8, codeSlot->index);
+            loadSlotImage(codeSlot->index, (uint8_t*)EPROM_IMAGE_BASE, codeSlot->protection);
+            printf("%s: Loaded code \"%s\" from slot %u (prot=%c)\n",
+                    __FUNCTION__, codeName, codeSlot->index, codeSlot->protection);
+        }
 
         // ---------------------------------------------------------------
         // Optional: If "mapblob" specified, find, verify, and overlay on top of code image

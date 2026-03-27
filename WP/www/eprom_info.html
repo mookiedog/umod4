@@ -386,28 +386,31 @@
             el.innerHTML = '<em style="color:#888;">Waiting for EP to report&hellip;</em>';
             return;
         }
+
+        // Determine code and maps from status / image_selector
+        var code, maps;
         if (d.status === 'limp_mode') {
-            el.innerHTML = '<span style="color:#9b2c2c;">&#9888; Limp mode — no image loaded</span>';
-            return;
+            code = '<span style="color:#9b2c2c;">&#9888; limp-mode</span>';
+            maps = 'none';
+        } else {
+            var e = (d.image_selector && d.image_selector.length > 0) ? d.image_selector[0] : null;
+            code = e ? esc(e.code || e.name || '?') : '?';
+            maps = (e && e.mapblob) ? esc(e.mapblob) : 'none';
         }
-        var entries = d.image_selector || [];
-        if (entries.length === 0) {
-            el.innerHTML = '<em style="color:#888;">(no selector entries)</em>';
-            return;
+
+        function row(label, val) {
+            return '<div style="padding:2px 0; font-size:0.9em;">'
+                 + '<span style="color:#888; width:6em; display:inline-block;">' + label + '</span>'
+                 + '<span style="font-family:monospace;">' + val + '</span>'
+                 + '</div>';
         }
+
         var html = '';
-        for (var i = 0; i < entries.length; i++) {
-            var e = entries[i];
-            var code = esc(e.code || e.name || '?');
-            var mapblob = e.mapblob ? ' + <em>' + esc(e.mapblob) + '</em>' : '';
-            var loaded = (d.status === 'ok' && i === 0);  // first entry is the active one
-            html += '<div style="padding:5px 2px; border-bottom:1px solid #f0f0f0; font-size:0.9em;'
-                  + (loaded ? ' background:#d4edda; border-radius:4px; margin:0 -4px; padding:5px 8px;' : '') + '">'
-                  + '<span style="color:#aaa; font-size:0.85em; margin-right:8px;">' + (i+1) + '</span>'
-                  + '<span style="font-family:monospace;">' + code + '</span>' + mapblob
-                  + (loaded ? ' <span style="color:#155724; font-size:0.8em; font-weight:700;">&#10003; loaded</span>' : '')
-                  + '</div>';
-        }
+        html += row('Code:', code);
+        html += row('Maps:', maps);
+        // html += row('Tag:', d.ecu_build ? esc(d.ecu_build.GH) : '');
+        html += row('Build:', d.ecu_build ? esc(d.ecu_build.BT) : '');
+
         el.innerHTML = html;
     }
 
@@ -771,13 +774,15 @@
     }
 
     function makeNameOptions(selected) {
-        var opts = '';
+        var BUILTIN = 'UM4 (built in)';
+        var opts = '<option value="' + BUILTIN + '"' + (selected === BUILTIN ? ' selected' : '') + '>' + BUILTIN + '</option>';
         g_slot_names.forEach(function(n) {
             opts += '<option value="' + esc(n) + '"'
                  + (n === selected ? ' selected' : '') + '>'
                  + esc(n) + '</option>';
         });
-        if (!g_slot_names.includes(selected) && selected) {
+        opts += '<option value="limp-mode"' + (selected === 'limp-mode' ? ' selected' : '') + '>limp-mode</option>';
+        if (!g_slot_names.includes(selected) && selected && selected !== 'limp-mode' && selected !== BUILTIN) {
             opts = '<option value="' + esc(selected) + '" selected>' + esc(selected) + '</option>' + opts;
         }
         return opts;

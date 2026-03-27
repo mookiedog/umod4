@@ -2,6 +2,14 @@
 
 ## Issues
 
+The ever increasing list of broken stuff:
+
+2. fix RPM averaging in decodelog.py
+
+3. Display EPROM build info on the EPROM Management page
+
+6. Should the WP check in once in a while if it has not heard from the server in 10 mins?
+
 ## Next Checkin
 
 * Come up with a way for the EP and WP to detect if the ECU is powered

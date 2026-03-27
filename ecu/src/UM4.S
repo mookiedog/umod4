@@ -22,20 +22,21 @@
 ; the log window. For example:
 ;      staA    LW+LOGID_ECU_CPU_EVENT_TYPE_U8
 
-
+;--------------------------------------------------------------------------------
 ; Define build options here
 
-; If defined, use explicit IC3 and IC4 SPARK ISR routines to report spark events instead of checking during crankshaft reporting
-#define SPARK_ISR       1
-#define VTA_INCLUDES_TS 1
-
-; Set RELOCATED_STACK to '1' to relocate the stack inside the EPROM address space. Only available if
-; this firmware is running on a umod4 PCB. If this firmware is to be burned into
-; an EPROM, this must be '0'
-#define RELOCATED_STACK 0
+#define SPARK_ISR
+#define VTA_INCLUDES_TS
+#define VTA_CONVERSION_SMOOTHING
+;#define RELOCATED_STACK
+;--------------------------------------------------------------------------------
 
 
-#if defined RELOCATED_STACK && (RELOCATED_STACK != 0)
+#if defined RELOCATED_STACK
+; Relocates the stack inside the EPROM address space.
+; Only available if this firmware is running on a umod4 PCB!
+; If this firmware is to be burned into an EPROM, this must be '0'
+;
 ; The ram window inside the EPROM goes from FF00..FFBB (FFBC..FFFF is the vector table)
 ; Our new stack area in the RAM window will be 192 bytes long, way larger than the original
 ; stack that was about 128 bytes.
@@ -1989,6 +1990,9 @@ LC05C:  ldaA    #0x90                   ;Disable interrupts, disable STOP mode
                                         ;counter1 is prescaled by 4
         staA    TPRE                    ;E-clk is 2MHz with 8MHz crystal, so both timers always tick at 2 uSec per count
 
+; WARNING: The write to TPRE above MUST complete within 64 cycles after RESET!
+; It will enter into a read-only mode after that. See section 6.4.2 of Motorola HC68HC11 Technical Manual.
+
         ldD     #0xFFF0                 ;PORTA=0xFF, DDRA=0xF0 (PORTA[7..4]=output, PORTA[3..0]=input)
         stD     PORTA
 
@@ -2132,6 +2136,10 @@ reset:
         ldS     #STACK_TOP              ;init stack pointer
 
         jsr     LC05C                   ;init processor IO resources
+
+; Now that we have initialized all the time-sensitive registers (above),
+; we can afford the time to log the metadata:
+        jsr     log_metadata
 
         ldX     #0x01FF                 ;clear all of RAM (bug: doesn't clear location 0x0000!)
         ldaA    #0x00
@@ -2788,14 +2796,50 @@ LC46F:  ldaA    ADCTL
 ;Figure out which channel to convert next.  In each case, the
 ;conversion is scan=false, single channel.
 
-;The counter bit pattern triggers particular conversions with
-;associated probabilities.  The patterns are checked in a
-;particular order, which explains why one pattern will never
-;trigger.
+;Conversion Theory:
+;The decision regarding what channel the ADC should convert is based on
+;patterns in an 8-bit counter.
+;In some other version of this ECU hardware, there were 3 ADC channels that got
+;converted at a high rate, meaning 64 times each out of 256 times: VTA, VM, REV.
+;Based on the low order 2 bits of the counter, the conversions would look like this:
+;  xxxxxx00 - VTA
+;  xxxxxx01 - REV
+;  xxxxxx10 - VM
+;  xxxxxx11 - low-rate channels, exact channel is based on bits 2 through 7
+
+;As can be seen above, the remaining 64 conversions per 256 get split among
+;the lower rate channels like tipover, trim pots, etc.
+;
+;However: the REV channel is not used by the Aprilia version of the ECU.
+;In truth, I don't even know what 'REV' means.
+;Rather than just ignore the REV conversions, it appears that the engineers
+;assigned the unused REV conversion slots to VTA, like this:
+;  xxxxxx00 - VTA
+;  xxxxxx01 - VTA
+;  xxxxxx10 - VM
+;  xxxxxx11 - low-rate channels
+;
+;This has always irked me though: even though there are double the number of VTA events,
+;the conversions are 'clumpy': there will always be two VTA conversions in a row,
+;then a VM conversion, then a low-rate conversion, repeat.
+;
+;It is my opinion that the conversion sequence would be better served in this fashion:
+;  xxxxxx00 - VTA
+;  xxxxxx01 - VM
+;  xxxxxx10 - VTA
+;  xxxxxx11 - low-rate channels
+;
+;There are just as many VTA conversions, but now they get spread smoothly across time.
+;That can't be argued. But: it is quite possible that the extra VTA conversions might
+;not be that useful in the first place. After all, the version of the ECU that supported
+;the mysterious 'REV' feature must have worked fine even when it only had 1/2 as many
+;VTA events in the first place when REV was active. So all of this might be a big
+;pile of nothing. Even so,
 
 ; xxxxxx0x throttle angle      128 of 256 (50.0%)
 ; xxxxxx10 VM Voltage Monitor   64 of 256 (25.0%)
-; xxxxxx01 water temp            0 of 256 ( 0.0%) this pattern will never trigger: see below
+; xxxxxx01 MUX_Y:1 REV           0 of 256 ( 0.0%) this pattern will never trigger: 01 is consumed by the VTA check above
+
 ; xxxxx011 air temp             32 of 256 (12.5%)
 ; xxxx0111 MUX_Y:2 AAP          16 of 256 ( 6.3%) ambient air pressure
 ; xxx01111 tipover               8 of 256 ( 3.2%)
@@ -2805,8 +2849,9 @@ LC46F:  ldaA    ADCTL
 ; 11111111 MUX_X:0 CO1R          1 of 256 ( 0.4%)
 
         inc     *L0019                  ;init'd at reset to 0x7f
-
         ldaA    *L0019
+
+#if !defined VTA_CONVERSION_SMOOTHING
         ldaB    #0x00                   ;AN1 (Throttle Angle) if the
         andA    #0b00000011             ;2 LS bits of the counter are either 00 or 01
         beq     2f
@@ -2824,11 +2869,24 @@ LC46F:  ldaA    ADCTL
         cli
         ldaB    #0x07                   ;AN8
         lsrA
-        bhs     2f                      ;convert AN8 [MUX_X:1 THW (Water Temp)] if counter B1==0
+        bhs     2f                      ;convert AN8 [MUX_Y:1 REV (not used)] if counter B1==0 -- never fires: B1 is always 1 at this point
+#else
+        ldaB    #0x00                   ;Convert AN1 (VTA Throttle Angle)...
+        lsrA                            ;
+        bcc     2f                      ;...if counter.bit0 is 0 (if will be 50% of the time)
 
+;We get here if the counter was 0bxxxxxxx1 (the remaining 50% of the time).
+;We now check B1 to see if we are converting VM or one of the low-rate conversion items
+        ldaB    #0x04                   ;Convert AN5 (VM)...
+        lsrA                            ;
+        bcc     2f                      ;...if counter.bit1 is 0 (it will be 25% of the total time)
+
+;Otherwise, we only get here if counter was 0bxxxxxx11 (the final 25% of the total time)
+;Pick one of the slow-rate conversion items as per the table, above.
+#endif
         ldaB    #0x05                   ;AN6
         lsrA
-        bhs     2f                      ;select AN6 [THA] (air temp) if B2==0
+        bcc     2f                      ;select AN6 [THA] (air temp) if B2==0
 
         sei
         ldaB    #0x02                   ;select mux channel 2
@@ -2836,7 +2894,7 @@ LC46F:  ldaA    ADCTL
         cli
         ldaB    #0x07                   ;AN8
         lsrA
-        bhs     2f                      ;convert AN8 [MUX_Y:2] (Ambient Air Pressure) if B3==0
+        bcc     2f                      ;convert AN8 [MUX_Y:2] (Ambient Air Pressure) if B3==0
 
         sei
         ldaB    #0x03                   ;select MUX input 3
@@ -2844,7 +2902,7 @@ LC46F:  ldaA    ADCTL
         cli
         ldaB    #0x06                   ;AN7
         lsrA
-        bhs     2f                      ;select AN7 [MUX_X:DON] (fall sensor) if B4==0
+        bcc     2f                      ;select AN7 [MUX_X:DON] (fall sensor) if B4==0
 
         sei
         ldaB    #0x02                   ;select MUX input 2
@@ -2852,7 +2910,7 @@ LC46F:  ldaA    ADCTL
         cli
         ldaB    #0x06                   ;AN7
         lsrA
-        bhs     2f                      ;select AN7 [MUX_X:AT] (not used) if B5==0
+        bcc     2f                      ;select AN7 [MUX_X:AT] (not used) if B5==0
 
         sei
         ldaB    #0x01                   ;select MUX input 1
@@ -2860,7 +2918,7 @@ LC46F:  ldaA    ADCTL
         cli
         ldaB    #0x06                   ;AN7
         lsrA
-        bhs     2f                      ;convert AN7 [MUX_X:THW] (water temp) if B6==0
+        bcc     2f                      ;convert AN7 [MUX_X:THW] (water temp) if B6==0
 
         sei
         ldaB    #0x00                   ;select MUX input 0
@@ -2868,7 +2926,7 @@ LC46F:  ldaA    ADCTL
         cli
         ldaB    #0x07                   ;AN8
         lsrA
-        bhs     2f                      ;select AN8 [MUX_Y:0] (CO2) if B7==0
+        bcc     2f                      ;select AN8 [MUX_Y:0] (CO2) if B7==0
 
         ldaB    #0x06                   ;default: select AN7 [MUX_X:0] (CO1) if B7==1
 
@@ -3068,11 +3126,21 @@ tbl1__00:
 #else
 ; Combine every VTA reading with the upper 6 bits of TCNT so that the log decoder
 ; can see time advance with more precision even when there are no crankshaft events.
+        tpa                             ;save current interrupt state
+        pshA                            ;otherwise, a crank event can sneak in putting this event out of time order
+        sei
+
         ldaA    TCNT
         andA    #0xFC                   ;extract the MS 6 bits of TCNT1...
         oraA    *L0024                  ;...and insert them into the unused upper 6 bits of the 10-bit VTA
         ldaB    *(L0024+1)              ;D now contains the combined time & VTA data
+        cmpD    RAW_VTA_prev            ;Only log if either the time or the VTA reading has changed
+        beq     33f
         stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
+        stD     RAW_VTA_prev
+
+33:     pulA                            ;restore previous interrupt state
+        tap
         bra     3f
 #endif
 
@@ -8507,7 +8575,7 @@ IC2F_ISR_35:
 
          cmpA   #0x01
          bne    1f
-         ldaB   #11                     ; we didn't see front coil #1 fire
+         ldaB   #0x11                   ; we didn't see front coil #1 fire
          staB   LW+LOGID_ECU_NOSPARK_TYPE_U8
 1:
         cmpA    #0x02
@@ -8551,7 +8619,7 @@ IC2F_ISR_38:
 
          cmpA   #0x01
          bne    1f
-         ldaB   #12                     ; we didn't see front coil #2 fire
+         ldaB   #0x12                   ; we didn't see front coil #2 fire
          staB   LW+LOGID_ECU_NOSPARK_TYPE_U8
 1:
         cmpA    #0x02
@@ -8605,7 +8673,7 @@ IC2F_ISR_42:
 
          cmpA   #0x01
          bne    1f
-         ldaB   #21                     ; we didn't see rear coil #1 fire
+         ldaB   #0x21                   ; we didn't see rear coil #1 fire
          staB   LW+LOGID_ECU_NOSPARK_TYPE_U8
 1:
         cmpA    #0x02
@@ -11550,6 +11618,17 @@ _ic3:
         rti
 #endif
 
+;-----------------------------------------------------------------
+; Log the metadata as a character string, NULL terminated
+log_metadata:
+        ldX     #build_metadata_start-1
+1:      inX
+        ldaA    0,X
+        staA    LW+LOGID_ECU_METADATA_TYPE_CS
+        bne     1b
+        rts
+
+;-----------------------------------------------------------------
 _oc4f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC4F
         bra     _log
 
@@ -11586,14 +11665,7 @@ _log:   ldaB    #LOGID_GEN_ECU_LOG_VER_VAL_V0
 
         staA    LW+LOGID_ECU_CPU_EVENT_TYPE_U8          ; #2: log the specific CPU event that got us here
 
-; Log the metadata as a character string, NULL terminated
-        ldX     #build_metadata_start-1
-1:      inX
-        ldaA    0,X
-        staA    LW+LOGID_ECU_METADATA_TYPE_CS
-        bne     1b
-
-        jmp     reset                                   ; Boot the ECU
+jmp     reset                                   ; Boot the ECU
 
 
 ; To help with tracking of elapsed time in the log, we log all timer1 overflow events

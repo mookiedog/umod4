@@ -84,7 +84,7 @@ One of the most fun features is the visualizer's ability to overlay the GPS posi
 There is a whole lot more over at the visualizer [README page](tools/README_Visualizer.md).
 Check it out over there.
 
-## Block Diagram
+## Hardware Block Diagram
 
 The Umod4 replaces the EPROM in a stock ECU with a circuit board to extend the capabilities of the overall system:
 ![Umod4 Hardware Block Diagram](doc/images/BlockDiag.jpg)
@@ -101,6 +101,14 @@ The board also contains a socketed Micro SD card.
 Now that WiFi is working, I can treat the SD card as being essentially non-removable.
 This is partly because it is a bit of a pain to physically access it when the ECU is mounted on the bike.
 It is mainly because the WiFi interface allows access to anything on the SD card filesystem, so there really is no reason to remove it anymore.
+
+## Data Flow
+
+A more detailed version of the block diagram makes clear the data flow in the system.
+
+![Data Flow Diagram](doc/images/DataFlow.jpg)
+
+Certain aspects might not be obvious. For one, the WP can directly control the EP's SWD (Single-Wire Debug) debug silicon unit. This allows the WP to reflash the EP in a bullet-proof fashion meaning that the EP cannot get bricked. The SWD mechanism also permits the WP to directly access the EP's SRAM even while the EP is running.
 
 ## PCB Hardware
 

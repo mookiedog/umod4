@@ -491,25 +491,30 @@ static void file_io_task(void* params)
 void file_io_task_init(void)
 {
     // Create queue (holds 1 request at a time - operations are serialized)
-    io_queue = xQueueCreate(1, sizeof(file_io_request_t));
+    static uint8_t      s_queue_storage[1 * sizeof(file_io_request_t)];
+    static StaticQueue_t s_queue_buf;
+    io_queue = xQueueCreateStatic(1, sizeof(file_io_request_t), s_queue_storage, &s_queue_buf);
     configASSERT(io_queue != NULL);
 
     // Create result semaphore
-    result_ready_sem = xSemaphoreCreateBinary();
+    static StaticSemaphore_t s_sem_buf;
+    result_ready_sem = xSemaphoreCreateBinaryStatic(&s_sem_buf);
     configASSERT(result_ready_sem != NULL);
 
     // Create task with larger stack for LittleFS operations
     // Priority 3 (TASK_HIGH_PRIORITY), below CYW43 (priority 4) but high enough
     // to prevent starvation by lower-priority tasks
-    BaseType_t err = xTaskCreate(
+    static StackType_t  s_stack[1024];
+    static StaticTask_t s_tcb;
+    io_task_handle = xTaskCreateStatic(
         file_io_task,
         "FileIO",
         1024,
         NULL,
         TASK_HIGH_PRIORITY,  // Priority 3, below CYW43 but above normal tasks
-        &io_task_handle
+        s_stack, &s_tcb
     );
-    configASSERT(err == pdPASS);
+    configASSERT(io_task_handle != NULL);
 
     printf("FileIO: Task initialized\n");
 }

@@ -15,6 +15,15 @@
 #include "lfs.h"
 #include "SdCardBase.h"
 
+// LittleFS geometry — shared constants used by lfsMgr, Logger, and others.
+// LFS_CACHE_SIZE must divide LFS_BLOCK_SIZE. Kept smaller than the block size
+// to limit per-file heap allocation (each lfs_file_open malloc's one cache buffer).
+#define LFS_BLOCK_SIZE  16384
+
+// Experiments show that increasing LFS_CACHE_SIZE to 16384 improved large file downloads
+// by a mere 2%.
+#define LFS_CACHE_SIZE  4096
+
 // Filesystem state
 extern lfs_t lfs;
 extern bool lfs_mounted;

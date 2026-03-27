@@ -714,22 +714,77 @@ current_record_address = 0
 maxDiff = 0.0
 
 from collections import deque
-# Store last 13 crank timestamps (64-bit ns) for smoothed RPM calculation
-# 12 intervals = 2 full rotations (360°). Using ns timestamps avoids 16-bit overflow at low RPM.
-crank_ts_history = deque(maxlen=13)
+# Max number of 60° crank intervals to average for smoothed RPM.
+RPM_AVG_MAX_PERIODS = 18
+# Store last RPM_AVG_MAX_PERIODS+1 crank timestamps (64-bit ns) for smoothed RPM calculation.
+# Using ns timestamps avoids 16-bit overflow at low RPM.
+crank_ts_history = deque(maxlen=RPM_AVG_MAX_PERIODS + 1)
 
 # ================================================================================================
 # TimeKeeper Class - Simplified time tracking system
 # ================================================================================================
 
 class TimeKeeper:
-    """Manages 64-bit nanosecond time tracking with wraparound detection.
+    """Manages 64-bit nanosecond time tracking for ECU log decoding.
 
-    Implements the time tracking requirements:
-    - 64-bit nanosecond counter starting at 0
-    - 16-bit timer (2µs per tick) wraparound detection
-    - Retrospective spark timestamp calculation
-    - CRANKREF_ID state tracking
+    Time tracking design
+    ====================
+    The ECU has a 16-bit free-running timer (TCNT, 2µs/tick, full cycle =
+    131.072ms).  Absolute time is reconstructed using a three-level hierarchy:
+
+    Level 1 — Crankshaft/camshaft TS events (most accurate)
+        Available only when the engine is running.  Each CRID_TS event carries
+        the exact 16-bit timer capture value at the moment the crank sensor
+        fired.  These are the gold standard.
+
+    Level 2 — VTA upper-6-bit timestamps (intermediate)
+        The ECU packs the upper 6 bits of TCNT into each VTA ADC conversion.
+        VTA runs at 100+ conversions/second regardless of engine state, so it
+        provides ~2ms-resolution time separation for the many non-timestamped
+        ADC events (MAP, THW, VM, AAP, etc.) that would otherwise all share the
+        same timestamp.
+
+        The VTA timestamp is the FLOOR of the 1024-tick bucket:
+            VTA_time = (overflow_count * 65536 + upper_6_bits * 1024) * 2000 ns
+        The true TCNT at conversion time is VTA_time + [0, 1023] ticks (never
+        ahead of TCNT, up to 1023 ticks / 2046 µs behind it).
+
+        If the VTA sensor fails the ECU stops reporting VTA events.  In that
+        case the decoder falls back to Level 3.
+
+    Level 3 — OFLO/HOFLO events (coarse fallback)
+        OFLO fires on every genuine timer overflow (0xFFFF→0x0000) and is the
+        sole owner of overflow_count.  HOFLO fires the first time bit 15 of
+        TCNT transitions 0→1 each cycle (~0x8000, 65.536ms into the cycle).
+        HOFLO exists as a within-cycle anchor for the case where the engine is
+        stopped AND VTA is absent; when either Level 1 or Level 2 is working,
+        HOFLO adds little but is still processed for accuracy.
+
+    Absolute time formula
+    ---------------------
+    For any event with a known 16-bit timer value (CRID, CAM, HOFLO, OFLO):
+        time_ns = (overflow_count * TIMER_MAX + raw_ts) * TICKS_TO_NS
+
+    For VTA events (only upper 6 bits of TCNT are known):
+        time_ns = (overflow_count * TIMER_MAX + upper_6_bits * 1024) * TICKS_TO_NS
+
+    Both formulas compute time directly from overflow_count; neither depends on
+    a delta chain through prev_ts.  This eliminates the backward-time artifact
+    that occurred when VTA estimates interacted with subsequent HOFLO events.
+
+    Overflow counting
+    -----------------
+    overflow_count is incremented exclusively by confirmed OFLO events.
+    Additionally, when VTA upper_6_bits transitions from 63→0, the timer has
+    definitely overflowed.  If that transition is observed without a preceding
+    OFLO increment (detected by checking whether the new absolute time would go
+    backward), overflow_count is corrected and a warning is emitted.
+
+    Non-timestamped events
+    ----------------------
+    Events with no timer information (MAP, AAP, THW, VM, etc.) inherit the
+    current time_ns.  A 1 ns ordering increment is applied per event so that
+    decode order is preserved when multiple events share the same timer tick.
     """
 
     # Constants
@@ -749,14 +804,13 @@ class TimeKeeper:
     SPARK_DELAY_X2_TICKS = 15  # Timer ticks delay for SPRK2 (15 * 2μs = 30μs)
 
     def __init__(self, verbose=False):
-        """Initialize time tracking.
-
-        Args:
-            verbose: Enable verbose logging for errors
-        """
-        # Time tracking - start at 0 as if first _TS was 0x0000
+        """Initialize time tracking."""
+        # Absolute time state
         self.time_ns = 0
-        self.prev_ts = 0
+        self.overflow_count = 0  # Number of timer overflows (0xFFFF→0x0000 crossings)
+        self.last_raw_ts = 0     # Last 16-bit TCNT value from any source (OFLO, CRID,
+                                 # CAM, VTA bucket floor, etc.).  Used for overflow
+                                 # detection and retrospective spark calculations.
 
         # State tracking
         self.crankref_id = None  # Current CRANKREF_ID value
@@ -788,75 +842,71 @@ class TimeKeeper:
         # Configuration
         self.verbose = verbose
 
+    def _absolute_ns(self, raw_ts):
+        """Compute absolute nanoseconds from a 16-bit timer value and overflow_count."""
+        return (self.overflow_count * self.TIMER_MAX + raw_ts) * self.TICKS_TO_NS
+
+    def _check_overflow(self, new_raw_ts):
+        """Increment overflow_count if the timer crossed zero since last_raw_ts.
+
+        A timer crossing is unambiguously indicated by the bit-15 sign transition:
+        the previous raw value had bit 15 set (upper half ≥ 0x8000) and the new
+        raw value has bit 15 clear (lower half < 0x8000).
+
+        This is called by every timestamp path — process_ts_event and
+        try_update_timer_bits — so whichever source (OFLO, CAM, VTA, CRID)
+        first observes the crossing counts it once, and subsequent sources
+        that carry the same crossing see bit 15 already 0 and skip it.
+        """
+        if (self.last_raw_ts >> 15) & 1 == 1 and (new_raw_ts >> 15) & 1 == 0:
+            self.overflow_count += 1
+
     def process_ts_event(self, raw_ts, is_oflo=False, is_hoflo=False):
-        """Process a _TS (retrospective timestamp) event and advance time.
+        """Process a timestamped event and advance time.
 
-        Rollover is detected by checking sign bits of consecutive timestamps:
-        - If prev_ts[15]==1 and raw_ts[15]==0: rollover occurred
-        - Otherwise: no rollover
-
-        Special OFLO handling:
-        - If OFLO event is seen but sign-bit check indicates NO rollover,
-          the OFLO must be completely ignored (stale prediction).
+        Overflow detection uses the bit-15 sign transition of last_raw_ts→raw_ts.
+        This handles all cases uniformly: real OFLO, stale OFLO predictions,
+        CAM/CRID crossing the boundary before OFLO arrives, etc.  No special
+        cases needed — whoever sees the 1→0 transition first counts it once.
 
         Args:
-            raw_ts: Raw 16-bit timestamp value
-            is_oflo: True if this is LOGID_ECU_T1_OFLO_TYPE_TS (optional hint)
-            is_hoflo: True if this is LOGID_ECU_T1_HOFLO_TYPE_TS (optional hint)
+            raw_ts:   Raw 16-bit timer capture value
+            is_oflo:  Unused; kept for call-site clarity only
+            is_hoflo: Unused; kept for call-site clarity only
 
         Returns:
             Current absolute time in nanoseconds
         """
-        # Check sign bits for rollover detection
-        prev_sign_bit = (self.prev_ts >> 15) & 1
-        curr_sign_bit = (raw_ts >> 15) & 1
-        rollover_occurred = (prev_sign_bit == 1) and (curr_sign_bit == 0)
-
-        # Special case: OFLO event with no actual rollover must be ignored
-        if is_oflo and not rollover_occurred:
-            # Stale OFLO prediction - do not update time or prev_ts
-            return self.time_ns
-
-        # Calculate delta from previous timestamp
-        delta_ticks = raw_ts - self.prev_ts
-
-        # Handle wraparound if rollover detected
-        if rollover_occurred:
-            delta_ticks += self.TIMER_MAX
-
-        # Advance time
-        self.time_ns += delta_ticks * self.TICKS_TO_NS
-        self.prev_ts = raw_ts
-
+        self._check_overflow(raw_ts)
+        self.time_ns = self._absolute_ns(raw_ts)
+        self.last_raw_ts = raw_ts
         return self.time_ns
 
     def process_retrospective_t_event(self, raw_ts):
-        """Process a _TYPE_PTS event (prescriptive timestamp - spark timestamp from the past).
+        """Process a retrospective timestamp (spark that has already fired).
 
-        Spark events report timestamps of sparks that already occurred.
-        They are guaranteed to be in the past, within the previous timer cycle.
+        The raw_ts is the actual TCNT capture value from the past.  We compute
+        its absolute time by applying a signed delta from the most recent known
+        timer position (last_raw_ts).  If the spark timestamp appears to be
+        ahead of last_raw_ts by more than half a cycle, it wrapped around and
+        is actually in the past.
 
         Args:
-            raw_ts: Raw 16-bit timestamp value
+            raw_ts: Raw 16-bit timer capture value of the past event
 
         Returns:
-            Absolute time in nanoseconds when the spark actually occurred
+            Absolute time in nanoseconds when the event actually occurred
         """
-        # Calculate signed delta from current timestamp
-        delta_ticks = raw_ts - self.prev_ts
-
-        # If delta appears positive and large (>32768), it's actually from the past
-        # (wrapped around the timer)
-        if delta_ticks > 32768:
+        delta_ticks = raw_ts - self.last_raw_ts
+        if delta_ticks > self.TIMER_MAX // 2:
             delta_ticks -= self.TIMER_MAX
-
-        # Calculate absolute time when spark occurred
-        spark_time_ns = self.time_ns + (delta_ticks * self.TICKS_TO_NS)
-
-        return spark_time_ns
+        return self.time_ns + (delta_ticks * self.TICKS_TO_NS)
 
     def advance_time_by_ns(self, ns):
-        """Advance time by a fixed number of nanoseconds (for non-timestamped events).
+        """Advance time by a fixed number of nanoseconds.
+
+        Used to impose a 1 ns ordering increment on non-timestamped events
+        so that their decode order is preserved within a shared timer tick.
 
         Args:
             ns: Nanoseconds to advance (typically 1)
@@ -875,38 +925,35 @@ class TimeKeeper:
         """Get current absolute time in seconds."""
         return self.time_ns / 1e9
 
-    def set_time_ns(self, time_ns):
-        """Set absolute time in nanoseconds (used to revert time on backwards adjustment)."""
-        self.time_ns = time_ns
-
     def try_update_timer_bits(self, upper_6_bits):
-        """Try to update time using upper 6 bits of 16-bit timer.
+        """Update time using the upper 6 bits of TCNT from a VTA conversion.
+
+        Computes absolute time from the bucket floor:
+            time_ns = (overflow_count * TIMER_MAX + upper_6_bits * 1024) * TICKS_TO_NS
+
+        The true TCNT at conversion time is in [bucket_floor, bucket_floor + 1023],
+        so this is a lower bound — accurate to within 2046 µs.
+
+        Overflow detection uses the same bit-15 sign transition as process_ts_event.
+        VTA always updates last_raw_ts so the shared crossing signal stays current
+        regardless of which source (OFLO, VTA, CAM) observes the overflow first.
 
         Args:
-            upper_6_bits: Upper 6 bits of the 16-bit timer (bits 10-15)
+            upper_6_bits: Bits 15:10 of TCNT at the time of the VTA conversion
 
         Returns:
-            True if time was advanced, False if update would cause time to go backwards
+            True if time_ns was advanced, False if already at or past this bucket
         """
-        # Construct the target timer value using the upper 6 bits and current prev_ts lower 10 bits
-        target_timer = (upper_6_bits << 10) | (self.prev_ts & 0x3FF)
+        new_raw_ts = upper_6_bits << 10
+        self._check_overflow(new_raw_ts)
+        self.last_raw_ts = new_raw_ts  # Always update so overflow signal stays current
 
-        # Calculate delta from current prev_ts
-        delta_ticks = target_timer - self.prev_ts
+        new_ns = self._absolute_ns(new_raw_ts)
+        if new_ns <= self.time_ns:
+            return False  # A real TS event already placed time past this bucket
 
-        # Handle potential wraparound
-        if delta_ticks < 0:
-            delta_ticks += self.TIMER_MAX
-
-        # Only advance if delta is positive and reasonable (not backwards in time)
-        if delta_ticks > 0 and delta_ticks < self.TIMER_MAX // 2:
-            # This looks like a forward time advancement
-            self.time_ns += delta_ticks * self.TICKS_TO_NS
-            self.prev_ts = target_timer
-            return True
-
-        # Would go backwards or delta is unreasonable, ignore
-        return False
+        self.time_ns = new_ns
+        return True
 
     def set_crankref_id(self, crid):
         """Update CRANKREF_ID state and reset spark detection flags."""
@@ -1639,7 +1686,7 @@ def main():
                     # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
                     # Do not advance time_ns based on this value
                     timekeeper.advance_time_by_ns(1)
-                    print(f"{fmt_record(recordCnt, timekeeper)} FI_ON:  {fi_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} FI_ON:  {fi_on:04X}")
                     if h5_writer:
                         # TODO: implement prospective timestamp conversion
                         actual_time_ns = timekeeper.get_time_ns()
@@ -1657,7 +1704,7 @@ def main():
                     ri_on = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
                     timekeeper.advance_time_by_ns(1)
-                    print(f"{fmt_record(recordCnt, timekeeper)} RI_ON:  {ri_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} RI_ON:  {ri_on:04X}")
                     if h5_writer:
                         # TODO: implement prospective timestamp conversion
                         actual_time_ns = timekeeper.get_time_ns()
@@ -1674,7 +1721,7 @@ def main():
                 elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_PTS:
                     fc_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt, timekeeper)} FC_ON:  {fc_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} FC_ON:  {fc_on:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_front_coil_on_calc', [calc_time_ns, fc_on])
@@ -1687,7 +1734,7 @@ def main():
                 elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_PTS:
                     fc_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt, timekeeper)} FC_OFF: {fc_off}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} FC_OFF: {fc_off:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_front_coil_off_calc', [calc_time_ns, fc_off])
@@ -1700,7 +1747,7 @@ def main():
                 elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_PTS:
                     rc_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt, timekeeper)} RC_ON:  {rc_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} RC_ON:  {rc_on:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_rear_coil_on_calc', [calc_time_ns, rc_on])
@@ -1713,7 +1760,7 @@ def main():
                 elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_PTS:
                     rc_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt, timekeeper)} RC_OFF: {rc_off}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} RC_OFF: {rc_off:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_rear_coil_off_calc', [calc_time_ns, rc_off])
@@ -1726,7 +1773,7 @@ def main():
                 elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_PTS:
                     fcm_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt, timekeeper)} FC_MON: {fcm_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} FC_MON: {fcm_on:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_front_coil_manual_on_calc', [calc_time_ns, fcm_on])
@@ -1739,7 +1786,7 @@ def main():
                 elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS:
                     fcm_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt, timekeeper)} FC_MOF: {fcm_off}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} FC_MOF: {fcm_off:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_front_coil_manual_off_calc', [calc_time_ns, fcm_off])
@@ -1752,7 +1799,7 @@ def main():
                 elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_PTS:
                     rcm_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt, timekeeper)} RC_MON: {rcm_on}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} RC_MON: {rcm_on:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_rear_coil_manual_on_calc', [calc_time_ns, rcm_on])
@@ -1765,7 +1812,7 @@ def main():
                 elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS:
                     rcm_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
-                    print(f"{fmt_record(recordCnt, timekeeper)} RC_MOF: {rcm_off}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} RC_MOF: {rcm_off:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_rear_coil_manual_off_calc', [calc_time_ns, rcm_off])
@@ -1884,20 +1931,11 @@ def main():
                     vta = vta_raw & 0x3FF  # Lower 10 bits
                     timer_bits = (vta_raw >> 10) & 0x3F  # Upper 6 bits
 
-                    # If upper 6 bits are non-zero, use them to update time
-                    if timer_bits != 0:
-                        # Timer bits provide upper 6 bits of the 16-bit timer
-                        # Try to update time, but ignore if it would go backwards
-                        current_time = timekeeper.get_time_ns()
-                        if timekeeper.try_update_timer_bits(timer_bits):
-                            # Time was successfully advanced
-                            pass
-                        else:
-                            # Time would have gone backwards, ignore the update
-                            timekeeper.set_time_ns(current_time)
-
+                    # Use the upper 6 bits to advance time to the VTA bucket floor.
+                    # Also handles missed-OFLO detection (63→0 transition).
+                    timekeeper.try_update_timer_bits(timer_bits)
                     timekeeper.advance_time_by_ns(1)
-                    print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta} ADC{f' (timer={timer_bits:02X})' if timer_bits != 0 else ''}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta} ADC{f' ({(timer_bits << 10):04X})'}")
                     if h5_writer:
                         h5_writer.append_data('ecu_throttle_adc', [timekeeper.get_time_ns(), vta])
 
@@ -1956,19 +1994,17 @@ def main():
                     if h5_writer:
                         h5_writer.append_data('ecu_crankref_timestamp', [timekeeper.get_time_ns(), cr_ts])
 
-                    if (cr_ts_prev > -1):
-                        elapsed = cr_ts - cr_ts_prev
-                        if (elapsed<0):
-                            elapsed += 65536
+                    elapsed = (rpm_timestamp_ns/2000) - cr_ts_prev
 
-                    cr_ts_prev = cr_ts
+                    cr_ts_prev = rpm_timestamp_ns/2000
 
                     # Calculate spark advance if this is the right CRID (will be determined in CRID handler)
                     # Store for potential printing below
                     spark_advance_data = None
 
-                    if (elapsed < 0):
-                        print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts}")
+                    # A bit of a hack here: if elapsed gets way too big, we consider this crank even to be the first one
+                    if (elapsed > 200000):
+                        print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts:04X}")
                     else:
                         # Calculate instantaneous RPM from single interval (30 degrees)
                         # elapsed is in 2μs ticks for one 30° interval
@@ -1979,23 +2015,22 @@ def main():
                         # Using ns timestamps instead of 16-bit ticks avoids overflow at low RPM
                         crank_ts_history.append(rpm_timestamp_ns)
 
-                        # Calculate smoothed RPM over last 12 intervals (2 full rotations = 360°)
-                        # Need 13 timestamps to have 12 intervals
-                        if len(crank_ts_history) >= 13:
-                            # Calculate elapsed time over 12 intervals (no wraparound issues with 64-bit ns)
+                        # Calculate smoothed RPM over up to RPM_AVG_MAX_PERIODS intervals.
+                        # Each crank event is 60° (6 teeth per revolution).
+                        # Averages over however many intervals are available, growing from 1 up to the max.
+                        num_intervals = len(crank_ts_history) - 1
+                        if num_intervals >= 1:
                             oldest_ts_ns = crank_ts_history[0]
-                            newest_ts_ns = crank_ts_history[12]  # 13th timestamp (index 12)
+                            newest_ts_ns = crank_ts_history[-1]
                             total_elapsed_ns = newest_ts_ns - oldest_ts_ns
-
-                            # RPM from 12 intervals (360 degrees = 1 full rotation)
-                            # total_elapsed_ns is in nanoseconds for 12 intervals (360°)
-                            # RPM = (60 sec/min * 1000000000 ns/sec) / total_elapsed_ns
-                            rpm_avg = 60000000000 / total_elapsed_ns
+                            # RPM = (num_intervals/6 rev * 60 s/min * 1e9 ns/s) / total_elapsed_ns
+                            #      = (10_000_000_000 * num_intervals) / total_elapsed_ns
+                            rpm_avg = (10_000_000_000 * num_intervals) / total_elapsed_ns
                         else:
-                            # Not enough history yet, use instantaneous RPM
+                            # Only one timestamp so far, use instantaneous RPM
                             rpm_avg = rpm
 
-                        print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts}, elapsed: {elapsed}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts:04X}, elapsed: {elapsed:.0f}, RPM-INST {rpm:.0f}, RPM-AVG {rpm_avg:.0f}")
 
                         if h5_writer:
                             # Use rpm_timestamp_ns which captures the END of the period being measured
@@ -2076,7 +2111,7 @@ def main():
                     cam_ts = int.from_bytes(read(f, L.LOGID_ECU_CAMSHAFT_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
                     timekeeper.process_ts_event(cam_ts)
-                    print(f"{fmt_record(recordCnt, timekeeper)} CAM_TS: {cam_ts}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} CAM_TS: {cam_ts:04X}")
                     if h5_writer:
                         h5_writer.append_data('ecu_camshaft_timestamp', [timekeeper.get_time_ns(), cam_ts])
 
@@ -2119,11 +2154,11 @@ def main():
                     # Print to human-readable output (advance will be calculated later when CRID arrives)
                     cyl_name = "Front" if is_front_cylinder else "Rear" if is_front_cylinder is not None else "Unknown"
                     if not is_valid_crid:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw} - {TimeKeeper.SPARK_DELAY_X1_TICKS} = {spx1_ts_corrected} (actual: {actual_spark_time_secs}) [IGNORED - wrong CRID]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - wrong CRID]")
                     elif is_first_spark:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw} - {TimeKeeper.SPARK_DELAY_X1_TICKS} = {spx1_ts_corrected} (actual: {actual_spark_time_secs}, {cyl_name} cyl) [advance pending]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}, {cyl_name} cyl) [advance pending]")
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw} - {TimeKeeper.SPARK_DELAY_X1_TICKS} = {spx1_ts_corrected} (actual: {actual_spark_time_secs}) [IGNORED - bounce]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - bounce]")
 
                     # Store spark for advance calculation and write to HDF5
                     if is_first_spark and is_valid_crid:
@@ -2158,11 +2193,11 @@ def main():
                     # Print to human-readable output (advance will be calculated later when CRID arrives)
                     cyl_name = "Front" if is_front_cylinder else "Rear" if is_front_cylinder is not None else "Unknown"
                     if not is_valid_crid:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw} - {TimeKeeper.SPARK_DELAY_X2_TICKS} = {spx2_ts_corrected} (actual: {actual_spark_time_secs}) [IGNORED - wrong CRID]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - wrong CRID]")
                     elif is_first_spark:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw} - {TimeKeeper.SPARK_DELAY_X2_TICKS} = {spx2_ts_corrected} (actual: {actual_spark_time_secs}, {cyl_name} cyl) [advance pending]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}, {cyl_name} cyl) [advance pending]")
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw} - {TimeKeeper.SPARK_DELAY_X2_TICKS} = {spx2_ts_corrected} (actual: {actual_spark_time_secs}) [IGNORED - bounce]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - bounce]")
 
                     # Store spark for advance calculation and write to HDF5
                     if is_first_spark and is_valid_crid:
@@ -2519,6 +2554,8 @@ def main():
         print(f"Error: File '{args.logfile}' not found.")
         return 1
     except Exception as e:
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         print(f"Error processing file: {e}", file=sys.stderr)
         return 1
     finally:

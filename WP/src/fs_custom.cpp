@@ -104,6 +104,15 @@ void fs_custom_init(lfs_t* lfs_ptr)
     printf("fs_custom: Initialized with LittleFS context\n");
 }
 
+void fs_custom_close_persistent_handle(void)
+{
+    if (s_lfs_open_filename[0] != '\0') {
+        lfs_file_close(g_lfs, &s_lfs_file);
+        s_lfs_open_filename[0] = '\0';
+        printf("fs_custom: Closed persistent LFS handle\n");
+    }
+}
+
 bool fs_custom_is_ready(void)
 {
     return (g_lfs != NULL);
@@ -779,7 +788,7 @@ void fs_close_custom(struct fs_file *file)
             // Chunk download — data points to static s_chunk_data_buf, do not free
             uint32_t t_close = time_us_32();
             uint32_t send_us = t_close - s_chunk_t_ready;
-            printf("CHK off=%lu gap=%luus lfs=%luus send=%luus sz=%lu\n",
+            printf("CHK off=%lu gap=%luus lfs=%luus send=%luus sz=%lu\r",
                    (unsigned long)s_chunk_off,
                    (unsigned long)s_chunk_gap_us,
                    (unsigned long)s_chunk_lfs_us,

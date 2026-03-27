@@ -27,6 +27,7 @@
 #include "RP2350.h"  // For NVIC
 
 #include "lfsMgr.h"
+#include "fs_custom.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -58,15 +59,8 @@ static QueueHandle_t ota_queue = NULL;
 static TaskHandle_t ota_task_handle = NULL;
 static volatile bool ota_in_progress = false;
 
-// Upgrade log file
-static lfs_file_t upgrade_log_file;
-static bool upgrade_log_open = false;
-
 // Forward declarations
 static void ota_flash_task(void* params);
-static void open_upgrade_log(void);
-static void upgrade_log_write(const char* msg);
-static void upgrade_log_close(void);
 static void shutdown_logger(void);
 static void shutdown_wifi(void);
 static void prepare_for_reboot(uint32_t target_addr, bool flash_success);
@@ -77,20 +71,24 @@ extern void unpause_watchdog_tick(void);
 void ota_flash_task_init(void)
 {
     // Create queue for OTA requests (only 1 deep - no concurrent OTA)
-    ota_queue = xQueueCreate(1, sizeof(ota_request_t));
+    static uint8_t       s_queue_storage[1 * sizeof(ota_request_t)];
+    static StaticQueue_t s_queue_buf;
+    ota_queue = xQueueCreateStatic(1, sizeof(ota_request_t), s_queue_storage, &s_queue_buf);
     configASSERT(ota_queue != NULL);
 
-    // Create task with high priority, pinned to core 0
-    BaseType_t err = xTaskCreateAffinitySet(
+    // Create task pinned to core 0
+    static StackType_t  s_stack[OTA_TASK_STACK_SIZE];
+    static StaticTask_t s_tcb;
+    ota_task_handle = xTaskCreateStaticAffinitySet(
         ota_flash_task,
         "OTA_Flash",
         OTA_TASK_STACK_SIZE,
         NULL,
         TASK_NORMAL_PRIORITY,
-        (1<<0),
-        &ota_task_handle
+        s_stack, &s_tcb,
+        (1<<0)
     );
-    configASSERT(err == pdPASS);
+    configASSERT(ota_task_handle != NULL);
 
     printf("OTA: Flash task initialized\n");
 }
@@ -204,72 +202,55 @@ static void ota_flash_task(void* params)
             ota_in_progress = true;
             printf("\n");
 
+            // Close any persistent LFS handle held by the chunk download path.
+            // Each open LFS file consumes 16KB of heap; releasing this before
+            // opening the UF2 file prevents OOM during flash programming.
+            fs_custom_close_persistent_handle();
+
             if (request.reboot_only) {
                 printf("OTA: Starting clean reboot (no flash)\n");
-
-                // Brief delay to let the HTTP response flush over WiFi before
-                // we power down the CYW43. Do NOT call shutdown_logger() here —
-                // logger->deinit() can block if the logger task is busy, which
-                // would hang the reboot indefinitely. LittleFS journals writes
-                // so it will recover cleanly from the watchdog reset.
                 printf("OTA: Waiting for HTTP response to flush\n");
                 vTaskDelay(pdMS_TO_TICKS(300));
 
                 printf("OTA: Shutting off WiFi\n");
                 shutdown_wifi();
 
-                // Save flash config NOW — WiFi is already down, so disabling
-                // interrupts for flash erase/program won't corrupt CYW43 state.
                 if (request.save_flash_config) {
                     printf("OTA: Saving flash config\n");
                     flash_config_save(&g_flash_config);
                 }
 
                 printf("OTA: Rebooting via watchdog\n");
-                vTaskDelay(pdMS_TO_TICKS(1000));  // let RTT buffer flush before scheduler is suspended
-                prepare_for_reboot(0, false);  // watchdog reset — does not return
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                prepare_for_reboot(0, false);
             }
 
             printf("OTA: Starting OTA flash process\n");
             printf("OTA: File: %s\n", request.uf2_path);
 
-            open_upgrade_log();
-            upgrade_log_write("OTA flash process starting");
-            upgrade_log_write(request.uf2_path);
-
-            upgrade_log_write("Waiting for HTTP response to complete");
+            printf("OTA: Waiting for HTTP response to complete\n");
             vTaskDelay(pdMS_TO_TICKS(200));
 
-            upgrade_log_write("Shutting down data logger");
+            printf("OTA: Shutting down data logger\n");
             shutdown_logger();
-            upgrade_log_write("Logger shutdown complete");
+            printf("OTA: Logger shutdown complete\n");
 
-            upgrade_log_write("Shutting off WiFi");
+            printf("OTA: Shutting off WiFi\n");
             shutdown_wifi();
-            upgrade_log_write("WiFi shutdown complete");
+            printf("OTA: WiFi shutdown complete\n");
 
-            // Perform the actual reflash operation
-            upgrade_log_write("Starting flash programming");
-
+            printf("OTA: Starting flash programming\n");
             uint32_t target_addr = 0;
             int32_t flash_result = flash_wp_uf2(request.uf2_path, true, &target_addr);
 
-            char msg[80];
-            snprintf(msg, sizeof(msg), "Flash result: %ld, target: 0x%08lX",
-                     (long)flash_result, (unsigned long)target_addr);
-            upgrade_log_write(msg);
-
             bool flash_success = (flash_result == 0);
             if (flash_success) {
-                upgrade_log_write("Flash programming successful");
+                printf("OTA: Flash programming successful, target=0x%08lX\n",
+                       (unsigned long)target_addr);
             } else {
-                upgrade_log_write("FLASH PROGRAMMING FAILED");
-                snprintf(msg, sizeof(msg), "Error code: %ld", (long)flash_result);
-                upgrade_log_write(msg);
-                upgrade_log_write("Will perform recovery reboot");
+                printf("OTA: FLASH PROGRAMMING FAILED, error=%ld\n", (long)flash_result);
             }
 
-            upgrade_log_write("Starting pre-reboot cleanup");
             prepare_for_reboot(target_addr, flash_success);
 
             // Should NEVER reach here - prepare_for_reboot doesn't return
@@ -279,76 +260,6 @@ static void ota_flash_task(void* params)
             }
         }
     }
-}
-
-static void open_upgrade_log(void)
-{
-    if (!lfs_mounted) {
-        printf("OTA: WARNING - filesystem not mounted, no upgrade log\n");
-        upgrade_log_open = false;
-        return;
-    }
-
-    // Open/create upgrade.log, truncating any previous content
-    int err = lfs_file_open(&lfs, &upgrade_log_file, "/upgrade.log",
-                            LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
-    if (err < 0) {
-        printf("OTA: Failed to open upgrade.log: %d\n", err);
-        upgrade_log_open = false;
-        return;
-    }
-
-    upgrade_log_open = true;
-    printf("OTA: Upgrade log opened\n");
-
-    // Write header
-    char header[128];
-    uint32_t uptime_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    snprintf(header, sizeof(header),
-             "=== OTA Upgrade Log ===\nUptime: %lu ms\nCore: %u\n",
-             (unsigned long)uptime_ms, get_core_num());
-
-    lfs_file_write(&lfs, &upgrade_log_file, header, strlen(header));
-    lfs_file_sync(&lfs, &upgrade_log_file);
-}
-
-static void upgrade_log_write(const char* msg)
-{
-    // Always print to console
-    printf("OTA: %s\n", msg);
-
-    if (!upgrade_log_open) {
-        return;
-    }
-
-    // Format: "[TIMESTAMP] message\n"
-    char line[256];
-    uint32_t ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    int len = snprintf(line, sizeof(line), "[%lu] %s\n", (unsigned long)ms, msg);
-
-    if (len > 0 && len < (int)sizeof(line)) {
-        lfs_file_write(&lfs, &upgrade_log_file, line, len);
-        // Sync after each write to ensure data is committed
-        lfs_file_sync(&lfs, &upgrade_log_file);
-    }
-}
-
-static void upgrade_log_close(void)
-{
-    if (!upgrade_log_open) {
-        return;
-    }
-
-    upgrade_log_write("Closing upgrade log - about to reboot");
-
-    // Final sync
-    lfs_file_sync(&lfs, &upgrade_log_file);
-
-    // Close file
-    lfs_file_close(&lfs, &upgrade_log_file);
-    upgrade_log_open = false;
-
-    printf("OTA: Upgrade log closed\n");
 }
 
 static void shutdown_logger(void)
@@ -377,9 +288,7 @@ static void shutdown_wifi(void)
 
 static void prepare_for_reboot(uint32_t target_addr, bool flash_success)
 {
-    printf("OTA: Preparing for reboot, closing log\n");
-
-    upgrade_log_close();
+    printf("OTA: Preparing for reboot\n");
 
     printf("OTA: Suspending FreeRTOS scheduler\n");
     vTaskSuspendAll();

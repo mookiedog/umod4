@@ -4,8 +4,6 @@
 #include "lwip/apps/fs.h"
 #include "lfs.h"
 
-#endif
-
 /**
  * Custom filesystem bridge for lwIP httpd to serve files from LittleFS SD card.
  *
@@ -28,3 +26,11 @@ void fs_custom_init(lfs_t* lfs_ptr);
  */
 bool fs_custom_is_ready(void);
 
+/**
+ * Close the persistent LFS file handle kept open across sequential chunk downloads.
+ * Must be called before any operation that opens additional LFS files (e.g. OTA flash),
+ * to avoid exhausting heap with multiple simultaneous 16KB LFS cache allocations.
+ */
+void fs_custom_close_persistent_handle(void);
+
+#endif

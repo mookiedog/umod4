@@ -36,6 +36,8 @@
 #include "lwip/ip4_addr.h"
 #include "lwip/stats.h"
 #include "lwip/memp.h"
+#include "hardware/structs/systick.h"
+
 
 
 extern "C" {
@@ -201,6 +203,29 @@ static volatile bool    ep_imgsel_complete = false;
 const char* get_ep_imgsel_str(void)   { return ep_imgsel_str; }
 bool        get_ep_imgsel_complete(void) { return ep_imgsel_complete; }
 
+// ---- ECU metadata capture (build date/version string logged at ECU startup) ----
+// ECU logs this as a NULL-terminated char stream via LOGID_ECU_METADATA_TYPE_CS.
+
+#define ECU_METADATA_STR_LEN  128
+
+static char             ecu_metadata_str[ECU_METADATA_STR_LEN] = "";
+static int              ecu_metadata_str_pos  = 0;
+static volatile bool    ecu_metadata_complete = false;
+
+const char* get_ecu_metadata_str(void)    { return ecu_metadata_str; }
+bool        get_ecu_metadata_complete(void) { return ecu_metadata_complete; }
+
+// Reset both capture buffers so fresh EP startup data is accepted after an EP reboot.
+void reset_ep_capture(void)
+{
+    ep_imgsel_str[0]    = '\0';
+    ep_imgsel_str_pos   = 0;
+    ep_imgsel_complete  = false;
+    ecu_metadata_str[0] = '\0';
+    ecu_metadata_str_pos  = 0;
+    ecu_metadata_complete = false;
+}
+
 uint32_t elapsed_max;
 void __time_critical_func(isr_rx32)()
 {
@@ -209,7 +234,9 @@ void __time_critical_func(isr_rx32)()
     bool backpressure_required = (level >= EP_FLOWCTRL_THRESHOLD);
 
     if (backpressure_required) {
+        #if defined EPLOG_FLOWCTRL_PIN
         gpio_put(EPLOG_FLOWCTRL_PIN, 1);  // pause EP
+        #endif
     }
 
     while(!pio_sm_is_rx_fifo_empty(PIO_UART, pio_sm_uart)) {
@@ -241,6 +268,19 @@ void __time_critical_func(isr_rx32)()
             }
         }
 
+        // Capture ECU metadata string (build date/version, sent once at ECU startup)
+        if (logId == LOGID_ECU_METADATA_TYPE_CS && !ecu_metadata_complete) {
+            char c = (char)data8;
+            if (c != '\0') {
+                if (ecu_metadata_str_pos < ECU_METADATA_STR_LEN - 1) {
+                    ecu_metadata_str[ecu_metadata_str_pos++] = c;
+                }
+            } else {
+                ecu_metadata_str[ecu_metadata_str_pos] = '\0';
+                ecu_metadata_complete = true;
+            }
+        }
+
         uint32_t elapsed = time_us_32() - t0;
         if (elapsed > elapsed_max) {
             elapsed_max = elapsed;
@@ -248,7 +288,9 @@ void __time_critical_func(isr_rx32)()
     }
 
     // FIFO is known to be empty now so EP can resume
+    #if defined EPLOG_FLOWCTRL_PIN
     gpio_put(EPLOG_FLOWCTRL_PIN, 0);
+    #endif
 
     // The fifo-not-empty interrupt is cleared automatically when we empty out the FIFO
 }
@@ -302,8 +344,10 @@ void allowEpToSendData()
 
 
     // Tell the EP we are ready for data
+    #if defined EPLOG_FLOWCTRL_PIN
     gpio_put(EPLOG_FLOWCTRL_PIN, 0);
     gpio_set_dir(EPLOG_FLOWCTRL_PIN, GPIO_OUT);
+    #endif
 }
 
 // ----------------------------------------------------------------------------------
@@ -351,11 +395,28 @@ void show_heap_stats(bool all=false)
 
 // ----------------------------------------------------------------------------------
 // Called by the SDK's panic() via PICO_PANIC_FUNCTION before breakpointing.
-// Printing heap stats here gives us a snapshot of heap state at the moment of panic
-// so we can distinguish OOM (remaining=0) from fragmentation (free is fragmented).
 //
-// The SDK's panic() becomes a naked wrapper that calls us, then loops on bkpt #0.
+// We print what we can in case RTT is working, then we flash the WS2812
+// in the style of "cop car" red/blue rapid flashing as a visual indication.
+//
+// The SDK's panic() becomes a naked wrapper that calls us.
 // We must handle all output ourselves and must not return.
+static void panic_dly_us(uint32_t us) {
+    uint32_t ticks = us * 150;
+
+    if (ticks == 0) return;
+    if (ticks > 0x00FFFFFF) ticks = 0x00FFFFFF;
+
+    systick_hw->csr = 0;
+    systick_hw->rvr = ticks;
+    systick_hw->cvr = 0;
+    systick_hw->csr = 0x05;
+    while (!(systick_hw->csr & 0x10000)) {
+        tight_loop_contents();
+    }
+    systick_hw->csr = 0;
+}
+
 extern "C" void __attribute__((noreturn)) my_panic_handler(const char *fmt, ...)
 {
     puts("\n*** PANIC ***\n");
@@ -368,7 +429,35 @@ extern "C" void __attribute__((noreturn)) my_panic_handler(const char *fmt, ...)
     }
     show_heap_stats(true);
     stdio_flush();
-    while (1) tight_loop_contents();
+
+    if (rgb_led) {
+        // make sure systick is initialized now:
+        systick_hw->csr = 0;           // Disable everything
+        systick_hw->cvr = 0;           // Writing 0 clears the current value AND the COUNTFLAG
+
+
+        while (1) {
+            // RED
+            for (int i=0; i<4; i++) {
+                rgb_led->neoPixelSetValue(0, 255,  0,  0, true);
+                panic_dly_us(15000);
+                rgb_led->neoPixelSetValue(0,   0,  0,  0, true);
+                panic_dly_us(75000);
+            }
+            panic_dly_us(100000);
+            panic_dly_us(100000);
+
+            for (int i=0; i<4; i++) {
+                rgb_led->neoPixelSetValue(0,  0,  0, 255, true);
+                panic_dly_us(15000);
+                rgb_led->neoPixelSetValue(0,  0,  0,   0, true);
+                panic_dly_us(75000);
+            }
+            panic_dly_us(100000);
+            panic_dly_us(100000);
+        }
+    }
+    while (1);
 }
 
 // ----------------------------------------------------------------------------------
@@ -417,7 +506,9 @@ void boot_system(void* args)
     // The logger may be started early since it has a big buffer to handle extremely long LittleFS write times.
     printf("%s: Creating the logger\n", __FUNCTION__);
     static uint8_t mergeBuf[LOG_BUFFER_SIZE];
-    logger = new Logger(mergeBuf, LOG_BUFFER_SIZE);
+    static uint8_t writeBuf[LFS_BLOCK_SIZE];
+    static Logger  s_logger(mergeBuf, LOG_BUFFER_SIZE, writeBuf);
+    logger = &s_logger;
 
     // First thing we log is what version of the log we are generating:
     uint8_t v = LOGID_GEN_WP_LOG_VER_VAL_V0;

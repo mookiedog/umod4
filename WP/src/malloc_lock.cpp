@@ -1,4 +1,3 @@
-#include <malloc.h>
 #include <stdlib.h>
 #include "hardware/sync.h"
 #include "pico/platform.h"

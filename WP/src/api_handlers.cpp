@@ -449,14 +449,23 @@ void generate_api_system_json(char* buffer, size_t size)
 // Getters defined in main.cpp
 extern const char* get_ep_imgsel_str(void);
 extern bool        get_ep_imgsel_complete(void);
+extern const char* get_ecu_metadata_str(void);
+extern bool        get_ecu_metadata_complete(void);
+extern void        reset_ep_capture(void);
 
 void generate_api_eprom_info_json(char* buffer, size_t size)
 {
-    const char* imgsel  = get_ep_imgsel_str();
-    bool        ready   = get_ep_imgsel_complete();
-
     uint32_t age_ms = (time_us_32() - get_last_ecu_data_us()) / 1000;
     bool ecu_alive  = (age_ms < 200);
+
+    // If EP is offline, clear stale capture data so fresh EP startup data is accepted
+    // when EP comes back up.
+    if (!ecu_alive) {
+        reset_ep_capture();
+    }
+
+    const char* imgsel  = get_ep_imgsel_str();
+    bool        ready   = get_ep_imgsel_complete();
 
     // Engine is considered running if a crank event was seen within the last second.
     // g_last_crank_event_us == 0 at startup means never seen → not running.
@@ -473,18 +482,24 @@ void generate_api_eprom_info_json(char* buffer, size_t size)
         status = "ok";
     }
 
+    // ecu_build JSON value: the metadata string is already a JSON object {"GH":...,"BT":...},
+    // so embed it directly as a JSON value (not quoted as a string).
+    const char* ecu_build_json = get_ecu_metadata_complete() ? get_ecu_metadata_str() : "null";
+
     // image_selector is already a valid JSON array string from EP, embed it directly
     snprintf(buffer, size,
              "{\n"
              "  \"image_selector\": %s,\n"
              "  \"status\": \"%s\",\n"
              "  \"ecu_alive\": %s,\n"
-             "  \"engine_running\": %s\n"
+             "  \"engine_running\": %s,\n"
+             "  \"ecu_build\": %s\n"
              "}",
              ready ? imgsel : "[]",
              status,
              ecu_alive ? "true" : "false",
-             engine_running ? "true" : "false");
+             engine_running ? "true" : "false",
+             ecu_build_json);
 }
 
 /**

@@ -220,6 +220,12 @@ Edit `cmake/toolchains/arm-none-eabi.cmake`, update `ARM_NONE_EABI_VERSION` vari
 
 ## Key Technical Details
 
+**Engine Operation**
+The engine is a 60 degree V twin 4 stroke.
+The crank sensor generates an interrupt every 60 degrees of rotation.
+The CAM sensor indicates that the next crankshaft event will be crankshaft reference event 0, or CRID 0.
+Subsequent crank events go from CRID1 through CRID11, when a CAM event will occur, and the entire CRID0..CRID11 cycle will repeat as long as the engine is running.
+
 **EPROM Emulation Timing:**
 - HC11 E-clock: 2MHz
 - Bus cycle: 500ns
