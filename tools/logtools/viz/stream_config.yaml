@@ -222,18 +222,7 @@ streams:
   # ============================================================================
 
   # Injector bars - Phase 3+ combined format (preferred)
-  ecu_front_inj:
-    type: bar_data
-    display_name: "Front Injector"
-    y_position: 0.95  # Will be dynamically adjusted
-    height: 0.04
-    alpha: 0.7
-    default_color: "#FF6600"
-    tooltip: "Front Injector\nDuration: {duration_us:.1f} μs"
-    # Combined format: single dataset with [time_ns, duration_ticks where 1 tick = 2μs]
-    combined_format: true
-    duration_units: "ticks"  # Duration in 2μs timer ticks
-
+  # Rear listed first so it gets the lower Y position (bottom), front on top
   ecu_rear_inj:
     type: bar_data
     display_name: "Rear Injector"
@@ -242,6 +231,18 @@ streams:
     alpha: 0.7
     default_color: "#FF9900"
     tooltip: "Rear Injector\nDuration: {duration_us:.1f} μs"
+    # Combined format: single dataset with [time_ns, duration_ticks where 1 tick = 2μs]
+    combined_format: true
+    duration_units: "ticks"  # Duration in 2μs timer ticks
+
+  ecu_front_inj:
+    type: bar_data
+    display_name: "Front Injector"
+    y_position: 0.95  # Will be dynamically adjusted
+    height: 0.04
+    alpha: 0.7
+    default_color: "#FF6600"
+    tooltip: "Front Injector\nDuration: {duration_us:.1f} μs"
     # Combined format: single dataset with [time_ns, duration_ticks where 1 tick = 2μs]
     combined_format: true
     duration_units: "ticks"  # Duration in 2μs timer ticks

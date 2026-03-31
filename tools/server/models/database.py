@@ -335,6 +335,23 @@ class Database:
         finally:
             session.close()
 
+    def find_successful_transfer(self, device_mac: str, filename: str, size_bytes: int):
+        """Find a previous successful transfer for a given file.
+
+        Returns:
+            Transfer record if found, else None
+        """
+        session = self.get_session()
+        try:
+            return session.query(Transfer).filter_by(
+                device_mac=device_mac,
+                filename=filename,
+                size_bytes=size_bytes,
+                status='success'
+            ).first()
+        finally:
+            session.close()
+
     def update_transfer(self, transfer_id, **kwargs):
         """Update transfer record.
 

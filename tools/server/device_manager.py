@@ -174,6 +174,21 @@ class DeviceManager:
         finally:
             lock.release()
 
+    def _find_previously_downloaded(self, device_mac: str, log_storage_path: str, filename: str, file_size: int):
+        """Return the Transfer record of a previously downloaded copy of this file, or None.
+
+        Queries the database for a successful transfer matching device_mac, filename,
+        and size_bytes, then verifies the file still exists on disk.
+        """
+        transfer = self.database.find_successful_transfer(device_mac, filename, file_size)
+        if transfer is None:
+            return None
+        date_str = transfer.start_time.strftime("%Y-%m-%d")
+        candidate = os.path.join(log_storage_path, date_str, filename)
+        if os.path.exists(candidate):
+            return transfer
+        return None
+
     def _download_new_logs_locked(self, device_mac: str, log_storage_path: str, device_name: str, client: DeviceClient) -> bool:
         """Inner download loop, called only when the per-device lock is held.
 
@@ -219,6 +234,26 @@ class DeviceManager:
                     continue
                 else:
                     print(f"DeviceManager: Re-downloading {filename} (size mismatch: {local_size} vs {file_size})")
+
+            # Check if this file was already downloaded on a previous date.
+            # If so, record it as deduplicated and skip the download.
+            prior_transfer = self._find_previously_downloaded(device_mac, log_storage_path, filename, file_size)
+            if prior_transfer is not None:
+                prior_date = prior_transfer.start_time.strftime("%Y-%m-%d")
+                note = f"Already downloaded on {prior_date}"
+                dedup_transfer = self.database.add_transfer(
+                    device_mac=device_mac,
+                    filename=filename,
+                    size_bytes=file_size,
+                    status='deduplicated',
+                )
+                self.database.update_transfer(
+                    dedup_transfer.id,
+                    end_time=datetime.utcnow(),
+                    error_message=note,
+                )
+                print(f"DeviceManager: Skipping {filename} ({note})")
+                continue
 
             # Download file
             print(f"DeviceManager: Downloading {filename} ({file_size} bytes)")

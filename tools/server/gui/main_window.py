@@ -653,6 +653,8 @@ class TransferHistoryWidget(QWidget):
                         speed_str = f"{speed_kbps:.0f} KB/s"
                 elif transfer.status == 'failed':
                     progress_str = "Failed"
+                elif transfer.status == 'deduplicated':
+                    progress_str = transfer.error_message or "Deduplicated"
 
                 self.transfer_table.setItem(row, 4, QTableWidgetItem(progress_str))
                 self.transfer_table.setItem(row, 5, QTableWidgetItem(speed_str))
@@ -665,6 +667,8 @@ class TransferHistoryWidget(QWidget):
                     status_item.setForeground(Qt.GlobalColor.red)
                 elif transfer.status == 'in_progress':
                     status_item.setForeground(Qt.GlobalColor.blue)
+                elif transfer.status == 'deduplicated':
+                    status_item.setForeground(Qt.GlobalColor.darkGray)
                 self.transfer_table.setItem(row, 6, status_item)
 
                 # Time (convert from UTC to local time)

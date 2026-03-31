@@ -11,6 +11,7 @@ python viz.py [logfile.h5]
 
 import sys
 import os
+import pathlib
 
 # Force UTF-8 encoding on Windows to handle Unicode characters in stream_config.yaml and output
 if sys.platform == 'win32':
@@ -779,8 +780,10 @@ class DataVisualizationTool(QMainWindow):
             self.recent_files_menu.addAction(no_files_action)
         else:
             for filepath in recent_files:
-                # Show just the filename, but use full path internally
-                action = QAction(os.path.basename(filepath), self)
+                # Show filename with up to two parent directories for context
+                parts = pathlib.Path(filepath).parts
+                display_name = str(pathlib.Path(*parts[max(len(parts) - 3, 0):]))
+                action = QAction(display_name, self)
                 action.setToolTip(filepath)  # Show full path in tooltip
                 action.triggered.connect(lambda checked, f=filepath: self.load_recent_file(f))
                 self.recent_files_menu.addAction(action)
@@ -3068,9 +3071,10 @@ class DataVisualizationTool(QMainWindow):
         // Create map centered on clicked position
         const map = L.map('map').setView([clickedPos.lat, clickedPos.lon], 15);
 
-        // Add OpenStreetMap tiles
-        L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-            attribution: '&copy; OpenStreetMap contributors',
+        // Add CartoDB Voyager tiles (no Referer header required, unlike OSM direct tiles)
+        L.tileLayer('https://{{s}}.basemaps.cartocdn.com/rastertiles/voyager/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
             maxZoom: 19
         }}).addTo(map);
 
