@@ -174,6 +174,32 @@ class DeviceManager:
         finally:
             lock.release()
 
+    TAIL_VERIFY_SIZE = 16 * 1024  # 16K tail comparison to detect file replacement
+
+    def _file_tail_matches(self, local_path: str, local_size: int, filename: str, client, device_name: str) -> bool:
+        """Return True if the last TAIL_VERIFY_SIZE bytes of the local file match the device.
+
+        Used to detect the case where a file was deleted on the device and a new file
+        with the same name has grown larger than the previous one.
+        """
+        tail_offset = local_size - self.TAIL_VERIFY_SIZE
+        tag = f"{device_name}:{filename}"
+        print(f"DeviceManager: tail verify {tag} — fetching {self.TAIL_VERIFY_SIZE//1024}K at offset {tail_offset:,}")
+        device_chunk = client.fetch_chunk(filename, tail_offset)
+        if device_chunk is None:
+            print(f"DeviceManager: tail verify {tag} — fetch failed, assuming mismatch")
+            return False
+        try:
+            with open(local_path, 'rb') as f:
+                f.seek(tail_offset)
+                local_chunk = f.read(self.TAIL_VERIFY_SIZE)
+        except Exception as e:
+            print(f"DeviceManager: tail verify {tag} — local read error: {e}")
+            return False
+        match = local_chunk == device_chunk
+        print(f"DeviceManager: tail verify {tag} — {'MATCH, will append' if match else 'MISMATCH, will re-download'}")
+        return match
+
     def _find_previously_downloaded(self, device_mac: str, log_storage_path: str, filename: str, file_size: int):
         """Return the Transfer record of a previously downloaded copy of this file, or None.
 
@@ -202,7 +228,7 @@ class DeviceManager:
             print(f"DeviceManager: No log files found on device {device_mac}")
             return False
 
-        print(f"DeviceManager: Device has {len(files)} log files")
+        print(f"DeviceManager: {device_name} has {len(files)} log files")
 
         # Create date subdirectory for today's downloads
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -220,23 +246,34 @@ class DeviceManager:
 
             # Skip files with no size — likely the currently-open active log
             if file_size == 0:
-                print(f"DeviceManager: Skipping {filename} (size 0, probably active log)")
+                print(f"DeviceManager: Skipping {device_name}:{filename} (size 0)")
                 continue
 
             local_path = os.path.join(date_subdir, filename)
+            start_offset = 0
 
             # Check if file already exists
             if os.path.exists(local_path):
-                # File exists - check if size matches
                 local_size = os.path.getsize(local_path)
                 if local_size == file_size:
-                    print(f"DeviceManager: Skipping {filename} (already downloaded)")
+                    print(f"DeviceManager: Skipping {device_name}:{filename} (already downloaded)")
                     continue
+                elif local_size < file_size:
+                    # File grew — but verify the tail matches before appending,
+                    # in case the device file was deleted and a new one started
+                    # from the same name and grew past the old size.
+                    if local_size >= self.TAIL_VERIFY_SIZE and self._file_tail_matches(local_path, local_size, filename, client, device_name):
+                        start_offset = local_size
+                        print(f"DeviceManager: Appending {device_name}:{filename} from byte {local_size:,} ({file_size - local_size:,} new bytes)")
+                    else:
+                        print(f"DeviceManager: Re-downloading {device_name}:{filename} (tail mismatch or file too small to verify)")
                 else:
-                    print(f"DeviceManager: Re-downloading {filename} (size mismatch: {local_size} vs {file_size})")
+                    # local_size > file_size: file shrank, re-download from scratch
+                    print(f"DeviceManager: Re-downloading {device_name}:{filename} (local {local_size} > device {file_size})")
 
             # Check if this file was already downloaded on a previous date.
             # If so, record it as deduplicated and skip the download.
+            print(f"DeviceManager: checking dedup for {device_name}:{filename} ({file_size} bytes)")
             prior_transfer = self._find_previously_downloaded(device_mac, log_storage_path, filename, file_size)
             if prior_transfer is not None:
                 prior_date = prior_transfer.start_time.strftime("%Y-%m-%d")
@@ -252,11 +289,12 @@ class DeviceManager:
                     end_time=datetime.utcnow(),
                     error_message=note,
                 )
-                print(f"DeviceManager: Skipping {filename} ({note})")
+                print(f"DeviceManager: Skipping {device_name}:{filename} ({note})")
                 continue
 
-            # Download file
-            print(f"DeviceManager: Downloading {filename} ({file_size} bytes)")
+            # Download file (full or append)
+            if start_offset == 0:
+                print(f"DeviceManager: Downloading {device_name}:{filename} ({file_size} bytes)")
 
             # Notify callback
             if self.on_download_started:
@@ -319,21 +357,23 @@ class DeviceManager:
                     self.on_download_progress(_mac, _fn, bytes_downloaded, total_bytes)
 
             # Download file
-            success, error_msg = client.download_log_file(
+            success, error_msg, bytes_transferred = client.download_log_file(
                 filename,
                 local_path,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                start_offset=start_offset
             )
 
             # Remove from active downloads
             with self._active_downloads_lock:
                 self._active_downloads.pop(dl_key, None)
 
-            # Calculate transfer speed
+            # Calculate transfer speed using monotonic clock for precision
             end_time = datetime.utcnow()
-            duration = (end_time - start_time).total_seconds()
-            if duration > 0:
-                speed_mbps = (file_size / (1024 * 1024)) / duration
+            duration = time.monotonic() - mono_start
+            print(f"DeviceManager: speed calc: {bytes_transferred:,} bytes in {duration:.3f}s")
+            if duration > 0 and bytes_transferred > 0:
+                speed_mbps = (bytes_transferred / (1024 * 1024)) / duration
             else:
                 speed_mbps = 0
 
@@ -348,10 +388,10 @@ class DeviceManager:
                     local_sha256 = client.calculate_file_sha256(local_path)
 
                     if device_sha256.lower() == local_sha256.lower():
-                        print(f"DeviceManager: SHA-256 verified for {filename}")
+                        print(f"DeviceManager: SHA-256 verified for {device_name}:{filename}")
                         sha256_hash = device_sha256.lower()
                     else:
-                        print(f"DeviceManager: SHA-256 MISMATCH for {filename}!")
+                        print(f"DeviceManager: SHA-256 MISMATCH for {device_name}:{filename}!")
                         print(f"  Device: {device_sha256}")
                         print(f"  Local:  {local_sha256}")
                         success = False
@@ -359,7 +399,7 @@ class DeviceManager:
                         # Delete corrupted file
                         os.remove(local_path)
                 else:
-                    print(f"DeviceManager: WARNING: Could not get SHA-256 from device for {filename}")
+                    print(f"DeviceManager: WARNING: Could not get SHA-256 from device for {device_name}:{filename}")
 
             # Update transfer record
             if success:
@@ -370,7 +410,10 @@ class DeviceManager:
                     transfer_speed_mbps=speed_mbps,
                     sha256=sha256_hash
                 )
-                print(f"DeviceManager: Downloaded {filename} successfully ({speed_mbps:.2f} MB/s) -> {local_path}")
+                if bytes_transferred == 0:
+                    print(f"DeviceManager: {device_name}:{filename} — nothing new to download (file unchanged since listing)")
+                else:
+                    print(f"DeviceManager: Downloaded {device_name}:{filename} successfully ({speed_mbps:.2f} MB/s) -> {local_path}")
             else:
                 had_failure = True
                 self.database.update_transfer(
@@ -379,7 +422,7 @@ class DeviceManager:
                     end_time=end_time,
                     error_message=error_msg
                 )
-                print(f"DeviceManager: Failed to download {filename}: {error_msg}")
+                print(f"DeviceManager: Failed to download {device_name}:{filename}: {error_msg}")
 
             # Notify callback
             if self.on_download_completed:

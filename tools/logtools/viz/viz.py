@@ -12,6 +12,9 @@ python viz.py [logfile.h5]
 import sys
 import os
 import pathlib
+import re
+import subprocess
+import threading
 
 # Force UTF-8 encoding on Windows to handle Unicode characters in stream_config.yaml and output
 if sys.platform == 'win32':
@@ -30,9 +33,9 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QFileDialog, QCheckBox,
                              QScrollArea, QSplitter, QLabel, QFrame, QMenu,
                              QMenuBar, QToolBar, QLineEdit, QListWidget, QListWidgetItem,
-                             QSpinBox)
-from PySide6.QtCore import Qt, QPointF, QTimer, QRectF, QSettings, QByteArray, QMimeData, QPoint
-from PySide6.QtGui import QPen, QColor, QFont, QAction, QPainter, QDrag
+                             QSpinBox, QStackedWidget, QPlainTextEdit, QTextEdit)
+from PySide6.QtCore import Qt, QPointF, QTimer, QRectF, QSettings, QByteArray, QMimeData, QPoint, QEvent, Signal
+from PySide6.QtGui import QPen, QColor, QFont, QAction, QPainter, QDrag, QTextCursor, QTextCharFormat
 import pyqtgraph as pg
 from pyqtgraph import QtWidgets
 
@@ -137,6 +140,126 @@ class InjectorBarItem(QtWidgets.QGraphicsRectItem):
 MIN_TEMPERATURE_TICK_SPACING_C = 5.0  # Minimum spacing between temperature axis ticks (degrees C)
 
 # ================================================================================================
+# Event Log Panel — decoded .um4 log viewer synchronized with the main graph
+# ================================================================================================
+
+class EventLogPanel(QWidget):
+    """
+    Displays decoded .um4 log lines as scrollable text, synchronized with the graph cursor.
+
+    Up/Down arrow keys move the highlighted center line one event at a time; the cursor
+    InfiniteLine on the main graph follows.  Clicking the graph jumps to that time.
+    """
+
+    cursor_time_changed = Signal(float)  # emits time in seconds when center line changes
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._events = []        # [(time_s, text), ...]
+        self._center_idx = 0
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
+
+        self._status = QLabel("Log Viewer — load a file with seek_index to enable  (toggle: L)")
+        self._status.setStyleSheet("font-size: 10px; color: gray;")
+        layout.addWidget(self._status)
+
+        self._text = QPlainTextEdit()
+        self._text.setReadOnly(True)
+        mono = QFont("Monospace")
+        mono.setStyleHint(QFont.StyleHint.TypeWriter)
+        mono.setPointSize(9)
+        self._text.setFont(mono)
+        self._text.installEventFilter(self)
+        layout.addWidget(self._text)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def show_loading(self, time_s):
+        self._status.setText(f"Loading log at {time_s:.4f}s …")
+        self._text.setPlainText("Loading…")
+
+    def load_events(self, events, center_time_s, source_file):
+        """Replace the displayed event list and center on the closest event to center_time_s."""
+        self._events = events
+        if not events:
+            self._status.setText("No events decoded (check .um4 path and seek_index)")
+            self._text.setPlainText("")
+            return
+
+        times = [e[0] for e in events]
+        self._center_idx = min(range(len(times)), key=lambda i: abs(times[i] - center_time_s))
+
+        fname = os.path.basename(source_file)
+        self._status.setText(
+            f"{fname} — {len(events)} events | ↑↓ navigate | L to close")
+        self._render()
+
+    def step(self, delta):
+        """Move center line by delta events and emit cursor signal."""
+        if not self._events:
+            return
+        self._center_idx = max(0, min(len(self._events) - 1, self._center_idx + delta))
+        self._highlight_center()
+        self.cursor_time_changed.emit(self._events[self._center_idx][0])
+
+    def center_time(self):
+        """Return the time (seconds) of the currently highlighted event, or None."""
+        if self._events:
+            return self._events[self._center_idx][0]
+        return None
+
+    # ------------------------------------------------------------------
+    # Internal rendering
+    # ------------------------------------------------------------------
+
+    def _render(self):
+        lines = [text for _, text in self._events]
+        self._text.setPlainText('\n'.join(lines))
+        self._highlight_center()
+        if self._events:
+            self.cursor_time_changed.emit(self._events[self._center_idx][0])
+
+    def _highlight_center(self):
+        doc = self._text.document()
+        block = doc.findBlockByNumber(self._center_idx)
+
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor(255, 220, 0, 130))   # amber highlight
+
+        sel = QTextEdit.ExtraSelection()
+        sel.cursor = QTextCursor(block)
+        sel.cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        sel.format = fmt
+        self._text.setExtraSelections([sel])
+
+        # Scroll highlighted line into view
+        cursor = QTextCursor(block)
+        self._text.setTextCursor(cursor)
+        self._text.centerCursor()
+
+    # ------------------------------------------------------------------
+    # Event handling
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, obj, event):
+        """Intercept Up/Down in the text widget so they step events instead of scrolling."""
+        if obj is self._text and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Up:
+                self.step(-1)
+                return True
+            elif key == Qt.Key.Key_Down:
+                self.step(1)
+                return True
+        return super().eventFilter(obj, event)
+
+
+# ================================================================================================
 # Main Application Class
 # ================================================================================================
 
@@ -206,6 +329,12 @@ class DataVisualizationTool(QMainWindow):
         self.current_file = None  # Track currently loaded file
         self._pending_per_file_settings = None  # Settings loaded from .viz file, applied during populate_stream_selection()
 
+        # Log viewer state
+        self.seek_index = None     # numpy array (N,4): [time_ns, byte_offset, overflow_count, last_raw_ts]
+        self.um4_path = None       # Path to companion .um4 binary log file
+        self.log_panel_visible = False
+        self._pending_log_events = None   # (events, center_time_s) set by background thread
+
         # Update timer for real-time updates (30 FPS max)
         self.update_timer = QTimer()
         self.update_timer.setInterval(33)  # ~30 FPS
@@ -273,9 +402,24 @@ class DataVisualizationTool(QMainWindow):
         self.create_graph_window()
         self.v_splitter.addWidget(self.graph_plot)
 
-        # Navigation window
+        # Navigation window + log panel stacked in the bottom slot
         self.create_navigation_window()
-        self.v_splitter.addWidget(self.nav_widget)
+        self.log_panel = EventLogPanel(self)
+        self.log_panel.cursor_time_changed.connect(self._on_log_cursor_changed)
+
+        self._bottom_stack = QStackedWidget()
+        self._bottom_stack.addWidget(self.nav_widget)   # index 0 — normal nav overview
+        self._bottom_stack.addWidget(self.log_panel)    # index 1 — decoded log text
+        self._bottom_stack.setMaximumHeight(200)
+        self.v_splitter.addWidget(self._bottom_stack)
+
+        # InfiniteLine cursor shown on the graph when the log panel is active
+        self._log_cursor_line = pg.InfiniteLine(
+            angle=90, movable=False,
+            pen=pg.mkPen(color='#FFD700', width=2, style=Qt.PenStyle.DashLine))
+
+        # Wire graph click → log panel via ZoomableGraphWidget's click_callback
+        self.graph_plot.click_callback = self._on_graph_clicked_for_log
 
         # Set default sizes
         # Navigation height from config (fraction of max height 200px)
@@ -433,6 +577,15 @@ class DataVisualizationTool(QMainWindow):
         metadata_action.triggered.connect(self.show_metadata_dialog)
         metadata_action.setEnabled(HDF5_AVAILABLE)
         view_menu.addAction(metadata_action)
+
+        view_menu.addSeparator()
+
+        # Log viewer toggle
+        self.log_panel_action = QAction("Toggle &Log Viewer", self)
+        self.log_panel_action.setShortcut("L")
+        self.log_panel_action.setCheckable(True)
+        self.log_panel_action.triggered.connect(self.toggle_log_panel)
+        view_menu.addAction(self.log_panel_action)
 
         # SETTINGS MENU
         settings_menu = menu_bar.addMenu("&Settings")
@@ -1162,6 +1315,33 @@ class DataVisualizationTool(QMainWindow):
             self.stream_metadata = self.data_manager.stream_metadata
             self.stream_ranges = self.data_manager.stream_ranges
 
+            # Load seek_index for log viewer (4-column dataset, not handled by hdf5_loader)
+            self.seek_index = None
+            self.um4_path = None
+            try:
+                with h5py.File(filename, 'r') as hf:
+                    if 'seek_index' in hf and hf['seek_index'].shape[0] > 0:
+                        self.seek_index = hf['seek_index'][:]
+                        print(f"Loaded seek_index: {len(self.seek_index)} entries")
+            except Exception as e:
+                print(f"Could not load seek_index: {e}")
+
+            # Look for companion .um4 binary log alongside the HDF5 file
+            base = filename
+            for ext in ('.h5', '.hdf5'):
+                if base.lower().endswith(ext):
+                    base = base[:-len(ext)]
+                    break
+            um4_candidate = base + '.um4'
+            if os.path.isfile(um4_candidate):
+                self.um4_path = um4_candidate
+                print(f"Found companion .um4: {um4_candidate}")
+
+            # Update log viewer availability
+            if hasattr(self, 'log_panel_action'):
+                self.log_panel_action.setEnabled(
+                    self.seek_index is not None and self.um4_path is not None)
+
             # Set time bounds
             time_min, time_max = self.data_manager.get_time_bounds()
             self.total_time_span = self.data_manager.time_span
@@ -1266,6 +1446,137 @@ class DataVisualizationTool(QMainWindow):
             print(f"Error loading HDF5 file: {e}")
             import traceback
             traceback.print_exc()
+
+    # -----------------------------------------------------------------------
+    # Log viewer — toggle, seek, decode, sync
+    # -----------------------------------------------------------------------
+
+    def toggle_log_panel(self):
+        """Toggle between navigation overview and decoded log text panel."""
+        if self.log_panel_visible:
+            # Switch back to nav plot
+            self._bottom_stack.setCurrentIndex(0)
+            self._bottom_stack.setMaximumHeight(200)
+            self.log_panel_visible = False
+            self.log_panel_action.setChecked(False)
+            if self._log_cursor_line in self.graph_plot.items():
+                self.graph_plot.removeItem(self._log_cursor_line)
+        else:
+            if self.seek_index is None or self.um4_path is None:
+                print("Log viewer requires a seek_index in the HDF5 and a companion .um4 file.")
+                self.log_panel_action.setChecked(False)
+                return
+            self._bottom_stack.setCurrentIndex(1)
+            self._bottom_stack.setMaximumHeight(16777215)  # no height cap for log panel
+            self.log_panel_visible = True
+            self.log_panel_action.setChecked(True)
+            self.graph_plot.addItem(self._log_cursor_line)
+            # Load around the center of the current view
+            center_time = (self.view_start + self.view_end) / 2.0
+            self._open_log_at_time(center_time)
+
+    def _on_graph_clicked_for_log(self, time_s):
+        """Called by ZoomableGraphWidget.click_callback with the clicked x (time) value."""
+        if self.log_panel_visible:
+            self._open_log_at_time(time_s)
+
+    def _on_log_cursor_changed(self, time_s):
+        """Move InfiniteLine cursor on the graph to match the highlighted log event."""
+        self._log_cursor_line.setValue(time_s)
+
+    def _open_log_at_time(self, time_s):
+        """Start a background decode of the log around time_s and update the log panel."""
+        if self.seek_index is None or self.um4_path is None:
+            return
+
+        # Find the seek_index entry just before (time_s - 1.0) so we get at least one
+        # full second of context before the requested position.
+        seek_time_ns = max(0, int((time_s - 1.0) * 1e9))
+        idx = int(np.searchsorted(self.seek_index[:, 0], seek_time_ns, side='right')) - 1
+        idx = max(0, idx)
+        seek_entry = self.seek_index[idx]
+
+        self.log_panel.show_loading(time_s)
+
+        def do_decode():
+            events = self._decode_range(seek_entry, max_time_s=20.0)
+            self._pending_log_events = (events, time_s)
+
+        thread = threading.Thread(target=do_decode, daemon=True)
+        thread.start()
+
+        poll_timer = QTimer(self)
+        poll_timer.setInterval(100)
+
+        def check_done():
+            if not thread.is_alive():
+                poll_timer.stop()
+                poll_timer.deleteLater()
+                if self._pending_log_events is not None:
+                    events, center = self._pending_log_events
+                    self._pending_log_events = None
+                    if self.log_panel_visible:
+                        self.log_panel.load_events(events, center, self.um4_path)
+
+        poll_timer.timeout.connect(check_done)
+        poll_timer.start()
+
+    def _decode_range(self, seek_entry, max_time_s=20.0):
+        """
+        Run decodelog.py as a subprocess starting from seek_entry and return decoded events.
+
+        seek_entry: 1-D array [time_ns, byte_offset, overflow_count, last_raw_ts]
+        Returns list of (time_s, text) tuples.
+        """
+        decoder_path = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), '..', 'decoder', 'decodelog.py'))
+        if not os.path.exists(decoder_path):
+            print(f"Decoder not found: {decoder_path}")
+            return []
+
+        time_ns      = int(seek_entry[0])
+        byte_offset  = int(seek_entry[1])
+        overflow_cnt = int(seek_entry[2])
+        last_raw_ts  = int(seek_entry[3])
+
+        try:
+            result = subprocess.run(
+                [sys.executable, decoder_path, self.um4_path,
+                 '--range-mode',
+                 f'--seek-offset={byte_offset}',
+                 f'--seek-time-ns={time_ns}',
+                 f'--seek-overflow={overflow_cnt}',
+                 f'--seek-raw-ts={last_raw_ts}',
+                 f'--max-time-s={max_time_s}'],
+                capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                print(f"_decode_range: decoder exited {result.returncode}")
+                print(f"  stderr: {result.stderr[:300]}")
+            events = self._parse_decoder_output(result.stdout)
+            if not events:
+                print(f"_decode_range: no events parsed (stdout len={len(result.stdout)})")
+                if result.stderr:
+                    print(f"  stderr: {result.stderr[:300]}")
+            return events
+        except subprocess.TimeoutExpired:
+            print("_decode_range: decoder subprocess timed out")
+            return []
+        except Exception as e:
+            print(f"_decode_range error: {e}")
+            return []
+
+    def _parse_decoder_output(self, output):
+        """Parse decoder stdout into [(time_s, text)] pairs."""
+        pattern = re.compile(r'@\s*([\d.]+)s\]')
+        events = []
+        for line in output.splitlines():
+            line = line.rstrip()
+            if not line or line.startswith('#'):
+                continue
+            m = pattern.search(line)
+            if m:
+                events.append((float(m.group(1)), line))
+        return events
 
     def show_metadata_dialog(self):
         """Show HDF5 metadata in a popup dialog"""
@@ -1562,6 +1873,10 @@ class DataVisualizationTool(QMainWindow):
 
         # Re-add GPS markers after clear (they get removed by clear())
         self.graph_plot.addItem(self.gps_markers)
+
+        # Re-add log cursor line if log panel is active
+        if self.log_panel_visible:
+            self.graph_plot.addItem(self._log_cursor_line)
 
         if not self.raw_data or len(self.enabled_streams) == 0:
             # Reset to default axis formatting when no streams are enabled

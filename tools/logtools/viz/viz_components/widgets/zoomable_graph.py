@@ -16,6 +16,7 @@ class ZoomableGraphWidget(pg.PlotWidget):
         self.rubberband_rect = None
         self.is_dragging = False
         self.zoom_callback = None
+        self.click_callback = None  # Called with (x_value) on a simple left click (no drag)
         self.exclude_region = None  # Optional LinearRegionItem to exclude from rubber band zoom
 
     def mousePressEvent(self, ev):
@@ -73,6 +74,10 @@ class ZoomableGraphWidget(pg.PlotWidget):
                 if abs(x_max - x_min) > 0.01 and abs(y_max - y_min) > 0.01:
                     if self.zoom_callback:
                         self.zoom_callback(x_min, x_max, y_min, y_max)
+                else:
+                    # Small or zero drag — treat as a plain click
+                    if self.click_callback:
+                        self.click_callback(end.x())
 
             if self.rubberband_rect is not None:
                 self.plotItem.vb.removeItem(self.rubberband_rect)
