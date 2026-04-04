@@ -277,20 +277,26 @@ class DeviceManager:
             prior_transfer = self._find_previously_downloaded(device_mac, log_storage_path, filename, file_size)
             if prior_transfer is not None:
                 prior_date = prior_transfer.start_time.strftime("%Y-%m-%d")
-                note = f"Already downloaded on {prior_date}"
-                dedup_transfer = self.database.add_transfer(
-                    device_mac=device_mac,
-                    filename=filename,
-                    size_bytes=file_size,
-                    status='deduplicated',
-                )
-                self.database.update_transfer(
-                    dedup_transfer.id,
-                    end_time=datetime.utcnow(),
-                    error_message=note,
-                )
-                print(f"DeviceManager: Skipping {device_name}:{filename} ({note})")
-                continue
+                prior_path = os.path.join(log_storage_path, prior_date, filename)
+                # Verify the tail of the local copy matches the device before trusting the dedup.
+                # This catches the case where a new file has the same name and size as an old one.
+                if file_size >= self.TAIL_VERIFY_SIZE and not self._file_tail_matches(prior_path, file_size, filename, client, device_name):
+                    print(f"DeviceManager: Dedup tail mismatch for {device_name}:{filename} — downloading fresh copy")
+                else:
+                    note = f"Already downloaded on {prior_date}"
+                    dedup_transfer = self.database.add_transfer(
+                        device_mac=device_mac,
+                        filename=filename,
+                        size_bytes=file_size,
+                        status='deduplicated',
+                    )
+                    self.database.update_transfer(
+                        dedup_transfer.id,
+                        end_time=datetime.utcnow(),
+                        error_message=note,
+                    )
+                    print(f"DeviceManager: Skipping {device_name}:{filename} ({note})")
+                    continue
 
             # Download file (full or append)
             if start_offset == 0:

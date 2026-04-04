@@ -1,14 +1,17 @@
 # To Do
 
+## Where To?
+
+1. It might be time to roll up PCB changes into 4V3.
+
+
 ## Issues
 
 The ever increasing list of broken stuff:
 
-2. fix RPM averaging in decodelog.py
+1. Display EPROM build info on the EPROM Management page
 
-3. Display EPROM build info on the EPROM Management page
-
-6. Should the WP check in once in a while if it has not heard from the server in 10 mins?
+2. Should the WP check in once in a while if it has not heard from the server in 10 mins?
 
 ## Next Checkin
 
@@ -18,16 +21,6 @@ The ever increasing list of broken stuff:
 
 * .dsc files should get incorporated into the EPROM library process
   It's mainly about capturing the descriptive information in the .dsc files so it can be displayed on the phone screen.
-
-* ECU Live View
-  * Is it worth it? ECU data flies by too fast. Displaying things like injector pulse width or CRID is pointless. What really needs to be observed in real time?
-    * CO1/CO2 deadband trim pot settings, just so a user could make them replicatable
-    * VTA throttle angle, to allow setting the TPS without the diag connection
-    * L000C though L000F: Error registers
-    * THA/THW Air/water temp
-    * VM Voltage monitor
-    * CAM error
-    * NoSpark error
 
 * GPS Live View
   * Should this just be part of "Live View"
@@ -80,10 +73,6 @@ General:
 
 * Figure out what the target ADC reading is for DIAG mode when setting the TPS position
 
-### Bugs
-
-* looks like time is going backwards with the new VTA/time reports
-
 ## Visualizer
 
 * Small Potatoes List
@@ -93,30 +82,13 @@ General:
     * Graph streams
     * Marker streams
 
-* Build a Log Viewer into visualizer
-  * Right click on any event in the graph window to view it in the log
-* Get viz packaged up for others to play with
-  * Start with Windows and Linux releases.
-  MacOS to follow once the processes are ironed out.
-
-Features to add:
-
-* Coil dwell bars
-  * GPS
-  * CPU events
-  * EPROM load events
-
-
 ## ECU
-
-### Find Out Why 4V1 PCB Draws High Current at ECU Power-Off
 
 ### ECU Power Supply Noise From Ignition
 
 #### ECU Loses Crank Posn
 
 Seems to be noise-related, perhaps when an ignition event occurs at the same time as the leading edge of a crank event.
-
 
 ## EP
 

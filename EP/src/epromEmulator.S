@@ -31,6 +31,13 @@
 //   The synchronizers introduce a 2 cycle latency into observing any changes on the GPIOs.
 //   For more info on the synchronizers: see PROC_IN_SYNC_BYPASS, in RP2040 datasheet p305
 //
+// - Propagation Delays Through the Voltage Translation Buffer
+//   The E signal passes through a 74LVC541 to translate it from the 5V HC11 domain to the 3.3V
+//   RP2040 domain. This nominally costs approx 1 cycle from the EP2040's point of view.
+//   If you are scoping the E signal in the 5V domain (where the test point is located)
+//   be aware that the signal will be delayed by approx. 1 RP2040 clock before the synchronizers
+//   even get a chance to see it.
+//
 // - RP2040 write of GPIO interrupt clear register is slower than expected
 //   See: https://forums.raspberrypi.com/viewtopic.php?t=343818#p2060153
 //
@@ -51,6 +58,15 @@
 //   To account for situations where the branches are taken, the target label of all branches
 //   must appear on an otherwise empty source line (no opcode!).  The label itself will
 //   get billed for the 1 cycle penalty to get there.
+//
+// Future Change Considerations
+//
+// - It has been proven that a PIO machine can be used to watch for falling E, then wake the CPU
+//   via a PIO interrupt. This increases the latency in waking the CPU from WFI by a cycle or two,
+//   but it means that the existing 5-cycle instruction to clear the GPIO interrupt turns into a
+//   2 cycle instruction to clear the PIO interrupt. Because the PIO unit is NOT on the far
+//   side of the AHB, it would remove the current constraint that core0 cannot use anything on
+//   the far side of the AHB bus to avoid disturbing Core1 timing.
 
 
         #include "pico/asm_helper.S"
@@ -104,7 +120,7 @@
 #define r_SIO_BASE_PTR          r7      // SIO accesses through this pointer register take only 1 cycle (yay SIO!)
 #define r_DBG_BSY_MSK           r6      // holds a bitmask for a test GPIO that gets driven to indicate the start and end of an HC11 transation
 #define r_EPROM_DATA_PTR        r5      // points at the start of the 32K EPROM code image we are serving to the HC11
-#define r_HC11_DATA_MSK         r4      // holds a constant used to control the data bus drivers
+#define r_PIO_TXF_PTR           r4      // the address of the PIO FIFO waiting for read data
 #define r_ECU_LOG_PTR           r3      // points at the location in the log to store the next ECU memory access
 // R0..R2 are reserved for general-purpose usage in the code.
 
@@ -142,8 +158,9 @@ epromTask:
 // Load a permanent pointer to the start address of EPROM data
         ldr     r_EPROM_DATA_PTR, =__ram_core1_eprom_start__  // lower 32K of bank0: EPROM image buffer
 
-// Load up the bitmask we will need for manipulating the HC11 data bus output drivers in the SIO GPIO direction control register
-        ldr     r_HC11_DATA_MSK, =#HC11_DB_BITS
+// Load a permanent pointer to the proper PIO FIFO where we write our read results to be driven to the HC11 bus
+        ldr     r0, =g_failsafe_txf_addr                // get a pointer to the variable that holds the FIFO address
+        ldr     r_PIO_TXF_PTR, [r0]                     // deref to get the actual FIFO address
 
 // Save some permanent constants identifying the start and end of our RAM window inside the fake EPROM
         ldr     r0, =#RAM_WINDOW_END_OFFSET
@@ -220,50 +237,48 @@ _wfi:   wfi                                                                     
 // See "wakeup budget" documentation at the start of this file for an explanation of
 // why the first instruction after WFI begins executing 6 to 6.999999 clocks after the WFI event.
                                                                                 // - [7]  Assume a worst case latency for waking up
-// Always disable data bus output drivers:
-        str     r_HC11_DATA_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OE_CLR_OFFSET]       // 1 [8]  We are already well beyond the 10 nS/2clk spec
-                                                                                //        This operation is harmless if the previous cycle was not a read
 // Acknowledge the interrupt that awoke us from the WFI
-        adr     r0,intAckInfo                                                   // 1 [9]  Point r0 at a table of info needed to clear the ints
-        ldm     r0,{r0,r1,r2}                                                   // 4 [13]
-        str     r0,[r1]                                                         // 5 [18] Clear the falling edge interrupt request from the GPIO unit (yes, this store takes 5 cycles!!)
-        str     r0,[r2]                                                         // 2 [20] Clear the GPIO's pending interrupt in the NVIC
+        adr     r0,intAckInfo                                                   // 1 [8]  Point r0 at a table of info needed to clear the ints
+        ldm     r0,{r0,r1,r2}                                                   // 4 [12]
+        str     r0,[r1]                                                         // 5 [17] Clear the falling edge interrupt request from the GPIO unit (yes, this store takes 5 cycles!!)
+        str     r0,[r2]                                                         // 2 [19] Clear the GPIO's pending interrupt in the NVIC
 
 // Drive DBG_BSY low to indicate that we are about to read the bus signals
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [21] Scope must show the STR instruction completing at 160 to 168 nSec (20 to 21 clocks)
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [20] Scope must show the STR instruction completing at 152 to 160 nSec (19 to 20 clocks)
 
 // The HC11 bus spec guarantees that the ADDR and control signals will be valid no later than 95 nS (12 clocks) after falling E.
 // We are well past that, so we have a lots of margin.
 // Our first decision point: discover if this bus cycle targets us or not.
-        ldr     r1,[r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                        // 1 [22] Read the entire set of bus signals CE, WR/!RD, E, A14..A0
-        lsls    r0,r1,#31-HC11_CE_LSB                                           // 1 [23] Shift the EPROM CE signal into b31
-        bpl     no_CE                                                           // 1 [24] branch if the EPROM CE is '0' (not asserted, meaning we are NOT the target of this bus cycle)
+        ldr     r1,[r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                        // 1 [21] Read the entire set of bus signals CE, WR/!RD, E, A14..A0
+        lsls    r0,r1,#31-HC11_CE_LSB                                           // 1 [22] Shift the EPROM CE signal into b31
+        bpl     no_CE                                                           // 1 [23] branch if the EPROM CE is '0' (not asserted, meaning we are NOT the target of this bus cycle)
 
 // -------------------------------------------------------------------------------------------------------------
 // The current bus cycle is targeting us.
 // Extract the 15-bit HC11 address offset field from the set of bus signals:
-        lsls    r2,r1,#31-HC11_AB_MSB                                           // 1 [25] Left-shift the address offset field so that its msb ends up in b31
-        lsrs    r2,#31-(HC11_AB_MSB - HC11_AB_LSB)                              // 1 [26] Right shift in zeroes until the lsb of the left-shifted offset field ends up at b0
+        lsls    r2,r1,#31-HC11_AB_MSB                                           // 1 [24] Left-shift the address offset field so that its msb ends up in b31
+        lsrs    r2,#31-(HC11_AB_MSB - HC11_AB_LSB)                              // 1 [25] Right shift in zeroes until the lsb of the left-shifted offset field ends up at b0
 
 // Is this a read or a write operation?
-        lsls    r0,r1,#31-HC11_WR_LSB                                           // 1 [27] Shift the HC11 WR signal into b31
-        bpl     _readCycle                                                      // 1 [28] The HC11 R/!W signal is inverted by our logic level converter on the PCB, therefore '0' means a read
+        lsls    r0,r1,#31-HC11_WR_LSB                                           // 1 [26] Shift the HC11 WR signal into b31
+        bpl     _readCycle                                                      // 1 [27] The HC11 R/!W signal is inverted by our logic level converter on the PCB, therefore '0' means a read
 
 // This is a write. Is a standard log write or a write inside our RAM window?
-        cmp     r2, rh_RAM_START_OFFSET                                         // 1 [29] Does the offset fall below the bottom of our RAM window?
-        blt     _writeLog1                                                      // 1 [30] Yes, it is a normal log write
-        cmp     r2, rh_RAM_END_OFFSET                                           // 1 [31] Does the offset fall above the top of our RAM window?
-        bgt     _writeLog2                                                      // 1 [32] Yes, it is a normal log write
+        cmp     r2, rh_RAM_START_OFFSET                                         // 1 [28] Does the offset fall below the bottom of our RAM window?
+        blt     _writeLog1                                                      // 1 [29] Yes, it is a normal log write
+        cmp     r2, rh_RAM_END_OFFSET                                           // 1 [30] Does the offset fall above the top of our RAM window?
+        bgt     _writeLog2                                                      // 1 [31] Yes, it is a normal log write
 
 // -------------------------------------------------------------------------------------------------------------
 // RAM Write Cycle: the write address is within the RAM window. We are allowed to update the RAM buffer inside the EPROM code image.
 // Wait for write data to get driven onto the data bus by the HC11:
-        movs    r0,#3                                                           // (3*3) [41]
+        movs    r0,#3                                                           // (3*3) [40]
 1:      subs    r0,#1
         bne     1b
 
 // We will drive our debug signal active, then sample 2 clocks later to account for the GPIO input synchronizer delay.
 // An oscilloscope will show DBG_BSY going high just before the data gets sampled.
+        nop                                                                     // 1 [41]
         nop                                                                     // 1 [42]
         str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [43] Drive DBG_BSY high
         nop                                                                     // 1 [44]
@@ -281,18 +296,19 @@ _wfi:   wfi                                                                     
 // We forward the log data to the other core.
 // The two target labels are set up to ensure that the overall timing is
 // identical regardless of which branch we took to get here.
-_writeLog1:                                                                     // 1 [31] taken branch
-        nop                                                                     // 1 [32] make up for the second compare we didn't need to do
-        nop                                                                     // 1 [33]
+_writeLog1:                                                                     // 1 [30] taken branch
+        nop                                                                     // 1 [31] make up for the second compare we didn't need to do
+        nop                                                                     // 1 [32]
 _writeLog2:                                                                     //   [33] account for the taken branch, but not the fallthrough
 // Writes require us to wait until the write data gets driven by the HC11. The HC11 bus spec says that
 // this will be no later than 255+80=335 nSec (42 clocks) after the E clock event that woke us up.
-        movs    r0,#3                                                           // (3*3) [42]
+        movs    r0,#3                                                           // (3*3) [41]
 1:      subs    r0,#1
         bne     1b
 
 // We will drive our debug signal active, then sample 2 clocks later to account for the input synchronizer delay.
 // An oscilloscope will show DBG_BSY going low in the same cycle as the data gets sampled.
+        nop                                                                     // 1 [42]
         str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [43] Drive DBG_BSY high at 43 clocks/344 nS
         nop                                                                     // 1 [44]
         ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [45] Sample the HC11 bus data from 2 clocks ago, note that E/A15 is guaranteed to be a '1'
@@ -309,30 +325,30 @@ _writeLog2:                                                                     
 // because they share the same RP2040 SRAM buffer.
 // READ data needs to be valid on the bus no later than 425 nS (53 clocks) after initial falling edge of E.
 // On entry, R2 must contain the 15-bit EPROM offset
-_readCycle:                                                                     // 1 [29]
-//Read the proper byte from SRAM buffer holding the ECU code image:
-        ldrb    r0,[r_EPROM_DATA_PTR,r2]                                        // 2 [31]
+_readCycle:                                                                     // 1 [28]
+// Read the proper byte from SRAM buffer holding the ECU code image:
+        ldrb    r0,[r_EPROM_DATA_PTR,r2]                                        // 2 [30]
 
-// We know that the data bus drivers are not enabled at this point since we always disable them after waking.
-// Drive the data byte to the HC11 data bus in a glitch-free fashion.
-        lsls    r0,#HC11_DB_LSB                                                 // 1 [32] Shift the data bits to their proper location in the SIO GPIO register
-        str     r_HC11_DATA_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]      // 1 [33] Clear all data bus outputs leaving all other IOs untouched
-        str     r0, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]                   // 1 [34] Put the proper data in the outputs, leaving all other IOs untouched
-        str     r_HC11_DATA_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OE_SET_OFFSET]       // 1 [35] Now that all updates are complete: enable the output drivers
+
+// Send the byte to the PIO to be driven to the bus.
+        str     r0,[r_PIO_TXF_PTR]                                              // 2 [32] 32 is worst case, 31 is best case
+
+// The PIO machine needs 4 more cycles to get the data on the bus.
+        nop                                                                     // 1 [33]
+        nop                                                                     // 1 [34]
+        nop                                                                     // 1 [35]
+        nop                                                                     // 1 [36]
 
 // Drive DBG_BSY high to indicate that read data is active (needs to be <=53 clocks, 425 nS)
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [36]
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [37]
 
-// Re-read the data bus now that it reflects our new output data and E/A15 is guaranteed to be '1'.
-        nop                                                                     // 1 [37] May not be req'd: it depends if our data bus outputs need to get resampled through the synchronizers or not. This is safe!
-        ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [38] Resample the HC11 bus data we wrote 2 clocks ago
-
-        movs    r2,#3                                                           // (3*3) [47]
+        movs    r2,#3                                                           // (3*3) [46]
 1:      subs    r2,#1
         bne     1b
+        nop                                                                     // 1 [47]
 
-        nop                                                                     // 1 [48]
-// r0 must contain the data to be logged:
+// Re-read HC11 data bus now that it reflects our new output data and E/A15 is guaranteed to be '1'.
+        ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [48] Resample the HC11 bus data we wrote 2 clocks ago
         b       log                                                             // 1 [49] Needs to be exactly 49 cycles+1 for taken branch
 
 
@@ -343,10 +359,10 @@ _readCycle:                                                                     
 // However: it is clear that the data associated with internal transactions is not showing up on the bus properly.
 // The address bits and control signals are correct, but the data is not!
 // We will not bother logging the bus cycle.
-no_CE:                                                                          // 1 [25] taken branch to get here
+no_CE:                                                                          // 1 [24] taken branch to get here
 // Drive DBG_BSY high to indicate we are done:
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [26] Oscope says this instr completes at 200nS to 208 nS, 25 to 26 clocks, so our accounting is correct!
-        b       _wfi                                                            // 1 [27] Nothing to log, so go back to sleep
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [25] Oscope says this instr completes at 200nS to 208 nS, 25 to 26 clocks, so our accounting is correct!
+        b       _wfi                                                            // 1 [26] Nothing to log, so go back to sleep
 
 
         .align  2

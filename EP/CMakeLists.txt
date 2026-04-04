@@ -73,6 +73,7 @@ add_executable(${PROJECT_NAME}
   src/main.cpp
   src/epromEmulator.S
   src/EpromLoader.cpp
+  src/busFailsafeSetup.cpp
   ${DESCRAMBLER_SOURCE}
 )
 
@@ -80,6 +81,10 @@ add_executable(${PROJECT_NAME}
 # Generate the uart PIO header file for use by this project.
 # FYI: the header file will be generated into "build/EP/uart_tx32_pio.h".
 pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_tx32.pio)
+
+# Generate the bus failsafe PIO header file.
+# FYI: the header file will be generated into "build/EP/busFailsafe_pio.h".
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/busFailsafe.pio)
 
 # Override the standard Segger definitions for these symbols.
 # The "up" buffer is EP->host printf data. We make it huge as a means of logging boot messages

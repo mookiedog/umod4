@@ -28,6 +28,7 @@
 #include "EpromLoader.h"
 #include "hardware.h"
 #include "epromEmulator.h"
+#include "busFailsafeSetup.h"
 #include "log_ids.h"
 #include "bsonlib.h"
 
@@ -579,6 +580,7 @@ int main(void)
 
     initSystick();
     initUart();
+    busFailsafeSetup();
 
     prepEpromImage();
     logMapblob();

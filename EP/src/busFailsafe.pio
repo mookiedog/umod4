@@ -1,0 +1,64 @@
+// busFailsafe.pio
+//
+// SM: Bus Output Driver + Dead-Man Failsafe
+//
+// Core 1 handles read cycles in epromEmulator.S. When it has the data byte
+// ready, it pushes the byte to this SM's TX FIFO. This SM wakes, pulls the data,
+// drives it to the bus, and enables OE.
+// Given that the SM knows exactly when the firmware put the data in the FIFO,
+// it can count down a fixed delay to where it knows that E must have have fallen
+// (plus a few cycles of data hold time), at which point, it can tristate
+// the data bus unconditionally.
+// This ensures that if an E-cycle for a READ ever gets started, this SM is
+// guaranteed to disable the bus drivers after an appropriate amount of time
+// so that we do not drive HC11 bus data in to an unpowered transceiver.
+//
+// The fixed delay is calibrated to expire just after HC11 E-fall (~cycle 62),
+// giving a few clocks of hold time. Crucially, if E never falls (ECU power
+// loss mid-cycle), the SM tristates after the timeout regardless — that is
+// the entire point of this approach.
+//
+// Calibration:
+//   Core 1 will push the read data byte at cycle 31 (best case) or
+//   cycle 32 (worst case) from falling-E.
+//   A complete 512 nS bus cycle is 64 clocks at 8 nS each.
+//   If we are shooting for a 10 nS hold time, we must drive the bus
+//   until cycle 66 (min).
+//   There is no max hold time except for potential bus driver contention that
+//   would occur when the processor starts to drive the next bus cycle.
+//   We need to calculate our timing here based on the best-case
+//   timing from core1 in order to be sure we meet the min hold time.
+//
+// DBG_BSY (side-set, optional):
+//   DBG_BSY=0 when OE is enabled (data on bus)
+//   DBG_BSY=1 when bus is tristated
+//   Used to verify timing on oscilloscope.
+//   If you are verifying with a scope, don't forget that the scope test point +5_E
+//   is E in the 5V domain, meaning that it has not gone through its voltage conversion
+//   buffer yet. This buffer adds a propagation delay that is approximately 1 RP2040 clk.
+//
+// Config:
+//   OUT_BASE      = HC11_DB_LSB  (GPIO16)
+//   OUT_COUNT     = 8
+//   OSR shift     = right, no autopull (byte in bits [7:0]; 0xFF mask in Y also in [7:0])
+//   SIDE_SET_BASE = DBG_BSY_LSB  (GPIO29)
+//   side_set count= 1, optional
+//   Y init        = 0xFF  OE enable mask. Must be loaded via pio_sm_exec at setup!
+//   JMP_PIN         not used
+
+.program bus_failsafe
+.side_set 1 opt
+
+.wrap_target
+                                            ; core1 FIFO push completes in cycle 31 (best case),
+                                            ; so the PULL below completes in cycle 32 (best case)
+        pull    block                       ; [32] wait for read-cycle data byte from Core 1
+        out     pins, 8                     ; [33] drive data values onto GPIO 16-23 (OE still off — no glitch)
+        mov     osr, y                      ; [34] OSR = 0xFF (OE enable mask)
+        out     pindirs, 8      side 0      ; [35] enable OE: GPIO 16-23 now driving HC11 data bus; DBG_BSY=0
+        set     x, 27                       ; [36] countdown: 29 iterations
+loop:
+        jmp     x-- loop                    ; [64] +28 loop iterations
+        mov     osr, null                   ; [65]
+        out     pindirs, 8      side 1      ; [66] tristate GPIO 16-23; DBG_BSY=1 (cycle complete or failsafe)
+.wrap
