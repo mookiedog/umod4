@@ -22,7 +22,7 @@ In the situation where the umod4 is powered via USB but the ECU is OFF, the yell
 For a minimal bench test system, all you need is a source of nominal +12V power and GND.
 A simple way to power the ECU adds an AC adapter socket to a home-made bracket on the circuit board, as shown below:
 
-![image](images/bench_power.jpg)
+![image](doc/images/bench_power.jpg)
 
 ### Power
 

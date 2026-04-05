@@ -1,6 +1,6 @@
 # Visualizer Operation
 
-The '[viz](src/viz.py)' program is what allows a user to look inside a log and see what happened.
+The '[viz](./logtools/viz/viz.py)' program is what allows a user to look inside a log and see what happened.
 The general goal is to allow users to:
 
 * Select the specific ECU data streams they are interested in examining
@@ -305,6 +305,29 @@ This next screen shows the bike at a bit over 7K RPM with the throttle fairly wi
 Hovering over an injector event will light up a tooltip telling you the pulse duration in microseconds.
 You can see that the duration is a lot longer than when the bike was warming up in the previous image.
 It makes sense: the engine is making serious power at this point!
+
+## Binary Log Details
+
+There is a dedicated tool 'decodelog.py' which can decode the .um4 log files into two different formats:
+
+* .h5 files: used by the visualizer to display log data graphically
+* .hr files: 'human readable' log files, decoded into English
+
+One reason to _not_ decode .um4 log files into human readable logs is that they are huge and take up a lot of disk space. I will still do that if I want to grep certain events from the log, but I usually don't need the whole thing laying around.
+
+To make things easier, the visualizer is now set up to show me the low-level binary data for every log item on the screen, on demand.
+You can see how it works, below:
+![binry-data-viewer](images/viz-detail-log.jpg)
+
+I clicked on the first spark event in the graph display.
+It was captured while the bike was cranking over during a startup sequence.
+The VTA events are the ECU measuring the throttle position.
+The VM is the Voltage Monitor.
+You can see that the battery voltage sagged to 8.5 Volts while the engine was cranking.
+That is pretty normal, especially on the cold day (11C) when this log was taken.
+You can see the crank just starting to speed up during CR5, then speed up greatly during CR6 as the front cylinder continues its power stroke.
+You can see that there is some additional detail in the low-level log, although I will admit that the level of detail is probably only interesting to me.
+That said, I get a surprising amount of use out of it!
 
 ## Wrap
 

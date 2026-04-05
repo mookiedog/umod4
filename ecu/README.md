@@ -9,7 +9,7 @@ Yes, you read that right: 512 _bytes_ of RAM.
 
 The same Gen 1 ECU was used on a number of Aprilia motorcycles, including the Mille, Tuono, Futura, and Falco.
 Various stock code images exist for the different bikes as well as for different years of production.
-The Umod4 Flash has room for over 200 ECU images.
+The Umod4 Flash has room for over well over 100 ECU images.
 It's unlikely that it would ever need to hold that many images though.
 I figure that I will end up with a favorite, and that will be the only one I use.
 

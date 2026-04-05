@@ -29,7 +29,7 @@ Once you can build the project, you can activate a Python virtual environment cr
 
 At some point in the future, I will package up the decoder and visualizer so that they are more standalone and can be run without having to build the entire umod4 software universe.
 
-## DecodeLog: Human Readable 
+## DecodeLog: Human Readable
 
 The human readable format is really just for debugging by software developers.
 It is unlikely that a rider would want to be digging into the raw log at that level, but you never know.
@@ -86,6 +86,8 @@ Again, the 'human readable' version of the log is mainly for debugging issues wi
 It rarely needs to be generated.
 That is a good thing because an 8 megabyte umod4 log translates to a nearly 250 megabyte human-readable file.
 
+That said, it can be extremely useful to generate a .hr file for a log so that you can grep for certain classes of events without having to look at all the rest.
+
 ## DecodeLog: HDF5 Format
 
 The HDF5 file format is used to store large datasets for efficient access.
@@ -95,11 +97,8 @@ This can be made clear when you see that a umod4 log file of 8 megabytes becomes
 The payoff for the expansion in log size is HDF5's capability for efficient retrieval.
 That is precisely what a visualizer needs in order to quickly scan the large logs to display them graphically.
 
-To decode a log into HDF5 format, type:
+To decode a log into HDF5 format, you would type:
 
     decodelog.py --format h5 <path-to-log-file>
 
-## Visualization
-
-Now that an h5 version of the log file can be created, it is time to use the log visualizer tool.
-See the visualizer [README](./README_Visualizer.md) for more info.
+Note that there is really no reason to create .h5 files 'manually' in this fashion: the visualizer will invoke the log decoder to create h5 files for you, as needed.
