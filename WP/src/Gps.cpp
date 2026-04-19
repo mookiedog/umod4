@@ -101,11 +101,6 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
 
     uart->notifyOnRx(gps_taskHandle);
 
-    // Drive this pin high to signal the scope
-    gpio_init(SPARE1_PIN);
-    gpio_put(SPARE1_PIN, 0);
-    gpio_set_dir(SPARE1_PIN, GPIO_OUT);
-
     // Flag that we have never seen any fixtype yet
     fixType = -1;
 

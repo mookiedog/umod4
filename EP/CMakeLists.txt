@@ -74,6 +74,7 @@ add_executable(${PROJECT_NAME}
   src/epromEmulator.S
   src/EpromLoader.cpp
   src/busFailsafeSetup.cpp
+  src/hc11SyncSetup.cpp
   ${DESCRAMBLER_SOURCE}
 )
 
@@ -85,6 +86,10 @@ pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/uart_t
 # Generate the bus failsafe PIO header file.
 # FYI: the header file will be generated into "build/EP/busFailsafe_pio.h".
 pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/busFailsafe.pio)
+
+# Generate the HC11 E-clock sync PIO header file.
+# FYI: the header file will be generated into "build/EP/hc11Sync_pio.h".
+pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/hc11Sync.pio)
 
 # Override the standard Segger definitions for these symbols.
 # The "up" buffer is EP->host printf data. We make it huge as a means of logging boot messages

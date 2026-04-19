@@ -33,21 +33,16 @@
 //
 // - Propagation Delays Through the Voltage Translation Buffer
 //   The E signal passes through a 74LVC541 to translate it from the 5V HC11 domain to the 3.3V
-//   RP2040 domain. This nominally costs approx 1 cycle from the EP2040's point of view.
+//   RP2040 domain. This nominally costs approx 4 nS from the EP2040's point of view.
 //   If you are scoping the E signal in the 5V domain (where the test point is located)
-//   be aware that the signal will be delayed by approx. 1 RP2040 clock before the synchronizers
+//   be aware that the signal will be delayed by approx 4 nS before the synchronizers
 //   even get a chance to see it.
 //
-// - RP2040 write of GPIO interrupt clear register is slower than expected
-//   See: https://forums.raspberrypi.com/viewtopic.php?t=343818#p2060153
-//
 // - RP2040 wake from WFI is slower than expected
-//   The latency from a GPIO event causing WFI to wake up to the time that the first instruction
-//   after the WFI getting executed does NOT match the doc saying it should execute in 2 cycles.
-//   Direct measurements show that the latency is between 6.000 and 6.999 cycles.
-//   Two of those cycles are due to the GPIO synchronizers delaying the GPIO event that triggers the interrupt (see above).
-//   One more cycle is due to the fact that the E clock and the RP2040 system clock are unsynchronized.
-//   We will accept as a fact that the latency is 6 clocks (min) to 7 clocks (rounded, max).
+//   Scope measurements show that the latency from an event causing WFI to wake up to the time
+//   that the first instruction after the WFI getting executed does NOT match the doc saying
+//   it should execute in 2 cycles. Given that the behavior is undocumented, we will accept it
+//   as a fact that the latency from falling E to WFI completing is 11 clocks (min) to 12 clocks (rounded, max).
 //
 // - Instruction Timing Accounting Mechanism
 //   Timing within the processing loop will be accounted on a per-instruction basis.
@@ -59,15 +54,15 @@
 //   must appear on an otherwise empty source line (no opcode!).  The label itself will
 //   get billed for the 1 cycle penalty to get there.
 //
-// Future Change Considerations
-//
-// - It has been proven that a PIO machine can be used to watch for falling E, then wake the CPU
-//   via a PIO interrupt. This increases the latency in waking the CPU from WFI by a cycle or two,
-//   but it means that the existing 5-cycle instruction to clear the GPIO interrupt turns into a
-//   2 cycle instruction to clear the PIO interrupt. Because the PIO unit is NOT on the far
-//   side of the AHB, it would remove the current constraint that core0 cannot use anything on
-//   the far side of the AHB bus to avoid disturbing Core1 timing.
-
+// - Core1 and the APB bridge
+//   The original code used GPIO interrupts to detect falling E. This meant that core1 would
+//   need to clear the GPIO interrupt by writing to a GPIO register located on the far side of
+//   the APB bridge. This prevented core0 from accessing anything on the far side of the APB
+//   bridge because APB bus contention could delay a core1 access from completing. This has been
+//   The WFI wake mechanism has been updated to use a PIO state machine to detect falling E
+//   and generate a PIO interrupt. Since PIO interrupt registers are core-specific, the interrupt clear
+//   does not need to cross the APB bridge any more.
+//   Core0 may now use APB silicon at its convenience.
 
         #include "pico/asm_helper.S"
 
@@ -113,8 +108,9 @@
 #define rh_ECU_LOG_START        r13     // (SP, can be used as target of MOV) Points at the first address of the ECU log buffer. Used to reset the pointer after it falls off the end
 #define rh_RAM_END_OFFSET       r12     // Holds the RAM window's end offset within the 15-bit EPROM address space
 #define rh_RAM_START_OFFSET     r11     // holds the RAM window's start offset within the 15-bit EPROM address space
-//unused                        r10     // Yowza: a veritable cornucopia of unused registers!!
-//unused                        r9
+#define rh_NVIC_ICPR_PTR        r10     // Core 1 NVIC_ICPR address — used by post-WFI ack and pre-sync flush
+#define rh_ALL_ONES             r9      // 0xFFFFFFFF — used by post-WFI ack and pre-sync flush
+                                        // The mask of all 1's means it clears the PIO interrupt no matter which one actually got assigned
 //unused                        r8
 //-------------------------------------
 #define r_SIO_BASE_PTR          r7      // SIO accesses through this pointer register take only 1 cycle (yay SIO!)
@@ -135,9 +131,9 @@
 // The epromTask code lives in scratch_y, copied from flash by the SDK crt0 at boot.
 // The EPROM image data is in the lower 32K of non-striped SRAM bank0 (RAM_CORE1_EPROM).
 // Bank0 is exclusive to core1, preventing bus fabric contention from core0.
-// The remaining source of contention is that the epromTask needs to clear an interrupt inside the GPIO unit.
-// This means that if core0 accesses *anything* behind the APB bridge on the crossbar (like the UART!),
-// bad things could happen...
+// E-fall detection uses PIO1 SM0 (hc11_sync), which fires PIO1 IRQ flag 0 to wake core1 via CPU IRQ 9.
+// The PIO SM auto-clears its own IRQ flag, so the post-WFI ack only writes NVIC_ICPR (core1's PPB —
+// zero contention with core0). APB bus contention is fully eliminated.
 
         .section .scratch_y.epromTask.code, "ax"
 
@@ -183,25 +179,27 @@ epromTask:
 // Set up a mask corresponding to the GPIO we are using to signal our debug info as we process events.
         ldr     r_DBG_BSY_MSK,=#DBG_BSY_BITS
 
-// Tell the GPIO unit to wake us from WFI on every falling edge of the HC11 E signal:
-        ldr     r0, =#0x4 << ((HC11_E_LSB%8)*4)                                 // 0x04 means 'falling edge'
-        ldr     r1, =#IO_BANK0_BASE + IO_BANK0_PROC1_INTE0_OFFSET + ((HC11_E_LSB/8)*4)
-        str     r0,[r1]
+// Pre-load NVIC interrupt ack constants into free high registers.
+        ldr     r0, =#0xFFFFFFFF
+        mov     rh_ALL_ONES, r0
+        ldr     r0, =(PPB_BASE + M0PLUS_NVIC_ICPR_OFFSET)
+        mov     rh_NVIC_ICPR_PTR, r0
 
-// We are ready to go. Start by flushing any existing falling edge E interrupt:
-        adr     r0,intAckInfo
-        ldm     r0,{r0,r1,r2}
-        str     r0,[r1]
-        str     r0,[r2]
+// E-fall wakeup is handled by PIO1 SM0 (hc11_sync), started by core0 before launching core1.
+// Flush stale NVIC pending state before the initial sync WFI.
+        mov     r0, rh_ALL_ONES
+        mov     r1, rh_NVIC_ICPR_PTR
+        str     r0, [r1]                                                        // Ack the NVIC interrupt
 
-// If this program gets stuck in the debugger on this 'wfi' instruction, it means you forgot to turn on the ECU power!!!
-        wfi                                                                     // wait for the next E interrupt
+// Waking from this next WFI guarantees that we are in sync with the E clock.
+// We don't process this first E clock, but just use it to drop into the main
+// processing loop knowing that the timing is sync'd.
+// *** If this program gets stuck in the debugger on this 'wfi' instruction, it means you forgot to turn on the ECU power!!!
+sync:   wfi
 
-// After waking, we are guaranteed to be in sync with the HC11 E signal.
-// We have approx. 450 nSec to get to our _wfi label, so plenty of time.
-// Acknowledge the WFI event that just woke us up:
-        str     r0,[r1]                                                         // No need to reload R0/R1/R2!
-        str     r0,[r2]
+// We have approx. 450 nSec to get to our _wfi label.
+// Acknowledge the sync WFI, above:
+        str     r0, [r1]                                                        // Ack the NVIC interrupt
 
 // Signal the other core that we are ready to serve memory accesses:
         ldr     r1, =#0x12345678                                                // Fix Me: use a symbol here
@@ -235,44 +233,45 @@ log:                                                                            
 _wfi:   wfi                                                                     // 1 [59] Wait for the next falling edge of E signifying the start of the next bus cycle
 
 // See "wakeup budget" documentation at the start of this file for an explanation of
-// why the first instruction after WFI begins executing 6 to 6.999999 clocks after the WFI event.
-                                                                                // - [7]  Assume a worst case latency for waking up
-// Acknowledge the interrupt that awoke us from the WFI
-        adr     r0,intAckInfo                                                   // 1 [8]  Point r0 at a table of info needed to clear the ints
-        ldm     r0,{r0,r1,r2}                                                   // 4 [12]
-        str     r0,[r1]                                                         // 5 [17] Clear the falling edge interrupt request from the GPIO unit (yes, this store takes 5 cycles!!)
-        str     r0,[r2]                                                         // 2 [19] Clear the GPIO's pending interrupt in the NVIC
+// why the first instruction after WFI begins executing 11 to 11.999999 clocks after the WFI event.
+// WFI timing is not documented. If the single-cycle instr that drives DBG_BSY low is placed here,
+// a scope shows the instruction completing in 12-13 cycles after falling E (E measured in the 3.3V domain).
+// This means that WFI completes in 11-12 cycles after falling E.
+                                                                                // - [12]  Assume worst case latency for waking up
 
+// Acknowledge the interrupt that awoke us from WFI (PIO1 SM0 has already cleared PIO1->irq)
+        mov     r0, rh_ALL_ONES                                                 // 1 [13]
+        mov     r1, rh_NVIC_ICPR_PTR                                            // 1 [14]
 // Drive DBG_BSY low to indicate that we are about to read the bus signals
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [20] Scope must show the STR instruction completing at 152 to 160 nSec (19 to 20 clocks)
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_CLR_OFFSET]        // 1 [15]
+        str     r0, [r1]                                                        // 2 [17] clear NVIC_ICPR
 
 // The HC11 bus spec guarantees that the ADDR and control signals will be valid no later than 95 nS (12 clocks) after falling E.
-// We are well past that, so we have a lots of margin.
+// We are well past that, so we have lots of margin.
 // Our first decision point: discover if this bus cycle targets us or not.
-        ldr     r1,[r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                        // 1 [21] Read the entire set of bus signals CE, WR/!RD, E, A14..A0
-        lsls    r0,r1,#31-HC11_CE_LSB                                           // 1 [22] Shift the EPROM CE signal into b31
-        bpl     no_CE                                                           // 1 [23] branch if the EPROM CE is '0' (not asserted, meaning we are NOT the target of this bus cycle)
+        ldr     r1,[r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                        // 1 [18] Read the entire set of bus signals CE, WR/!RD, E, A14..A0 (from 2 cycles ago due GPIO to syncronizer delays)
+        lsls    r0,r1,#31-HC11_CE_LSB                                           // 1 [19] Shift the EPROM CE signal into b31
+        bpl     no_CE                                                           // 1 [20] branch if the EPROM CE is '0' (not asserted, meaning we are NOT the target of this bus cycle)
 
 // -------------------------------------------------------------------------------------------------------------
 // The current bus cycle is targeting us.
 // Extract the 15-bit HC11 address offset field from the set of bus signals:
-        lsls    r2,r1,#31-HC11_AB_MSB                                           // 1 [24] Left-shift the address offset field so that its msb ends up in b31
-        lsrs    r2,#31-(HC11_AB_MSB - HC11_AB_LSB)                              // 1 [25] Right shift in zeroes until the lsb of the left-shifted offset field ends up at b0
-
+        lsls    r2,r1,#31-HC11_AB_MSB                                           // 1 [21] Left-shift the address offset field so that its msb ends up in b31
+        lsrs    r2,#31-(HC11_AB_MSB - HC11_AB_LSB)                              // 1 [22] Right shift in zeroes until the lsb of the left-shifted offset field ends up at b0
 // Is this a read or a write operation?
-        lsls    r0,r1,#31-HC11_WR_LSB                                           // 1 [26] Shift the HC11 WR signal into b31
-        bpl     _readCycle                                                      // 1 [27] The HC11 R/!W signal is inverted by our logic level converter on the PCB, therefore '0' means a read
+        lsls    r0,r1,#31-HC11_WR_LSB                                           // 1 [23] Shift the HC11 WR signal into b31
+        bpl     _readCycle                                                      // 1 [24] The HC11 R/!W signal is inverted by our logic level converter on the PCB, therefore '0' means a read
 
 // This is a write. Is a standard log write or a write inside our RAM window?
-        cmp     r2, rh_RAM_START_OFFSET                                         // 1 [28] Does the offset fall below the bottom of our RAM window?
-        blt     _writeLog1                                                      // 1 [29] Yes, it is a normal log write
-        cmp     r2, rh_RAM_END_OFFSET                                           // 1 [30] Does the offset fall above the top of our RAM window?
-        bgt     _writeLog2                                                      // 1 [31] Yes, it is a normal log write
+        cmp     r2, rh_RAM_START_OFFSET                                         // 1 [25] Does the offset fall below the bottom of our RAM window?
+        blt     _writeLog1                                                      // 1 [26] Yes, it is a normal log write
+        cmp     r2, rh_RAM_END_OFFSET                                           // 1 [27] Does the offset fall above the top of our RAM window?
+        bgt     _writeLog2                                                      // 1 [28] Yes, it is a normal log write
 
 // -------------------------------------------------------------------------------------------------------------
 // RAM Write Cycle: the write address is within the RAM window. We are allowed to update the RAM buffer inside the EPROM code image.
 // Wait for write data to get driven onto the data bus by the HC11:
-        movs    r0,#3                                                           // (3*3) [40]
+        movs    r0,#4                                                           // (4*3) [40]
 1:      subs    r0,#1
         bne     1b
 
@@ -296,13 +295,13 @@ _wfi:   wfi                                                                     
 // We forward the log data to the other core.
 // The two target labels are set up to ensure that the overall timing is
 // identical regardless of which branch we took to get here.
-_writeLog1:                                                                     // 1 [30] taken branch
-        nop                                                                     // 1 [31] make up for the second compare we didn't need to do
-        nop                                                                     // 1 [32]
-_writeLog2:                                                                     //   [33] account for the taken branch, but not the fallthrough
+_writeLog1:                                                                     // 1 [27] taken branch
+        nop                                                                     // 1 [28] make up for the second compare we didn't need to do
+        nop                                                                     // 1 [29]
+_writeLog2:                                                                     //   [29] account for the taken branch, but not the fallthrough
 // Writes require us to wait until the write data gets driven by the HC11. The HC11 bus spec says that
 // this will be no later than 255+80=335 nSec (42 clocks) after the E clock event that woke us up.
-        movs    r0,#3                                                           // (3*3) [41]
+        movs    r0,#4                                                           // (4*3) [41]
 1:      subs    r0,#1
         bne     1b
 
@@ -311,7 +310,7 @@ _writeLog2:                                                                     
         nop                                                                     // 1 [42]
         str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [43] Drive DBG_BSY high at 43 clocks/344 nS
         nop                                                                     // 1 [44]
-        ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [45] Sample the HC11 bus data from 2 clocks ago, note that E/A15 is guaranteed to be a '1'
+        ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [45] Reample the HC11 bus data from 2 clocks ago to include the write data
         str     r0, [r_SIO_BASE_PTR, #SIO_FIFO_WR_OFFSET]                       // 1 [46] Send the write info to the other core for further processing
 
 // R0 must contain the bus transaction including the write data, with E/A15 as '1'
@@ -325,12 +324,18 @@ _writeLog2:                                                                     
 // because they share the same RP2040 SRAM buffer.
 // READ data needs to be valid on the bus no later than 425 nS (53 clocks) after initial falling edge of E.
 // On entry, R2 must contain the 15-bit EPROM offset
-_readCycle:                                                                     // 1 [28]
+_readCycle:                                                                     // 1 [25]
 // Read the proper byte from SRAM buffer holding the ECU code image:
-        ldrb    r0,[r_EPROM_DATA_PTR,r2]                                        // 2 [30]
+        ldrb    r0,[r_EPROM_DATA_PTR,r2]                                        // 2 [27]
 
+// FIFO push must occur at cycle 32 (max), preserving busFailsafe PIO countdown calibration.
+        nop                                                                     // 1 [28]
+        nop                                                                     // 1 [29]
+        nop                                                                     // 1 [30]
 
 // Send the byte to the PIO to be driven to the bus.
+// Scope measurements of DBG_BSY show that the data bus will get released between
+// 28 and 36 nS after the next falling E.
         str     r0,[r_PIO_TXF_PTR]                                              // 2 [32] 32 is worst case, 31 is best case
 
 // The PIO machine needs 4 more cycles to get the data on the bus.
@@ -348,7 +353,7 @@ _readCycle:                                                                     
         nop                                                                     // 1 [47]
 
 // Re-read HC11 data bus now that it reflects our new output data and E/A15 is guaranteed to be '1'.
-        ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [48] Resample the HC11 bus data we wrote 2 clocks ago
+        ldr     r0, [r_SIO_BASE_PTR, #SIO_GPIO_IN_OFFSET]                       // 1 [48] Resample the HC11 bus data so that it includes the write data
         b       log                                                             // 1 [49] Needs to be exactly 49 cycles+1 for taken branch
 
 
@@ -359,18 +364,11 @@ _readCycle:                                                                     
 // However: it is clear that the data associated with internal transactions is not showing up on the bus properly.
 // The address bits and control signals are correct, but the data is not!
 // We will not bother logging the bus cycle.
-no_CE:                                                                          // 1 [24] taken branch to get here
+no_CE:                                                                          // 1 [21] taken branch to get here
 // Drive DBG_BSY high to indicate we are done:
-        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [25] Oscope says this instr completes at 200nS to 208 nS, 25 to 26 clocks, so our accounting is correct!
-        b       _wfi                                                            // 1 [26] Nothing to log, so go back to sleep
+        str     r_DBG_BSY_MSK, [r_SIO_BASE_PTR,#SIO_GPIO_OUT_SET_OFFSET]        // 1 [22] will complete 168..176 nS after falling E
+        b       _wfi                                                            // 1 [23] Nothing to log, so go back to sleep
 
-
-        .align  2
-// This data table is designed for a LDM instruction to load these 3 constants into 3 specific registers:
-intAckInfo:
-        .word   0xFFFFFFFF                                                      // R0: a constant of all 1 bits
-        .word   IO_BANK0_BASE + IO_BANK0_INTR0_OFFSET + ((HC11_E_LSB/8)*4)      // R1: A pointer to the specific interrupt acknowledge register based on what GPIO is associated with E
-        .word   (PPB_BASE + M0PLUS_NVIC_ICPR_OFFSET)                            // R2: A pointer to the NVIC Pending Interrupt register that needs to be cleared after the WFI
 
 // All the ROM constants generated by 'LDR Rx,='' pseudo-ops will populate after this next label.
 _epromTask_data:

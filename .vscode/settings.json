@@ -24,6 +24,8 @@
     ],
     "cortex-debug.variableUseNaturalFormat": false,
     "cortex-debug.registerUseNaturalFormat": false,
+    /* This next line is required to set breakpoints in assemhly code */
+    "debug.allowBreakpointsEverywhere": true,
     "files.associations": {
         "freertos.h": "c",
         "functional": "cpp",

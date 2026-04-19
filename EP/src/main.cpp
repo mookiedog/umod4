@@ -29,6 +29,7 @@
 #include "hardware.h"
 #include "epromEmulator.h"
 #include "busFailsafeSetup.h"
+#include "hc11SyncSetup.h"
 #include "log_ids.h"
 #include "bsonlib.h"
 
@@ -173,13 +174,14 @@ static void mainCore1(void) __attribute__((noreturn));
 void mainCore1(void)
 {
     // Completely disable ALL interrupts on core1 at the CPU PRIMASK level.
-    // Core1 will not be servicing any interrupts. Instead, it will use GPIO
-    // NVIC interrupt requests to wake itself from WFI sleep.
+    // Core1 will not be servicing any interrupts. Instead, it will use PIO1 IRQ
+    // requests to wake itself from WFI sleep.
     __disable_irq();
 
-    // Explicitly disable all interrupts inside the core1 NVIC except for GPIO interrupts.
+    // Explicitly disable all interrupts inside the core1 NVIC except for PIO1_IRQ_0.
+    // PIO1 SM0 (hc11_sync) fires PIO1_IRQ_0 on each E-fall to wake core1 from WFI.
     for (uint32_t i=0; i<32; i++) {
-        irq_set_enabled(i, i == IO_IRQ_BANK0);
+        irq_set_enabled(i, i == PIO1_IRQ_0);
     }
 
     // Make sure that the Core0 <--> Core1 FIFO is completely flushed on the Core1 side
@@ -386,9 +388,6 @@ void prepEpromImage()
 // Therefore:
 // - Regardless of how full the stream buffer is, we will not send out more than two 16-bit messages
 //   every 50 microseconds.
-// SysTick is in the CPU core (PPB), NOT behind the APB bridge.
-// Using the hardware timer (time_us_64) would cause APB bridge contention with core1's
-// GPIO interrupt clear, adding up to 3 cycles of jitter to the EPROM service loop.
 // SysTick counts down from reload value at 125 MHz. 24-bit counter wraps every ~134 ms.
 const uint32_t tx_delay_ticks = 50 * 125;   // 50 uS * 125 ticks/uS = 6250 ticks
 
@@ -474,13 +473,6 @@ static inline void __time_critical_func(processIncoming)(void)
 // Core0's whole job is to forward the incoming ECU message stream from Core1 over to the
 // WiFi Processor (WP).
 //
-// NOTE: The code within this mainloop must NEVER access any devices on the far side of
-// the APB bridge. Doing so WILL create bus contention issues with Core1. The issue is that
-// core1 must access the GPIO control registers to clear its GPIO interrupt on every
-// falling E-clock edge. If core0 is accessing any APB-bridge devices at the same time,
-// the resulting APB bridge contention will delay Core1's GPIO interrupt clear, disturbing
-// the timing of the HC11 memory cycle.
-//
 // Note: do not make this function static because the -Os optimizer will inline it back into
 // its caller main() causing it to get run from flash.
 void __time_critical_func(core0Mainloop)(void) __attribute__((noreturn));
@@ -522,8 +514,6 @@ void disableInts()
 void initSystick()
 {
     // Configure SysTick as a free-running 24-bit down counter at processor clock speed.
-    // Used by processOutgoing() for tx pacing instead of the hardware timer used by time_us_64()
-    // because that timer is behind the APB bridge and would contend with core1.
     systick_hw->rvr = 0x00FFFFFF;   // max reload value
     systick_hw->cvr = 0;            // clear current value
     systick_hw->csr = 0x05;         // enable, use processor clock, no interrupt
@@ -531,15 +521,7 @@ void initSystick()
 
 // --------------------------------------------------------------------------------------------
 // Prep the UART to forward the ECU log data to the WP.
-// We use a TX-only UART implemented as a PIO state machine.
-//
-// The EPROM loop needs exclusive bus fabric access to the APB bridge so it can clear
-// its GPIO interrupt.
-// If this code used a real UART, there would potentially be bus contention for the APB bridge
-// whenever we accessed a UART register.
-//
-// Using a PIO-based UART means that there can be no bus contention because the PIO unit
-// is not located behind the APB bridge.
+// We use a 32-bit TX-only UART implemented as a PIO state machine.
 void initUart()
 {
     #if defined CLKOUT_GPIO
@@ -581,6 +563,7 @@ int main(void)
     initSystick();
     initUart();
     busFailsafeSetup();
+    hc11SyncSetup();
 
     prepEpromImage();
     logMapblob();

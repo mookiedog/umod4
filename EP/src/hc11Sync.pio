@@ -1,0 +1,22 @@
+// hc11Sync.pio
+//
+// PIO1 SM0: HC11 E-clock synchronizer and Core 1 wakeup source.
+//
+// Detects HC11 E-fall and fires PIO1 IRQ flag 0, which routes to CPU IRQ 9
+// (PIO1_IRQ_0) to wake Core 1 from WFI.
+//
+// The IRQ flag is asserted for 2 PIO cycles (via the [1] delay) to guarantee the
+// NVIC latches the pending bit. We then clear the IRQ flag ourself so that
+// Core 1 only needs to clear NVIC_ICPR, saving complexity in the epromEmulator code.
+//
+// Config: no IN pins, no OUT pins, no side-set, no autopush/autopull.
+// GPIO 15 = HC11_E_LSB (hardcoded since the PIO wait instruction requires a literal).
+
+.program hc11_sync
+
+.wrap_target
+        wait    1 gpio 15               ; anti-retrigger: wait for E high
+        wait    0 gpio 15               ; detect E-fall (there will be 2-cycle GPIO synchronizer latency)
+        irq     set 0 [1]               ; assert PIO1 IRQ flag 0 for 2 cycles to be certain that the NVIC sees it...
+        irq     clear 0                 ; ...then deassert PIO IRQ ourselves while the epromEmulator's WFI completes
+.wrap
