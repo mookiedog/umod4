@@ -50,11 +50,10 @@ struct EpChanState {
     int      wp_channel;    // target WP RTT channel index
 };
 
-static EpChanState s_chan[2];   // EP ch0→WP ch2, EP ch1→WP ch3
+static EpChanState s_chan[2];   // EP ch0→WP ch3, EP ch1→WP ch4
 static bool        s_connected;
 
-static char s_wp_vfy_buf[512];
-static char s_ep_gen_buf[4096];
+static char s_ep_rtt_buf[4096];
 static char s_ep_vfy_buf[1024];
 
 // -------------------------------------------------------------------------
@@ -230,7 +229,7 @@ static void ep_rtt_forwarder_task(void*)
         if (!swd->connect_target(0, false)) {
             if (!inhibit_msg_sent) {
                 const char* msg = "EP RTT unavailable: SWD inhibited (SPARE2 grounded)\n";
-                SEGGER_RTT_WriteString(WP_RTT_CH_EP_GEN, msg);
+                SEGGER_RTT_WriteString(WP_RTT_CH_EP_STDIO, msg);
                 SEGGER_RTT_WriteString(WP_RTT_CH_EP_VFY, msg);
                 inhibit_msg_sent = true;
             }
@@ -252,7 +251,7 @@ static void ep_rtt_forwarder_task(void*)
                            magic, EP_INFO_MAGIC);
                 } else {
                     // Step 3: Read BUFFER_UP descriptors
-                    s_chan[0].wp_channel = WP_RTT_CH_EP_GEN;
+                    s_chan[0].wp_channel = WP_RTT_CH_EP_STDIO;
                     s_chan[1].wp_channel = WP_RTT_CH_EP_VFY;
                     setup_ok = true;
                     for (int i = 0; i < 2 && setup_ok; i++) {
@@ -317,9 +316,7 @@ void ep_rtt_channels_init(void)
 {
     // Call this before vTaskStartScheduler() so Cortex-Debug sees all channels
     // with valid buffers on its initial RTT scan.
-    SEGGER_RTT_ConfigUpBuffer(WP_RTT_CH_VFY,    "WP_VFY", s_wp_vfy_buf, sizeof(s_wp_vfy_buf),
-                              SEGGER_RTT_MODE_NO_BLOCK_SKIP);
-    SEGGER_RTT_ConfigUpBuffer(WP_RTT_CH_EP_GEN, "EP_GEN", s_ep_gen_buf, sizeof(s_ep_gen_buf),
+    SEGGER_RTT_ConfigUpBuffer(WP_RTT_CH_EP_STDIO, "EP_STDIO", s_ep_rtt_buf, sizeof(s_ep_stdio_buf),
                               SEGGER_RTT_MODE_NO_BLOCK_SKIP);
     SEGGER_RTT_ConfigUpBuffer(WP_RTT_CH_EP_VFY, "EP_VFY", s_ep_vfy_buf, sizeof(s_ep_vfy_buf),
                               SEGGER_RTT_MODE_NO_BLOCK_SKIP);

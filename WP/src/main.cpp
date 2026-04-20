@@ -23,6 +23,7 @@
 #include "Logger.h"
 #include "NeoPixelConnect.h"
 #include "Shell.h"
+#include "wp_rtt.h"
 #include "Swd.h"
 #include "Uart.h"
 #include "umod4_WP.h"
@@ -831,6 +832,7 @@ int main()
     initSpareIos();
 
     stdio_init_all();
+    wp_rtt_init();
     ep_rtt_channels_init();
 
     printf("\n\nWP Core %d booting on board %s\n", get_core_num(), STRINGIFY(PICO_BOARD));

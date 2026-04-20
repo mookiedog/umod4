@@ -238,6 +238,7 @@ add_executable(${PROJECT_NAME}
     src/SdCardSDIO.cpp
     src/Shell.cpp
     src/Swd.cpp
+    src/wp_rtt.cpp
     src/TimeUtils.cpp
     src/Uart.cpp
     src/WiFiManager.cpp
@@ -312,13 +313,13 @@ pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/swd.pi
 
 # Override the standard Segger definitions for these symbols:
 #add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
-# This is the size of the buffer to use for sending data from the device to the host debug terminal app
+# Channel 0 (WP_STDIO) buffer sizes
 add_compile_definitions(BUFFER_SIZE_UP=16384)
-# We use 4 up-channels: WP_GEN(0), WP_VFY(1), EP_GEN(2), EP_VFY(3).
-# Default is 3; must be raised explicitly.
-add_compile_definitions(SEGGER_RTT_MAX_NUM_UP_BUFFERS=4)
-# This is the size of the buffer that the host debug terminal app can send down as a single cmdline
 add_compile_definitions(BUFFER_SIZE_DOWN=1024)
+# Up channels: ch0=WP_STDIO, ch1=WP_VFY, ch2=WP_SHELL, ch3=EP_STDIO, ch4=EP_VFY
+add_compile_definitions(SEGGER_RTT_MAX_NUM_UP_BUFFERS=5)
+# Down channels: ch0=unused, ch1=WP_VFY, ch2=WP_SHELL
+add_compile_definitions(SEGGER_RTT_MAX_NUM_DOWN_BUFFERS=3)
 
 add_compile_definitions(LFS_THREADSAFE=1)
 #add_compile_definitions(LFS_TRACE=printf)

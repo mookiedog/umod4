@@ -1,6 +1,9 @@
 #include "Shell.h"
 #include "string.h"
 #include "ctype.h"
+#include "wp_rtt.h"
+
+#define SHELL_PRINTF(fmt, ...) shell_printf(fmt, ##__VA_ARGS__)
 
 #include "lfsMgr.h"
 #include "umod4_EP.h"
@@ -234,7 +237,7 @@ void Shell::cmd_touch(char* argList)
 {
     // Check if filesystem is mounted before attempting any operations
     if (!lfs_mounted) {
-        printf("Error: Filesystem not mounted\n");
+        SHELL_PRINTF("Error: Filesystem not mounted\n");
         return;
     }
 
@@ -250,15 +253,15 @@ void Shell::cmd_touch(char* argList)
         char* value = decomposeArg(arg);
         path = arg;
         if (value) {
-            printf("unexpected value %s for path %s\n", value, path);
+            SHELL_PRINTF("unexpected value %s for path %s\n", value, path);
             return;
         }
 
-        if (dbg) printf("%s: pathname=%s\n", __FUNCTION__, path);
+        if (dbg) SHELL_PRINTF("%s: pathname=%s\n", __FUNCTION__, path);
         // Open the file argument, creating it if it does not exist
         err = lfs_file_open(lfs, &fp, path, LFS_O_CREAT | LFS_O_RDWR);
         if (err != LFS_ERR_OK) {
-            printf("Unable to create path <%s>\n", path, err);
+            SHELL_PRINTF("Unable to create path <%s>\n", path, err);
             return;
         }
 
@@ -275,7 +278,7 @@ void Shell::cmd_rm(char* argList)
 {
     // Check if filesystem is mounted before attempting any operations
     if (!lfs_mounted) {
-        printf("Error: Filesystem not mounted\n");
+        SHELL_PRINTF("Error: Filesystem not mounted\n");
         return;
     }
 
@@ -291,16 +294,16 @@ void Shell::cmd_rm(char* argList)
         char* value = decomposeArg(arg);
         path = arg;
         if (value) {
-            printf("unexpected value %s for path %s\n", value, path);
+            SHELL_PRINTF("unexpected value %s for path %s\n", value, path);
             return;
         }
 
-        if (dbg) printf("%s: pathname=%s\n", __FUNCTION__, path);
+        if (dbg) SHELL_PRINTF("%s: pathname=%s\n", __FUNCTION__, path);
 
         // Remove the file at the specified path
         err = lfs_remove(lfs, path);
         if (err != LFS_ERR_OK) {
-            printf("Unable to remove %s: %s\n", path, lfs_err_decode(err));
+            SHELL_PRINTF("Unable to remove %s: %s\n", path, lfs_err_decode(err));
             return;
         }
 
@@ -318,7 +321,7 @@ void Shell::cmd_hd(char* argList)
 {
     // Check if filesystem is mounted before attempting any operations
     if (!lfs_mounted) {
-        printf("Error: Filesystem not mounted\n");
+        SHELL_PRINTF("Error: Filesystem not mounted\n");
         return;
     }
 
@@ -339,7 +342,7 @@ void Shell::cmd_hd(char* argList)
         // We treat this as an option to modify the width of the line we will output
         sscanf(value, "%d", &lineWidth);
         if ((lineWidth < 1) || (lineWidth>sizeof(lineBuf))) {
-            printf("hd: width specifier out of range [1..%d]\n", sizeof(lineBuf));
+            SHELL_PRINTF("hd: width specifier out of range [1..%d]\n", sizeof(lineBuf));
             return;
         }
 
@@ -354,15 +357,15 @@ void Shell::cmd_hd(char* argList)
     value = decomposeArg(arg);
     path = arg;
     if (value) {
-        printf("path %s should not have a value associated with it (%s)\n", path, value);
+        SHELL_PRINTF("path %s should not have a value associated with it (%s)\n", path, value);
         return;
     }
 
-    if (dbg) printf("%s: pathname=%s\n", __FUNCTION__, path);
+    if (dbg) SHELL_PRINTF("%s: pathname=%s\n", __FUNCTION__, path);
 
     err = lfs_file_open(lfs, &fp, path, LFS_O_RDONLY);
     if (err != LFS_ERR_OK) {
-        printf("Unable to open %s: %s\n", path, lfs_err_decode(err));
+        SHELL_PRINTF("Unable to open %s: %s\n", path, lfs_err_decode(err));
         return;
     }
 
@@ -370,27 +373,27 @@ void Shell::cmd_hd(char* argList)
         // Dump the file as hex data
         count = lfs_file_read(lfs, &fp, lineBuf, lineWidth);
         if (count>0) {
-            printf("%04X: ", totalRead);
+            SHELL_PRINTF("%04X: ", totalRead);
 
             for (int i=0; i<lineWidth; i++) {
                 if (i<count) {
-                    printf("%02X ", lineBuf[i]);
+                    SHELL_PRINTF("%02X ", lineBuf[i]);
                 }
                 else {
-                    printf("   ");
+                    SHELL_PRINTF("   ");
                 }
             }
             for (int i=0; i<lineWidth; i++) {
                 if (i<count) {
                     if (isprint(lineBuf[i]) && !iscntrl(lineBuf[i])) {
-                        printf("%c", lineBuf[i]);
+                        SHELL_PRINTF("%c", lineBuf[i]);
                     }
                     else {
-                        printf(".");
+                        SHELL_PRINTF(".");
                     }
                 }
             }
-            printf("\n");
+            SHELL_PRINTF("\n");
             totalRead += count;
         }
     } while (count>0);
@@ -418,7 +421,7 @@ void Shell::iterate(const char* directory, const char* globName, void (*operatio
 
     lfs_err = lfs_dir_open(lfs, &dir, directory);
     if (lfs_err < 0) {
-        printf("unable to open directory %s\n", directory);
+        SHELL_PRINTF("unable to open directory %s\n", directory);
     }
     else {
         // Simplistically convert a globname to an equivalent regular expression
@@ -464,7 +467,7 @@ void Shell::operation_ls(struct lfs_info* info)
 {
     if (info->type == LFS_TYPE_DIR) {
         // directories do not have a size
-        printf("d %8s %s\n", "", info->name);
+        SHELL_PRINTF("d %8s %s\n", "", info->name);
     }
     else if (info->type == LFS_TYPE_REG) {
         int32_t size = 0;
@@ -474,7 +477,7 @@ void Shell::operation_ls(struct lfs_info* info)
         if (err == LFS_ERR_OK) {
             size = lfs_file_size(lfs, &file);
         }
-        printf("- %8d %s\n", size, info->name);
+        SHELL_PRINTF("- %8d %s\n", size, info->name);
         lfs_file_close(lfs, &file);
     }
 }
@@ -497,7 +500,7 @@ void Shell::cmd_ls(char* args)
 {
     // Check if filesystem is mounted before attempting any operations
     if (!lfs_mounted) {
-        printf("Error: Filesystem not mounted\n");
+        SHELL_PRINTF("Error: Filesystem not mounted\n");
         return;
     }
 
@@ -552,12 +555,12 @@ void Shell::cmd_ls(char* args)
     *gp++ = '$';
     *gp++ = 0;
 
-    if (dbg) printf("%s: globname <%s>\n", __FUNCTION__, globname);
+    if (dbg) SHELL_PRINTF("%s: globname <%s>\n", __FUNCTION__, globname);
     pattern = re_compile(globname);
 
     lfs_err = lfs_dir_open(lfs, &dir, path);
     if (lfs_err < 0) {
-        printf("unable to open directory %s\n", path);
+        SHELL_PRINTF("unable to open directory %s\n", path);
     }
     else {
         // Scan through every file in the directory
@@ -569,7 +572,7 @@ void Shell::cmd_ls(char* args)
                 if ((matchIdx==0) && (matchLen == strlen(info.name))) {
                     if (info.type == LFS_TYPE_DIR) {
                         // directories do not have a size
-                        printf("d %8s %s\n", "", info.name);
+                        SHELL_PRINTF("d %8s %s\n", "", info.name);
                     }
                     else if (info.type == LFS_TYPE_REG) {
                         size = 0;
@@ -579,7 +582,7 @@ void Shell::cmd_ls(char* args)
                         if (err == LFS_ERR_OK) {
                             size = lfs_file_size(lfs, &file);
                         }
-                        printf("- %8d %s\n", size, info.name);
+                        SHELL_PRINTF("- %8d %s\n", size, info.name);
                         lfs_file_close(lfs, &file);
                     }
                 }
@@ -621,7 +624,7 @@ void Shell::cmd_rm(char* args)
     }
 
     if ((!name) || (*name == 0)) {
-        printf("rm: filename expected\n");
+        SHELL_PRINTF("rm: filename expected\n");
     }
 
     // Simplistically convert a globname to an equivalent regular expression
@@ -645,12 +648,12 @@ void Shell::cmd_rm(char* args)
     *gp++ = '$';
     *gp++ = 0;
 
-    if (dbg) printf("%s: globname <%s>\n", __FUNCTION__, globname);
+    if (dbg) SHELL_PRINTF("%s: globname <%s>\n", __FUNCTION__, globname);
     pattern = re_compile(globname);
 
     lfs_err = lfs_dir_open(lfs, &dir, path);
     if (lfs_err < 0) {
-        printf("unable to open directory %s\n", path);
+        SHELL_PRINTF("unable to open directory %s\n", path);
     }
     else {
         // Scan through every file in the directory
@@ -662,7 +665,7 @@ void Shell::cmd_rm(char* args)
                 if ((matchIdx==0) && (matchLen == strlen(info.name))) {
                     if (info.type == LFS_TYPE_DIR) {
                         // directories do not have a size
-                        printf("d %8s %s\n", "", info.name);
+                        SHELL_PRINTF("d %8s %s\n", "", info.name);
                     }
                     else if (info.type == LFS_TYPE_REG) {
                         size = 0;
@@ -672,7 +675,7 @@ void Shell::cmd_rm(char* args)
                         if (err == LFS_ERR_OK) {
                             size = lfs_file_size(lfs, &file);
                         }
-                        printf("- %8d %s\n", size, info.name);
+                        SHELL_PRINTF("- %8d %s\n", size, info.name);
                         lfs_file_close(lfs, &file);
                     }
                 }
@@ -686,7 +689,7 @@ void Shell::cmd_rm(char* args)
 // ----------------------------------------------------------------------------------
 void Shell::cmd_pwd(char* args)
 {
-    printf("%s\n", cwd);
+    SHELL_PRINTF("%s\n", cwd);
 }
 
 // ----------------------------------------------------------------------------------
@@ -714,42 +717,42 @@ void Shell::cmd_dumpEp(char* args)
     // Parse start address
     char* addrArg = decompose(&args, " ");
     if (!addrArg || *addrArg == 0) {
-        printf("Usage: dumpep <start_addr> <length>\n");
+        SHELL_PRINTF("Usage: dumpep <start_addr> <length>\n");
         return;
     }
 
     if (sscanf(addrArg, "%i", &startAddr) != 1) {
-        printf("Error: Invalid start address '%s'\n", addrArg);
+        SHELL_PRINTF("Error: Invalid start address '%s'\n", addrArg);
         return;
     }
 
     // Parse length
     char* lenArg = decompose(&args, " ");
     if (!lenArg || *lenArg == 0) {
-        printf("Error: Length argument required\n");
+        SHELL_PRINTF("Error: Length argument required\n");
         return;
     }
 
     if (sscanf(lenArg, "%i", &totalLength) != 1) {
-        printf("Error: Invalid length '%s'\n", lenArg);
+        SHELL_PRINTF("Error: Invalid length '%s'\n", lenArg);
         return;
     }
 
     if (totalLength == 0) return;
 
     if (!swd) {
-        printf("Error: SWD not initialized\n");
+        SHELL_PRINTF("Error: SWD not initialized\n");
         return;
     }
 
     SWDLock lock;
     // Connect to EP
     if (!swd->connect_target(0, false)) {
-        printf("Error: Failed to connect to EP via SWD\n");
+        SHELL_PRINTF("Error: Failed to connect to EP via SWD\n");
         return;
     }
 
-    printf("Dumping EP memory: 0x%08X, %u bytes\n", startAddr, totalLength);
+    SHELL_PRINTF("Dumping EP memory: 0x%08X, %u bytes\n", startAddr, totalLength);
 
     // Use a small stack-based buffer (64 bytes = 16 words)
     const uint32_t CHUNK_SIZE = 64;
@@ -765,33 +768,33 @@ void Shell::cmd_dumpEp(char* args)
         uint32_t readLenAligned = (bytesToRead + 3) & ~3;
 
         if (!swd->read_target_mem(startAddr + offset, buffer, readLenAligned)) {
-            printf("\nError: Failed to read EP memory at 0x%08X\n", startAddr + offset);
+            SHELL_PRINTF("\nError: Failed to read EP memory at 0x%08X\n", startAddr + offset);
             return;
         }
 
         // Hex dump the current chunk
         for (uint32_t lineOffset = 0; lineOffset < bytesToRead; lineOffset += 16) {
             uint32_t absAddr = startAddr + offset + lineOffset;
-            printf("%08X: ", absAddr);
+            SHELL_PRINTF("%08X: ", absAddr);
 
             // Hex bytes
             for (int i = 0; i < 16; i++) {
                 if (lineOffset + i < bytesToRead) {
-                    printf("%02X ", byteBuffer[lineOffset + i]);
+                    SHELL_PRINTF("%02X ", byteBuffer[lineOffset + i]);
                 } else {
-                    printf("   ");
+                    SHELL_PRINTF("   ");
                 }
             }
 
             // ASCII
-            printf(" ");
+            SHELL_PRINTF(" ");
             for (int i = 0; i < 16; i++) {
                 if (lineOffset + i < bytesToRead) {
                     uint8_t c = byteBuffer[lineOffset + i];
-                    printf("%c", (isprint(c) && !iscntrl(c)) ? c : '.');
+                    SHELL_PRINTF("%c", (isprint(c) && !iscntrl(c)) ? c : '.');
                 }
             }
-            printf("\n");
+            SHELL_PRINTF("\n");
         }
     }
 }
@@ -808,23 +811,23 @@ void Shell::cmd_wifi(char* args)
     char* password = args ? skipWhite(args) : nullptr;
 
     if (!ssid || *ssid == 0) {
-        printf("Usage: wifi <ssid> <password>\n");
-        printf("  Sets WiFi credentials in flash config and reboots.\n");
+        SHELL_PRINTF("Usage: wifi <ssid> <password>\n");
+        SHELL_PRINTF("  Sets WiFi credentials in flash config and reboots.\n");
         return;
     }
 
     if (!password || *password == 0) {
-        printf("wifi: password required\n");
+        SHELL_PRINTF("wifi: password required\n");
         return;
     }
 
     if (strlen(ssid) >= sizeof(g_flash_config.wifi_ssid)) {
-        printf("wifi: SSID too long (max %d chars)\n", (int)sizeof(g_flash_config.wifi_ssid) - 1);
+        SHELL_PRINTF("wifi: SSID too long (max %d chars)\n", (int)sizeof(g_flash_config.wifi_ssid) - 1);
         return;
     }
 
     if (strlen(password) >= sizeof(g_flash_config.wifi_password)) {
-        printf("wifi: password too long (max %d chars)\n", (int)sizeof(g_flash_config.wifi_password) - 1);
+        SHELL_PRINTF("wifi: password too long (max %d chars)\n", (int)sizeof(g_flash_config.wifi_password) - 1);
         return;
     }
 
@@ -833,11 +836,11 @@ void Shell::cmd_wifi(char* args)
     strncpy(g_flash_config.wifi_password, password, sizeof(g_flash_config.wifi_password) - 1);
     g_flash_config.wifi_password[sizeof(g_flash_config.wifi_password) - 1] = '\0';
 
-    printf("wifi: SSID='%s', password set (%d chars) — queuing save+reboot\n",
+    SHELL_PRINTF("wifi: SSID='%s', password set (%d chars) — queuing save+reboot\n",
            g_flash_config.wifi_ssid, (int)strlen(g_flash_config.wifi_password));
 
     if (!ota_reboot_with_config_save_request()) {
-        printf("wifi: reboot request failed (OTA already in progress?)\n");
+        SHELL_PRINTF("wifi: reboot request failed (OTA already in progress?)\n");
     }
 }
 
@@ -852,7 +855,7 @@ void Shell::cmd_tasks()
 {
     char buffer[1024];
     vTaskList(buffer);
-    printf("\n%s\n", buffer);
+    SHELL_PRINTF("\n%s\n", buffer);
 }
 
 // ----------------------------------------------------------------------------------
@@ -862,87 +865,102 @@ void Shell::cmd_sdperf(char* args)
     // Check if reset requested
     if (args && strcmp(args, "reset") == 0) {
         memset(&sd_perf_stats, 0, sizeof(sd_perf_stats));
-        printf("LFS performance statistics reset\n");
+        SHELL_PRINTF("LFS performance statistics reset\n");
         return;
     }
 
-    printf("\n=== LFS Performance Statistics ===\n\n");
+    SHELL_PRINTF("\n=== LFS Performance Statistics ===\n\n");
 
     // Display interface and LFS configuration
     if (sdCard && sdCard->operational()) {
-        printf("Interface: %s @ %.1f MHz\n",
+        SHELL_PRINTF("Interface: %s @ %.1f MHz\n",
             sdCard->getInterfaceMode(),
             sdCard->getClockFrequency_Hz() / 1000000.0);
 
             // Check if running at reduced speed (for SDIO, full speed is 50 MHz)
             const char* mode = sdCard->getInterfaceMode();
             if (strstr(mode, "SDIO") && sdCard->getClockFrequency_Hz() < 50000000) {
-                printf("  ** NOTE: Speed downgraded from 50 MHz to %u MHz **\n",
+                SHELL_PRINTF("  ** NOTE: Speed downgraded from 50 MHz to %u MHz **\n",
                     sdCard->getClockFrequency_Hz() / 1000000);
                 }
             }
 
             // Display LittleFS block size
-            printf("LFS block size: %u bytes", lfs_cfg.block_size);
+            SHELL_PRINTF("LFS block size: %u bytes", lfs_cfg.block_size);
             if (lfs_cfg.block_size == 512) {
-                printf(" (1 sector/block)\n");
+                SHELL_PRINTF(" (1 sector/block)\n");
             } else if (lfs_cfg.block_size % 512 == 0) {
-                printf(" (%u sectors/block)\n", lfs_cfg.block_size / 512);
+                SHELL_PRINTF(" (%u sectors/block)\n", lfs_cfg.block_size / 512);
             } else {
-                printf("\n");
+                SHELL_PRINTF("\n");
             }
-            printf("\n");
+            SHELL_PRINTF("\n");
 
             // Read statistics
-            printf("LFS READ Operations:\n");
-            printf("  Count:     %lu\n", sd_perf_stats.read_count);
-            printf("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.read_bytes, sd_perf_stats.read_bytes / 1024.0);
+            SHELL_PRINTF("LFS READ Operations:\n");
+            SHELL_PRINTF("  Count:     %lu\n", sd_perf_stats.read_count);
+            SHELL_PRINTF("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.read_bytes, sd_perf_stats.read_bytes / 1024.0);
             if (sd_perf_stats.read_count > 0) {
                 uint64_t avg_us = sd_perf_stats.read_time_us / sd_perf_stats.read_count;
                 double avg_bytes = (double)sd_perf_stats.read_bytes / sd_perf_stats.read_count;
                 double throughput_kbps = (sd_perf_stats.read_bytes / 1024.0) / (sd_perf_stats.read_time_us / 1000000.0);
-                printf("  Min time:  %lu us\n", sd_perf_stats.read_min_us);
-                printf("  Max time:  %lu us\n", sd_perf_stats.read_max_us);
-                printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
-                printf("  Throughput: %.2f KB/s\n", throughput_kbps);
+                SHELL_PRINTF("  Min time:  %lu us\n", sd_perf_stats.read_min_us);
+                SHELL_PRINTF("  Max time:  %lu us\n", sd_perf_stats.read_max_us);
+                SHELL_PRINTF("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
+                SHELL_PRINTF("  Throughput: %.2f KB/s\n", throughput_kbps);
             }
 
-            printf("\nLFS WRITE Operations:\n");
-            printf("  Count:     %lu\n", sd_perf_stats.write_count);
-            printf("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.write_bytes, sd_perf_stats.write_bytes / 1024.0);
+            SHELL_PRINTF("\nLFS WRITE Operations:\n");
+            SHELL_PRINTF("  Count:     %lu\n", sd_perf_stats.write_count);
+            SHELL_PRINTF("  Bytes:     %llu (%.2f KB)\n", sd_perf_stats.write_bytes, sd_perf_stats.write_bytes / 1024.0);
             if (sd_perf_stats.write_count > 0) {
                 uint64_t avg_us = sd_perf_stats.write_time_us / sd_perf_stats.write_count;
                 double avg_bytes = (double)sd_perf_stats.write_bytes / sd_perf_stats.write_count;
                 double throughput_kbps = (sd_perf_stats.write_bytes / 1024.0) / (sd_perf_stats.write_time_us / 1000000.0);
-                printf("  Min time:  %lu us\n", sd_perf_stats.write_min_us);
-                printf("  Max time:  %lu us\n", sd_perf_stats.write_max_us);
-                printf("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
-                printf("  Throughput: %.2f KB/s\n", throughput_kbps);
-                printf("  Logger high-water: %d/%d\n", logger->get_inUse_max(), logger->get_log_size());
+                SHELL_PRINTF("  Min time:  %lu us\n", sd_perf_stats.write_min_us);
+                SHELL_PRINTF("  Max time:  %lu us\n", sd_perf_stats.write_max_us);
+                SHELL_PRINTF("  Avg time:  %llu us (%.0f bytes/op)\n", avg_us, avg_bytes);
+                SHELL_PRINTF("  Throughput: %.2f KB/s\n", throughput_kbps);
+                SHELL_PRINTF("  Logger high-water: %d/%d\n", logger->get_inUse_max(), logger->get_log_size());
             }
 
-            printf("\nUsage: sdperf [reset]\n");
-            printf("  sdperf       - Display statistics\n");
-            printf("  sdperf reset - Reset statistics to zero\n\n");
+            SHELL_PRINTF("\nUsage: sdperf [reset]\n");
+            SHELL_PRINTF("  sdperf       - Display statistics\n");
+            SHELL_PRINTF("  sdperf reset - Reset statistics to zero\n\n");
+        }
+
+        // ----------------------------------------------------------------------------------
+        // Block until a line is available on the shell RTT down-channel.
+        // Strips the terminating newline. Echoes characters for interactive use.
+        static void shell_readline(char* buf, size_t maxLen)
+        {
+            size_t pos = 0;
+            while (pos < maxLen - 1) {
+                char c;
+                while (shell_rtt_read(&c, 1) == 0) {
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                }
+                if (c == '\r' || c == '\n') {
+                    shell_printf("\r\n");
+                    break;
+                }
+                shell_printf("%c", c);
+                buf[pos++] = c;
+            }
+            buf[pos] = '\0';
         }
 
         // ----------------------------------------------------------------------------------
         void Shell::shell_task()
         {
-            bool done;
-            char* cmdP;
-            const char* lastCharP = &cmdBuf[sizeof(cmdBuf)]-1;
             const char* promptString = "$ ";
 
             while (1) {
-                printf("%s%s", cwd, promptString);
-                if (fgets(cmdBuf, sizeof(cmdBuf), stdin)) {
-                    char* p = strrchr(cmdBuf, '\n');
-                    if (p) {
-                        *p = 0;
-
+                SHELL_PRINTF("%s%s", cwd, promptString);
+                shell_readline(cmdBuf, sizeof(cmdBuf));
+                {
                         args = cmdBuf;
-                        //if (dbg) printf("processing <%s>\n", cmdBuf);
+                        //if (dbg) SHELL_PRINTF("processing <%s>\n", cmdBuf);
                         cmd = decompose(&args, " ");
 
                         if (cmd) {
@@ -981,19 +999,18 @@ void Shell::cmd_sdperf(char* args)
                             }
                             #if 0
                             else if (strcmp(cmd, "cp") == 0) {
-                                printf("cp!\n");
+                                SHELL_PRINTF("cp!\n");
                             }
                             else if (strcmp(cmd, "mv") == 0) {
-                                printf("mv!\n");
+                                SHELL_PRINTF("mv!\n");
                             }
                             #endif
                             else if (strcmp(cmd, "") == 0) {
                             }
                             else {
-                                printf("Unknown cmd: %s\n", cmd);
+                                SHELL_PRINTF("Unknown cmd: %s\n", cmd);
                             }
                         }
-                    }
                 }
             }
         }
