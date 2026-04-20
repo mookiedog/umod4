@@ -141,6 +141,12 @@
             border-left: 3px solid #3182ce;
             padding-left: 1px;
         }
+        .selector-row.sel-continue { background: #fdd; }
+        .selector-row.sel-continue.sel-selected {
+            background: #fcb8b8;
+            border-left: 3px solid #c53030;
+            padding-left: 1px;
+        }
         .selector-idx {
             color: #aaa; min-width: 1.6em; font-size: 0.9em;
             cursor: pointer; text-align: center;
@@ -212,6 +218,7 @@
                 <button class="btn-icon btn-small" id="btn-sel-down" disabled onclick="selectorCtrlDown()" title="Move down">&#9660;</button>
                 <button class="btn-icon btn-small" id="btn-sel-top"  disabled onclick="selectorCtrlTop()"  title="Move to top">&#8657;</button>
                 <button class="btn-icon btn-small" id="btn-sel-del"  disabled onclick="selectorCtrlDel()"  title="Delete" style="color:#9b2c2c;">&#10005;</button>
+                <button class="btn-icon btn-small" id="btn-sel-cont" disabled onclick="selectorCtrlContinue()" title="Toggle: continue loading next entry even after success (red = on)">&#8594;</button>
                 <button class="btn-icon btn-small" id="selector-add" onclick="selectorAddEntry()" title="Add entry">+</button>
             </div>
             <div id="selector-save-row" style="display:none; margin-top:12px; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -393,7 +400,7 @@
             code = '<span style="color:#9b2c2c;">&#9888; limp-mode</span>';
             maps = 'none';
         } else {
-            var e = (d.image_selector && d.image_selector.length > 0) ? d.image_selector[0] : null;
+            var e = (d.image_selector && d.image_selector.length > 0) ? d.image_selector[d.image_selector.length - 1] : null;
             code = e ? esc(e.code || e.name || '?') : '?';
             maps = (e && e.mapblob) ? esc(e.mapblob) : 'none';
         }
@@ -806,14 +813,16 @@
         var i = g_selected_idx;
         var hasSel = i >= 0 && i < n;
         var dis = g_engine_running;
-        var btnUp  = document.getElementById('btn-sel-up');
-        var btnDn  = document.getElementById('btn-sel-down');
-        var btnTop = document.getElementById('btn-sel-top');
-        var btnDel = document.getElementById('btn-sel-del');
-        if (btnUp)  btnUp.disabled  = dis || !hasSel || i === 0;
-        if (btnDn)  btnDn.disabled  = dis || !hasSel || i === n - 1;
-        if (btnTop) btnTop.disabled = dis || !hasSel || i === 0;
-        if (btnDel) btnDel.disabled = dis || !hasSel;
+        var btnUp   = document.getElementById('btn-sel-up');
+        var btnDn   = document.getElementById('btn-sel-down');
+        var btnTop  = document.getElementById('btn-sel-top');
+        var btnDel  = document.getElementById('btn-sel-del');
+        var btnCont = document.getElementById('btn-sel-cont');
+        if (btnUp)   btnUp.disabled   = dis || !hasSel || i === 0;
+        if (btnDn)   btnDn.disabled   = dis || !hasSel || i === n - 1;
+        if (btnTop)  btnTop.disabled  = dis || !hasSel || i === 0;
+        if (btnDel)  btnDel.disabled  = dis || !hasSel;
+        if (btnCont) btnCont.disabled = dis || !hasSel;
     }
 
     function renderSelector() {
@@ -829,8 +838,9 @@
             + '<span class="sel-col-hdr">Mapblob</span>'
             + '</div>';
         g_selector.forEach(function(entry, i) {
-            var sel = (i === g_selected_idx);
-            html += '<div class="selector-row' + (sel ? ' sel-selected' : '') + '" data-idx="' + i + '">'
+            var sel  = (i === g_selected_idx);
+            var cont = !!entry.continue;
+            html += '<div class="selector-row' + (sel ? ' sel-selected' : '') + (cont ? ' sel-continue' : '') + '" data-idx="' + i + '" data-continue="' + (cont ? 'true' : '') + '">'
                 + '<span class="selector-idx" onclick="selectorSelect(' + i + ')">' + (i+1) + '</span>'
                 + '<select class="sel-code" data-idx="' + i + '" onchange="selectorUserEdit()">'
                 + makeNameOptions(entry.code) + '</select>'
@@ -855,6 +865,7 @@
             var mapblob = row.querySelector('.sel-mapblob').value;
             var entry = { code: code };
             if (mapblob) entry.mapblob = mapblob;
+            if (row.dataset.continue === 'true') entry.continue = 'true';
             g_selector.push(entry);
         });
     }
@@ -902,6 +913,19 @@
         selectorUpdate();
         g_selector.splice(g_selected_idx, 1);
         if (g_selected_idx >= g_selector.length) g_selected_idx = g_selector.length - 1;
+        renderSelector();
+        markSelectorDirty();
+    }
+
+    function selectorCtrlContinue() {
+        if (g_selected_idx < 0) return;
+        selectorUpdate();
+        var entry = g_selector[g_selected_idx];
+        if (entry.continue) {
+            delete entry.continue;
+        } else {
+            entry.continue = 'true';
+        }
         renderSelector();
         markSelectorDirty();
     }

@@ -3,6 +3,7 @@
 #include "WiFiManager.h"
 #include "bsonlib.h"
 #include "Swd.h"
+#include "swd_lock.h"
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "pico/sha256.h"
@@ -879,6 +880,8 @@ static bool g_scan_cache_valid = false;
  */
 void image_store_init(void)
 {
+    // Called pre-scheduler from boot_system() — g_swd_mutex does not exist yet.
+    // No SWDLock here; do_image_store_scan() takes it at runtime instead.
     g_selector_cache_valid = false;
     if (!swd) {
         snprintf(g_image_store_json, sizeof(g_image_store_json),
@@ -974,14 +977,21 @@ void image_store_init(void)
             mapblob = (const char*)mapblobElem.data + 4;
         }
 
+        element_t contElem;
+        bool has_continue = Bson::findElement(entry.data, "continue", contElem);
+
+        // Build optional suffix fields; cont_part is non-empty when continue is set.
+        char cont_part[22] = "";
+        if (has_continue) snprintf(cont_part, sizeof(cont_part), ",\"continue\":\"true\"");
+
         if (mapblob) {
             len += snprintf(g_image_store_json + len, sizeof(g_image_store_json) - len,
-                            "%s{\"code\":\"%s\",\"mapblob\":\"%s\"}",
-                            first ? "" : ",", code, mapblob);
+                            "%s{\"code\":\"%s\",\"mapblob\":\"%s\"%s}",
+                            first ? "" : ",", code, mapblob, cont_part);
         } else {
             len += snprintf(g_image_store_json + len, sizeof(g_image_store_json) - len,
-                            "%s{\"code\":\"%s\"}",
-                            first ? "" : ",", code);
+                            "%s{\"code\":\"%s\"%s}",
+                            first ? "" : ",", code, cont_part);
         }
         first = false;
     }
@@ -1022,6 +1032,7 @@ void image_store_invalidate_scan_cache(void)
 
 static void do_image_store_scan(void)
 {
+    SWDLock lock;
     const uint32_t IMAGE_STORE_BASE = 0x10200000;
     const uint32_t SLOT_SIZE        = 65536;
     const uint32_t HEADER_PROBE     = 512;   // bytes read per slot (enough for all fields)
@@ -1193,5 +1204,34 @@ void generate_api_wifi_scan_json(char* buffer, size_t size)
             e.ssid, e.rssi, e.channel);
         first = false;
     }
-    snprintf(buffer + pos, size - pos, "]}");;
+    snprintf(buffer + pos, size - pos, "]}");
+}
+
+// -------------------------------------------------------------------------
+// /api/ep-stdio/<offset>
+// Returns EP stdio circular buffer contents since client_offset.
+// Response: {"data":"...","next":N,"overflow":false}
+#include "ep_rtt_forwarder.h"
+
+void generate_api_ep_stdio_json(char* buffer, size_t size, uint32_t client_offset)
+{
+    uint8_t  raw[512];
+    uint32_t next;
+    bool     overflow;
+    uint32_t len = ep_stdio_read(client_offset, raw, sizeof(raw), &next, &overflow);
+
+    size_t pos = 0;
+    pos += (size_t)snprintf(buffer + pos, size - pos, "{\"data\":\"");
+    for (uint32_t i = 0; i < len && pos + 8 < size; i++) {
+        uint8_t c = raw[i];
+        if      (c == '"')  { buffer[pos++] = '\\'; buffer[pos++] = '"'; }
+        else if (c == '\\') { buffer[pos++] = '\\'; buffer[pos++] = '\\'; }
+        else if (c == '\n') { buffer[pos++] = '\\'; buffer[pos++] = 'n'; }
+        else if (c == '\r') { buffer[pos++] = '\\'; buffer[pos++] = 'r'; }
+        else if (c < 0x20)  { pos += (size_t)snprintf(buffer + pos, size - pos, "\\u%04x", (unsigned)c); }
+        else                { buffer[pos++] = (char)c; }
+    }
+    snprintf(buffer + pos, size - pos,
+             "\",\"next\":%lu,\"overflow\":%s}",
+             (unsigned long)next, overflow ? "true" : "false");
 }

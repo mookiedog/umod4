@@ -15,7 +15,12 @@ extern void enqueue(uint8_t id, uint8_t data);
 #if defined HAS_DESCRAMBLER
 #include "descramble.h"
 #else
-extern uint8_t readEpromViaDaughterboard(uint32_t ecuAddr, const uint8_t* scrambledEpromImage);
+// Weak no-op fallbacks used when the build does not include the unprotection mechanism.
+uint8_t readEpromViaDaughterboard(uint32_t, const uint8_t*) __attribute__((weak));
+uint8_t readEpromViaDaughterboard(uint32_t, const uint8_t*) { return 0; }
+
+bool hasDescrambler() __attribute__((weak));
+bool hasDescrambler() { return false; }
 #endif
 
 extern uint32_t __IMAGE_STORE_PARTITION_START_ADDR;
@@ -68,20 +73,26 @@ struct SlotInfo {
 // protection:  'A' or 'N'
 // startOffset: starting EPROM address (0x0000..0x7FFF)
 // length:      number of bytes to copy
-static void loadSlotImage(uint8_t slotIndex, uint8_t* dest, char protection,
+static bool loadSlotImage(uint8_t slotIndex, uint8_t* dest, char protection,
                           uint32_t startOffset = 0, uint32_t length = EPROM_IMAGE_SIZE_BYTES)
 {
+    if (protection == 'A' && !hasDescrambler()) {
+        printf("%s: ERR: slot %u requires protection 'A' but no descrambler is present\n",
+               __FUNCTION__, slotIndex);
+        return false;
+    }
+
     const uint8_t* src = (const uint8_t*)(image_store_PartitionStart_addr
                                           + (uint32_t)slotIndex * SLOT_SIZE_BYTES
                                           + SLOT_IMAGE_OFFSET);
     if (protection == 'A') {
-        // Protected images must get copied on a byte-by-byte basis through the daughterboard decoder
         for (uint32_t i = 0; i < length; i++) {
             dest[i] = readEpromViaDaughterboard(startOffset + i, src);
         }
     } else {
         memcpy(dest, src + startOffset, length);
     }
+    return true;
 }
 
 // --------------------------------------------------------------------------------------------
@@ -108,9 +119,9 @@ static void loadSlotImage(uint8_t slotIndex, uint8_t* dest, char protection,
 //
 void EpromLoader::loadImage()
 {
-    element_t imagesArray;
+    const char* fname = "ld";
 
-    printf("%s: Loading image via image_store (64K slot format)\n", __FUNCTION__);
+    element_t imagesArray;
 
     // -------------------------------------------------------------------------
     // Images can be stored 'sparsely' throughout the image store.
@@ -120,6 +131,7 @@ void EpromLoader::loadImage()
     static SlotInfo slot_dir[MAX_IMAGE_SLOTS];
     uint8_t slot_dir_count = 0;
 
+    printf("%s: Scanning image_store (slot size: %u)\n", fname, SLOT_SIZE_BYTES);
     for (uint8_t i = 1; i <= MAX_IMAGE_SLOTS; i++) {
         const uint8_t* headerPtr = (const uint8_t*)(image_store_PartitionStart_addr
                                                      + (uint32_t)i * SLOT_SIZE_BYTES);
@@ -138,6 +150,8 @@ void EpromLoader::loadImage()
         element_t nameElem;
         if (Bson::findElement(headerPtr, "name", nameElem) && nameElem.elementType == BSON_TYPE_UTF8) {
             const char* n = (const char*)nameElem.data + 4;
+            if (strlen(n) >= sizeof(si.name))
+                printf("%s: WARN: slot %u name truncated to %u chars\n", fname, i, (unsigned)(sizeof(si.name) - 1));
             strncpy(si.name, n, sizeof(si.name) - 1);
             si.name[sizeof(si.name) - 1] = '\0';
         }
@@ -150,19 +164,25 @@ void EpromLoader::loadImage()
             }
         }
 
-        // Extract "protection" (optional; default 'N')
+        // Extract "protection" (optional; default 'N').
+        // Unknown values are fatal — silently treating a protected image as 'N'
+        // would feed descrambled garbage to the ECU.
         element_t protElem;
         if (Bson::findElement(headerPtr, "protection", protElem) && protElem.elementType == BSON_TYPE_UTF8) {
             const char* p = (const char*)protElem.data + 4;
-            if (p[0] == 'A') si.protection = 'A';
+            if (p[0] == 'A') {
+                si.protection = 'A';
+            } else if (p[0] != 'N') {
+                printf("%s: ERR: slot %u has unknown protection '%c', skipping\n",
+                       fname, i, (p[0] >= 0x20 && p[0] < 0x7F) ? p[0] : '?');
+                continue;
+            }
         }
 
-        printf("%s: slot_dir[%u]: slot=%u name=\"%s\" m3=0x%08X prot=%c\n",
-               __FUNCTION__, slot_dir_count, i, si.name, si.image_m3, si.protection);
         slot_dir_count++;
     }
 
-    printf("%s: Found %u populated image slots\n", __FUNCTION__, slot_dir_count);
+    printf("%s: Found %u populated slots\n", fname, slot_dir_count);
 
     // Load-result JSON array, built up as we process selector entries.
     // Accessible at limp_mode so we can append a final limp-mode entry.
@@ -174,17 +194,18 @@ void EpromLoader::loadImage()
 
     // -------------------------------------------------------------------------
     // Validate the image selector, which will be sitting in slot 0.
+    printf("%s: Processing img_sel BSON\n", fname);
     const uint8_t* selectorDoc = (const uint8_t*)image_store_PartitionStart_addr;
     uint32_t selectorSize = Bson::read_unaligned_uint32(selectorDoc);
     if (selectorSize < 5 || selectorSize > SLOT_SIZE_BYTES) {
-        printf("%s: Invalid selector size %u in slot 0\n", __FUNCTION__, selectorSize);
+        printf("%s: ERR: Invalid selector size %u in slot 0\n", fname, selectorSize);
         enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_BADMAGIC);
         goto limp_mode;
     }
 
     if (!Bson::findElement(selectorDoc, "images", imagesArray) ||
         imagesArray.elementType != BSON_TYPE_ARRAY) {
-        printf("%s: No \"images\" array in selector BSON\n", __FUNCTION__);
+        printf("%s: ERR: No \"images\" array in selector BSON\n", fname);
         enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOIMAGES);
         goto limp_mode;
     }
@@ -208,7 +229,7 @@ void EpromLoader::loadImage()
             codeName = (const char*)codeElem.data + 4;
         }
         if (!codeName || codeName[0] == '\0' || strcmp(codeName, "limp-mode") == 0) {
-            printf("%s: Entry %s: limp-mode selected\n", __FUNCTION__, indexStr);
+            printf("%s: Entry %s: limp-mode selected\n", fname, indexStr);
             goto limp_mode;
         }
 
@@ -225,7 +246,7 @@ void EpromLoader::loadImage()
         bool continueFlag = Bson::findElement(entry.data, "continue", continueElem);
 
         logEpromName_load(codeName);
-        printf("%s: Entry %s: code=\"%s\"", __FUNCTION__, indexStr, codeName);
+        printf("%s: Trying img_sel[%s]: code=\"%s\"", fname, indexStr, codeName);
         if (mapblobName) printf(" mapblob=\"%s\"", mapblobName);
         printf("\n");
 
@@ -241,7 +262,9 @@ void EpromLoader::loadImage()
             // ---------------------------------------------------------------
             // "UM4 (built in)": intentionally use the UM4 image compiled into EP firmware.
             // No slot lookup or hash check needed — the image is part of EP itself.
-            printf("%s: Loading built-in UM4 image\n", __FUNCTION__);
+            // This is a "best-effort" load meaning that we would attempt to run it
+            // even if it had a bad hash just in case it worked well enough to get home.
+            printf("%s: Loading image \"UM4 (built-in)\"\n", fname);
             memcpy((uint8_t*)EPROM_IMAGE_BASE, limp_mode_image, EPROM_IMAGE_SIZE_BYTES);
         } else {
             // ---------------------------------------------------------------
@@ -254,7 +277,7 @@ void EpromLoader::loadImage()
                 }
             }
             if (!codeSlot) {
-                printf("%s: Code slot \"%s\" not found\n", __FUNCTION__, codeName);
+                printf("%s: ERR: Code slot \"%s\" not found\n", fname, codeName);
                 enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
                 append_fail();
                 continue;
@@ -267,8 +290,8 @@ void EpromLoader::loadImage()
                                                             + SLOT_IMAGE_OFFSET);
             uint32_t codeHash = murmur3_32(codeImagePtr, EPROM_IMAGE_SIZE_BYTES, ~0x0);
             if (codeHash != codeSlot->image_m3) {
-                printf("%s: Code slot \"%s\" hash mismatch: expected 0x%08X, got 0x%08X\n",
-                        __FUNCTION__, codeName, codeSlot->image_m3, codeHash);
+                printf("%s: ERR: Code slot \"%s\" hash mismatch: expected 0x%08X, got 0x%08X\n",
+                        fname, codeName, codeSlot->image_m3, codeHash);
                 enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_BAD_HASH);
                 append_fail();
                 continue;
@@ -277,14 +300,20 @@ void EpromLoader::loadImage()
             // ---------------------------------------------------------------
             // Load code image into EPROM_IMAGE_BASE.
             enqueue(LOGID_EP_LOAD_IMAGESLOT_TYPE_U8, codeSlot->index);
-            loadSlotImage(codeSlot->index, (uint8_t*)EPROM_IMAGE_BASE, codeSlot->protection);
-            printf("%s: Loaded code \"%s\" from slot %u (prot=%c)\n",
-                    __FUNCTION__, codeName, codeSlot->index, codeSlot->protection);
+            printf("%s: Loading image \"%s\" from slot %u (prot=%c)\n",
+                    fname, codeName, codeSlot->index, codeSlot->protection);
+            if (!loadSlotImage(codeSlot->index, (uint8_t*)EPROM_IMAGE_BASE, codeSlot->protection)) {
+                enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
+                append_fail();
+                continue;
+            }
+
         }
 
         // ---------------------------------------------------------------
         // Optional: If "mapblob" specified, find, verify, and overlay on top of code image
         if (mapblobName) {
+            printf("%s: Overlaying mapblob from \"%s\"\n", fname, mapblobName);
             logEpromName_load(mapblobName);
             const SlotInfo* mapSlot = nullptr;
             for (uint8_t d = 0; d < slot_dir_count; d++) {
@@ -294,7 +323,7 @@ void EpromLoader::loadImage()
                 }
             }
             if (!mapSlot) {
-                printf("%s: Mapblob slot \"%s\" not found\n", __FUNCTION__, mapblobName);
+                printf("%s: ERR: Mapblob \"%s\" not found\n", fname, mapblobName);
                 enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
                 append_fail();
                 continue;
@@ -305,8 +334,8 @@ void EpromLoader::loadImage()
                                                             + SLOT_IMAGE_OFFSET);
             uint32_t mapHash = murmur3_32(mapImagePtr, EPROM_IMAGE_SIZE_BYTES, ~0x0);
             if (mapHash != mapSlot->image_m3) {
-                printf("%s: Mapblob slot \"%s\" hash mismatch: expected 0x%08X, got 0x%08X\n",
-                        __FUNCTION__, mapblobName, mapSlot->image_m3, mapHash);
+                printf("%s: ERR: Mapblob \"%s\" hash mismatch: expected 0x%08X, got 0x%08X\n",
+                        fname, mapblobName, mapSlot->image_m3, mapHash);
                 enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_BAD_HASH);
                 append_fail();
                 continue;
@@ -314,23 +343,23 @@ void EpromLoader::loadImage()
             enqueue(LOGID_EP_LOAD_IMAGESLOT_TYPE_U8, mapSlot->index);
 
             // Overlay mapblob bytes 0x0000–0x1BFF directly onto EPROM_IMAGE_BASE
-            loadSlotImage(mapSlot->index, (uint8_t*)EPROM_IMAGE_BASE, mapSlot->protection, 0, MAPBLOB_SIZE);
-            printf("%s: Overlaid mapblob \"%s\" from slot %u (prot=%c)\n",
-                    __FUNCTION__, mapblobName, mapSlot->index, mapSlot->protection);
+            if (!loadSlotImage(mapSlot->index, (uint8_t*)EPROM_IMAGE_BASE, mapSlot->protection, 0, MAPBLOB_SIZE)) {
+                enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOTFOUND);
+                append_fail();
+                continue;
+            }
         }
 
         // ---------------------------------------------------------------
         // Log success and send result to WP
+        printf("%s: Success\n", fname);
+
         {
             int w;
-            if (mapblobName) {
-                w = snprintf(imgsel_str + imgsel_pos, sizeof(imgsel_str) - imgsel_pos - 4,
-                                "%s{\"code\":\"%s\",\"mapblob\":\"%s\",\"load\":\"ok\"}",
-                                imgsel_first ? "" : ",", codeName, mapblobName);
-            } else {
-                w = snprintf(imgsel_str + imgsel_pos, sizeof(imgsel_str) - imgsel_pos - 4,
-                                "%s{\"code\":\"%s\",\"load\":\"ok\"}", imgsel_first ? "" : ",", codeName);
-            }
+            const char* blobName = (mapblobName) ? mapblobName : "<none>";
+            w = snprintf(imgsel_str + imgsel_pos, sizeof(imgsel_str) - imgsel_pos - 4,
+                            "%s{\"code\":\"%s\",\"mapblob\":\"%s\",\"load\":\"ok\"}",
+                            imgsel_first ? "" : ",", codeName, blobName);
             if (w > 0 && imgsel_pos + w < (int)sizeof(imgsel_str) - 4) imgsel_pos += w;
             imgsel_first = false;
         }
@@ -342,20 +371,19 @@ void EpromLoader::loadImage()
             const char* p = imgsel_str;
             char c;
             do { c = *p++; enqueue(LOGID_EP_IMGSEL_TYPE_CS, c); } while (c != '\0');
-            printf("%s: %s\n", __FUNCTION__, imgsel_str);
             return;
         }
         // continue flag: keep iterating through remaining selector entries
-        printf("%s: Continue flag present, trying next...\n", __FUNCTION__);
+        printf("%s: WARN: Continue flag present\n", fname);
     }
     // All selector entries exhausted; fall through to limp_mode.
 
 limp_mode:
     // We were unsuccessful in loading any image from the image_store.
-    printf("%s: No loadable images found in image_selector!\n", __FUNCTION__);
+    printf("%s: ERR: No loadable images found in image_selector!\n", fname);
     enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_NOIMAGES);
 
-    printf("%s: Loading limp mode image built into EP firmware\n", __FUNCTION__);
+    printf("%s: ERR: Loading image \"limp mode\"\n", fname);
     memcpy((uint8_t*)EPROM_IMAGE_BASE, limp_mode_image, EPROM_IMAGE_SIZE_BYTES);
     enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_VAL_LIMP_MODE);
 
@@ -365,7 +393,7 @@ limp_mode:
     if (w > 0) imgsel_pos += w;
     imgsel_str[imgsel_pos++] = ']';
     imgsel_str[imgsel_pos] = '\0';
-    printf("%s: %s\n", __FUNCTION__, imgsel_str);
+    printf("%s: %s\n", fname, imgsel_str);
 
     const char* p = imgsel_str;
     char c;
@@ -393,9 +421,6 @@ void logEpromName_load(const char* nameP)
         } while (c != '\0');
     }
 }
-
-
-
 
 // --------------------------------------------------------------------------------------------
 uint8_t EpromLoader::loadImage(bsonDoc_t epromDoc, const char* epromName)
@@ -495,7 +520,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     // Verify the M3 hash:
     uint32_t hash = murmur3_32(imageMemInfo.binData, imageMemInfo.length, ~0x0);
     if (hash != imageMemInfo.m3) {
-        printf("%s: Hash checksum failed: calculated 0x%08X, expected 0x%08X\n", __FUNCTION__, hash, imageMemInfo.m3);
+        printf("%s: ERR: Hash checksum failed: calculated 0x%08X, expected 0x%08X\n", __FUNCTION__, hash, imageMemInfo.m3);
         return LOGID_EP_LOAD_ERR_VAL_M3FAIL;
     }
 

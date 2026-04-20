@@ -69,12 +69,33 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+set(BUILD_INFO_C ${CMAKE_CURRENT_BINARY_DIR}/build_info.c)
+
+# Regenerate the build timestamp whenever any EP source file changes.
+# If nothing changed, ninja is a no-op and the timestamp is preserved.
+set(EP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/epromEmulator.S
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/EpromLoader.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/busFailsafeSetup.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hc11SyncSetup.cpp
+)
+add_custom_command(
+    OUTPUT ${BUILD_INFO_C}
+    COMMAND ${CMAKE_COMMAND} -DOUTPUT_FILE=${BUILD_INFO_C}
+                             -P ${CMAKE_CURRENT_SOURCE_DIR}/gen_build_info.cmake
+    DEPENDS ${EP_SOURCES}
+    COMMENT "Generating EP build timestamp"
+    VERBATIM
+)
+
 add_executable(${PROJECT_NAME}
   src/main.cpp
   src/epromEmulator.S
   src/EpromLoader.cpp
   src/busFailsafeSetup.cpp
   src/hc11SyncSetup.cpp
+  ${BUILD_INFO_C}
   ${DESCRAMBLER_SOURCE}
 )
 

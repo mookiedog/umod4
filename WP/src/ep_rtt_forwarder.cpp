@@ -7,6 +7,7 @@
 #include "ep_info.h"
 #include "Swd.h"
 #include "swd_lock.h"
+#include "hardware/sync.h"
 
 // -------------------------------------------------------------------------
 // SEGGER_RTT_BUFFER_UP layout (24 bytes per channel, host reads from pBuffer)
@@ -55,6 +56,54 @@ static bool        s_connected;
 static char s_wp_vfy_buf[512];
 static char s_ep_gen_buf[4096];
 static char s_ep_vfy_buf[1024];
+
+// -------------------------------------------------------------------------
+// EP stdio circular buffer — tees EP ch0 output for the web interface.
+#define EP_STDIO_BUF_SIZE   1024u
+static uint8_t           s_ep_stdio_buf[EP_STDIO_BUF_SIZE];
+static volatile uint32_t s_ep_stdio_wr;     // monotonically increasing byte count
+
+static void ep_stdio_append(const uint8_t* data, uint32_t len)
+{
+    if (len == 0) return;
+    uint32_t wr  = s_ep_stdio_wr;
+    uint32_t idx = wr % EP_STDIO_BUF_SIZE;
+    uint32_t to_end = EP_STDIO_BUF_SIZE - idx;
+    if (len <= to_end) {
+        memcpy(s_ep_stdio_buf + idx, data, len);
+    } else {
+        memcpy(s_ep_stdio_buf + idx, data, to_end);
+        memcpy(s_ep_stdio_buf, data + to_end, len - to_end);
+    }
+    __dmb();    // ensure data bytes visible before counter advances
+    s_ep_stdio_wr = wr + len;
+}
+
+uint32_t ep_stdio_read(uint32_t client_offset, uint8_t* out, uint32_t max_bytes,
+                       uint32_t* out_next, bool* out_overflow)
+{
+    uint32_t wr   = s_ep_stdio_wr;
+    uint32_t tail = (wr >= EP_STDIO_BUF_SIZE) ? (wr - EP_STDIO_BUF_SIZE) : 0u;
+
+    *out_overflow = (client_offset < tail);
+    if (*out_overflow)
+        client_offset = tail;
+
+    uint32_t avail = wr - client_offset;
+    if (avail > max_bytes)
+        avail = max_bytes;
+
+    uint32_t idx    = client_offset % EP_STDIO_BUF_SIZE;
+    uint32_t to_end = EP_STDIO_BUF_SIZE - idx;
+    if (avail <= to_end) {
+        memcpy(out, s_ep_stdio_buf + idx, avail);
+    } else {
+        memcpy(out, s_ep_stdio_buf + idx, to_end);
+        memcpy(out + to_end, s_ep_stdio_buf, avail - to_end);
+    }
+    *out_next = client_offset + avail;
+    return avail;
+}
 
 // -------------------------------------------------------------------------
 // Read one BUFFER_UP struct fields we care about from EP via SWD.
@@ -123,6 +172,8 @@ static bool forward_channel(EpChanState& ch, uint32_t cb_addr, int ch_idx)
         if (!swd->read_target_mem(aligned_src, (uint32_t*)(void*)tmp, total_read))
             return false;
         SEGGER_RTT_Write(ch.wp_channel, tmp + align_off, avail);
+        if (ch_idx == 0)
+            ep_stdio_append(tmp + align_off, avail);
     } else {
         // Wrapping: read from rd_off to end of buffer, then 0 to remainder
         uint32_t first_len = contiguous;
@@ -135,6 +186,8 @@ static bool forward_channel(EpChanState& ch, uint32_t cb_addr, int ch_idx)
         if (!swd->read_target_mem(aligned_src1, (uint32_t*)(void*)tmp, total_read1))
             return false;
         SEGGER_RTT_Write(ch.wp_channel, tmp + align_off1, first_len);
+        if (ch_idx == 0)
+            ep_stdio_append(tmp + align_off1, first_len);
 
         // Second segment starts at buf_addr (beginning of ring buffer)
         uint32_t src2 = ch.buf_addr;
@@ -142,6 +195,8 @@ static bool forward_channel(EpChanState& ch, uint32_t cb_addr, int ch_idx)
         if (!swd->read_target_mem(src2, (uint32_t*)(void*)tmp, total_read2))
             return false;
         SEGGER_RTT_Write(ch.wp_channel, tmp, second_len);
+        if (ch_idx == 0)
+            ep_stdio_append(tmp, second_len);
     }
 
     // Advance RdOff in EP

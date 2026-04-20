@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - EP Boot Log</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .log-box {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            font-family: monospace;
+            font-size: 0.85em;
+            padding: 12px;
+            border-radius: 6px;
+            height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-box .overflow-marker {
+            color: #ff6b6b;
+            font-style: italic;
+        }
+        .toolbar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        .toolbar button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            background: #6c757d;
+            color: white;
+        }
+        .toolbar button:hover { background: #5a6268; }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #aaa;
+            display: inline-block;
+            margin-left: auto;
+        }
+        .status-dot.active { background: #28a745; }
+        .status-dot.idle   { background: #ffc107; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">EP Boot Log</span>
+                <div class="ribbon-status">
+                    <a href="/" class="ribbon-icon-link" title="Home">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+            <div class="toolbar">
+                <button onclick="doClear()">Clear</button>
+                <button onclick="doRefresh()">Refresh</button>
+                <span class="status-dot" id="status-dot"></span>
+            </div>
+            <div class="log-box" id="log-box"></div>
+        </div>
+    </div>
+
+    <script>
+        var nextOffset = 0;
+        var pollTimer = null;
+        var POLL_INTERVAL_MS = 2000;
+
+        fetch('/api/info')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
+            }).catch(function() {});
+
+        function appendText(text) {
+            var box = document.getElementById('log-box');
+            var span = document.createElement('span');
+            span.textContent = text;
+            box.appendChild(span);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function appendOverflow() {
+            var box = document.getElementById('log-box');
+            var span = document.createElement('span');
+            span.className = 'overflow-marker';
+            span.textContent = '\n[...data lost...]\n';
+            box.appendChild(span);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function setDot(state) {
+            var dot = document.getElementById('status-dot');
+            dot.className = 'status-dot' + (state ? ' ' + state : '');
+        }
+
+        function poll() {
+            setDot('active');
+            fetch('/api/ep-stdio/' + nextOffset)
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.overflow) appendOverflow();
+                    if (d.data && d.data.length > 0) appendText(d.data);
+                    nextOffset = d.next;
+                    setDot('idle');
+                    pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+                })
+                .catch(function() {
+                    setDot('');
+                    pollTimer = setTimeout(poll, POLL_INTERVAL_MS);
+                });
+        }
+
+        function doClear() {
+            document.getElementById('log-box').textContent = '';
+            nextOffset = 0;
+        }
+
+        function doRefresh() {
+            if (pollTimer) clearTimeout(pollTimer);
+            poll();
+        }
+
+        // Start polling immediately
+        setDot('idle');
+        poll();
+    </script>
+</body>
+</html>

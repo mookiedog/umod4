@@ -803,8 +803,6 @@ void check_tbyb()
 // That is where all the behind-the-scenes initialization of the runtime occurs.
 int main()
 {
-    // Note: With configNUMBER_OF_CORES=1, core 1 is never used.
-
     // Simulate having pullup resistors on EPLOG_RX_PIN and EPLOG_FLOWCTRL_PIN.
     // Any future PCB4.2 rev of the PCB must add pullups to both of these signals!
     gpio_init(EPLOG_RX_PIN);
@@ -823,12 +821,10 @@ int main()
     gpio_set_dir(GPS_PPS_PIN, GPIO_IN);
     gpio_set_pulls(GPS_PPS_PIN, false, true);
 
-    {
-        // While bench testing, it is hugely useful to reset the EP here which
-        // mimics both processors getting reset at ignition key ON.
-        #warning " ********** EXTREMELY TEMP - RESETTING THE EP **************"
-        epResetAndRun();
-    }
+    // It has turned out to be very useful that the WP always resets the EP.
+    // The only concern would be if the WP got into some kind of boot-loop.
+    // This would have the very undesirable side effect of not allowing the engine to run.
+    epResetAndRun();
 
     hello(3);
 

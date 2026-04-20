@@ -6,6 +6,7 @@
 #include <RP2040.h>
 
 #include "pico/types.h"
+#include "build_info.h"
 #include "pico/stdlib.h"
 #include "pico/binary_info.h"
 #include "pico/multicore.h"
@@ -68,22 +69,12 @@ const uint uart_sm = 0;
 uint64_t epoch;
 
 // --------------------------------------------------------------------------------------------
-// Decoding protected EPROMs is not a public feature.
-// Implementing these routines is left as an exercise for the student.
+#if defined HAS_DESCRAMBLER
+#include "descramble.h"
+#else
+extern uint8_t readEpromViaDaughterboard(uint32_t ecuAddr, const uint8_t* scrambledEpromImage);
+#endif
 
-uint8_t readEpromViaDaughterboard(uint32_t ecuAddr, uint8_t* scrambledEpromImage) __attribute__((weak));
-uint8_t readEpromViaDaughterboard(uint32_t ecuAddr, uint8_t* scrambledEpromImage)
-{
-    return 0;
-}
-
-bool hasDescrambler() __attribute__((weak));
-bool hasDescrambler()
-{
-    return false;
-}
-
-// --------------------------------------------------------------------------------------------
 // dbId == 'N' means no daughterboard, so no address or data mangling required
 // dbId == 'A' means a standard Aprilia daughterboard, address and data mangling is required
 uint8_t readEprom(uint32_t ecuAddr, uint8_t* epromImage, char dbId)
@@ -268,7 +259,9 @@ void blinkCode(uint32_t count)
 //  - Release the HC11 processor from RESET
 void startCore1(void)
 {
-    printf("%s: Starting Core1\n", __FUNCTION__);
+    const char* fname = "s1";
+
+    printf("%s: Launch Core1\n", fname);
     // The SDK requires that we specify a tiny stack to get Core1 booted.
     // Once the fake EPROM code is running, it won't be used any more.
     uint32_t stackSizeBytes = (uint8_t*)&__StackOneTop - (uint8_t*)&__StackOneBottom;
@@ -292,18 +285,18 @@ void startCore1(void)
                 gpio_xor_mask(DBG_BSY_BITS);
                 if (!msg) {
                     msg = true;
-                    printf("***\n*** Check ECU power!\n***\n");
+                    printf("%s: ERR: Check ECU power!\n", fname);
                 }
             }
         }
     } while (!core1Rdy);
 
-    printf("%s: Core1 is running!\n", __FUNCTION__);
+    printf("%s: Core1 is running!\n", fname);
 
     // Now that core1 is serving memory transactions, we can finally release the HC11 out of RESET.
     // Driving the HC11 reset output signal to '0' deasserts the HC11 RESET
     uint64_t elapsed = time_us_64() - epoch;
-    printf("%s: Releasing the ECU from RESET %lld mSecs after the EP booted\n", __FUNCTION__, (elapsed+500)/1000);
+    printf("%s: Releasing ECU RESET (elapsed: %lld mS)\n", fname, (elapsed+500)/1000);
     sio_hw->gpio_clr = HC11_RESET_BITS;
 }
 
@@ -358,15 +351,17 @@ static inline void __time_critical_func(logMapblob)()
 // to get the data-logging capability of the UM4 EPROM.
 //
 // The resulting EPROM image gets placed in RAM where Core1 expects to find it.
-void prepEpromImage()
+void prepImage()
 {
     uint32_t t0, t1, elapsed;
+    const char* fname = "pi";
 
+    printf("%s: Begin\n", fname);
     t0 = get_absolute_time();
     EpromLoader::loadImage();
     t1 = get_absolute_time();
     elapsed = absolute_time_diff_us(t0, t1);
-    printf("%s: loadImage() completed in %u mSec \n", __FUNCTION__, (elapsed+500) / 1000);
+    printf("%s: complete: %u mSec \n", fname, (elapsed+500) / 1000);
 
 }
 
@@ -481,12 +476,25 @@ static inline void __time_critical_func(processIncoming)(void)
 void __time_critical_func(core0Mainloop)(void) __attribute__((noreturn));
 void core0Mainloop(void)
 {
-    // Do not delay entering the mainloop after starting core1 because
+    const char* fname = "c0";
+
+    // Warning: No lengthy delays entering the mainloop after starting core1 because
     // ECU logging data will arrive essentially immediately!
     startCore1();
 
-    // If the WP is not ready, we just buffer incoming data.
-    while (1) {
+    printf("%s: Waiting for WP RDY\n", fname);
+    // Initially: if the WP is not ready, we just buffer incoming data.
+    while (!wpReady) {
+        processIncoming();
+    }
+
+    // Report how long it took the WP to become ready
+    uint64_t elapsed = time_us_64() - epoch;
+    printf("%s: WP RDY @ %lld mS\n", fname, (elapsed+500)/1000);
+
+    // Remember that wpReady is a true flow-control signal now, so we need to respect
+    // it should it get deasserted during normal operation
+        while (1) {
         processIncoming();
         if (wpReady()) {
             processOutgoing();
@@ -497,10 +505,10 @@ void core0Mainloop(void)
 // --------------------------------------------------------------------------------------------
 void showBootMessages()
 {
-    printf("\n\nEP Booting\n");
-    uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
-    printf("System clock: %.1f MHz\n", f_clk_sys / 1000.0);
-    printf("\n");
+    const char* fname = "bt";
+    printf("\n%s: EP <Built %s>\n", fname, ep_build_datetime());
+    uint32_t f_clk_sys_khz = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
+    printf("%s: Sysclk: %u MHz\n", fname, (f_clk_sys_khz + 500) / 1000);
 }
 
 
@@ -567,6 +575,20 @@ void init_stdio()
     ep_info->magic = EP_INFO_MAGIC;
 }
 
+
+// --------------------------------------------------------------------------------------------
+void init_hardware()
+{
+    printf("hw: Begin\n");
+    disableInts();
+    initSystick();
+    initUart();
+
+    printf("pio: Begin\n");
+    busFailsafeSetup();
+    hc11SyncSetup();
+}
+
 // --------------------------------------------------------------------------------------------
 int main(void)
 {
@@ -582,23 +604,26 @@ int main(void)
         gpio_set_pulls(EP_TO_WP_TX_GPIO, true, false);    // pullup
     #endif
 
+    // Basic sign of life & low-level pin initialization comes first
     hello(3);
     initPins();
 
+    // First thing to be logged must be the log version!
     enqueue(LOGID_GEN_EP_LOG_VER_TYPE_U8, LOGID_GEN_EP_LOG_VER_VAL_V0);
 
+    // Get our RTT IO working first
     init_stdio();
     showBootMessages();
 
-    disableInts();
+    // Init the higher-level hardware mechanisms
+    init_hardware();
 
-    initSystick();
-    initUart();
-    busFailsafeSetup();
-    hc11SyncSetup();
+    // Get an EPROM image loaded for the ECU
+    prepImage();
 
-    prepEpromImage();
+    // Always log the ENTIRE map blob from the loaded image before the ECU runs
     logMapblob();
 
+    // Prepare for ECU operation
     core0Mainloop();
 }

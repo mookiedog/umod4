@@ -192,6 +192,7 @@ add_custom_command(
             ${WWW_DIR}/ecu_live.html
             ${WWW_DIR}/wifi_config.html
             ${WWW_DIR}/sd_info.html
+            ${WWW_DIR}/ep_stdio.html
             ${WWW_DIR}/style.css
     WORKING_DIRECTORY ${WWW_DIR}
     COMMENT "Generating fsdata.c from www directory"

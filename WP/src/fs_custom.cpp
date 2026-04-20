@@ -31,6 +31,7 @@ extern void generate_api_image_store_selector_json(char* buffer, size_t size);
 extern void generate_api_image_store_scan_json(char* buffer, size_t size);
 extern void generate_api_wifi_scan_start_json(char* buffer, size_t size);
 extern void generate_api_wifi_scan_json(char* buffer, size_t size);
+extern void generate_api_ep_stdio_json(char* buffer, size_t size, uint32_t client_offset);
 
 // Global LittleFS context (set by fs_custom_init)
 static lfs_t* g_lfs = NULL;
@@ -297,7 +298,8 @@ int fs_open_custom(struct fs_file *file, const char *name)
                                   (strcmp(api_name, "image-store") == 0 ||
                                    strcmp(api_name, "image-store/selector") == 0 ||
                                    strcmp(api_name, "ecu-live-data") == 0) ? 1024 :
-                                  (strcmp(api_name, "ecu-live-meta") == 0) ? 2048 : 512;
+                                  (strcmp(api_name, "ecu-live-meta") == 0) ? 2048 :
+                                  (strncmp(api_name, "ep-stdio/", 9) == 0) ? 1536 : 512;
 
         struct lfs_custom_file* api_file =
             (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file) + api_buffer_size);
@@ -367,6 +369,9 @@ int fs_open_custom(struct fs_file *file, const char *name)
             generate_api_wifi_scan_start_json(api_file->data, api_buffer_size);
         } else if (strcmp(api_name, "wifi-scan") == 0) {
             generate_api_wifi_scan_json(api_file->data, api_buffer_size);
+        } else if (strncmp(api_name, "ep-stdio/", 9) == 0) {
+            uint32_t offset = (uint32_t)strtoul(api_name + 9, NULL, 10);
+            generate_api_ep_stdio_json(api_file->data, api_buffer_size, offset);
         } else {
             printf("fs_custom: Unknown API endpoint: %s\n", api_name);
             free(api_file->data);
