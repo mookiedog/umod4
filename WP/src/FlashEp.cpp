@@ -8,6 +8,7 @@
 #include "FlashEp.h"
 #include "swdreflash_binary.h"
 #include "Swd.h"
+#include "swd_lock.h"
 #include "murmur3.h"
 
 #include "lfsMgr.h"
@@ -261,6 +262,7 @@ int32_t FlashEp::process_uf2(lfs_t *lfs, const char *path, bool verbose)
 // -----------------------------------------------------------------------------------
 int32_t FlashEp::flashUf2(const char* pathname, bool verbose)
 {
+    SWDLock lock;
     int32_t res = 0;
     uint32_t magic;
     uint32_t t0 = time_us_32();
@@ -381,6 +383,7 @@ int32_t FlashEp::flashSlot(const uint8_t* bson_hdr, size_t bson_hdr_size,
                             const uint8_t* image_data, uint32_t target_flash_addr,
                             bool erase)
 {
+    SWDLock lock;
     static const uint8_t zero_buf[1024] = {0};
     static uint8_t ff_buf[1024];
     static bool ff_buf_ready = false;
@@ -561,6 +564,7 @@ int32_t FlashEp::eraseSlot(uint32_t target_flash_addr)
 // Connects without halting EP (non-destructive). No reset.
 bool FlashEp::readSlotBinary(uint32_t slot_flash_addr, uint8_t* buf, size_t buf_size)
 {
+    SWDLock lock;
     const uint32_t IMAGE_OFFSET = 32768;
     const uint32_t IMAGE_SIZE   = 32768;
     const uint32_t SWD_CHUNK    = 1024;
@@ -648,6 +652,7 @@ int32_t FlashEp::flashSlotFromFile(lfs_t* lfs_ptr, const char* img_path,
                                     const char* protection,
                                     uint32_t target_flash_addr)
 {
+    SWDLock lock;
     const uint32_t HEADER_SIZE = 32768;
     const uint32_t IMAGE_SIZE  = 32768;
     const uint32_t SLOT_SIZE   = 65536;
@@ -831,6 +836,7 @@ int32_t FlashEp::rewriteSlotHeader(uint32_t slot_flash_addr,
                                     const char* name, const char* description,
                                     const char* protection)
 {
+    SWDLock lock;
     const uint32_t HEADER_SIZE  = 32768;
     const uint32_t SWD_CHUNK    = 1024;
 

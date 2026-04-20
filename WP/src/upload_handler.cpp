@@ -13,6 +13,7 @@
 #include "FlashEp.h"
 #include "ota_flash_task.h"
 #include "Swd.h"
+#include "swd_lock.h"
 #include "bsonlib.h"
 #include "murmur3.h"
 #include "pico/stdlib.h"
@@ -229,6 +230,7 @@ static bool imgstore_engine_running(void)
 // Returns the flash address of the empty slot, or 0 if all slots full or SWD unavailable.
 static uint32_t find_empty_slot(void)
 {
+    SWDLock lock;
     const uint32_t BASE = 0x10200000;
     const uint32_t SLOT = 65536;
     if (!swd || !swd->connect_target(0, false)) return 0;
@@ -244,6 +246,7 @@ static uint32_t find_empty_slot(void)
 // Returns the flash address, or 0 if not found / invalid.
 static uint32_t resolve_slot_addr_from_json(const char* body)
 {
+    SWDLock lock;
     const uint32_t BASE = 0x10200000;
     const uint32_t SLOT = 65536;
 

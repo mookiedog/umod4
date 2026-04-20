@@ -15,6 +15,7 @@
 #include "hardware/structs/scb.h"
 #include "hardware/pio.h"
 #include "hardware/irq.h"
+#include "hardware/resets.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/structs/systick.h"
 #include "hardware/clocks.h"
@@ -34,6 +35,8 @@
 #include "bsonlib.h"
 
 #include "RP58_memorymap.h"
+#include "ep_info.h"
+#include "ep_rtt.h"
 
 // This can be handy in order to insert an instruction that will
 // be guaranteed to exist for the purposes of setting a debugger breakpoint.
@@ -536,6 +539,35 @@ void initUart()
 }
 
 // --------------------------------------------------------------------------------------------
+// Init everything to do with stdio.
+// This is
+void init_stdio()
+{
+    // This is the RPi SDK init of stdio
+    stdio_init_all();
+
+    // Now that stdio is up, we set up our Segger RTT channels
+    // Channel 0 is the general output channel, accessed by default via printf(...)
+    // Channel 1 is the validation/test output channel, accessed via vfy_printf(...)
+
+    // Set up RTT channel 1 as the EP verification channel.
+    static char rtt_vfy_buf[256];
+    SEGGER_RTT_ConfigUpBuffer(EP_RTT_CH_VFY, "EP_VFY", rtt_vfy_buf, sizeof(rtt_vfy_buf),
+                              SEGGER_RTT_MODE_NO_BLOCK_SKIP);
+    vfy_printf("EP vfy RTT channel ready\n");
+
+    // Publish EP info to USB DPSRAM for WP to read via SWD.
+    // USB DPSRAM (0x50100000) is unused on EP but needs the USB controller to be 'unreset'
+    // before the AHB can access it.
+    unreset_block_wait(RESETS_RESET_USBCTRL_BITS);
+    volatile EpInfo* ep_info = (volatile EpInfo*)EP_INFO_ADDR;
+    ep_info->rtt_cb_addr = (uint32_t)&_SEGGER_RTT;
+
+    // The 'magic' field must be written last. The WP polls it as a 'ready' flag.
+    ep_info->magic = EP_INFO_MAGIC;
+}
+
+// --------------------------------------------------------------------------------------------
 int main(void)
 {
     epoch = time_us_64();
@@ -555,7 +587,7 @@ int main(void)
 
     enqueue(LOGID_GEN_EP_LOG_VER_TYPE_U8, LOGID_GEN_EP_LOG_VER_VAL_V0);
 
-    stdio_init_all();
+    init_stdio();
     showBootMessages();
 
     disableInts();

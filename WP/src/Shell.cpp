@@ -11,6 +11,7 @@
 #include "hardware/gpio.h"
 #include "pico/stdlib.h"
 #include "Swd.h"
+#include "swd_lock.h"
 #include "swdreflash_binary.h"
 
 #include "Logger.h"
@@ -741,6 +742,7 @@ void Shell::cmd_dumpEp(char* args)
         return;
     }
 
+    SWDLock lock;
     // Connect to EP
     if (!swd->connect_target(0, false)) {
         printf("Error: Failed to connect to EP via SWD\n");

@@ -378,6 +378,18 @@ bool Swd::read_target_mem(uint32_t target_addr, uint32_t* data, uint32_t len_in_
         // For all words, we read from the Data Read/Write register (0x1F).
         // This is the most consistent way to handle auto-increment in a loop.
         if (!read_cmd(0x1F, data[i])) return false;
+
+        // ARM ADIv5 MEM-AP auto-increment wraps within 1KB-aligned blocks.
+        // If the next word crosses a 1KB boundary, drain the stale pending
+        // fetch, reset TAR to the correct next address, and re-prime.
+        uint32_t current_addr = target_addr + i * 4;
+        uint32_t next_addr    = current_addr + 4;
+        if (i + 1 < words_to_read &&
+            (current_addr & ~0x3FFu) != (next_addr & ~0x3FFu)) {
+            if (!read_cmd(0x1F, dummy)) return false;       // drain wrong fetch
+            if (!write_cmd(0x0B, next_addr)) return false;  // reset TAR
+            if (!read_cmd(0x1F, dummy)) return false;       // re-prime pipeline
+        }
     }
 
     // 6. FINALIZE & CLEANUP

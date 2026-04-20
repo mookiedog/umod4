@@ -257,6 +257,7 @@ add_executable(${PROJECT_NAME}
     src/flash_safe_helper.cpp
     # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
     src/httpd_stubs.cpp
+    src/ep_rtt_forwarder.cpp
 
     # The RAM-resident SwdReflash binary that gets loaded to EP via SWD:
     ${SWDREFLASH_C}
@@ -289,6 +290,7 @@ set_source_files_properties(
     src/upload_handler.cpp
     src/WiFiManager.cpp
     src/Uart.cpp
+    src/ep_rtt_forwarder.cpp
 
     PROPERTIES COMPILE_FLAGS "-Wno-volatile"
 )
@@ -311,6 +313,9 @@ pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/src/swd.pi
 #add_compile_definitions(SEGGER_RTT_PRINTF_BUFFER_SIZE=1024)
 # This is the size of the buffer to use for sending data from the device to the host debug terminal app
 add_compile_definitions(BUFFER_SIZE_UP=16384)
+# We use 4 up-channels: WP_GEN(0), WP_VFY(1), EP_GEN(2), EP_VFY(3).
+# Default is 3; must be raised explicitly.
+add_compile_definitions(SEGGER_RTT_MAX_NUM_UP_BUFFERS=4)
 # This is the size of the buffer that the host debug terminal app can send down as a single cmdline
 add_compile_definitions(BUFFER_SIZE_DOWN=1024)
 
@@ -464,3 +469,17 @@ add_custom_target(partition_table ALL
     DEPENDS ${PARTITION_TABLE_UF2}
     COMMENT "Standalone partition table UF2 ready at ${PARTITION_TABLE_UF2}"
 )
+
+# Extract raw binary from partition table UF2 for use by the Partition-Aware debug config.
+# OpenOCD flash write_image does not support UF2; it needs a raw .bin + base address.
+set(PARTITION_TABLE_BIN ${CMAKE_CURRENT_BINARY_DIR}/partition_table.bin)
+add_custom_command(
+    OUTPUT ${PARTITION_TABLE_BIN}
+    COMMAND python3 -c
+        "import struct,sys; d=open(sys.argv[1],'rb').read(); open(sys.argv[2],'wb').write(b''.join(d[i*512+32:i*512+288] for i in range(len(d)//512)))"
+        ${PARTITION_TABLE_UF2} ${PARTITION_TABLE_BIN}
+    DEPENDS ${PARTITION_TABLE_UF2}
+    COMMENT "Extracting partition table binary from UF2"
+    VERBATIM
+)
+add_custom_target(partition_table_bin DEPENDS ${PARTITION_TABLE_BIN})

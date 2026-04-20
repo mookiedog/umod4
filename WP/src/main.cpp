@@ -32,6 +32,8 @@
 #include "file_io_task.h"
 #include "ota_flash_task.h"
 #include "api_handlers.h"
+#include "ep_rtt_forwarder.h"
+#include "swd_lock.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/stats.h"
@@ -54,6 +56,7 @@ NeoPixelConnect* rgb_led;
 Logger* logger;
 Shell* dbgShell;
 Swd* swd;
+SemaphoreHandle_t g_swd_mutex;
 
 static int pio_sm_uart;
 
@@ -573,6 +576,12 @@ void boot_system(void* args)
     // EP flash is static; doing this here keeps SWD off the lwIP tcpip thread.
     image_store_init();
 
+    g_swd_mutex = xSemaphoreCreateRecursiveMutex();
+    configASSERT(g_swd_mutex);
+
+    printf("%s: Starting EP RTT forwarder\n", __FUNCTION__);
+    ep_rtt_forwarder_init();
+
     // A bit more accurate now that we have mostly booted:
     show_heap_stats();
 
@@ -826,6 +835,7 @@ int main()
     initSpareIos();
 
     stdio_init_all();
+    ep_rtt_channels_init();
 
     printf("\n\nWP Core %d booting on board %s\n", get_core_num(), STRINGIFY(PICO_BOARD));
     printf("WP Version JSON: %s\n", SYSTEM_JSON);
