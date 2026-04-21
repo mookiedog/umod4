@@ -23,6 +23,7 @@
 #include "Logger.h"
 #include "NeoPixelConnect.h"
 #include "Shell.h"
+#include "VfyTask.h"
 #include "wp_rtt.h"
 #include "Swd.h"
 #include "Uart.h"
@@ -545,6 +546,9 @@ void boot_system(void* args)
 
     printf("%s: Starting the debug shell\n", __FUNCTION__);
     dbgShell = new Shell(&lfs);
+
+    printf("%s: Starting the VFY task\n", __FUNCTION__);
+    vfy_task_init();
 
     // Load persistent config from flash; fall back to compile-time defaults if blank/corrupt
     printf("%s: Loading config from flash\n", __FUNCTION__);

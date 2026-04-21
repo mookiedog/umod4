@@ -2,6 +2,20 @@
     "version": "2.0.0",
     "tasks": [
         {
+            // Flash WP firmware and reboot — no debug session attached.
+            // Use this before running the automated test harness.
+            // OpenOCD exits immediately after flashing, leaving the chip running.
+            "label": "WP: Flash and Run (no debugger)",
+            "type": "shell",
+            "command": "openocd -f interface/cmsis-dap.cfg -f target/rp2350.cfg -c 'adapter speed 20000; program ${workspaceRoot}/build/WP/WP.elf verify reset exit'",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
             // Erase only slot 0 (the image selector, 64KB at 0x10200000).
             // Sufficient to force EP into limp mode without touching slot data.
             // Use before launching EP when you want to test the empty-store boot path.

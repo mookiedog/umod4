@@ -238,6 +238,7 @@ add_executable(${PROJECT_NAME}
     src/SdCardSDIO.cpp
     src/Shell.cpp
     src/Swd.cpp
+    src/VfyTask.cpp
     src/wp_rtt.cpp
     src/TimeUtils.cpp
     src/Uart.cpp
@@ -276,6 +277,7 @@ add_dependencies(${PROJECT_NAME} generate_fsdata generate_swdreflash_binary)
 # Suppress volatile warnings from FreeRTOS headers in files that include FreeRTOS
 set_source_files_properties(
     src/Shell.cpp
+    src/VfyTask.cpp
     src/api_handlers.cpp
     src/flash_safe_helper.cpp
     src/FlashConfig.cpp
