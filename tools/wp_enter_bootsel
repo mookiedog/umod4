@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# wp_enter_bootsel: Use OpenOCD via SWD to force WP into USB BOOTSEL mode.
+#
+# Usage: wp_enter_bootsel <WpUsbBoot_binary>
+#
+#   WpUsbBoot_binary  path to the WpUsbBoot RAM stub (no_flash ELF),
+#                     e.g. build/WpUsbBoot/WpUsbBoot
+#
+# Prerequisites:
+#   - Debug probe (CMSIS-DAP) connected to WP SWD header
+#   - WP powered on (any firmware state is fine)
+#
+# On success: RP2350 has rebooted into USB mass-storage (BOOTSEL) mode.
+# Run flash_WP afterwards to attach the device via usbipd and program it.
+
+WP_USB_BOOT_ELF="$1"
+
+if [ -z "$WP_USB_BOOT_ELF" ]; then
+    echo "Usage: $0 <WpUsbBoot_binary>"
+    exit 1
+fi
+
+if [ ! -f "$WP_USB_BOOT_ELF" ]; then
+    echo "Error: WpUsbBoot binary not found: $WP_USB_BOOT_ELF"
+    exit 1
+fi
+
+# --- Trigger USB BOOTSEL mode via OpenOCD ---
+#
+# Load WpUsbBoot to WP SRAM via SWD and execute it.
+# The stub writes USB-BOOTSEL parameters to watchdog scratch registers
+# and fires a 10ms watchdog.  The RP2350 reboots into USB mass-storage mode.
+# SP and PC are read from the vector table at 0x20000000 after loading.
+
+echo "Triggering WP USB bootloader via OpenOCD..."
+openocd \
+    -f interface/cmsis-dap.cfg \
+    -f target/rp2350.cfg \
+    -c "adapter speed 5000" \
+    -c "init" \
+    -c "reset halt" \
+    -c "rbp all" \
+    -c "load_image $WP_USB_BOOT_ELF" \
+    -c "targets rp2350.cm0" \
+    -c 'set sp_val [lindex [read_memory 0x20000000 32 1] 0]' \
+    -c 'set pc_val [lindex [read_memory 0x20000004 32 1] 0]' \
+    -c 'reg sp $sp_val' \
+    -c 'reg pc $pc_val' \
+    -c 'resume' \
+    -c 'sleep 5000' \
+    -c 'exit'
+
+if [ $? -ne 0 ]; then
+    echo "Error: OpenOCD failed. Check that the debug probe is connected and WP is powered."
+    exit 1
+fi
+
+echo "WP is now in USB BOOTSEL mode."

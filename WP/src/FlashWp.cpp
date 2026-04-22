@@ -391,8 +391,12 @@ int32_t FlashWp::flashUf2(
     bool first_block = true;
     memset(sector_buffer, 0xFF, FLASH_SECTOR_SIZE_BYTES);
 
+    uint32_t app_blocks_flashed = 0;
+    uint32_t total_kb = (app_block_count * 256 + 1023) / 1024;
+    uint32_t next_progress_block = 256;  // print every 256 app blocks (~64 KB)
+
     // Process all the UF2 blocks in the file one at a time
-    printf("%s: Flashing the target partition\n", __FUNCTION__);
+    printf("%s: Flashing the target partition (%u KB)\n", __FUNCTION__, total_kb);
     while (lfs_file_read(&lfs, &file, &block, sizeof(UF2_Block)) == sizeof(UF2_Block)) {
         // Magic already validated in first pass
 
@@ -437,7 +441,7 @@ int32_t FlashWp::flashUf2(
         // If it belongs to a different sector than we're accumulating, flush the current one
         if (!first_block && block_sector_start != sector_start_addr) {
             if (verbose) {
-                printf("%s: Flashing sector at 0x%08X\r", __FUNCTION__, sector_start_addr);
+                printf("%s: Flashing sector at 0x%08X\n", __FUNCTION__, sector_start_addr);
             }
             int rc = flashSector(sector_start_addr, sector_buffer, FLASH_SECTOR_SIZE_BYTES);
             if (rc != 0) {
@@ -462,6 +466,14 @@ int32_t FlashWp::flashUf2(
         // Copy block data into sector buffer
         memcpy(sector_buffer + block_offset_in_sector, block.data, block.payloadSize);
         sector_offset = block_offset_in_sector + block.payloadSize;
+
+        app_blocks_flashed++;
+        if (app_blocks_flashed >= next_progress_block) {
+            uint32_t kb_done = (app_blocks_flashed * 256) / 1024;
+            uint32_t pct = (app_blocks_flashed * 100) / app_block_count;
+            printf("WP OTA: %u/%u KB (%u%%)\n", kb_done, total_kb, pct);
+            next_progress_block += 256;
+        }
     }
 
     // Flush the final sector if we have pending data

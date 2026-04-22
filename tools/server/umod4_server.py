@@ -80,6 +80,37 @@ class DownloadCompletedEvent:
     error_msg: Optional[str]
 
 
+def _run_flash_ep(ip: str, uf2_path: str) -> int:
+    """
+    CLI mode: upload uf2_path to device at ip, trigger EP reflash, exit with 0/1.
+    Does not start the GUI or bind any server ports.
+    """
+    from device_client import DeviceClient
+
+    if not os.path.isfile(uf2_path):
+        print(f"ERROR: file not found: {uf2_path}", file=sys.stderr)
+        return 1
+
+    client = DeviceClient(f"http://{ip}")
+    filename = os.path.basename(uf2_path)
+
+    print(f"Uploading {uf2_path} to {ip} as {filename} ...")
+    ok, session_id, error = client.upload_file(uf2_path, filename)
+    if not ok:
+        print(f"ERROR: upload failed: {error}", file=sys.stderr)
+        return 1
+    print("Upload complete.")
+
+    print(f"Triggering EP reflash with {filename} ...")
+    ok, error = client.reflash_ep(filename)
+    if not ok:
+        print(f"ERROR: reflash failed: {error}", file=sys.stderr)
+        return 1
+
+    print("EP reflash succeeded.")
+    return 0
+
+
 def main():
     """Main entry point for umod4 server application."""
     parser = argparse.ArgumentParser(description='umod4 Server - Log file receiver')
@@ -89,8 +120,17 @@ def main():
                        help='Database path (default: platform-specific)')
     parser.add_argument('--host', type=str, default='0.0.0.0',
                        help='HTTP server host (default: 0.0.0.0)')
+    parser.add_argument('--flash-ep', metavar='UF2_PATH',
+                       help='CLI mode: upload UF2 and reflash EP (requires --ip)')
+    parser.add_argument('--ip', metavar='ADDRESS',
+                       help='Device IP address for CLI operations')
 
     args = parser.parse_args()
+
+    if args.flash_ep:
+        if not args.ip:
+            parser.error('--flash-ep requires --ip <device_ip>')
+        sys.exit(_run_flash_ep(args.ip, args.flash_ep))
 
     # Thread-safe event queue: background threads put events here,
     # a QTimer on the main thread drains and dispatches them.

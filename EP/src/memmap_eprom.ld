@@ -25,9 +25,10 @@
 __FLASH_SIZE_BYTES                    =  16*1024K;      /* Total size of flash */
 __CODE_SIZE_BYTES                     =   2*1024K;      /* 2 megabytes for code */
 __IMAGE_STORE_PARTITION_SIZE_BYTES    = 128*64K;        /* 8 megabytes for image store (max 128 slots, each slot is 64K (32K BSON header + 32K image)) */
-                                                        /* 6 megabytes remains unused */
+__UNUSED_PARTITION_SIZE_BYTES         =  96*64K;        /* 6 megabytes explicitly reserved as unused scratch space */
 
 __IMAGE_STORE_PARTITION_START_ADDR = 0x10000000 + __CODE_SIZE_BYTES;
+__UNUSED_PARTITION_START_ADDR      = __IMAGE_STORE_PARTITION_START_ADDR + __IMAGE_STORE_PARTITION_SIZE_BYTES;
 
 /* We will be using RAM in a non-striped configuration.
  * The banks will be assigned exclusively to a core to avoid RAM contention.
@@ -42,6 +43,7 @@ MEMORY
 {
     FLASH(rx)               : ORIGIN = 0x10000000, LENGTH = __CODE_SIZE_BYTES
     IMAGE_STORE(rw)         : ORIGIN = __IMAGE_STORE_PARTITION_START_ADDR,  LENGTH = __IMAGE_STORE_PARTITION_SIZE_BYTES
+    UNUSED_FLASH(rw)        : ORIGIN = __UNUSED_PARTITION_START_ADDR,       LENGTH = __UNUSED_PARTITION_SIZE_BYTES
     RAM_CORE1_EPROM(rwx)    : ORIGIN = 0x21000000, LENGTH = 32K     /* Bank0 lower half: EPROM image served by core1 */
     RAM_CORE1_BUSLOG(rwx)   : ORIGIN = 0x21008000, LENGTH = 32K     /* Bank0 upper half: bus log */
     RAM(rwx)                : ORIGIN = 0x21010000, LENGTH = 192K    /* Non-striped banks 1/2/3 for core0 */
@@ -294,5 +296,25 @@ SECTIONS
 
     ASSERT( __binary_info_header_end - __logical_binary_start <= 256, "Binary info must be in first 256 bytes of the binary")
     /* todo assert on extra code */
+
+    /* Export unused-flash region boundaries as ELF symbols so the test
+     * harness can locate them without hardcoding addresses.
+     * arm-none-eabi-nm build/EP/EP.elf | grep unused_flash
+     */
+    __unused_flash_start__ = __UNUSED_PARTITION_START_ADDR;
+    __unused_flash_size__  = __UNUSED_PARTITION_SIZE_BYTES;
+
+    /* Partition accounting: all flash must be claimed.  Omitting or
+     * zeroing __UNUSED_PARTITION_SIZE_BYTES is a linker error. */
+    ASSERT(__CODE_SIZE_BYTES + __IMAGE_STORE_PARTITION_SIZE_BYTES + __UNUSED_PARTITION_SIZE_BYTES == __FLASH_SIZE_BYTES,
+        "ERROR: flash partition sizes do not sum to total flash size — update __UNUSED_PARTITION_SIZE_BYTES")
+
+    /* Alignment and granularity constraints */
+    ASSERT((__UNUSED_PARTITION_START_ADDR & (64*1024 - 1)) == 0,
+        "ERROR: UNUSED_FLASH must start on a 64K boundary")
+    ASSERT((__UNUSED_PARTITION_SIZE_BYTES & (64*1024 - 1)) == 0,
+        "ERROR: UNUSED_FLASH size must be a multiple of 64K")
+    ASSERT(__UNUSED_PARTITION_SIZE_BYTES >= 64*1024,
+        "ERROR: UNUSED_FLASH must contain at least one 64K slot")
 }
 

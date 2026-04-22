@@ -1,9 +1,16 @@
 #!/bin/bash
 
-# flash_WP: Attach RP2350 boot device via usbipd, then flash WP firmware.
+# flash_WP: Flash WP firmware using picotool.
 #
-# Usage: flash_WP [-e] <directory_path>
+# Usage: flash_WP [-e] <build/WP directory>
 #   -e  Erase flash before programming
+#
+# Prerequisites:
+#   - WP is already in USB BOOTSEL (mass-storage) mode.
+#     To enter BOOTSEL mode via SWD use wp_enter_bootsel, or hold the
+#     BOOTSEL button while pressing RESET.
+#   - On WSL: the device must be bound in usbipd (usbipd bind --busid=<id>).
+#     This script handles the usbipd attach automatically.
 
 # Default values
 DO_ERASE=false
@@ -44,35 +51,26 @@ done
 # --- usbipd: find and attach RP2350 Boot device ---
 
 echo "Scanning for RP2350 Boot device via usbipd..."
-USBIPD_LINE=$(usbipd.exe list 2>/dev/null | grep "RP2350 Boot")
+USBIPD_LINE=$(usbipd.exe list 2>/dev/null | grep -E "^[0-9]+-[0-9]+" | grep "RP2350 Boot")
 
 if [ -z "$USBIPD_LINE" ]; then
     echo "Error: No 'RP2350 Boot' device found in usbipd list."
-    echo "Make sure the WP is plugged in while holding the BOOTSEL button."
+    echo "Make sure WP is in BOOTSEL mode (use wp_enter_bootsel or hold BOOTSEL while pressing RESET)."
     exit 1
 fi
 
 BUSID=$(echo "$USBIPD_LINE" | awk '{print $1}' | tr -d '\r')
-STATE=$(echo "$USBIPD_LINE" | awk '{print $NF}' | tr -d '\r')
-
-echo "Found RP2350 Boot device: BUSID=$BUSID  STATE=$STATE"
-
-if [ "$STATE" = "Attached" ]; then
-    echo "Device is already attached to WSL."
-elif [ "$STATE" = "Shared" ]; then
-    echo "Attaching BUSID $BUSID to WSL..."
-    usbipd.exe attach --wsl --busid="$BUSID"
-    if [ $? -ne 0 ]; then
-        echo "Error: usbipd attach failed."
-        exit 1
-    fi
-    echo "Waiting for device to enumerate..."
-    sleep 2
-else
-    echo "Error: Device STATE is '$STATE'. Expected 'Shared' or 'Attached'."
-    echo "Run: usbipd.exe bind --busid=$BUSID  (from an elevated Windows prompt)"
+echo "Found RP2350 Boot device: BUSID=$BUSID"
+echo "Attaching BUSID $BUSID to WSL..."
+usbipd.exe attach --wsl --busid="$BUSID"
+if [ $? -ne 0 ]; then
+    echo "Error: usbipd attach failed."
+    echo "If the device shows 'Not shared', run from an elevated Windows prompt:"
+    echo "  usbipd.exe bind --busid=$BUSID"
     exit 1
 fi
+echo "Waiting for device to enumerate in WSL..."
+sleep 2
 
 # --- Flash ---
 
@@ -80,7 +78,7 @@ fi
 sleep 1
 
 if [ "$DO_ERASE" = true ]; then
-    echo "Erasing Pico flash..."
+    echo "Erasing WP flash..."
     ~/.local/bin/picotool erase
     sleep 1
 fi

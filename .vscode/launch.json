@@ -83,6 +83,43 @@
         },
     },
     {
+        // WpUsbBoot: RAM-only stub that puts WP into USB bootloader mode.
+        // Loads entirely to SRAM (no_flash).  Use this to debug the stub itself.
+        "name": "*** WP: WpUsbBoot RAM Debug (RP2350)",
+        "cwd": "${workspaceRoot}",
+        "executable": "${workspaceRoot}/build/WpUsbBoot/WpUsbBoot",
+        "request": "launch",
+        "type": "cortex-debug",
+        "servertype": "openocd",
+        "gdbPath": "${workspaceFolder}/build/arm_toolchain_latest/arm-none-eabi-gdb",
+        "device": "RP2350",
+        "configFiles": [
+            "interface/cmsis-dap.cfg",
+            "target/rp2350.cfg"
+        ],
+        "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
+        "openOCDLaunchCommands": ["adapter speed 20000"],
+        // GDB 'load' writes ELF sections to their SRAM addresses directly.
+        // After load, manually set SP and PC from the vector table.
+        "postLaunchCommands": [
+            "set $sp = 0x20082000",
+            "set $pc = 0x20000199",
+            "break main",
+            "continue"
+        ],
+        "postRestartCommands": [
+            "load",
+            "set $sp = 0x20082000",
+            "set $pc = 0x20000199",
+            "break main",
+            "continue"
+        ],
+        "liveWatch": {
+            "enabled": true,
+            "samplesPerSecond": 4
+        },
+    },
+    {
         // SwdReflash: RAM-only program for testing SWD loading
         // This program runs entirely from RAM (no flash)
         // Entry point is at 0x20000101 (Thumb mode), SP at 0x20042000

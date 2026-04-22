@@ -298,6 +298,26 @@ ExternalProject_Add(SwdReflash
 )
 
 # ---------------------------------------------------------------------------------------------
+message(STATUS "Adding the 'WpUsbBoot' project")
+
+set(WPUSBBOOT_CMAKE_ARG_LIST
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
+    -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
+    -DPICO_SDK_PATH=${PICO_SDK_PATH}
+)
+
+ExternalProject_Add(WpUsbBoot
+    # No dependencies - WpUsbBoot is completely standalone
+    PREFIX ${CMAKE_BINARY_DIR}/WpUsbBoot
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/WpUsbBoot
+    BINARY_DIR ${CMAKE_BINARY_DIR}/WpUsbBoot
+    CMAKE_GENERATOR ${generator}
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${WPUSBBOOT_CMAKE_ARG_LIST}
+    BUILD_ALWAYS true
+    INSTALL_COMMAND ""
+)
+
+# ---------------------------------------------------------------------------------------------
 message(STATUS "Adding the 'WP' project")
 
 set(WP_CMAKE_ARG_LIST

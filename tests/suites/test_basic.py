@@ -8,7 +8,7 @@ from harness.rtt import RttChannel, RttError
 WP_VFY_CHANNEL = 1
 
 
-def run(ocd, results):
+def run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
 
         # ----------------------------------------------------------------

@@ -704,6 +704,11 @@ int32_t wifi_get_rssi(void) {
     return rssi;
 }
 
+bool wifi_get_ip_address(char* out, size_t outlen) {
+    if (wifiMgr == nullptr) return false;
+    return wifiMgr->getIPAddress(out, outlen);
+}
+
 const char* get_current_log_name(void) {
     if (logger == nullptr) return "";
     const char* name = logger->getCurrentLogName();

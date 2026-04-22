@@ -28,6 +28,7 @@
 
 #include "lfsMgr.h"
 #include "fs_custom.h"
+#include "wp_rtt.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -240,6 +241,8 @@ static void ota_flash_task(void* params)
             printf("OTA: WiFi shutdown complete\n");
 
             printf("OTA: Starting flash programming\n");
+            VFY("wp_ota FLASH_START file=%s", request.uf2_path);
+
             uint32_t target_addr = 0;
             int32_t flash_result = flash_wp_uf2(request.uf2_path, true, &target_addr);
 
@@ -247,8 +250,16 @@ static void ota_flash_task(void* params)
             if (flash_success) {
                 printf("OTA: Flash programming successful, target=0x%08lX\n",
                        (unsigned long)target_addr);
+                VFY("wp_ota FLASH_DONE target=0x%08lX", (unsigned long)target_addr);
+                // Small delay: let VFY messages drain from the RTT buffer before
+                // prepare_for_reboot() suspends the scheduler and disables interrupts.
+                vTaskDelay(pdMS_TO_TICKS(100));
+                VFY("wp_ota TBYB_REBOOT");
+                vTaskDelay(pdMS_TO_TICKS(100));
             } else {
                 printf("OTA: FLASH PROGRAMMING FAILED, error=%ld\n", (long)flash_result);
+                VFY("wp_ota FLASH_FAILED err=%ld", (long)flash_result);
+                vTaskDelay(pdMS_TO_TICKS(100));
             }
 
             prepare_for_reboot(target_addr, flash_success);

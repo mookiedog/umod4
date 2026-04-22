@@ -14,6 +14,28 @@ Flailing would include things like:
 If the user converses with all caps or is swearing, STOP AND LISTEN TO THEM.
 Do NOT keep blindly charging ahead.
 
+## Honesty Under Uncertainty
+
+Before attempting any hardware/firmware approach you are not certain about:
+
+- State your confidence level explicitly ("I know this from docs/disassembly" vs "I believe this but am not sure")
+- State what you DON'T know that could cause it to fail
+
+After a failure:
+
+- Explain WHY it failed before proposing anything new
+- If you cannot explain the failure, say so explicitly: "I don't know why that didn't work"
+- Do NOT propose a variant of the same approach if you can't explain the previous failure
+
+Hard stop rule: After 2 failures on the same approach, stop and write a summary:
+
+1. What you tried
+2. What you know for certain vs. what you guessed
+3. What the open question is
+4. Whether you recommend continuing or stopping
+
+When the user asks "what is going on?" or "are you sure?", treat this as a signal to stop and give an honest assessment — not to defend the current approach and propose the next attempt.
+
 ## Project Overview
 
 Umod4 is a data logging system for Aprilia Gen 1 motorcycle fuel injection ECUs. It replaces the ECU's EPROM with a sophisticated circuit board containing two ARM processors (EP and WP) that emulate the EPROM, log ECU data streams, correlate with GPS data, and provide future wireless capabilities.

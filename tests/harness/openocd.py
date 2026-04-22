@@ -26,8 +26,9 @@ RTT_SEARCH  = ("0x20000000", "0x80000")   # base, size — full WP RAM
 # TCP base port for RTT channels: channel N → RTT_PORT_BASE + N
 RTT_PORT_BASE = 9000
 
-# How long to wait for RTT control block before giving up (seconds)
-RTT_TIMEOUT = 10.0
+# How long to wait for RTT control block after WP reset (seconds).
+# WP boot takes ~2-3 s; 20 s gives plenty of margin.
+RTT_TIMEOUT = 20.0
 
 
 class OpenOCDError(Exception):
@@ -44,13 +45,17 @@ class OpenOCD:
         self._lock          = threading.Lock()
 
     # ------------------------------------------------------------------
-    def start(self):
+    def start(self, reset=True):
         cmd = [
             OPENOCD,
             "-f", IFACE_CFG,
             "-f", TARGET_CFG,
             "-c", f"adapter speed {self._adapter_speed}",
             "-c", "init",
+        ]
+        if reset:
+            cmd += ["-c", "reset run"]   # clean WP boot; omit after OTA reboot
+        cmd += [
             "-c", f"rtt setup {RTT_SEARCH[0]} {RTT_SEARCH[1]} \"SEGGER RTT\"",
             "-c", "rtt start",
         ]
@@ -77,6 +82,19 @@ class OpenOCD:
             except subprocess.TimeoutExpired:
                 self._proc.kill()
         self._proc = None
+
+    def reconnect(self, timeout=RTT_TIMEOUT):
+        """Stop current OpenOCD session and reconnect without resetting the target.
+
+        Used after a target-initiated reboot (e.g. WP OTA) where the new firmware
+        is already running and must not be disturbed by a debug reset.
+        """
+        self.stop()
+        with self._lock:
+            self._rtt_ready.clear()
+            self._log_lines.clear()
+        self.start(reset=False)
+        self.wait_ready(timeout=timeout)
 
     def wait_ready(self, timeout=RTT_TIMEOUT):
         """Block until RTT control block is found, or raise OpenOCDError."""

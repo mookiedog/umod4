@@ -2,12 +2,50 @@
     "version": "2.0.0",
     "tasks": [
         {
-            // Flash WP firmware and reboot — no debug session attached.
-            // Use this before running the automated test harness.
-            // OpenOCD exits immediately after flashing, leaving the chip running.
-            "label": "WP: Flash and Run (no debugger)",
+            // Load WpUsbBoot RAM stub via OpenOCD to put WP into USB mass-storage bootloader mode.
+            // Requires debug probe connected to WP SWD header.  No BOOTSEL button needed.
+            // The SPARE1 LED will light for ~1 second, then WP reboots into USB boot mode.
+            "label": "WP: Enter USB Boot Mode (WpUsbBoot)",
             "type": "shell",
-            "command": "openocd -f interface/cmsis-dap.cfg -f target/rp2350.cfg -c 'adapter speed 20000; program ${workspaceRoot}/build/WP/WP.elf verify reset exit'",
+            "command": "openocd -f interface/cmsis-dap.cfg -f target/rp2350.cfg -c 'adapter speed 5000' -c 'init' -c 'reset halt' -c 'rbp all' -c 'load_image ${workspaceRoot}/build/WpUsbBoot/WpUsbBoot' -c 'targets rp2350.cm0' -c 'set sp_val [lindex [read_memory 0x20000000 32 1] 0]' -c 'set pc_val [lindex [read_memory 0x20000004 32 1] 0]' -c 'reg sp $sp_val' -c 'reg pc $pc_val' -c 'resume' -c 'sleep 10000' -c 'exit'",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            // Flash WP firmware via SWD + picotool.
+            // Uses wp_enter_bootsel to force WP into USB BOOTSEL mode via the debug probe,
+            // then flashes with picotool.  Requires CMSIS-DAP debug probe connected to WP.
+            //
+            // This writes both the partition table (ABSOLUTE blocks) and the
+            // application image into slot A.  Using OpenOCD's 'program WP.elf'
+            // instead would overwrite the partition table at 0x10000000 and
+            // break OTA — do NOT use that approach.
+            "label": "WP: Flash and Run (force BOOTSEL via SWD)",
+            "type": "shell",
+            "command": "~/projects/umod4/tools/wp_enter_bootsel ${workspaceRoot}/build/WpUsbBoot/WpUsbBoot && ~/projects/umod4/tools/flash_WP ${workspaceRoot}/build/WP",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            // Flash WP firmware using picotool.
+            // Assumes WP is already in USB BOOTSEL (mass-storage) mode —
+            // either via wp_enter_bootsel or by holding BOOTSEL while pressing RESET.
+            //
+            // This writes both the partition table (ABSOLUTE blocks) and the
+            // application image into slot A.  Using OpenOCD's 'program WP.elf'
+            // instead would overwrite the partition table at 0x10000000 and
+            // break OTA — do NOT use that approach.
+            "label": "WP: Flash and Run (BOOTSEL mode)",
+            "type": "shell",
+            "command": "~/projects/umod4/tools/flash_WP ${workspaceRoot}/build/WP",
             "group": "build",
             "presentation": {
                 "reveal": "always",
