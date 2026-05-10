@@ -107,7 +107,7 @@ The build system creates a virtual environment at `build/.venv` and installs req
 - Emulates 32KB EPROM with regions that can act as RAM (expands ECU's 512 bytes)
 - Loads and combines multiple EPROM images from 16MB SPI flash partition
 - Forwards ECU data stream to WP via UART at 921600 baud
-- Logs all HC11 accesses to circular buffer (16,384 entries) for debugging
+- Logs all HC11 accesses to circular buffer (8,192 entries × 4 bytes = 32KB) for debugging
 - BSON document-based EPROM library with metadata
 - has RTT debug output, NOT UART!
 
@@ -194,7 +194,7 @@ umod4/
 - Uses Raspberry Pi Debug Probe (CMSIS-DAP)
 - VS Code launch.json configured for OpenOCD debugging
 - On WSL2: Use usbipd to attach debug probe to WSL
-- When debugging WP on 4V1 PCB, SPARE2 must be grounded to inhibit WP from using SWD to talk to EP
+- When debugging the EP on 4V1 PCB, SPARE2 must be grounded to inhibit WP from using SWD to talk to EP
 
 **Flashing:**
 ```bash
@@ -293,13 +293,53 @@ Cannot select debug targets normally due to ExternalProject_Add() preventing VS 
 
 ## Testing
 
-Currently no automated test suite. Testing happens on physical hardware (Aprilia Tuono motorcycle ECU with umod4 board installed).
+### Automated Test Harness
 
-**Verification Steps:**
-1. Build succeeds without errors
-2. Flash EP and WP firmware via debugger
-3. Install in bike ECU, verify engine runs correctly
-4. Verify data logging to SD card
-5. Extract and decode logs with `tools/logtools/decoder/decodelog.py`
-6. Validate HDF5 output with `tools/logtools/decoder/verify_hdf5.py`
-7. Visualize with `tools/logtools/viz/viz.py`
+The project has an automated hardware-in-the-loop test harness in `tests/`. It requires physical hardware: a umod4 device connected via CMSIS-DAP debug probe, and an ap_proxy (Pico W USB serial HTTP proxy).
+
+**Running tests:**
+
+```bash
+# Run all suites (provisioning first — erases WP flash)
+build/.venv/bin/python3 tests/runner.py --ssid MyNetwork --password MyPass --device-name umod4_test_hw
+
+# Run specific suites (skips provisioning, board must already be flashed)
+build/.venv/bin/python3 tests/runner.py test_basic test_wifi
+
+# Pre-flight checks only (USB devices, tools, build artifacts)
+build/.venv/bin/python3 tests/runner.py --preflight-only
+```
+
+Reports are written to `build/test_reports/run_YYYYMMDD_HHMMSS.md` and `build/test_reports/latest.md`.
+
+**Test suites** (in `tests/suites/`):
+
+* `test_basic` — boot info, SD info, filesystem health, GPS
+* `test_ep_swd` — EP processor SWD connectivity
+* `test_wifi` — WiFi connectivity
+* `test_ota_ep` / `test_ota_wp` — OTA firmware update flows
+* `test_provisioning` — full device provisioning via ap_proxy (AP mode → WiFi setup)
+
+**Harness components** (in `tests/harness/`):
+
+* `preflight.py` — pre-run checks (USB devices, tools, build artifacts)
+* `rtt.py` — RTT output capture via OpenOCD
+* `openocd.py` — OpenOCD process management
+* `ap_proxy.py` — USB serial protocol to the ap_proxy Pico W
+* `usbipd.py` / `usb_ids.py` — WSL2 USB attachment helpers
+
+**Hardware requirements:**
+
+* CMSIS-DAP debug probe (2e8a:000c) attached to WSL
+* ap_proxy device (1209:0001) attached to WSL
+* Build artifacts present: `build/WP/WP.uf2`, `build/EP/EP.uf2`, `build/WpUsbBoot/WpUsbBoot`
+
+### Manual Verification (motorcycle testing)
+
+For ECU/engine validation (no automated equivalent):
+1. Flash EP and WP firmware via debugger
+2. Install in bike ECU, verify engine runs correctly
+3. Verify data logging to SD card
+4. Extract and decode logs with `tools/logtools/decoder/decodelog.py`
+5. Validate HDF5 output with `tools/logtools/decoder/verify_hdf5.py`
+6. Visualize with `tools/logtools/viz/viz.py`

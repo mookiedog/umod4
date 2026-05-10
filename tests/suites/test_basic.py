@@ -23,7 +23,7 @@ def run(ocd, results, context):
         results.start("version")
         try:
             reply = vfy.command("version")
-            if "PASS" in reply and "bt=" in reply:
+            if "PASS" in reply and '"bt"' in reply:
                 results.passed("version", reply)
             else:
                 results.failed("version", reply)
@@ -34,7 +34,7 @@ def run(ocd, results, context):
         results.start("status")
         try:
             reply = vfy.command("status")
-            if "PASS" in reply and "uptime_ms=" in reply:
+            if "PASS" in reply and '"uptime_ms"' in reply:
                 results.passed("status", reply)
             else:
                 results.failed("status", reply)

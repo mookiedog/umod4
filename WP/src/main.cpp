@@ -36,6 +36,8 @@
 #include "api_handlers.h"
 #include "ep_rtt_forwarder.h"
 #include "swd_lock.h"
+#include "health_boot.h"
+#include "health_gps.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/stats.h"
@@ -543,6 +545,7 @@ void boot_system(void* args)
 
     printf("%s: Starting the GPS\n", __FUNCTION__);
     startGps();
+    health_gps_init(gps);
 
     printf("%s: Starting the debug shell\n", __FUNCTION__);
     dbgShell = new Shell(&lfs);
@@ -853,6 +856,7 @@ int main()
     show_heap_stats(true);
 
     show_partition_info();
+    health_boot_init();
     check_tbyb();
 
     // Create a transient task to boot the rest of the system

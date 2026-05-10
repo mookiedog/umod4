@@ -4,7 +4,7 @@ RTT channel I/O over OpenOCD's TCP RTT server.
 RttChannel wraps a TCP socket to one OpenOCD RTT server port.
 - send(text)          writes to the channel's DOWN buffer (host→device)
 - readline(timeout)   reads one newline-terminated line from the UP buffer
-- command(cmd, timeout) sends a command and returns the matching VFY: reply
+- command(cmd, timeout) sends a command and returns the matching JSON reply
 """
 
 import socket
@@ -105,15 +105,17 @@ class RttChannel:
 
     def command(self, cmd, timeout=5.0):
         """
-        Send a VFY command and return the matching 'VFY: <cmd> ...' reply line.
+        Send a VFY command and return the matching JSON reply line.
+        Matches any line that starts with '{' and contains '"<cmd_name>":'.
         Raises RttError if no matching reply arrives within timeout.
         """
         self.send(cmd)
         cmd_name = cmd.strip().split()[0]   # match on command name only, ignoring arguments
+        key_fragment = f'"{cmd_name}":'
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             line = self.readline(timeout=remaining)
-            if line.startswith(f"VFY: {cmd_name}"):
+            if line.startswith("{") and key_fragment in line:
                 return line
-        raise RttError(f"No VFY reply for '{cmd}' within {timeout}s")
+        raise RttError(f"No JSON reply for '{cmd}' within {timeout}s")

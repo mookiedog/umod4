@@ -28,6 +28,7 @@ from PySide6.QtCore import QTimer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models.database import Database, Device
+from models.app_settings import AppSettings
 from http_server import Umod4Server
 from gui.main_window import MainWindow
 from checkin_listener import CheckInListener
@@ -142,6 +143,9 @@ def main():
     database = Database(db_path=args.db)
     print(f"Database: {database.db_path}")
 
+    # Initialize persistent application settings
+    app_settings = AppSettings()
+
     # Initialize HTTP server (legacy push-based upload endpoint)
     print(f"Initializing HTTP server on {args.host}:{args.port}")
     server = Umod4Server(database, port=args.port, host=args.host)
@@ -169,7 +173,7 @@ def main():
     app.setOrganizationName("umod4")
 
     # Create main window
-    window = MainWindow(database, server, connectivity_checker=connectivity_checker, device_manager=device_manager)
+    window = MainWindow(database, server, connectivity_checker=connectivity_checker, device_manager=device_manager, app_settings=app_settings)
 
     # --- Background thread callbacks (just put events on the queue) ---
 

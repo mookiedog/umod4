@@ -59,7 +59,7 @@ class DeviceFilesDialog(QDialog):
         layout.addWidget(header)
 
         # Info label
-        info_label = QLabel("Log files (.um4, .log) must be downloaded before deletion. Other files can be deleted freely.")
+        info_label = QLabel("Log files (.um4, .log) must be downloaded before deletion (zero-length logs exempt). Other files can be deleted freely.")
         info_label.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(info_label)
 
@@ -141,9 +141,10 @@ class DeviceFilesDialog(QDialog):
                 is_downloaded = filename in downloaded_files
 
                 # Determine if file can be deleted:
-                # - Log files (.um4, .log) require download first
+                # - Log files (.um4, .log) require download first, UNLESS they are
+                #   zero-length (nothing to preserve — likely a failed-write artifact)
                 # - Other files (uploaded files like .uf2) can always be deleted
-                can_delete = is_downloaded or not is_log_file
+                can_delete = is_downloaded or not is_log_file or file_size == 0
 
                 # Checkbox column: use QTableWidgetItem with check state rather than
                 # setCellWidget(QCheckBox) to avoid PySide6/shiboken C++ ownership bugs
@@ -195,6 +196,8 @@ class DeviceFilesDialog(QDialog):
                 # Status
                 if is_config_file:
                     status = "Config file"
+                elif file_size == 0 and is_log_file:
+                    status = "Empty file"
                 elif can_delete:
                     status = "Can delete"
                 else:

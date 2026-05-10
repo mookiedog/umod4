@@ -49,12 +49,9 @@ def run(ocd, results, context):
             if "PASS" in reply:
                 results.passed("swd_spare2_check", reply)
             else:
-                results.failed("swd_spare2_check", reply)
-                print("  NOTE: SPARE2 must be ungrounded (floating) for WP→EP SWD.")
-                return
+                results.abort("swd_spare2_check", reply + " — SPARE2 must be floating")
         except RttError as e:
-            results.failed("swd_spare2_check", str(e))
-            return
+            results.abort("swd_spare2_check", str(e))
 
         # ----------------------------------------------------------------
         # Phase 1 — EP halted in bootrom
@@ -66,11 +63,9 @@ def run(ocd, results, context):
             if "PASS" in reply:
                 results.passed("swd_connect_in_reset", reply)
             else:
-                results.failed("swd_connect_in_reset", reply)
-                return   # no point continuing without a working SWD connection
+                results.abort("swd_connect_in_reset", reply)
         except RttError as e:
-            results.failed("swd_connect_in_reset", str(e))
-            return
+            results.abort("swd_connect_in_reset", str(e))
 
         results.start("swd_read_flash_in_reset")
         try:
@@ -98,11 +93,9 @@ def run(ocd, results, context):
             if "PASS" in reply:
                 results.passed("swd_load_swdreflash", reply)
             else:
-                results.failed("swd_load_swdreflash", reply)
-                return   # can't do flash write without swdreflash loaded
+                results.abort("swd_load_swdreflash", reply)
         except RttError as e:
-            results.failed("swd_load_swdreflash", str(e))
-            return
+            results.abort("swd_load_swdreflash", str(e))
 
         # ----------------------------------------------------------------
         # Phase 2 — Flash write
@@ -112,8 +105,7 @@ def run(ocd, results, context):
         try:
             scratch = _unused_flash_scratch()
         except ElfError as e:
-            results.failed("swd_write_flash", f"ELF symbol read failed: {e}")
-            return
+            results.abort("swd_write_flash", f"ELF symbol read failed: {e}")
 
         try:
             cmd = f"swd_write_flash 0x{scratch:08x}"
@@ -135,11 +127,9 @@ def run(ocd, results, context):
             if "PASS" in reply:
                 results.passed("swd_release_reset", reply)
             else:
-                results.failed("swd_release_reset", reply)
-                return
+                results.abort("swd_release_reset", reply)
         except RttError as e:
-            results.failed("swd_release_reset", str(e))
-            return
+            results.abort("swd_release_reset", str(e))
 
         results.start("swd_reconnect_after_boot")
         try:
@@ -147,10 +137,6 @@ def run(ocd, results, context):
             if "PASS" in reply:
                 results.passed("swd_reconnect_after_boot", reply)
             else:
-                # SWD unresponsive after boot = bad image — hard abort
-                results.failed("swd_reconnect_after_boot", reply)
-                print("  NOTE: EP SWD unresponsive after boot — bad image or EP hang.")
-                return
+                results.abort("swd_reconnect_after_boot", reply + " — bad image or EP hang")
         except RttError as e:
-            results.failed("swd_reconnect_after_boot", str(e))
-            return
+            results.abort("swd_reconnect_after_boot", str(e))

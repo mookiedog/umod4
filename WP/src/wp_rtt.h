@@ -14,15 +14,13 @@
 // Call once from main() after stdio_init_all()
 void wp_rtt_init(void);
 
-// Write a structured verification message to the WP_VFY up-channel.
-// Format: "VFY: <message>\n"
+// Write a JSON response line to the WP_VFY up-channel.
 //
-// WARNING: WP_VFY uses BLOCK_IF_FIFO_FULL. Only call VFY() in response to an
-// explicit test command — never unconditionally during boot or normal operation.
-// If no debugger is draining the buffer, the calling task will block permanently.
-// Boot status belongs on WP_STDIO (printf) which uses NO_BLOCK_TRIM.
+// WARNING: WP_VFY uses BLOCK_IF_FIFO_FULL. Only call vfy_printf() in response
+// to an explicit test command — never unconditionally during boot or normal
+// operation. If no debugger is draining the buffer, the calling task will
+// block permanently. Boot status belongs on WP_STDIO (printf).
 void vfy_printf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
-#define VFY(fmt, ...) vfy_printf("VFY: " fmt "\n", ##__VA_ARGS__)
 
 // Read up to maxLen bytes from the WP_VFY down-channel (automation commands in).
 // Returns number of bytes read (may be 0 if nothing available).

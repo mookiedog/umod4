@@ -8,6 +8,11 @@
 
 #define SPARE1_LED_PIN 26
 
+// This whole program turned out uglier than I would like. But it works, so there's that.
+
+// Stub out pico_stdlib runtime init functions to prevent SDK from running
+// heavy initialization before main(). Without these, the SDK init sequence
+// executes bkpt instructions that halt the CPU when running under a debugger.
 void runtime_init_post_clock_resets(void) {}
 void runtime_init_default_alarm_pool(void) {}
 void runtime_init_bootrom_reset(void) {}
@@ -15,9 +20,9 @@ void runtime_init_per_core_bootrom_reset(void) {}
 void runtime_init_spin_locks_reset(void) {}
 void runtime_init_per_core_irq_priorities(void) {}
 
+
 static void busy_wait_ms(uint32_t ms, uint32_t clk_sys_khz)
 {
-    // ~4 cycles per loop iteration
     uint32_t iterations = (clk_sys_khz * ms) / 4;
     for (volatile uint32_t i = 0; i < iterations; i++) {}
 }

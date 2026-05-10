@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+# flash_EP: Flash EP firmware over WiFi via the WP's HTTP API.
+#
+# Usage:
+#   flash_EP <device-name> [EP-build-dir]
+#
+# Two modes of operation:
+#   Release mode:  run without a directory argument from the folder containing
+#                  this script (e.g. a downloaded release zip).  The script
+#                  looks for EP.uf2 beside itself.
+#                    ./flash_EP umod4_garage
+#   Dev/build mode: pass the build output directory explicitly.
+#                    flash_EP umod4_garage ~/projects/umod4/build/EP
+#
+# Prerequisites:
+#   - WP firmware must be installed and connected to home WiFi.
+#   - Device must be reachable at <device-name>.local
+#   - python3 with 'requests': pip3 install requests
+#                          or: sudo apt install python3-requests
+
+import sys
+import os
+import socket
+import argparse
+
+
+def _check_requests():
+    try:
+        import requests  # noqa: F401
+    except ImportError:
+        print("Error: 'requests' library not installed.")
+        print("  Fix: pip3 install requests")
+        print("   or: sudo apt install python3-requests")
+        sys.exit(1)
+
+
+def _resolve_host(host):
+    """Resolve a .local hostname to an IP address.
+
+    Tries avahi-resolve-host-name first (fast, bypasses glibc NSS/D-Bus issues
+    in WSL2).  Falls back to socket.getaddrinfo if avahi-utils is not installed.
+    Returns the IP string, or None on failure.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['avahi-resolve-host-name', '-4', host],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            parts = result.stdout.strip().split()
+            if len(parts) == 2:
+                return parts[1]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    try:
+        return socket.getaddrinfo(host, 80, socket.AF_INET)[0][4][0]
+    except socket.gaierror:
+        return None
+
+
+def main():
+    _check_requests()
+
+    parser = argparse.ArgumentParser(
+        prog='flash_EP',
+        description='Flash EP firmware over WiFi via the WP HTTP API.',
+        epilog=(
+            'Examples:\n'
+            '  ./flash_EP umod4_garage                          # release mode\n'
+            '  flash_EP umod4_garage ~/projects/umod4/build/EP  # dev mode'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        'device_name',
+        metavar='device-name',
+        help='umod4 device name set during WiFi provisioning (e.g. umod4_garage or umod4_garage.local)',
+    )
+    parser.add_argument(
+        'ep_dir',
+        metavar='EP-build-dir',
+        nargs='?',
+        default=None,
+        help='directory containing EP.uf2 (default: same directory as this script)',
+    )
+    args = parser.parse_args()
+
+    device_name = args.device_name
+    if device_name.endswith('.local'):
+        device_name = device_name[:-6]
+
+    script_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+    ep_dir = args.ep_dir if args.ep_dir is not None else script_dir
+    ep_uf2 = os.path.join(ep_dir, 'EP.uf2')
+
+    if not os.path.isdir(ep_dir):
+        print(f"Error: directory '{ep_dir}' does not exist.")
+        sys.exit(1)
+
+    if not os.path.exists(ep_uf2):
+        print(f"Error: EP.uf2 not found in {ep_dir}")
+        sys.exit(1)
+
+    sys.path.insert(0, os.path.join(script_dir, 'server'))
+    from device_client import DeviceClient
+
+    host = f"{device_name}.local"
+    print(f"Resolving {host}...")
+    ip = _resolve_host(host)
+    if ip is None:
+        print(f"Error: Cannot resolve {host}")
+        print(f"  Make sure the device name is correct and the WP is connected to WiFi.")
+        sys.exit(1)
+    print(f"Connecting to {host} ({ip})...")
+
+    client = DeviceClient(ip)
+    info = client.get_device_info()
+    if info is None:
+        print(f"Error: Cannot reach {host}")
+        print(f"  Make sure the device name is correct and the WP is connected to WiFi.")
+        sys.exit(1)
+    print(f"Connected: {info.get('device_name', device_name)}")
+
+    fs_status = info.get('fs_status', 'unknown')
+    if fs_status != 'ok':
+        print(f"Error: SD card not ready — {info.get('fs_message', fs_status)}")
+        print(f"  Insert the SD card and try again.")
+        sys.exit(1)
+
+    ep_size = os.path.getsize(ep_uf2)
+    print(f"Uploading EP.uf2 ({ep_size:,} bytes)...")
+    ok, _session_id, error = client.upload_file(ep_uf2, 'EP.uf2')
+    if not ok:
+        print(f"Error: Upload failed: {error}")
+        sys.exit(1)
+    print("Upload complete.")
+
+    print("Flashing EP firmware via SWD (this takes up to 30 seconds)...")
+    ok, error = client.reflash_ep('EP.uf2')
+    if not ok:
+        print(f"Error: EP flash failed: {error}")
+        sys.exit(1)
+
+    print("EP firmware flashed successfully.")
+    print("The EP is now running the new firmware.")
+
+
+if __name__ == '__main__':
+    main()

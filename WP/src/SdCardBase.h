@@ -82,6 +82,7 @@ class SdCardBase {
     virtual bool cardPresent() = 0;
     virtual uint32_t getSectorSize() = 0;      // Always returns 512
     virtual uint32_t getSectorCount() = 0;     // Total sectors on card
+    uint32_t getCapacityMB() { return (uint32_t)((uint64_t)getSectorCount() * getSectorSize() / (1024 * 1024)); }
 
     /// @brief Get the SD card interface mode name
     /// @return String describing the interface mode

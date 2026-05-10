@@ -46,6 +46,9 @@ class OpenOCD:
 
     # ------------------------------------------------------------------
     def start(self, reset=True):
+        with self._lock:
+            self._rtt_ready.clear()
+            self._log_lines.clear()
         cmd = [
             OPENOCD,
             "-f", IFACE_CFG,
@@ -82,6 +85,10 @@ class OpenOCD:
             except subprocess.TimeoutExpired:
                 self._proc.kill()
         self._proc = None
+
+    @property
+    def is_running(self):
+        return self._proc is not None and self._proc.poll() is None
 
     def reconnect(self, timeout=RTT_TIMEOUT):
         """Stop current OpenOCD session and reconnect without resetting the target.

@@ -78,20 +78,28 @@ class CheckInListener:
                 # Parse JSON payload
                 try:
                     payload = json.loads(data.decode('utf-8'))
+                    msg_type = payload.get('type', 'checkin')
                     device_mac = payload.get('device_mac')
                     device_ip = payload.get('ip')
 
-                    if device_mac and device_ip:
-                        print(f"CheckInListener: Device {device_mac} checked in from {device_ip}")
-
-                        # Call callback if registered
-                        if self.on_device_checkin:
-                            try:
-                                self.on_device_checkin(device_mac, device_ip)
-                            except Exception as e:
-                                print(f"CheckInListener: Error in callback: {e}")
+                    if msg_type == 'discover':
+                        # Device is broadcasting to find the server — reply so it learns our IP:port
+                        reply = json.dumps({"type": "announce", "port": self.port}).encode('utf-8')
+                        self.socket.sendto(reply, addr)
+                        device_name = payload.get('device_name', device_mac)
+                        print(f"CheckInListener: Discovery from {device_name} ({device_mac}) at {device_ip} — replied")
                     else:
-                        print(f"CheckInListener: Invalid check-in payload: {payload}")
+                        if device_mac and device_ip:
+                            print(f"CheckInListener: Device {device_mac} checked in from {device_ip}")
+                        else:
+                            print(f"CheckInListener: Invalid check-in payload: {payload}")
+
+                    # Fire callback for both discover and regular check-ins
+                    if device_mac and device_ip and self.on_device_checkin:
+                        try:
+                            self.on_device_checkin(device_mac, device_ip)
+                        except Exception as e:
+                            print(f"CheckInListener: Error in callback: {e}")
 
                 except json.JSONDecodeError as e:
                     print(f"CheckInListener: Invalid JSON from {addr}: {data[:100]}")

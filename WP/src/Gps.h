@@ -8,6 +8,27 @@
 #include "Psm.h"
 #include "Uart.h"
 
+#include <stdint.h>
+
+typedef enum {
+    GPS_NOT_PRESENT,    // GPIO reads low on every timeout — nothing driving the line
+    GPS_MAYBE_PRESENT,  // GPIO reads high on timeout — something is driving the line
+    GPS_PRESENT,        // received at least one byte from the UART
+} GpsPresence;
+
+struct GpsHealth {
+    GpsPresence presence;
+    uint32_t rx_errors;         // UART framing/parity errors
+    uint32_t cksum_errors;      // UBX checksum failures
+    uint32_t tim_tp_count;
+    uint32_t nav_timels_count;
+    uint32_t nav_pvt_count;
+    uint32_t unknown_count;
+    uint32_t tim_tp_age_ms;     // ms since last TIM-TP; UINT32_MAX if never received
+    uint32_t nav_timels_age_ms;
+    uint32_t nav_pvt_age_ms;
+};
+
 class Gps : public Psm
 {
   public:
@@ -15,6 +36,7 @@ class Gps : public Psm
 
     bool getLocation(float* latitude_degrees, float* longitude_degrees);
     float getSpeedMph() const { return speed_mph_; }
+    void getHealth(GpsHealth* out) const;
 
     void sendUbxMsg(uint8_t ubxClass, uint8_t ubxId, const uint8_t* payload, uint16_t payloadLength);
     void sendUbxMsg(uint8_t* buffer, uint16_t bufferLen);
@@ -102,6 +124,18 @@ class Gps : public Psm
     uint8_t secs;
     int32_t nanos;
     uint32_t itow;
+
+    // Health metrics
+    GpsPresence m_presence;
+    uint32_t m_rx_errors;
+    uint32_t m_cksum_errors;
+    uint32_t m_tim_tp_count;
+    uint32_t m_nav_timels_count;
+    uint32_t m_nav_pvt_count;
+    uint32_t m_unknown_count;
+    uint32_t m_tim_tp_last_ms;      // 0 = never received
+    uint32_t m_nav_timels_last_ms;
+    uint32_t m_nav_pvt_last_ms;
 };
 
 #endif

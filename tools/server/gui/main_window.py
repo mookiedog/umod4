@@ -146,7 +146,7 @@ class DeviceListWidget(QWidget):
                 self.device_table.setItem(row, 0, status_item)
 
                 # Name column
-                name_item = QTableWidgetItem(device.name if device.name else "")
+                name_item = QTableWidgetItem(device.display_name or "")
                 name_item.setData(Qt.ItemDataRole.UserRole, device.mac_address)
                 self.device_table.setItem(row, 1, name_item)
 
@@ -950,11 +950,12 @@ class TransferHistoryWidget(QWidget):
 class ManageDeviceWidget(QWidget):
     """Widget for managing the selected device."""
 
-    def __init__(self, database, connectivity_checker=None, device_manager=None):
+    def __init__(self, database, connectivity_checker=None, device_manager=None, app_settings=None):
         super().__init__()
         self.database = database
         self.connectivity_checker = connectivity_checker
         self.device_manager = device_manager
+        self.app_settings = app_settings
         self.selected_mac = None
         self.device_is_online = False
         self._setup_ui()
@@ -1508,12 +1509,18 @@ class ManageDeviceWidget(QWidget):
                 QMessageBox.warning(self, "Device Offline", "Device must be online to reflash.")
                 return
 
+            ep_start = ""
+            if self.app_settings:
+                ep_start = self.app_settings.get('ep_uf2_path', '')
             source_file, _ = QFileDialog.getOpenFileName(
-                self, "Select EP Firmware File", "", "UF2 Files (*.uf2);;All Files (*.*)"
+                self, "Select EP Firmware File", ep_start, "UF2 Files (*.uf2);;All Files (*.*)"
             )
 
             if not source_file:
                 return
+
+            if self.app_settings:
+                self.app_settings.set('ep_uf2_path', source_file)
 
             destination_filename = os.path.basename(source_file)
             file_size = os.path.getsize(source_file)
@@ -1636,12 +1643,18 @@ class ManageDeviceWidget(QWidget):
                 QMessageBox.warning(self, "Device Offline", "Device must be online to reflash.")
                 return
 
+            wp_start = ""
+            if self.app_settings:
+                wp_start = self.app_settings.get('wp_uf2_path', '')
             source_file, _ = QFileDialog.getOpenFileName(
-                self, "Select WP Firmware File", "", "UF2 Files (*.uf2);;All Files (*.*)"
+                self, "Select WP Firmware File", wp_start, "UF2 Files (*.uf2);;All Files (*.*)"
             )
 
             if not source_file:
                 return
+
+            if self.app_settings:
+                self.app_settings.set('wp_uf2_path', source_file)
 
             destination_filename = os.path.basename(source_file)
             file_size = os.path.getsize(source_file)
@@ -1756,12 +1769,13 @@ class ManageDeviceWidget(QWidget):
 class MainWindow(QMainWindow):
     """Main window for umod4 server application."""
 
-    def __init__(self, database, server, connectivity_checker=None, device_manager=None):
+    def __init__(self, database, server, connectivity_checker=None, device_manager=None, app_settings=None):
         super().__init__()
         self.database = database
         self.server = server
         self.connectivity_checker = connectivity_checker
         self.device_manager = device_manager
+        self.app_settings = app_settings
         self.setWindowTitle("umod4 Server")
         self.resize(1200, 700)
         self._setup_ui()
@@ -1807,7 +1821,7 @@ class MainWindow(QMainWindow):
         self.transfer_history = TransferHistoryWidget(self.database, device_manager=self.device_manager)
         tab_widget.addTab(self.transfer_history, "Transfer History")
 
-        self.manage_device = ManageDeviceWidget(self.database, self.connectivity_checker, self.device_manager)
+        self.manage_device = ManageDeviceWidget(self.database, self.connectivity_checker, self.device_manager, self.app_settings)
         tab_widget.addTab(self.manage_device, "Manage Device")
 
         splitter.addWidget(tab_widget)

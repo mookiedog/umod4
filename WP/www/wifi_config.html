@@ -194,6 +194,16 @@
         <form id="cfg-form">
 
             <div class="section">
+                <div class="section-title">Device Identity</div>
+                <div class="form-row">
+                    <label for="device_name">Device Name <span style="color:#dc3545;">*</span></label>
+                    <input type="text" id="device_name" name="device_name" maxlength="63"
+                           placeholder="e.g. Robin's Tuono">
+                    <div class="hint">Required. Give this device a unique, memorable name.</div>
+                </div>
+            </div>
+
+            <div class="section">
                 <div class="section-title">Home Network (STA Mode)</div>
                 <div class="form-row">
                     <label for="wifi_ssid">WiFi SSID</label>
@@ -254,12 +264,17 @@
     <script>
         // Wifi mode at page load — determines post-save UX
         var currentWifiMode = 'sta';
+        var deviceName = '';
 
         // Load current config on page load
         fetch('/api/config')
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (data.device_name) document.getElementById('device-name').textContent = data.device_name;
+                if (data.device_name) {
+                    deviceName = data.device_name;
+                    document.getElementById('device-name').textContent = data.device_name;
+                    document.getElementById('device_name').value = data.device_name;
+                }
                 if (data.wifi_ssid)   document.getElementById('wifi_ssid').value   = data.wifi_ssid;
                 if (data.ap_ssid)     document.getElementById('ap_ssid').value     = data.ap_ssid;
                 if (data.wifi_mode)   currentWifiMode = data.wifi_mode;
@@ -277,6 +292,17 @@
 
             // Build JSON — omit empty password fields so server keeps existing value
             var body = {};
+
+            // Device name is required
+            var name = document.getElementById('device_name').value.trim();
+            if (!name) {
+                showStatus('Device name is required. Please give this device a name.', false);
+                btn.disabled = false;
+                btn.textContent = 'Save & Reboot';
+                return;
+            }
+            body['device_name'] = name;
+
             var fields = ['wifi_ssid', 'ap_ssid'];
             fields.forEach(function(f) {
                 var v = document.getElementById(f).value.trim();
@@ -294,6 +320,7 @@
             // and the browser loses AP connectivity — polling won't work.
             var leavingApMode = (currentWifiMode === 'ap') && wifiCredChanged;
             var targetSsid = body.wifi_ssid || '';
+            var savedDeviceName = name;
 
             fetch('/api/config', {
                 method: 'POST',
@@ -305,7 +332,7 @@
                 if (data.success) {
                     btn.textContent = 'Rebooting\u2026';
                     if (leavingApMode) {
-                        showStaModeCard(targetSsid);
+                        showStaModeCard(targetSsid, savedDeviceName);
                     } else {
                         pollForDevice(wifiCredChanged);
                     }
@@ -319,7 +346,7 @@
                 // Device dropped the connection while sending response — reboot is in progress
                 btn.textContent = 'Rebooting\u2026';
                 if (leavingApMode) {
-                    showStaModeCard(targetSsid);
+                    showStaModeCard(targetSsid, savedDeviceName);
                 } else {
                     pollForDevice(wifiCredChanged);
                 }
@@ -504,20 +531,16 @@
         }
 
         // Replace the page after leaving AP mode — device is now connecting to home network.
-        function showStaModeCard(ssid) {
-            var ssidLine = ssid
-                ? 'The device is connecting to <strong>' + ssid + '</strong>.'
-                : 'The device is connecting to your home network.';
+        function showStaModeCard(ssid, savedName) {
+            var nameStr = savedName ? '“' + savedName + '”' : 'The device';
+            var networkStr = ssid ? '<strong>' + ssid + '</strong>' : 'your home network';
             document.querySelector('.container').innerHTML =
                 '<div style="text-align:center; padding:10px 0 20px;">' +
-                '<h2 style="color:#155724; margin:0 0 8px;">Saved! Connecting to Home Network</h2>' +
-                '<p style="color:#666; margin:0 0 24px; font-size:0.95em;">' + ssidLine + '</p>' +
+                '<h2 style="color:#155724; margin:0 0 16px;">Saved!</h2>' +
+                '<p style="color:#333; margin:0 0 12px; font-size:1em;">' + nameStr + ' is now connecting to ' + networkStr + '.</p>' +
+                '<p style="color:#333; margin:0 0 24px; font-size:1em;">Connect this device to ' + networkStr + ' as well.</p>' +
                 '<div style="background:#d4edda; border:1px solid #c3e6cb; border-radius:8px; padding:20px; text-align:left;">' +
-                '<p style="margin:0 0 12px; font-weight:700; color:#155724;">To reconnect to the device:</p>' +
-                '<ol style="margin:0; padding-left:22px; line-height:2.2; color:#333;">' +
-                '<li>Reconnect your phone/computer to your home WiFi network.</li>' +
-                '<li>Open: <a href="http://motorcycle.local/" style="color:#155724;">motorcycle.local</a></li>' +
-                '</ol>' +
+                '<p style="margin:0; color:#155724; font-size:1em;">Then start the <strong>umod4 server</strong> program on your PC to continue.</p>' +
                 '</div>' +
                 '</div>';
         }

@@ -2,6 +2,33 @@
     "version": "2.0.0",
     "tasks": [
         {
+            // Attach the CMSIS-DAP debug probe to WSL via usbipd.
+            // Called automatically by preLaunchTask in each debug configuration.
+            // Requires setup_usb_wsl.ps1 to have been run once as Administrator.
+            "label": "usbipd: attach debug probe",
+            "type": "shell",
+            "command": "usbipd.exe attach --hardware-id 2e8a:000c --wsl",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "close": true
+            },
+            "problemMatcher": []
+        },
+        {
+            // Detach the CMSIS-DAP debug probe from WSL, returning it to Windows.
+            // Called automatically by postDebugTask in each debug configuration.
+            "label": "usbipd: detach debug probe",
+            "type": "shell",
+            "command": "usbipd.exe detach --hardware-id 2e8a:000c",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "close": true
+            },
+            "problemMatcher": []
+        },
+        {
             // Load WpUsbBoot RAM stub via OpenOCD to put WP into USB mass-storage bootloader mode.
             // Requires debug probe connected to WP SWD header.  No BOOTSEL button needed.
             // The SPARE1 LED will light for ~1 second, then WP reboots into USB boot mode.

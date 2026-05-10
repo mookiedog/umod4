@@ -1,0 +1,249 @@
+#!/bin/bash
+# flash_ap_proxy: Flash ap_proxy firmware to a Pico W.
+#
+# Usage: flash_ap_proxy [path/to/ap_proxy.uf2]
+#
+# Default UF2: build/ap_proxy/ap_proxy.uf2
+#
+# Automatic flow (ap_proxy already running):
+#   1. On WSL2: attaches the ap_proxy serial device if not already visible
+#   2. Sends BOOTSEL command over serial — no button press needed
+#   3. Waits for "RP2 Boot" to appear in usbipd (WSL2) and attaches it
+#   4. Flashes with picotool and reboots
+#   5. Re-attaches the serial device (WSL2)
+#
+# First-flash flow (no firmware running yet):
+#   - Hold BOOTSEL on the Pico W while plugging it in, then press Enter
+
+set -e
+
+if grep -qi "WSL2" /proc/version 2>/dev/null; then
+    IS_WSL2=true
+else
+    IS_WSL2=false
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+VENV_PYTHON="$PROJECT_DIR/build/.venv/bin/python3"
+
+# VID:PID from single source of truth
+USB_IDS="$SCRIPT_DIR/ap_proxy/usb_ids.txt"
+AP_PROXY_VID=$(grep "^AP_PROXY_VID=" "$USB_IDS" | cut -d= -f2)
+AP_PROXY_PID=$(grep "^AP_PROXY_PID=" "$USB_IDS" | cut -d= -f2)
+AP_PROXY_HW_ID="${AP_PROXY_VID}:${AP_PROXY_PID}"
+
+if [ ! -x "$VENV_PYTHON" ]; then
+    VENV_PYTHON="python3"
+fi
+
+DEFAULT_UF2="$PROJECT_DIR/build/ap_proxy/ap_proxy.uf2"
+UF2="${1:-$DEFAULT_UF2}"
+
+if [ ! -f "$UF2" ]; then
+    echo "Error: UF2 not found: $UF2"
+    echo "Build first: cd ~/projects/umod4/build && ninja ap_proxy"
+    exit 1
+fi
+
+echo "UF2: $UF2"
+
+# ---- Helper: find and attach a usbipd device by pattern --------------------
+# Usage: usbipd_attach "pattern"  → sets BUSID, returns 0 on success
+
+# Attach a known BUSID to WSL2.  "Already attached" is treated as success.
+# Usage: usbipd_do_attach <busid> <bind_hint>
+usbipd_do_attach() {
+    local busid="$1"
+    local bind_hint="$2"
+    ATTACH_OUT=$(usbipd.exe attach --wsl --busid="$busid" 2>&1) || {
+        if echo "$ATTACH_OUT" | grep -qi "already attached"; then
+            true  # already attached to WSL — that's fine
+        else
+            echo "$ATTACH_OUT"
+            echo ""
+            echo "Attach failed. Run in an Administrator PowerShell window:"
+            echo "  $bind_hint"
+            exit 1
+        fi
+    }
+    BUSID="$busid"
+}
+
+usbipd_attach() {
+    local pattern="$1"
+    local label="$2"
+    local max_wait="${3:-10}"
+    local found_busid=""
+
+    for i in $(seq 1 "$max_wait"); do
+        local line
+        line=$(usbipd.exe list 2>/dev/null | grep -E "^[0-9]+-[0-9]+" | grep "$pattern" | head -1 || true)
+        if [ -n "$line" ]; then
+            found_busid=$(echo "$line" | awk '{print $1}' | tr -d '\r')
+            break
+        fi
+        sleep 1
+    done
+
+    if [ -z "$found_busid" ]; then
+        return 1
+    fi
+
+    echo "Found $label: BUSID=$found_busid"
+    usbipd_do_attach "$found_busid" "usbipd.exe bind --busid=$found_busid"
+    return 0
+}
+
+# ---- Helper: ping a serial port, print port name if ap_proxy responds ----
+# Waits up to wait_secs for /dev/ttyACM* to appear, then pings each one.
+
+find_serial_port() {
+    local wait_secs="${1:-15}"
+
+    # Keep scanning ALL ttyACM* ports for the full duration.
+    # New ports (e.g. ap_proxy) can appear after other ports (e.g. debug
+    # probe UART) are already visible, so we must not stop on first sight.
+    local result=""
+    result=$("$VENV_PYTHON" - "$wait_secs" <<'PYEOF'
+import sys, serial, time, glob
+
+wait_secs = float(sys.argv[1])
+deadline = time.monotonic() + wait_secs
+tried = set()
+
+while time.monotonic() < deadline:
+    ports = sorted(glob.glob("/dev/ttyACM*"))
+    for port in ports:
+        if port in tried:
+            continue
+        tried.add(port)
+        try:
+            with serial.Serial(port, 115200, timeout=1.0) as s:
+                time.sleep(0.3)
+                s.reset_input_buffer()
+                s.write(b"PING\n")
+                s.flush()
+                ping_deadline = time.monotonic() + 3.0
+                while time.monotonic() < ping_deadline:
+                    line = s.readline()
+                    if line.strip().startswith(b"OK"):
+                        print(port)
+                        sys.exit(0)
+        except Exception:
+            pass
+    time.sleep(0.5)
+PYEOF
+    2>/dev/null) || true
+
+    if [ -n "$result" ]; then
+        echo "$result"
+        return 0
+    fi
+    return 1
+}
+
+# ---- Helper: send BOOTSEL command over serial ------------------------------
+
+send_bootsel() {
+    local port="$1"
+    "$VENV_PYTHON" - "$port" <<'PYEOF' 2>/dev/null || true
+import sys, serial, time
+port = sys.argv[1]
+with serial.Serial(port, 115200, timeout=1.0) as s:
+    time.sleep(0.3)
+    s.reset_input_buffer()
+    s.write(b"BOOTSEL\n")
+    s.flush()
+    time.sleep(0.5)
+PYEOF
+}
+
+# ---- Step 1: on WSL2, attach the ap_proxy serial port -------------------
+# Match by product name "ap_proxy" (set via USBD_PRODUCT in firmware).
+# Explicitly avoid attaching CMSIS-DAP debug probe devices.
+
+BUSID=""  # will be set to Boot device BUSID in step 3
+
+if [ "$IS_WSL2" = true ]; then
+    echo "Attaching ap_proxy to WSL2 ($AP_PROXY_HW_ID)..."
+    if usbipd.exe list 2>/dev/null | grep -qiE "$AP_PROXY_HW_ID"; then
+        usbipd.exe attach --wsl --hardware-id "$AP_PROXY_HW_ID" 2>&1 || true
+    else
+        echo "ap_proxy ($AP_PROXY_HW_ID) not found in usbipd."
+        echo "Ensure ap_proxy is plugged in and setup_usb_wsl.ps1 has been run as Administrator."
+        echo "Continuing — will fall back to BOOTSEL button if serial ping fails."
+    fi
+fi
+
+# ---- Step 2: enter BOOTSEL mode --------------------------------------------
+
+echo ""
+if SERIAL_PORT=$(find_serial_port); then
+    echo "Found ap_proxy on $SERIAL_PORT — sending BOOTSEL command..."
+    send_bootsel "$SERIAL_PORT"
+    echo "Waiting for RP2 Boot device to appear..."
+    sleep 2
+else
+    echo "ap_proxy not found on any serial port."
+    echo ""
+    echo "FIRST FLASH: Hold the BOOTSEL button on the Pico W,"
+    echo "plug it into USB, then press Enter here."
+    read -r -p "Press Enter when Pico W is in BOOTSEL mode: "
+fi
+
+# ---- Step 3: WSL2 — find and attach RP2 Boot -------------------------------
+
+if [ "$IS_WSL2" = true ]; then
+    echo "Scanning for RP2 Boot device via usbipd..."
+    if ! usbipd_attach "RP2 Boot" "RP2 Boot" 10; then
+        echo "Error: No 'RP2 Boot' device found in usbipd list."
+        echo "Make sure the Pico W is in BOOTSEL mode."
+        exit 1
+    fi
+    echo "Waiting for device to enumerate in WSL2..."
+    sleep 2
+fi
+
+# ---- Step 4: flash ---------------------------------------------------------
+
+echo "Flashing $UF2 ..."
+~/.local/bin/picotool load "$UF2" -v
+echo ""
+echo "Rebooting device..."
+~/.local/bin/picotool reboot
+echo "Waiting for ap_proxy to boot..."
+sleep 3
+
+# ---- Step 5: WSL2 — re-attach the serial device ----------------------------
+
+if [ "$IS_WSL2" = true ]; then
+    echo "Waiting for ap_proxy to appear in usbipd ($AP_PROXY_HW_ID)..."
+    found=false
+    for i in $(seq 1 15); do
+        if usbipd.exe list 2>/dev/null | grep -qiE "$AP_PROXY_HW_ID"; then
+            found=true
+            break
+        fi
+        sleep 1
+    done
+
+    if [ "$found" = true ]; then
+        usbipd.exe attach --wsl --hardware-id "$AP_PROXY_HW_ID" 2>&1 || true
+        sleep 2
+
+        echo "Verifying ap_proxy is responsive..."
+        if FOUND=$(find_serial_port); then
+            echo "ap_proxy is ready on $FOUND"
+        else
+            echo "Warning: ap_proxy did not respond to PING yet."
+            echo "Try: build/.venv/bin/python3 tools/ap_proxy/smoke_test.py"
+        fi
+    else
+        echo "Warning: ap_proxy ($AP_PROXY_HW_ID) not found in usbipd after reboot."
+        echo "Run manually: usbipd.exe attach --wsl --hardware-id $AP_PROXY_HW_ID"
+    fi
+fi
+
+echo ""
+echo "Done."

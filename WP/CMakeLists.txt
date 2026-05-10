@@ -130,14 +130,9 @@ if(PICO_CYW43_SUPPORTED)
     endif()
 endif()
 
-# Server config — optional, non-sensitive.
-# WiFi credentials are NOT accepted here — they are entered once via AP mode and
-# stored in the flash config partition, which persists across firmware reflashes.
-if(DEFINED ENV{UMOD4_SERVER_HOST} AND (NOT UMOD4_SERVER_HOST))
-    set(UMOD4_SERVER_HOST $ENV{UMOD4_SERVER_HOST})
-    message("Using UMOD4_SERVER_HOST from environment ('${UMOD4_SERVER_HOST}')")
-endif()
-
+# Server port — used only as the discovery reply port default.
+# The server HOST is no longer compiled in: the WP discovers it automatically
+# by broadcasting a UDP discovery packet when no server address is saved in flash.
 if(DEFINED ENV{UMOD4_SERVER_PORT})
     set(UMOD4_SERVER_PORT $ENV{UMOD4_SERVER_PORT})
     message("Using UMOD4_SERVER_PORT from environment ('${UMOD4_SERVER_PORT}')")
@@ -245,6 +240,7 @@ add_executable(${PROJECT_NAME}
     src/WiFiManager.cpp
     src/dhcpserver.c
     src/dns_server.c
+    src/tcp443_server.c
 
     # Shared lib
     ${LIB_DIR}/src/log_meta.c
@@ -261,6 +257,11 @@ add_executable(${PROJECT_NAME}
     # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
     src/httpd_stubs.cpp
     src/ep_rtt_forwarder.cpp
+    src/wp_health.cpp
+    src/health_boot.cpp
+    src/health_sd.cpp
+    src/health_fs.cpp
+    src/health_gps.cpp
 
     # The RAM-resident SwdReflash binary that gets loaded to EP via SWD:
     ${SWDREFLASH_C}
@@ -387,9 +388,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     # Enable "Try Before You Buy" (TBYB) for OTA updates
     # PICO_CRT0_IMAGE_TYPE_TBYB=1
 
-    # Optional compile-time default credentials (used only on first boot if flash config is blank).
-    # After first boot, config is read from the flash config partition.
-    $<$<BOOL:${UMOD4_SERVER_HOST}>:DEFAULT_SERVER_HOST=\"${UMOD4_SERVER_HOST}\">
+    # Server port used by discovery reply — host is discovered automatically at runtime.
     DEFAULT_SERVER_PORT=${UMOD4_SERVER_PORT}
 
     # Point lwIP httpd to our custom-generated fsdata.c in build directory
@@ -486,4 +485,4 @@ add_custom_command(
     COMMENT "Extracting partition table binary from UF2"
     VERBATIM
 )
-add_custom_target(partition_table_bin DEPENDS ${PARTITION_TABLE_BIN})
+add_custom_target(partition_table_bin ALL DEPENDS ${PARTITION_TABLE_BIN})

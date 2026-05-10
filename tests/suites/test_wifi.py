@@ -24,16 +24,6 @@ WIFI_CONNECT_WAIT = 30.0
 HTTP_SERVER_WAIT  = 15.0
 
 
-def _parse_kv(line):
-    """Parse 'key=value' pairs from a VFY reply line into a dict."""
-    kv = {}
-    for tok in line.split():
-        if "=" in tok:
-            k, _, v = tok.partition("=")
-            kv[k] = v.strip('"')
-    return kv
-
-
 def _http_get_json(ip, path, timeout=HTTP_TIMEOUT):
     """
     GET http://<ip><path> and return the parsed JSON dict.
@@ -78,22 +68,20 @@ def run(ocd, results, context):
             try:
                 reply = vfy.command("wifi_status", timeout=WIFI_TIMEOUT)
             except RttError as e:
-                results.failed("wifi_status", str(e))
-                return
+                results.abort("wifi_status", str(e))
 
             if "PASS" in reply:
                 break
             if "not_connected" not in reply or time.monotonic() >= deadline:
-                results.failed("wifi_status", reply)
-                print("  NOTE: WP must be connected to WiFi for HTTP tests.")
-                return
+                results.abort("wifi_status", reply + " — WP must be connected to WiFi")
             time.sleep(2.0)
 
-        kv    = _parse_kv(reply)
-        wp_ip = kv.get("ip")
+        try:
+            wp_ip = json.loads(reply).get("ip")
+        except (json.JSONDecodeError, AttributeError):
+            wp_ip = None
         if not wp_ip:
-            results.failed("wifi_status", "No IP address in reply")
-            return
+            results.abort("wifi_status", "no IP address in reply")
         context["wp_ip"] = wp_ip
         results.passed("wifi_status", reply)
 

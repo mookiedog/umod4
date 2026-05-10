@@ -46,10 +46,6 @@ set(PICO_EXAMPLES_PATH ${PROJECTS_PATH}/pico-examples)
 set(PICO_SDK_VERSION 2.2.0)
 set(PICO_SDK_PATH ${PROJECTS_PATH}/pico-sdk/${PICO_SDK_VERSION})
 
-# If this path is specified, the SDK init process will make sure that the picotool sources will get downloaded to this path,
-# that the picotool gets built, and that the various sub-projects in this superbuild will know where to find the picotool executable.
-set(PICOTOOL_FETCH_FROM_GIT_PATH ${PROJECTS_PATH}/picotool)
-
 # Create a Python Virtual Environment (venv) in the build directory so that we can install a few
 # required Python packages without using the normal, system-wide python installation mechanisms.
 set(VENV_PATH "${CMAKE_CURRENT_BINARY_DIR}/.venv")
@@ -139,6 +135,9 @@ execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install PyYAML)
 message(STATUS "   ---> Installing python lib: nuitka")
 execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install nuitka)
 
+message(STATUS "   ---> Installing python lib: pyserial")
+execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pyserial)
+
 project(umod4)
 
 # Set generator for external projects
@@ -166,6 +165,27 @@ set(LIB_DIR ${CMAKE_SOURCE_DIR}/lib)
 # The source dir is required for accessing python scripts
 set(TOOLS_INSTALL_DIR $ENV{HOME}/.local/bin)
 set(TOOLS_SOURCE_DIR ${CMAKE_SOURCE_DIR}/tools/src)
+
+# ---------------------------------------------------------------------------------------------
+message(STATUS "Adding the 'picotool' project")
+
+ExternalProject_Add(picotool
+    PREFIX ${CMAKE_BINARY_DIR}/picotool
+    GIT_REPOSITORY https://github.com/raspberrypi/picotool.git
+    GIT_TAG ${PICO_SDK_VERSION}
+    GIT_SHALLOW TRUE
+    CMAKE_ARGS
+        -DCMAKE_INSTALL_PREFIX=$ENV{HOME}/.local
+    INSTALL_COMMAND
+        cmake --install .
+        COMMAND ${CMAKE_COMMAND} -E make_directory $ENV{HOME}/.local/share/picotool
+        COMMAND ${CMAKE_COMMAND} -E copy
+            <SOURCE_DIR>/udev/60-picotool.rules
+            $ENV{HOME}/.local/share/picotool/60-picotool.rules
+        COMMAND ${CMAKE_COMMAND}
+            -DRULES_SRC=$ENV{HOME}/.local/share/picotool/60-picotool.rules
+            -P ${CMAKE_SOURCE_DIR}/cmake/check_udev_rules.cmake
+)
 
 # ---------------------------------------------------------------------------------------------
 message(STATUS "Adding the 'tools' project")
@@ -252,7 +272,6 @@ message(STATUS "Adding the 'EP' project")
 
 set(EP_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
-    -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
     -DLIB_DIR=${LIB_DIR}
     -DEPROM_LIB_SRC_DIR=${CMAKE_SOURCE_DIR}/eprom_lib
     -DECU_BINARY_DIR=${CMAKE_BINARY_DIR}/ecu
@@ -265,7 +284,7 @@ set(EP_CMAKE_ARG_LIST
 )
 
 ExternalProject_Add(EP
-    DEPENDS tools ecu
+    DEPENDS tools ecu picotool
     PREFIX ${CMAKE_BINARY_DIR}/EP
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/EP
     BINARY_DIR ${CMAKE_BINARY_DIR}/EP
@@ -280,7 +299,6 @@ message(STATUS "Adding the 'SwdReflash' project")
 
 set(SWDREFLASH_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
-    -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
@@ -302,7 +320,6 @@ message(STATUS "Adding the 'WpUsbBoot' project")
 
 set(WPUSBBOOT_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
-    -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
 )
 
@@ -318,11 +335,31 @@ ExternalProject_Add(WpUsbBoot
 )
 
 # ---------------------------------------------------------------------------------------------
+message(STATUS "Adding the 'ap_proxy' project")
+
+# ap_proxy manages its own toolchain setup via PICO_TOOLCHAIN_PATH auto-detection
+# (same pattern as the standalone build, just driven by the superbuild).
+set(PROXY_PICO_CMAKE_ARG_LIST
+    -DPICO_SDK_PATH=${PICO_SDK_PATH}
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=1
+)
+
+ExternalProject_Add(ap_proxy
+    # No dependencies - ap_proxy is completely standalone
+    PREFIX ${CMAKE_BINARY_DIR}/ap_proxy
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/tools/ap_proxy
+    BINARY_DIR ${CMAKE_BINARY_DIR}/ap_proxy
+    CMAKE_GENERATOR ${generator}
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${PROXY_PICO_CMAKE_ARG_LIST}
+    BUILD_ALWAYS true
+    INSTALL_COMMAND ""
+)
+
+# ---------------------------------------------------------------------------------------------
 message(STATUS "Adding the 'WP' project")
 
 set(WP_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
-    -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_FROM_GIT_PATH}
     -DLIB_DIR=${LIB_DIR}
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
@@ -332,7 +369,7 @@ set(WP_CMAKE_ARG_LIST
 )
 
 ExternalProject_Add(WP
-    DEPENDS tools EP SwdReflash
+    DEPENDS tools EP SwdReflash picotool
     PREFIX ${CMAKE_BINARY_DIR}/WP
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/WP
     BINARY_DIR ${CMAKE_BINARY_DIR}/WP

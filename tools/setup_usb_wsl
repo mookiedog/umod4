@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# setup_usb_wsl — WSL launcher for setup_usb_wsl.ps1
+#
+# Copies setup_usb_wsl.ps1 to the Windows TEMP folder (accessible by elevated
+# processes) then runs it in an elevated PowerShell window.
+#
+# Must be run from WSL2.  A UAC prompt will appear on the Windows desktop.
+#
+# Usage:
+#   tools/setup_usb_wsl
+
+set -e
+
+if ! grep -qi "WSL2\|microsoft" /proc/version 2>/dev/null; then
+    echo "Error: this script must be run inside WSL2."
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PS1_SRC="$SCRIPT_DIR/setup_usb_wsl.ps1"
+USB_IDS_SRC="$SCRIPT_DIR/ap_proxy/usb_ids.txt"
+
+if [ ! -f "$PS1_SRC" ]; then
+    echo "Error: $PS1_SRC not found."
+    exit 1
+fi
+if [ ! -f "$USB_IDS_SRC" ]; then
+    echo "Error: $USB_IDS_SRC not found."
+    exit 1
+fi
+
+WINTMP=$(cmd.exe /c "echo %TEMP%" 2>/dev/null | tr -d '\r\n')
+WSLTMP=$(wslpath "$WINTMP")
+DEST="$WSLTMP/umod4_setup_usb_wsl.ps1"
+# Use the real expanded Windows path — PowerShell does not expand %TEMP% in -File arguments.
+WINDEST="$WINTMP\\umod4_setup_usb_wsl.ps1"
+
+cp "$PS1_SRC" "$DEST"
+cp "$USB_IDS_SRC" "$WSLTMP/usb_ids.txt"
+echo "Copied script to $WINDEST"
+echo "A UAC prompt will appear on the Windows desktop — click Yes."
+echo ""
+
+WSLLOG="$WSLTMP/umod4_setup_usb_wsl.log"
+rm -f "$WSLLOG"
+
+powershell.exe -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-ExecutionPolicy Bypass -File $WINDEST'"
+
+echo ""
+if [ -f "$WSLLOG" ]; then
+    echo "--- Script output ---"
+    # Strip transcript header/footer boilerplate, keep only user-visible lines
+    grep -v "^\*\*\*\*\*\|^Windows PowerShell transcript\|^Start time:\|^End time:\|^Username:\|^RunAs User:\|^Configuration Name:\|^Machine:\|^Host Application:\|^Process ID:\|^PSVersion:\|^PSEdition:\|^PSCompatible\|^BuildVersion:\|^CLRVersion:\|^WSManStack\|^PSRemoting\|^Serialization\|^﻿" "$WSLLOG"
+    echo "---------------------"
+else
+    echo "Warning: no log file produced — the script may not have run (UAC denied?)."
+fi

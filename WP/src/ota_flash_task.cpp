@@ -241,7 +241,7 @@ static void ota_flash_task(void* params)
             printf("OTA: WiFi shutdown complete\n");
 
             printf("OTA: Starting flash programming\n");
-            VFY("wp_ota FLASH_START file=%s", request.uf2_path);
+            vfy_printf("{\"wp_ota\":\"FLASH_START\",\"file\":\"%s\"}\n", request.uf2_path);
 
             uint32_t target_addr = 0;
             int32_t flash_result = flash_wp_uf2(request.uf2_path, true, &target_addr);
@@ -250,15 +250,15 @@ static void ota_flash_task(void* params)
             if (flash_success) {
                 printf("OTA: Flash programming successful, target=0x%08lX\n",
                        (unsigned long)target_addr);
-                VFY("wp_ota FLASH_DONE target=0x%08lX", (unsigned long)target_addr);
+                vfy_printf("{\"wp_ota\":\"FLASH_DONE\",\"target\":\"0x%08lX\"}\n", (unsigned long)target_addr);
                 // Small delay: let VFY messages drain from the RTT buffer before
                 // prepare_for_reboot() suspends the scheduler and disables interrupts.
                 vTaskDelay(pdMS_TO_TICKS(100));
-                VFY("wp_ota TBYB_REBOOT");
+                vfy_printf("{\"wp_ota\":\"TBYB_REBOOT\"}\n");
                 vTaskDelay(pdMS_TO_TICKS(100));
             } else {
                 printf("OTA: FLASH PROGRAMMING FAILED, error=%ld\n", (long)flash_result);
-                VFY("wp_ota FLASH_FAILED err=%ld", (long)flash_result);
+                vfy_printf("{\"wp_ota\":\"FLASH_FAILED\",\"err\":%ld}\n", (long)flash_result);
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
 
@@ -306,8 +306,8 @@ static void prepare_for_reboot(uint32_t target_addr, bool flash_success)
 
     // From this point forward, NO FreeRTOS calls!
 
-    // Note: With configNUMBER_OF_CORES=1, core 1 was never started,
-    // so no need to reset it.
+    // Core 1 is blocked in flash_helper_task (highest priority, affinity core 1).
+    // The scheduler is now suspended so it will not preempt anything here.
 
     printf("OTA: Disabling interrupts\n");
     uint32_t saved_interrupts = save_and_disable_interrupts();

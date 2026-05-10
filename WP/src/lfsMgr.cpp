@@ -2,6 +2,8 @@
 
 #include "umod4_WP.h"
 #include "lfsMgr.h"
+#include "health_sd.h"
+#include "health_fs.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "SdCardSDIO.h"
@@ -196,6 +198,7 @@ bool comingOnline(SdCardBase* sdCard)
     static uint32_t mountTime_us;
     static uint32_t formatTime_us;
     int32_t mount_err;
+    bool reformatted = false;
 
     printf("%s: Bringing SD card online\n", __FUNCTION__);
     printf("  Interface: %s at %.1f MHz\n",
@@ -313,6 +316,7 @@ bool comingOnline(SdCardBase* sdCard)
         // We should probably log a message if we ever have to reformat!
 
         printf("%s: Formatting a filesystem\n", __FUNCTION__);
+        reformatted = true;
         t0 = time_us_32();
         mount_err = lfs_format(&lfs, &lfs_cfg);
         t1 = time_us_32();
@@ -352,6 +356,7 @@ bool comingOnline(SdCardBase* sdCard)
 
     printf("%s: Filesystem mounted in %.2f milliseconds\n", __FUNCTION__, mountTime_us/1000.0);
     lfs_mounted = true;  // Mark filesystem as successfully mounted
+    health_fs_set_mounted(reformatted, mountTime_us / 1000);
 
     // Notify registered callback (e.g. Logger) that filesystem is now available
     if (on_mount_cb) {
@@ -367,6 +372,7 @@ bool comingOnline(SdCardBase* sdCard)
 // ----------------------------------------------------------------------------------
 void goingOffline(SdCardBase* sdCard)
 {
+    health_fs_set_unmounted();
     if (on_unmount_cb) {
         on_unmount_cb();
     }
@@ -428,6 +434,7 @@ void startFileSystem(void)
 
     // Create the SdCardSDIO object - uses proven SDIO_RP2350 library low-level functions
     sdCard = new SdCardSDIO(SD_CARD_PIN);
+    health_sd_init(sdCard);
 
     // Set up a configuration object required by the hotPlugManager so that it knows what SdCard instance to
     // use, and what callback routines to call when that SdCard instance is coming up or going down.

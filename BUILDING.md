@@ -1,53 +1,52 @@
 # Umod4 Project
 
-This document explains how to set up a machine so that it can build the umod4 project.
+This document explains how to set up a development machine to build the umod4 project.
 
-To set expectations: if you are a Gen1 Aprilia enthusiast more than a software person, be warned that this project is not trivial.
+To set expectations: if you are a Gen1 Aprilia enthusiast more than a software person, be warned that getting this project installed is not trivial.
 It is significantly more complicated than loading an Arduino sketch and going riding!
-To get the project working requires building tools and executables for four separate processors:
+
+One reason is that the project requires building tools and executables for four separate processors:
 
 1) 68HC11 assembly code for ECU firmware
-1) C, C++ and assembly language for ARM Cortex M0+ for the WP processor (RP2040), and ARM Cortex M33 for the EP processor (RP2350).
+1) C, C++ and assembly language for ARM Cortex M0+ for the EP processor (RP2040), and ARM Cortex M33 for the WP processor (RP2350).
 1) various C, C++, and Python tools that will run on the development host (an x86 PC or ARM Raspberry Pi)
+
+So: the setup process will not be simple, but this guide is aimed at helping non-experts get it working.
 
 ## Development System Overview
 
-Linux is required to build this project.
-The development system to be created has been tested on three different OS/machine combinations:
+Linux is __required__ to build this project.
+The development system has been tested on three different OS/machine combinations:
 
 1) an x86-64 Windows machine running Ubuntu via Windows Subsystem for Linux (WSL2)
 1) an x86-64 machine running Linux Mint 22
-1) a ARM-based Raspberry Pi 5 running Raspberry Pi OS, its own flavor of Linux
+1) an ARM-based Raspberry Pi 5 running Raspberry Pi OS, its own flavor of Linux
 
-Once the tools are installed, all project development will occur directly within the VS Code Integrated Development Environment (IDE): editing, building, flashing, and debugging of the hardware.
+Once the tools are installed, all project development occurs directly within the VS Code Integrated Development Environment (IDE): editing, building, flashing, and debugging of the hardware.
 VS Code is available for x86 and ARM, and runs under Windows WSL2 as well as other linux distros.
-It might be possible to use an IDE other than VS Code, but you are on your own if you do.
-Part of that is because certain aspects of the build/run/debug process are baked into VS Code setup files and extensions.
-If you _really_ want to use a different IDE, then I will assume that you are capable of figuring out what you need to do based on the VS Code instructions that follow.
 
 ## Prep The Development System
 
 The list of the high-level steps to get a build system working on Windows is shown below.
 It's a long list, but it's not overly difficult, and it only needs to happen once.
 
-The instructions assume that you will be using a Window machine and running WSL2 linux under Windows.
+The instructions assume that you will be using a Windows machine and running WSL2 linux under Windows.
 If you choose to build the system on a pure Linux machine instead of Windows/WSL2, then you probably already know what you are doing and can figure out what you should be doing based on these instructions.
 
 * [Install WSL2](#install-wsl2)
-  * WSL2 Ubuntu Linux
+  * [Set up WSL Networking](#set-up-wsl-networking)
+  * [Set up Windows Firewall](#add-windows-networking-firewall-rules)
 * [Windows Terminal App](#windows-terminal-app)
 * [Install VS Code](#vs-code)
-  * Install a bunch of VS Code extensions
+  * [Install VS Code extensions](#vs-code-extensions)
 * [Install Linux software](#linuxwsl2-software-installation)
   * [Host Tools](#install-linux-host-tools)
-  * [Build a 68HC11 toolchain](#build-68hc11-toolchain) from source (requited to create Aprilia ECU software)
+  * [Build a 68HC11 toolchain](#build-68hc11-toolchain) (required to create Aprilia ECU software)
   * [Download ARM Tools](#downloading-arm-tools-for-x86-pc)
-  * [OpenOCD](#install-openocd), Interfaces GDB to on-chip debugging silicon
+  * Build [OpenOCD](#install-openocd) for on-chip debugging of EP/WP
 * [Prepare a 'projects' directory in Linux](#project-development-setup)
-  * Install Pi Pico software
-    * [Raspberry Pi Pico-SDK](#rpi-sdk)
-    * [Picotool](#picotool)
-  * [Install this project from github](#getting-the-umod4-source-code)
+  * [Install the Raspberry Pi Pico SDK](#rpi-sdk)
+  * [Install the umod4 project from github](#getting-the-umod4-source-code)
 
 Once all the software is successfully installed, you will be able to use VS Code to:
 
@@ -79,13 +78,83 @@ If so, it will only be required this one time.
 The second install installs a generic Ubuntu distro.
 Unless you have some favorite distro and know what you are doing, just install Ubuntu.
 
+### Set Up WSL Networking
+
+By default, WSL creates its own virtual network for the WSL virtual machine.
+This means that the umod4 on the motorbike will not be able to see the server running on WSL.
+To fix this, we use 'mirrored' mode so that WSL shares the same IP address and network interface as your PC.
+
+To set up mirrored network mode in WSL, you need to edit the .wslconfig file in your Windows user directory (i.e. ``C:\users\<your-user-name>\.wslconfig'``) and add 'networkingMode=mirrored' under the [wsl2] section:
+
+```txt
+[wsl2]
+networkingMode=mirrored
+```
+
+If there is no [wsl2] section in the file (or if the file does not exist), just add both the lines shown above.
+Write the file, then restart your WSL distribution by typing 'wsl --shutdown' in a PowerShell window.
+Open a new WSL bash terminal window to restart WLS, then type:
+
+```bash
+robin@Morty:~$ hostname -I
+192.168.1.198
+robin@Morty:~$ ipconfig.exe | findstr.exe IPv4
+   IPv4 Address. . . . . . . . . . . : 192.168.1.198
+```
+
+The 'hostname' command reports what WSL thinks the IP address is.
+The 'ipconfig.exe' command reports what Windows thinks the IP address is.
+Both commands should now return the same IP address.
+
+An interesting point: you will notice in the example above that it is possible to execute Windows commands directly from the WSL command line.
+All you need to do is remember to append a '.exe' to the command name.
+It gets even better: you can even mix and match WSL and Windows in the same cmdline:
+
+```
+robin@Morty:~$ ipconfig.exe | grep IPv4
+   IPv4 Address. . . . . . . . . . . : 192.168.1.198
+```
+
+That example feeds the output of the Windows 'ipconfig.exe' command to the input of the WSL 'grep' command, doing exactly what you would expect!
+
+### Add Windows Networking Firewall Rules
+
+We need to adjust the Windows firewall settings so that the motorbike and the server can chat with each other.
+
+Start by opening Windows Firewall, Advanced Settings:
+
+* Press the __Windows key__, type __Windows Defender Firewall__, click it
+* On the left, click __Advanced settings__: a new window opens
+* Click __Inbound Rules__ in the left panel
+
+#### Create Rule 1 — TCP port 8080 (to allow log file uploads)
+
+* Click __New Rule...__ (located in the right panel)
+* Select __Port__ → click __Next__
+* Select __TCP__, type `8080` in the port box → click __Next__
+* Select __Allow the connection__ → click __Next__
+* Leave all three boxes checked (Domain, Private, Public) → click __Next__
+* Name it `umod4_server` → click __Finish__
+
+#### Create Rule 2 — UDP port 8081 (to allow umod4 device check-ins)
+
+* Click __New Rule...__ (just like before)
+* Select __Port__ → click __Next__
+* Select __UDP__, type `8081` in the port box → click __Next__
+* Select __Allow the connection__ → click __Next__
+* Leave all three boxes checked → click __Next__
+* Name it `umod4 Server UDP Check-in` → click __Finish__
+
+No outbound firewall rules are needed.
+Windows allows all outbound connections by default, so the umod4 server can reach the umod4 device on the motorbike without any additional configuration.
+
 ## Windows Terminal App
 
 Once WSL2/Ubuntu has been installed, go to the Microsoft store and download the "[Windows Terminal](https://apps.microsoft.com/detail/9n0dx20hk701?hl=en-us&gl=US)" free app.
 Terminal works great for interacting with WSL2.
 It supports multiple terminal windows using a tabbed interface which is nice.
 
-**Note:** From this point on, any of the instructions in this document that are executed from a Linux command line will be using a Windows Terminal window that is running Ubuntu/WSL.
+__Note:__ From this point on, any of the instructions in this document that are executed from a Linux command line will be using a Windows Terminal window that is running Ubuntu/WSL.
 
 * Open the terminal app by typing 'terminal' into the Windows search box.
 * On the title bar, click the small down-arrow to get a bunch of options.
@@ -107,7 +176,7 @@ There are other options you can play with (like fonts and colors), but those men
 If you click the same little down arrow on the title bar now, you will see a new entry with the name you entered earlier: 'wsl-Ubuntu'.
 Click the 'wsl-ubuntu' selection.
 
-The linux boot will takes a few seconds the very first time that it runs.
+The linux boot will take a few seconds the very first time that it runs.
 You will be asked for a user name and password for your initial Ubuntu user account.
 You can use the same user name as your windows account, or create a different user name.
 The new user name is used by linux only.
@@ -136,9 +205,9 @@ You should run this command pair once in a while to keep your Linux distro up-to
 ### WSL and Windows Filesystems
 
 Both WSL and Windows run simultaneously, but each has its own separate filesystem.
-Even so, WSL2 arranges for the two filesystems get cross-mounted so that each one is accessable from the other.
+Even so, WSL2 arranges for the two filesystems get cross-mounted so that each one is accessible from the other.
 
-From Windows, the root of all the distros that may be installed is located at '\\\\wsl$' or \\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
+From Windows, the root of all the distros that may be installed is located at '\\\\wsl$' or '\\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
 
 ![image](doc/images/wsl-from-windows.jpg)
 
@@ -160,7 +229,7 @@ There are a few programs that need to be installed on the development host.
 ### VS Code
 
 VS Code is a software IDE (Integrated Development Environment) that runs in Windows.
-Basically, it is an extremely powerful text editor, with all kinds of additions to help you develop writing code.
+Basically, it is an extremely powerful text editor, with all kinds of additions to help you write code.
 One feature of VS Code is that it can edit from remote sources.
 If VS Code is running on a Windows machine, as a Windows executable, it will seamlessly connect to the 'remote' WSL2 linux environment on the same machine to allow you to edit the project files in the linux filesystem.
 
@@ -254,7 +323,7 @@ if [ -d "$HOME/.local/bin" ] ; then
 fi
 ```
 
-Log out and log in again (or type 'source \~/.profile'), and verify that '\~/.local.bin' is on your PATH.
+Log out and log in again (or type 'source \~/.profile'), and verify that '\~/.local/bin' is on your PATH.
 
 ### Install Linux Host Tools
 
@@ -265,6 +334,36 @@ Install them as below:
 ```bash
 sudo apt install gcc g++ git unzip cmake jq ninja-build libncurses5-dev libncursesw5-dev
 ```
+
+#### Avahi
+
+The avahi tools supply mDNS functionality needed by `flash_EP` to resolve device names on the home network.
+To install them, type:
+
+```bash
+sudo apt install avahi-daemon avahi-utils libnss-mdns
+```
+
+`avahi-daemon` handles `.local` hostname resolution.
+`avahi-utils` provides the `avahi-resolve-host-name` command that `flash_EP` uses for fast resolution (bypassing a WSL2 glibc/D-Bus issue that makes the standard resolver take ~9 seconds for `.local` names).
+
+WSL2 does not auto-start services, so configure it to start avahi-daemon automatically on every WSL startup.
+Edit `/etc/wsl.conf` (as root) and add or update the `[boot]` section:
+
+```ini
+[boot]
+command = service avahi-daemon start
+```
+
+If the file already has a `[boot]` section, add the `command` line to it — do not create a second `[boot]` section.
+
+Then restart WSL once from a PowerShell window for the change to take effect:
+
+```powershell
+wsl --shutdown
+```
+
+#### GCC and G++
 
 The gcc and g++ compilers installed above generate code for your Linux host machine, not the ARM chips on the Pico boards. The Pico SDK expects to find the host g++ compiler using an environment variable called 'CXX'.
 Run the following command to add the appropriate CXX definition to your .bashrc file:
@@ -283,8 +382,8 @@ Remember to re-run your .bashrc so that the change you just made takes effect:
 
 The umod4 system uses Python3 for some utility programs, as well as the visualizer if you choose to run the visualizer from inside the umod4 project tree.
 Python3 is typically part of Linux distributions, so you probably do not need to install it.
-The umod4 project does require using Python virtual enviroments so that it can install various libraries as the build process runs.
-To add that capablility, find out what version of python3 is on your system, then do the following, making sure that the version number for the install matches the first two numbers reported by the --version command ("3.10" in the example, below):
+The umod4 project does require using Python virtual environments so that it can install various libraries as the build process runs.
+To add that capability, find out what version of python3 is on your system, then do the following, making sure that the version number for the install matches the first two numbers reported by the --version command ("3.10" in the example, below):
 
 ```bash
 $ python3 --version
@@ -419,7 +518,7 @@ sudo mkdir -p /opt/arm/arm-none-eabi/15.2.rel1
 ```
 
 You will be able switch over to the new tools or switch back to the old ones by just changing an appropriate CMake toolchain file to point at the proper directory.
-This really helps keeping old projects alive when some new release breaks compatibilty with your old project: the old project can just continue to use the old tools.
+This really helps keeping old projects alive when some new release breaks compatibility with your old project: the old project can just continue to use the old tools.
 
 Now that the toolchain has a place to live, it's time to get it, then install it.
 
@@ -429,7 +528,7 @@ The umod4 uses a pair of ARM processors.
 They need a "cross compiler" which means that the compiler runs on an x86-style Intel processor, but generates code for an ARM processor.
 This next section explains how to get an appropriate ARM cross-compiler toolchain loaded onto your PC.
 
-**Important:**
+__Important:__
 
 The build system for umod4 assumes that the various versions of the ARM toolchains that get installed on your system will be stored in a directory structure that looks like this:
 
@@ -439,9 +538,10 @@ The build system for umod4 assumes that the various versions of the ARM toolchai
     ├── 14.2.rel1
     └── 15.2.rel1
 ```
+
 If you install the ARM toolchains somewhere else, you will need to symlink some directories to make your installation look like this, or else CMake will not be able to find them!
 
-To get the Arm cross-compiler software installed, start off by downloading an appropriate toolchain from the Arm download page located [here](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
+To get the Arm cross-compiler software installed, start off by downloading an appropriate toolchain from the [Arm download page](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
 Click that link to view the download page.
 Assuming that your PC host is an x86 machine capable of running linux/WSL2, scroll down until you see the section called:
 
@@ -568,10 +668,48 @@ sudo udevadm trigger
 
 From now on, the rules will be reapplied every time WSL starts.
 
+## WSL2: USB Device Sharing
+
+_If you are on native Linux (not Windows/WSL2), skip this section._
+
+By default, USB devices plugged into a Windows machine are owned by Windows — WSL cannot see them.
+`usbipd` solves this by sharing ("binding") specific device types from Windows to WSL.
+The project includes a script that does this binding for all the USB devices you will need as a developer.
+
+### Bind vs. Attach
+
+There are two distinct usbipd operations:
+
+- __Bind__ (`usbipd bind`): a one-time, persistent grant that says "this VID:PID is allowed to be shared with WSL".
+  Survives unplugging, rebooting, and re-plugging.
+  Must be done by an Administrator.
+- __Attach__ (`usbipd attach`): per-session connection of a currently-plugged device to WSL.
+  Tools like `flash_WP` and the test runner handle this automatically.
+
+You only need to worry about __binding__.
+
+### Running the Setup Script
+
+With your umod4 hardware (or debug probe) plugged in, run from a WSL terminal:
+
+```bash
+~/projects/umod4/tools/setup_usb_wsl
+```
+
+A UAC prompt will appear on the Windows desktop — click __Yes__ to allow it to run as Administrator.
+The script binds all Raspberry Pi Pico-family PIDs (including the CMSIS-DAP debug probe and the RP2350 BOOTSEL mass-storage device) plus the ap_proxy device used by the automated test harness.
+
+Re-run the script any time you add a new physical device that wasn't plugged in the first time.
+
+### Note on usbipd Versions
+
+`usbipd policy add --operation AutoBind` (which would automate all of this) is broken in usbipd 5.2 — it throws `Invalid policy rule` for every entry and does nothing.
+The script uses `usbipd bind --hardware-id` instead, which achieves the same persistent result.
+
 ## Project Development Setup
 
 The next step is to start filling out the project directory structure.
-There is a fair amount of software source that needs to be installed, and a some of it needs to know where other parts of it are located.
+There is a fair amount of software source that needs to be installed, and and some of it needs to know where other parts of it are located.
 By installing things as decribed in the sections that follows, the various bits of the system will be able to find each other.
 
 ### Development Directory Structure
@@ -581,7 +719,7 @@ The SDK could be installed by cmake as sub-piece of each of your Pico projects, 
 Instead, we will set things up so that all projects will share a single SDK installation.
 We do this by storing the SDK at a well-known location in the 'projects' directory.
 We then tell the individual Pico development projects where to find it.
-This also allows us to store multiple versions of the SDK, enabling old projects to use old SDK versions without forcing them to uipgrade.
+This also allows us to store multiple versions of the SDK, enabling old projects to use old SDK versions without forcing them to upgrade.
 
 Pictorially, we want to end up with a directory structure that has this general form:
 
@@ -634,7 +772,7 @@ cd 2.2.0
 git checkout 2.2.0
 ```
 
-Our new branch tag now matches its directory name.
+Our new git tag now matches its directory name.
 Update the new branch so that it can do WiFi & Bluetooth on a Pico2 W:
 
 ```bash
@@ -673,58 +811,15 @@ By following the instructions above to load new SDK versions 'beside' the old on
 ## Picotool
 
 Picotool is a tool used by the SDK to perform various tasks while building project binaries.
-In theory, the SDK will build picotool as needed.
-In practice, this approach does not always work.
-I have had better luck arranging to build the 'picotool' once, and then intalling in my .local/bin where all my projects can use the same executable.
-To that end, do the following:
-
-```bash
-cd ~/projects
-git clone https://github.com/raspberrypi/picotool
-cd picotool
-mkdir build
-cd build
-cmake -DCMAKE_INSTALL_PREFIX=~/.local ..
-make
-make install
-```
-
-The 'make install' step will install the picotool executable in your ".local/bin" directory.
-Prove to yourself that picotool exists, and is being found in your own ".local/bin":
-
-```bash
-$ which picotool
-/home/<your-name-here>/.local/bin/picotool
-```
-
-Finally, do the following so that you can use picotool without needing sudo:
-
-```bash
-cd ~/projects/picotool
-sudo cp udev/60-picotool.rules /etc/udev/rules.d/
-```
-
-If for some reason the cp command above was not able to find the file 'udev/60-picotool.rules', use a 'find' command to locate it, then use the path that find shows you instead:
-
-```bash
-cd ~/projects/picotool
-find . -name '*picotool.rules'
-./udev/60-picotool.rules
-```
+Building the umod4 project will automatically download the picotool sources,
+then build and install the tool in ~/.local/bin.
+The installation occurs in a fashion that will allow other pico SDK projects to reuse the same picotool binary.
 
 ## Getting the Umod4 Source Code
 
 Now that all the tools are in place, it is finally time to get the umod4 code loaded onto your system!
 
-Before getting started, make sure that your git configuration is to not mess with the line endings when it works with repositories.
-In your terminal window, type the following:
-
-```bash
-cd ~/projects
-git config --global core.autocrlf false
-```
-
-Now, we clone the umod4 project onto your own machine.
+Start by cloning the umod4 project onto your own machine.
 Still inside ~/projects, type:
 
 ```bash
@@ -747,15 +842,7 @@ If you type 'ls' inside ~/projects, you should now see ~/projects/umod4.
 projects
     ├── openocd
     ├── pico-sdk
-    ├── picotool
     └── umod4
-```
-
-If you type 'du -sh umod4', it should report that it takes up about 28 megabytes:
-
-```bash
-du -sh umod4
-28M     umod4
 ```
 
 Now, cd into umod4 and check your umod4 project's git status:
@@ -767,7 +854,7 @@ git status
 
 You should see this exact output:
 
-```bash
+```text
 On branch main
 Your branch is up to date with 'origin/main'.
 
@@ -801,8 +888,14 @@ At that point, go back to the step that clones the repository, and you will be g
 
 ## Building Umod4
 
-It should be clear by now that the umod is not a particularly simple system to get working!
-But you are finally ready to try and build it.
+It should be clear by now that the umod4 is not a particularly simple system to get working!
+But we are finally ready to build it.
+
+### Configuration
+
+The first step is to 'configure' the build.
+The configuration process runs a program called CMake, which analyzes the entire project's structure, then generates a set of files which will tell the build system _how_ to create the appropriate output files.
+
 In your VS code window that you used to get the umod4 code from Github, hit 'F1' then type 'delete', but don't hit return.
 A bunch of selections related to the topic of 'deleting' will appear in a dropdown list.
 Click the list item called '__CMake: Delete Cache and Reconfigure__'.
@@ -810,8 +903,8 @@ Click the list item called '__CMake: Delete Cache and Reconfigure__'.
 If a window pops up asking you to specify a toolkit, select 'unspecified'.
 The project will set up the toolkit by itself.
 
-After some amount of time, that operation should finish without errors.
-It should produce a bunch of messages in the VS Code 'output' window that looks something like this:
+After some amount of time, configuration operation should finish without errors.
+It should produce a bunch of messages in the VS Code 'output' window that look something like this:
 
 ```text
 [main] Configuring project: umod4
@@ -824,190 +917,96 @@ It should produce a bunch of messages in the VS Code 'output' window that looks 
 ...
 <lots more messages snipped out from here>
 ...
-[cmake] -- Adding the 'tools' project
-[cmake] -- Adding the 'ecu' project
-[cmake] -- Adding the 'eprom_lib' project
-[cmake] -- Adding the 'EP' project
-[cmake] -- Adding the 'WP' project
 [cmake] -- Configuring done (6.8s)
 [cmake] -- Generating done (0.0s)
 [cmake] -- Build files have been written to: /home/robin/projects/umod4/build
 ```
 
-You will see all kinds of messages about installing Python packages, detecting C and C++ compilers, and adding various sub-projects.
+The important part is that the configuration messages end with "Build files have been written to: ..." which means __no errors__.
 
-The important part is that the messages end with "Build files have been written to: ..." which means, no errors.
+### Building
 
-Assuming that the system configured without errors, you **finally** get to build the umod4 project.
-Go to your VS Code window with the umod4 project in it and hit key 'F7' to build everything.
+Assuming that the configuration process completed without errors, you __finally__ get to build the umod4 project.
+The files created by the configuration process drive the build process.
+They tell the build system exactly what to create, how to create it, and where to put the outputs that get created.
+
+Invoking the build system is the easiest part of this whole process: with your cursor inside the VS Code window, hit key 'F7' to build everything.
+
 The VS Code output window will display tons of messages as everything runs.
-Depending on how beastly your PC is, this may take 15-ish seconds to a couple of minutes.
+Depending on how beastly your PC is, this may take 30-ish seconds to a few minutes.
 This is the worst-case build time though.
 Once the build is complete, subsequent builds only rebuild files that have changed which only takes a small number of seconds.
-If it all goes according to plan, you will see the following down at the very bottom of all those messages:
+
+_Note: The very first time you build, the build system will generate an error, by design.
+The issue: [picotool](#picotool) requires 'sudo' (administrator rights) in order to access the Pico USB devices.
+Installing an appropriate udev 'rules' file gets rid of the 'sudo' requirement and allows the build system to use picotool itself.
+The build system will verify that the required rules file is installed.
+If not, the build system will stop with an error message showing you the exact commands to run to install the rules file.
+Run the commands in a bash terminal window, then hit F7 to continue the build process._
+
+If it all goes correctly, you will see these final messages in the VS Code OUTPUT window:
 
 ```text
-[driver] Build completed: 00:00:15.502
+[driver] Build completed: 00:00:32.466
 [build] Build finished with exit code 0
 ```
 
-The exit code of 0 means **"All Is Good"**.
+The exit code of 0 means __"All Is Good"__.
+
 A non-zero exit code means that some part of the build failed.
 If you get a non-zero exit code, scroll back to the top of the message output window, then scan down through all the output until you see the first error message appear.
 Then, fix the error.
 I know, I know, maybe not so simple...
 
-**Important:** the CMake process is designed to put anything that gets generated or created by the build process into a directory called 'build', located inside the main "projects/umod4" directory.
-There is a reason for that.
-It means that it is *always* safe to delete the entire contents of the build directory because anything in that directory can be re-created automatically.
+### The 'build' Directory
+
+The CMake process is designed to put anything that gets generated or created by the build process into a subdirectory called 'build', located inside the main "projects/umod4" directory.
+There is a reason for that: it keeps the files that are generated by the build process completely separate from the source files used to generate them.
+Because of that, it is _always_ safe to delete the build directory and everything inside it because everything in that directory can be re-created automatically.
+
+Why would you need to?
 Sometimes, things can get out of sync in the CMake build process.
 It usually happens after making changes to one of the CMakeLists.txt files in the system.
-If things are acting weird, the nuclear option to get back on track is to:
+If things are acting weird, the first thing to try is the 'F1', then start typing 'CMake: delete cache and reconfigure'. As you type, a menu will appear based on what you have typed so far. As soon as you see the menu item "CMake: delete cache and reconfigure" appear, you can quit typing and just click that menu item.
+If that does not work, the nuclear option to get back on track is to:
 
-1) Delete the entire 'build' directory by right-clicking 'build' is the VS Code file wiewer window, then selecting 'delete permanently' from the menu.
-**When the dialog box opens up warning you about permanently deleting 'build', make sure that it really does say 'build' and that you didn't accidentally select some other directory**. Hit the 'delete' button to finally delete build.
-1) Hit "F1", then start typing "CMake: delete cache and reconfigure". As you type, a menu will appear based on what you have typed so far. As soon as you see the menu item "CMake: delete cache and reconfigure" appear, you can quit typing and just click that menu item.
+1) Delete the entire 'build' directory by right-clicking 'build' is the VS Code file viewer window, then selecting 'delete permanently' from the menu.
+__When the dialog box opens up warning you about permanently deleting 'build', make sure that it really does say 'build' and that you didn't accidentally select some other directory__.
+Hit the 'delete' button to finally delete build.
+1) Hit "F1", then start typing "CMake: delete cache and reconfigure", and select the menu item as mentioned as above.
 1) Hit "F7" to rebuild everything. Your build directory will reappear, full of binary goodness.
 
 Try those commands right now, and rebuild your entire system from scratch.
-Never fear deleting 'build'!
+Remember: Never fear deleting the 'build' directory!
 
-## Interlude
+### Build Outputs
 
-Now would be a good time to take a deep breath and look around the system.
-Looking inside the main directory, you will see a few subdirectories containing various parts of the project:
+As part of a successful build operation, the build system generates a number of output files.
+The most important ones are:
 
-* **ecu**: This sub-project generates the special **UM4** data-logging software that will run inside the Aprilia ECU
-* **EP**: the **E**prom **P**rocessor.
-The EP is a Raspberry Pi RP2040 processor that pretends to be the EPROM that plugs into the ECU EPROM socket.
-It is responsible for creating an EPROM image that it will feed to the 68HC11 processor in the ECU.
-It is also responsible for accepting the ECU data stream that is generated by the data-logging software and forwarding it to the WP.
-* **WP**: the **W**ireless **P**rocessor.
-The WP is a Raspberry Pi Pico-W board, also containing an RP2040 processor like the EP.
-The WP takes the incoming ECU data stream from the EP and logs it to a micro SD card.
-Simultaneously, it logs position and velocity data from an on-board GPS module.
-In the future, the WP will be extended to dump logs off the bike via WiFi, and add features like EPROM image selection.
-* **eprom_lib**: This sub-project contains information about many of the stock EPROMs used by the Gen1 ECU.
-The information takes the form of JSON documents because that makes them fairly human-readable.
-These images used to get built into the EP itself, but that has now been retired in favor of the Image Library controls built into the server and the WP's web interface available from a phone or PC.
+* __build/EP/EP.uf2:__ the EP firmware image
+* __build/WP/WP.uf2:__ the WP firmware image
+* __build/ecu/UM4.bin:__ An ECU EPROM image containing the data-logging ECU codebase with default 549USA maps. A UM4.bin image is contained inside every EP.uf2 image where it acts as the default built-in EPROM image. If desired, UM4.bin can be uploaded to the EP's image library if you wanted to retain a specific version of it.
+
+The server program will reflash the umod4 OTA (Over The Air) using the EP.uf2 and WP.uf2 files.
 
 ## Running Umod4
 
-If by some miracle the system built successfully, the next step would be to run it by using the debugger to flash the software on a umod4 circuit board.
-But for that, you would need an Ultramod4 circuit board and an ECU that has been modified to accept it.
-And that's where things will stop for a while because currently, I am the only one in the world who has working umod4 hardware.
+The next step would be to flash the WP software onto onto a umod4 circuit board.
+But for that, you would need an umod4 circuit board and an ECU that has been modified to accept it.
+And that's where things will stop for now because I am not aware of anyone who has replicated the umod4 hardware yet.
 
-In the meantime, thanks for checking out this project.
-
-## Debugging
-
-*For documentation purposes, here's some of the next steps.
-From here on, you would need a umod4 PCB and a slightly modified ECU*
-
-The umod4 project contains a '.vscode/launch.json' file which tells VS Code how to work with the debugger hardware.
-
-Sadly, there is a bug in either CMake or VS Code or both which results in VS Code not knowing how to find the executables produced by the CMake 'ExternalProject_Add()' comamnds.
-Hopefully, this will get fixed at some point.
-But for now, the 'launch.json' file is modified so that it creates an explicit command to flash and debug the EP and WP portions of the umod4 project.
-
-### Getting WSL To See a Debug Probe
-
-Ownership of USB devices is one of the few non-seamless issues for WSL under windows.
-When you plug a USB device into a Windows machine, Windows owns it by default, as opposed to WSL.
-There is a software package that allows you to tell Windows to give control of a specific USB device to WSL.
-
-Plug your [Raspberry Pi Pico Debug Probe](https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html) into a USB port on your Windows machine.
-
-Using your terminal app, open a Windows powershell or cmd prompt in administrator mode.
-Do NOT use a linux terminal window!
-Type the following:
-
-```text
-winget install --interactive --exact dorssel.usbipd-win
-```
-
-It will download and run an installer.
-Do what the installer says.
-
-Still from your powershell 'administrator' window, type "usbipd list" as below.
-You will get back something like this, obviously depending on the USB devices that are attached to your own machine:
-
-```text
-PS C:\Users\robin> usbipd list
-Connected:
-BUSID  VID:PID    DEVICE                                                        STATE
-6-2    062a:4102  USB Input Device                                              Not shared
-8-2    2e8a:000c  CMSIS-DAP v2 Interface, USB Serial Device (COM5)              Shared
-8-3    046a:010d  USB Input Device                                              Not shared
-8-4    2357:012e  TP-Link Wireless USB Adapter                                  Not shared
-8-5    0bda:2550  Realtek Bluetooth 5.1 Adapter                                 Not shared
-
-Persisted:
-GUID                                  DEVICE
-```
-
-The debug device will be the one with "CMSIS-DAP" in its name.
-In this case, its busID is 8-2.
-It will be different on your system.
-Make a note of the busID, then do the following in your powershell administrator window:
-
-```text
-usbipd bind --busid 8-2
-```
-
-The 'bind' operation is a one-time administrator-level operation that tells Windows that it is allowed to share the device with WSL from now on.
-
-You can now close the powershell administrator window and open a regular (non-administrator) powershell window as one of the tabs inside your terminal app.
-
-To connect the debugger to WSL, use the regular powershell window to type the 'list' and 'attach' commands as shown below:
-
-```text
-PS C:\Users\robin> usbipd list
-Connected:
-BUSID  VID:PID    DEVICE                                                        STATE
-6-2    062a:4102  USB Input Device                                              Not shared
-8-2    2e8a:000c  CMSIS-DAP v2 Interface, USB Serial Device (COM5)              Shared
-8-3    046a:010d  USB Input Device                                              Not shared
-8-4    2357:012e  TP-Link Wireless USB Adapter                                  Not shared
-8-5    0bda:2550  Realtek Bluetooth 5.1 Adapter                                 Not shared
-
-Persisted:
-GUID                                  DEVICE
-PS C:\Users\robin>usbipd attach --wsl --busid 8-2
-```
-
-At this point, Windows will have given control of the debugger to WSL.
-If you reboot your machine, or if you unplug the debugger and plug it back in, you will need to repeat the powershell 'list' and 'attach' commands to give control back to WSL.
-The busID can change on reboot, so pay attention to what 'list' tells you!
-
-### Starting the Debugger
-
-At the moment, there is a bug in VS Code CMake that does not allow executables from subprojects to be found, meaning that you can't select them as part of starting the debugger in the normal fashion.
-To get around that, when you are ready to debug, type "F1", then "Debug: Select And Start Debugging".
-That will bring up a window of all the launch configurations as menu choices.
-Click the first one, named '*** EP: Launch CMSIS-DAP'.
-
-And finally, you should see something like this:
-
-![image](doc/images/debugging.jpg)
-
-There you are: the EP code has been flashed into the EP processor on the umod4 board.
-The debugger has stopped execution at the first line of main() (that's why it is highlighted in yellow).
-The EP processor is ready to load an EPROM image and start feeding those instructions to the ECU when when you hit "F5".
-
-Congratulations if you made it this far.
-
-I know it was not a simple process to replicate.
-I can assure you that it was a lot harder to create though, so it's not all bad.
-I only got it working due to tons of people on the internet who ran into all the same problems as I did, but somehow were smart enough to figure out the issues, and more critically, to document their successes in places where DuckDuckGo could find them for me.
-
-## Whats Next
-
-See the [STATUS](./STATUS.md) document.
+But if you do have hardware, check out [GETTING_STARTED.md](./GETTING_STARTED.md) to see how to prep your ECU and get the software installed onto it.
 
 ## Final Thoughts
 
-So that's where things stand. I will probably always be working on some aspect of this project because that's what "fun" looks like to me.
+Congratulations if you made it this far.
+I know it was not a simple process to get to this point.
+
+To give credit where it is due, I only got it working due to tons of people on the internet who ran into all the same problems as I did, but somehow were smart enough to figure out the issues, and more critically, to document their successes in places where DuckDuckGo could find them for me.
+And credit to Claude Code, too: Claude knows CMake & Python, for sure.
+
+I will probably always be working on some aspect of this project because that's what "fun" looks like to me.
 Weird, I know, but fun comes in many forms.
 
 ![image](doc/images/proudly-made-1.jpg)

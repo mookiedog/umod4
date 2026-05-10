@@ -1,3 +1,7 @@
+# Enforce LF line endings for all text files on commit, regardless of user's core.autocrlf setting.
+# This prevents CRLF endings from being checked in by Windows users.
+* text=auto eol=lf
+
 # Binary file types
 *.um4 binary
 *.jpg binary

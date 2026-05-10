@@ -2,15 +2,30 @@
 
 # flash_WP: Flash WP firmware using picotool.
 #
-# Usage: flash_WP [-e] <build/WP directory>
+# Usage: flash_WP [-e] [build/WP directory]
 #   -e  Erase flash before programming
+#
+# Two modes of operation:
+#   Release mode:  run without a directory argument from the folder containing
+#                  this script (e.g. a downloaded release zip).  The script
+#                  looks for WP.uf2 and partition_table.uf2 beside itself.
+#                    ./flash_WP -e
+#   Dev/build mode: pass the build output directory explicitly.
+#                    flash_WP -e ~/projects/umod4/build/WP
 #
 # Prerequisites:
 #   - WP is already in USB BOOTSEL (mass-storage) mode.
 #     To enter BOOTSEL mode via SWD use wp_enter_bootsel, or hold the
 #     BOOTSEL button while pressing RESET.
-#   - On WSL: the device must be bound in usbipd (usbipd bind --busid=<id>).
+#   - On WSL2: the device must be bound in usbipd (usbipd bind --busid=<id>).
 #     This script handles the usbipd attach automatically.
+#   - On native Linux: the device appears automatically via libusb; no setup needed.
+
+if grep -qi "WSL2" /proc/version 2>/dev/null; then
+    IS_WSL2=true
+else
+    IS_WSL2=false
+fi
 
 # Default values
 DO_ERASE=false
@@ -25,13 +40,10 @@ while getopts "e" opt; do
 done
 
 shift $((OPTIND -1))
-TARGET_DIR=$1
 
-if [ -z "$TARGET_DIR" ]; then
-    echo "Error: Please provide a directory path."
-    echo "Usage: $0 [-e] <directory_path>"
-    exit 1
-fi
+# Default to the script's own directory (release mode) if no argument given.
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+TARGET_DIR="${1:-$SCRIPT_DIR}"
 
 if [ ! -d "$TARGET_DIR" ]; then
     echo "Error: Directory '$TARGET_DIR' does not exist."
@@ -48,29 +60,31 @@ for file in "$PARTITION_TABLE" "$WP_IMAGE"; do
     fi
 done
 
-# --- usbipd: find and attach RP2350 Boot device ---
+# --- usbipd: find and attach RP2350 Boot device (WSL2 only) ---
 
-echo "Scanning for RP2350 Boot device via usbipd..."
-USBIPD_LINE=$(usbipd.exe list 2>/dev/null | grep -E "^[0-9]+-[0-9]+" | grep "RP2350 Boot")
+if [ "$IS_WSL2" = true ]; then
+    echo "Scanning for RP2350 Boot device via usbipd..."
+    USBIPD_LINE=$(usbipd.exe list 2>/dev/null | grep -E "^[0-9]+-[0-9]+" | grep "RP2350 Boot")
 
-if [ -z "$USBIPD_LINE" ]; then
-    echo "Error: No 'RP2350 Boot' device found in usbipd list."
-    echo "Make sure WP is in BOOTSEL mode (use wp_enter_bootsel or hold BOOTSEL while pressing RESET)."
-    exit 1
+    if [ -z "$USBIPD_LINE" ]; then
+        echo "Error: No 'RP2350 Boot' device found in usbipd list."
+        echo "Make sure WP is in BOOTSEL mode (press&hold BOOTSEL while powering up)."
+        exit 1
+    fi
+
+    BUSID=$(echo "$USBIPD_LINE" | awk '{print $1}' | tr -d '\r')
+    echo "Found RP2350 Boot device: BUSID=$BUSID"
+    echo "Attaching BUSID $BUSID to WSL2..."
+    usbipd.exe attach --wsl --busid="$BUSID"
+    if [ $? -ne 0 ]; then
+        echo "Error: usbipd attach failed."
+        echo "If the device shows 'Not shared', run the following in an Administrator Powershell window:"
+        echo "  usbipd.exe bind --busid=$BUSID"
+        exit 1
+    fi
+    echo "Waiting for device to enumerate in WSL2..."
+    sleep 2
 fi
-
-BUSID=$(echo "$USBIPD_LINE" | awk '{print $1}' | tr -d '\r')
-echo "Found RP2350 Boot device: BUSID=$BUSID"
-echo "Attaching BUSID $BUSID to WSL..."
-usbipd.exe attach --wsl --busid="$BUSID"
-if [ $? -ne 0 ]; then
-    echo "Error: usbipd attach failed."
-    echo "If the device shows 'Not shared', run from an elevated Windows prompt:"
-    echo "  usbipd.exe bind --busid=$BUSID"
-    exit 1
-fi
-echo "Waiting for device to enumerate in WSL..."
-sleep 2
 
 # --- Flash ---
 
@@ -87,6 +101,22 @@ echo "Loading partition table from $TARGET_DIR..."
 ~/.local/bin/picotool load -f "$PARTITION_TABLE"
 echo
 sleep 1
+
+# Reboot into BOOTSEL so the bootrom re-reads the partition table from flash.
+# picotool load -p 1 uses the bootrom's in-memory partition structures, which
+# are populated at boot time — if the device booted with erased flash those
+# structures say "no partition table" even though we just wrote one.
+echo "Rebooting to re-read partition table..."
+~/.local/bin/picotool reboot -u
+sleep 3
+
+# Re-attach if needed — usbipd may have kept the device attached automatically (WSL2 only)
+if [ "$IS_WSL2" = true ]; then
+    echo "Re-attaching BUSID $BUSID to WSL2 after reboot..."
+    usbipd.exe attach --wsl --busid="$BUSID" 2>&1 | grep -v "already attached" || true
+    echo "Waiting for device to re-enumerate in WSL2..."
+    sleep 2
+fi
 
 ~/.local/bin/picotool info
 echo

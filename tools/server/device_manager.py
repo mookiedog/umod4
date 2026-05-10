@@ -135,6 +135,12 @@ class DeviceManager:
                             device.wp_version = wp_ver
                     if 'ep_version' in info:
                         device.ep_version = info.get('ep_version')
+                    # Use the device's self-reported name as display_name when the
+                    # user has not yet assigned a name via the server GUI.
+                    reported_name = info.get('device_name', '')
+                    if reported_name and not device.name:
+                        device.display_name = reported_name
+                        print(f"DeviceManager: Display name updated to '{reported_name}' from device")
                     session.commit()
             finally:
                 session.close()

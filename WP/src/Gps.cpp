@@ -5,6 +5,7 @@
 
 #include "stdio.h"
 #include <string.h>
+#include <limits.h>
 //#include <math.h>
 
 #include "Clock.h"
@@ -19,7 +20,6 @@
 #include "log_ids.h"
 
 uint32_t msgCount;
-uint32_t cksumErrorCount;
 
 static uint32_t dbg = 0;
 
@@ -114,6 +114,17 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
     nanos = 0;
 
     moving = false;
+
+    m_presence          = GPS_NOT_PRESENT;
+    m_rx_errors         = 0;
+    m_cksum_errors      = 0;
+    m_tim_tp_count      = 0;
+    m_nav_timels_count  = 0;
+    m_nav_pvt_count     = 0;
+    m_unknown_count     = 0;
+    m_tim_tp_last_ms    = 0;
+    m_nav_timels_last_ms = 0;
+    m_nav_pvt_last_ms   = 0;
 
     gpio_init(GPS_PPS_PIN);
     gpio_set_dir(GPS_PPS_PIN, GPIO_IN);
@@ -501,17 +512,42 @@ void Gps::processUbxBuffer()
         ubxNak = true;
     }
     else if ((ubxClass == 0x0D) && (ubxId == 0x01)) {
+        m_tim_tp_count++;
+        m_tim_tp_last_ms = to_ms_since_boot(get_absolute_time());
         process_TIM_TP(payload);
     }
     else if ((ubxClass == 0x01) && (ubxId == 0x26)) {
+        m_nav_timels_count++;
+        m_nav_timels_last_ms = to_ms_since_boot(get_absolute_time());
         process_NAV_TIMELS(payload);
     }
     else if ((ubxClass == 0x01) && (ubxId == 0x07)) {
+        m_nav_pvt_count++;
+        m_nav_pvt_last_ms = to_ms_since_boot(get_absolute_time());
         process_NAV_PVT(payload);
     }
     else {
+        m_unknown_count++;
         printf("%s: Unknown UBX Message received: %02X-%02X\n", __FUNCTION__, ubxClass, ubxId);
     }
+}
+
+// ----------------------------------------------------------------------------------
+void Gps::getHealth(GpsHealth* out) const
+{
+    uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+
+    out->presence         = m_presence;
+    out->rx_errors        = m_rx_errors;
+    out->cksum_errors     = m_cksum_errors;
+    out->tim_tp_count     = m_tim_tp_count;
+    out->nav_timels_count = m_nav_timels_count;
+    out->nav_pvt_count    = m_nav_pvt_count;
+    out->unknown_count    = m_unknown_count;
+
+    out->tim_tp_age_ms     = m_tim_tp_last_ms     ? (now_ms - m_tim_tp_last_ms)     : UINT32_MAX;
+    out->nav_timels_age_ms = m_nav_timels_last_ms  ? (now_ms - m_nav_timels_last_ms) : UINT32_MAX;
+    out->nav_pvt_age_ms    = m_nav_pvt_last_ms     ? (now_ms - m_nav_pvt_last_ms)    : UINT32_MAX;
 }
 
 // ----------------------------------------------------------------------------------
@@ -945,6 +981,7 @@ void Gps::rxTask()
             // With no GPS, the GPS TX input will always report as '0' due to our port-based pulldown.
             if (gpio_get(GPS_RX_PIN) != 0) {
                 // The GPIO is being driven high, so a GPS might be present.
+                if (m_presence == GPS_NOT_PRESENT) m_presence = GPS_MAYBE_PRESENT;
                 // Try to reconfigure it:
                 setBaud();
                 config();
@@ -952,12 +989,14 @@ void Gps::rxTask()
         }
         else {
             // We successfully retrieved a character to process.
+            // Any received byte means the GPS is physically present and driving the line.
+            m_presence = GPS_PRESENT;
             // The data bits are the low order 8 bits, and the error flags are the higher-order bits.
             bool err = c >= 0x100;
             if (err) {
+                m_rx_errors++;
                 if (dbg) printf("%s: err bits during receive: %02X\n", __FUNCTION__, c>>8);
-            }
-            if (err) {
+
                 // We don't care what the error was - we just resync our UBX stream:
                 state = SYNC_ST;
             }
@@ -1088,8 +1127,8 @@ void Gps::rxTask()
                     state = UBX_CKB_ST;
                 }
                 else {
-                    cksumErrorCount++;
-                    printf("%s: UBX checksum A error (err #%d) saw: %02X, expected %02X\n", __FUNCTION__, cksumErrorCount, b, ubxCkA);
+                    m_cksum_errors++;
+                    printf("%s: UBX checksum A error (err #%d) saw: %02X, expected %02X\n", __FUNCTION__, m_cksum_errors, b, ubxCkA);
                     state = SYNC_ST;
                 }
                 break;
@@ -1101,8 +1140,8 @@ void Gps::rxTask()
                     processUbxBuffer();
                 }
                 else {
-                    cksumErrorCount++;
-                    printf("%s: UBX checksum B error (%d)\n", __FUNCTION__, cksumErrorCount);
+                    m_cksum_errors++;
+                    printf("%s: UBX checksum B error (%d)\n", __FUNCTION__, m_cksum_errors);
                 }
                 state = SYNC_ST;
                 break;

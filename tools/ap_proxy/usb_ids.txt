@@ -1,0 +1,11 @@
+# ap_proxy USB VID:PID — single source of truth for the whole project.
+#
+# WARNING: 1209:0001 is the pid.codes reserved test PID.
+# It is fine for a private test device, but MUST NOT be used on any device
+# that is redistributed, sold, or manufactured.  Get a real PID from pid.codes
+# (free for open-source projects) before any such use.
+# See: https://pid.codes/1209/0001/
+#
+# When changing these values, update ALL consumers listed in tests/README.md.
+AP_PROXY_VID=1209
+AP_PROXY_PID=0001

@@ -5,6 +5,8 @@
 #include "lwip/ip_addr.h"
 #include "lwip/netif.h"
 
+struct udp_pcb; // forward declaration — avoids pulling in lwip/udp.h here
+
 #include "FreeRTOS.h"
 #include "task.h"
 #include "timers.h"
@@ -173,8 +175,12 @@ public:
 private:
     void sendCheckInNotification();
     void performScan();
+    void sendDiscoveryBroadcast();
+    void stopDiscovery();
     static void heartbeatTimerCallback(TimerHandle_t xTimer);
-    static int scanResultCallback(void* env, const cyw43_ev_scan_result_t* result);
+    static int  scanResultCallback(void* env, const cyw43_ev_scan_result_t* result);
+    static void discoveryReplyCallback(void* arg, struct udp_pcb* pcb, struct pbuf* p,
+                                       const ip_addr_t* addr, u16_t port);
 
     State state_;
     bool connected_;
@@ -184,6 +190,7 @@ private:
     Gps* gps_;
     int scan_countdown_;        // seconds until next background AP scan
     bool home_ssid_found_;      // set by scanResultCallback
+    bool auth_failed_;          // set on PICO_ERROR_BADAUTH; suppresses AP→STA until new credentials saved
 
     // WiFi station credentials
     char wifiSsid_[64];
@@ -193,6 +200,13 @@ private:
     char serverHostname_[64];  // Hostname or IP address
     uint16_t serverPort_;
     bool hasServerAddress_;
+
+    // Server auto-discovery (broadcasts when no server address is known)
+    struct udp_pcb* discovery_pcb_;
+    int             discovery_countdown_;  // seconds until next broadcast
+    volatile bool   server_discovered_;   // set by discoveryReplyCallback, cleared by task
+    char            discovered_server_ip_[16];
+    uint16_t        discovered_server_port_;
 
     // Periodic heartbeat timer (5 minutes)
     TimerHandle_t heartbeatTimer_;

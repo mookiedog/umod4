@@ -12,12 +12,15 @@
 #include "FlashConfig.h"
 #include "dhcpserver.h"
 #include "dns_server.h"
+#include "tcp443_server.h"
+#include "lwip/udp.h"
+#include "lwip/pbuf.h"
 
 // Set true while AP mode is active; checked by fs_custom.cpp to redirect unknown
 // URIs to wifi_config.html, triggering the captive portal on phones/laptops.
 bool g_captive_portal_active = false;
 
-// Global WiFi scan results — written by WiFiManager, read by /api/wifi-scan handler
+// Global WiFi scan results - written by WiFiManager, read by /api/wifi-scan handler
 WifiScanResults g_wifi_scan_results = {};
 
 // Device name and config globals owned by main.cpp
@@ -51,6 +54,12 @@ WiFiManager::WiFiManager()
     gps_ = nullptr;
     scan_countdown_ = 60;
     home_ssid_found_ = false;
+    auth_failed_ = false;
+    discovery_pcb_ = NULL;
+    discovery_countdown_ = 0;  // broadcast on first CONNECTED tick
+    server_discovered_ = false;
+    discovered_server_ip_[0] = '\0';
+    discovered_server_port_ = 8081;
 
     static StackType_t  s_stack[1024];
     static StaticTask_t s_tcb;
@@ -92,15 +101,16 @@ WiFiManager::~WiFiManager()
 }
 
 // ----------------------------------------------------------------------------------
-// Scan result callback — called from cyw43 async context for each network found.
+// Scan result callback - called from cyw43 async context for each network found.
 // Populates g_wifi_scan_results and sets home_ssid_found_ if home SSID matches.
 int WiFiManager::scanResultCallback(void* env, const cyw43_ev_scan_result_t* result)
 {
     if (!result) return 0;
     WiFiManager* self = static_cast<WiFiManager*>(env);
 
-    if (strncmp((const char*)result->ssid, self->wifiSsid_, result->ssid_len) == 0
-            && result->ssid_len == strlen(self->wifiSsid_)) {
+    if (self->wifiSsid_[0] != '\0'
+            && result->ssid_len == strlen(self->wifiSsid_)
+            && strncmp((const char*)result->ssid, self->wifiSsid_, result->ssid_len) == 0) {
         self->home_ssid_found_ = true;
     }
 
@@ -112,7 +122,7 @@ int WiFiManager::scanResultCallback(void* env, const cyw43_ev_scan_result_t* res
     // Skip hidden networks (empty SSID)
     if (ssid[0] == '\0') return 0;
 
-    // Deduplicate by SSID — keep strongest signal per network name
+    // Deduplicate by SSID - keep strongest signal per network name
     WifiScanResults& r = g_wifi_scan_results;
     for (int i = 0; i < r.count; i++) {
         if (strcmp(r.entries[i].ssid, ssid) == 0) {
@@ -207,7 +217,7 @@ void WiFiManager::WiFiManager_task()
                     vTaskDelay(pdMS_TO_TICKS(1000));
                 }
                 else {
-                    // Enable STA mode to populate cyw43_state.mac — this is the earliest
+                    // Enable STA mode to populate cyw43_state.mac - this is the earliest
                     // point the MAC becomes available (cyw43_arch_init alone does not read it).
                     // WIFI_POWERING_UP keeps its own enable_sta_mode() call for the
                     // reconnect-after-disconnect path; a double call is a no-op.
@@ -238,7 +248,7 @@ void WiFiManager::WiFiManager_task()
 
             case State::CHECK_WIFI_ALLOWED:
                 if (wifiSsid_[0] == '\0') {
-                    printf("WiFiMgr: No WiFi credentials — entering AP mode\n");
+                    printf("WiFiMgr: No WiFi credentials - entering AP mode\n");
                     state_ = State::AP_STARTING;
                 } else {
                     printf("WiFiMgr: Enabling Station Mode\n");
@@ -253,26 +263,34 @@ void WiFiManager::WiFiManager_task()
 
             case State::CONNECTING:
                 printf("WiFiMgr: Connecting to SSID: %s\n", wifiSsid_);
-                // Blocking call with 30s timeout
                 {
                     int err = cyw43_arch_wifi_connect_timeout_ms(
                                 wifiSsid_, wifiPassword_,
-                                CYW43_AUTH_WPA2_AES_PSK, 30000);
+                                CYW43_AUTH_WPA2_AES_PSK, 10000);
 
                     if (err == 0) {
                         printf("WiFiMgr: Link Up, waiting for IP...\n");
                         state_ = State::WAITING_FOR_IP;
                         dhcp_start_time = xTaskGetTickCount();
-                        fail_count = 0; // Reset error counter
+                        fail_count = 0;
+                    } else if (err == CYW43_LINK_NONET) {
+                        // SSID not found - no point retrying, go straight to AP mode
+                        printf("WiFiMgr: SSID not found (%d) - falling back to AP mode\n", err);
+                        state_ = State::AP_STARTING;
+                    } else if (err == PICO_ERROR_BADAUTH) {
+                        // Wrong password - no point retrying, go straight to AP mode
+                        printf("WiFiMgr: Bad credentials (%d) - falling back to AP mode\n", err);
+                        auth_failed_ = true;
+                        state_ = State::AP_STARTING;
                     } else {
+                        // Transient failure (timeout, general error) - retry up to 3 times
                         printf("WiFiMgr: Connection failed (%d)\n", err);
                         fail_count++;
-
                         if (fail_count >= 3) {
-                            printf("WiFiMgr: STA connect failed %d times — falling back to AP mode\n", fail_count);
+                            printf("WiFiMgr: STA connect failed %d times - falling back to AP mode\n", fail_count);
                             state_ = State::AP_STARTING;
                         } else {
-                            vTaskDelay(pdMS_TO_TICKS(5000)); // Backoff
+                            vTaskDelay(pdMS_TO_TICKS(5000));
                         }
                     }
                 }
@@ -321,15 +339,32 @@ void WiFiManager::WiFiManager_task()
                 else {
                     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
                     printf("WiFiMgr: Connection lost\n");
-                    // Stop heartbeat timer when connection lost
                     if (heartbeatTimer_ != NULL) {
                         xTimerStop(heartbeatTimer_, 0);
                     }
+                    stopDiscovery();
                     state_ = State::CONNECTING;
                 }
                 // Service on-demand scan requests while connected
                 if (g_wifi_scan_results.scan_requested) {
                     performScan();
+                }
+                // Process discovery reply received by the lwIP callback
+                if (server_discovered_) {
+                    server_discovered_ = false;
+                    strncpy(g_flash_config.server_host, discovered_server_ip_,
+                            sizeof(g_flash_config.server_host) - 1);
+                    g_flash_config.server_host[sizeof(g_flash_config.server_host) - 1] = '\0';
+                    g_flash_config.server_port = discovered_server_port_;
+                    flash_config_save(&g_flash_config);
+                    setServerAddress(discovered_server_ip_, discovered_server_port_);
+                    stopDiscovery();
+                    sendCheckInNotification();
+                }
+                // If no server address is known, broadcast periodically to find one
+                if (!hasServerAddress_ && --discovery_countdown_ <= 0) {
+                    sendDiscoveryBroadcast();
+                    discovery_countdown_ = 30;
                 }
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 break;
@@ -338,6 +373,7 @@ void WiFiManager::WiFiManager_task()
                 if (ap_mode_active_) {
                     g_captive_portal_active = false;
                     dns_server_deinit();
+                    tcp443_server_deinit();
                     dhcp_server_deinit(&ap_dhcp_server_);
                     cyw43_arch_disable_ap_mode();
                     ap_mode_active_ = false;
@@ -349,7 +385,7 @@ void WiFiManager::WiFiManager_task()
                 break;
 
             case State::REBOOT_CYW43:
-                // This state is only reached on DHCP timeout (15s) in WAITING_FOR_IP —
+                // This state is only reached on DHCP timeout (15s) in WAITING_FOR_IP -
                 // i.e. WiFi link came up but the router never assigned an IP. That is
                 // extremely rare in normal use. A lighter alternative would be to go
                 // straight back to CONNECTING or WIFI_POWERING_UP instead of tearing
@@ -357,15 +393,17 @@ void WiFiManager::WiFiManager_task()
                 // what is essentially "try again."
                 //
                 // WARNING: cyw43_arch_deinit() followed by cyw43_arch_init() causes
-                // lwip_init() → memp_init() to run again, which rebuilds pool free lists
+                // lwip_init() -> memp_init() to run again, which rebuilds pool free lists
                 // from scratch. Any live lwIP allocations (e.g. the httpd listening PCB)
                 // will be corrupted. This is harmless only as long as MEMP_MEM_MALLOC=1
                 // routes all pool allocations through malloc instead of the pool arrays.
                 // If MEMP_MEM_MALLOC is ever disabled, this path must be reworked.
                 printf("WiFiMgr: Hard resetting CYW43 chip...\n");
+                stopDiscovery();
                 if (ap_mode_active_) {
                     g_captive_portal_active = false;
                     dns_server_deinit();
+                    tcp443_server_deinit();
                     dhcp_server_deinit(&ap_dhcp_server_);
                     ap_mode_active_ = false;
                 }
@@ -378,8 +416,12 @@ void WiFiManager::WiFiManager_task()
             case State::AP_STARTING:
             {
                 // Ensure STA mode is off before starting AP (handles the CONNECTING
-                // → AP_STARTING fallback path where STA was enabled but never connected)
+                // -> AP_STARTING fallback path where STA was enabled but never connected)
                 cyw43_arch_disable_sta_mode();
+
+                // Scan immediately on first AP_ACTIVE tick so the home network
+                // check doesn't wait 60 seconds after a fresh AP fallback.
+                scan_countdown_ = 0;
 
                 // Resolve AP SSID: use configured value or derive from MAC
                 if (g_flash_config.ap_ssid[0] != '\0') {
@@ -410,10 +452,11 @@ void WiFiManager::WiFiManager_task()
                                  (ip_addr_t*)&ap_ip,
                                  (ip_addr_t*)&ap_mask);
                 dns_server_init((ip_addr_t*)&ap_ip);
+                tcp443_server_init();
                 ap_mode_active_ = true;
                 g_captive_portal_active = true;
 
-                printf("WiFiMgr: AP active — connect to '%s', captive portal on 192.168.4.1\n",
+                printf("WiFiMgr: AP active - connect to '%s', captive portal on 192.168.4.1\n",
                        ap_ssid_resolved_);
                 state_ = State::AP_ACTIVE;
                 break;
@@ -423,7 +466,7 @@ void WiFiManager::WiFiManager_task()
             {
                 // Shut down radio if bike is moving
                 if (gps_ != nullptr && gps_->getSpeedMph() > 20.0f) {
-                    printf("WiFiMgr: Speed > 20 MPH — shutting down radio\n");
+                    printf("WiFiMgr: Speed > 20 MPH - shutting down radio\n");
                     state_ = State::RADIO_OFF;
                     break;
                 }
@@ -433,8 +476,13 @@ void WiFiManager::WiFiManager_task()
                 ap_led_state = !ap_led_state;
                 cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, ap_led_state);
 
-                // Trigger a scan if countdown expired or API/user requested one
-                if (--scan_countdown_ <= 0 || g_wifi_scan_results.scan_requested) {
+                // Trigger a scan if: user requested one (for wifi config UI), or
+                // countdown expired AND we have credentials to look for.
+                // Never auto-scan when no home SSID is configured: there is
+                // nothing to find, and an empty wifiSsid_ falsely matches hidden
+                // networks, causing a pointless AP->STA->AP thrash loop.
+                if (g_wifi_scan_results.scan_requested
+                        || (--scan_countdown_ <= 0 && wifiSsid_[0] != '\0')) {
                     state_ = State::AP_SCANNING;
                 } else {
                     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -445,11 +493,15 @@ void WiFiManager::WiFiManager_task()
             case State::AP_SCANNING:
             {
                 performScan();
-                if (home_ssid_found_) {
-                    printf("WiFiMgr: Home network found — switching to STA\n");
+                if (home_ssid_found_ && !auth_failed_) {
+                    printf("WiFiMgr: Home network found - switching to STA\n");
                     state_ = State::DISCONNECTING;
                 } else {
-                    printf("WiFiMgr: Home network not found\n");
+                    if (home_ssid_found_ && auth_failed_) {
+                        printf("WiFiMgr: Home network visible but credentials failed - staying in AP mode\n");
+                    } else {
+                        printf("WiFiMgr: Home network not found\n");
+                    }
                     scan_countdown_ = 60;
                     state_ = State::AP_ACTIVE;
                 }
@@ -462,13 +514,14 @@ void WiFiManager::WiFiManager_task()
                 if (ap_mode_active_) {
                     g_captive_portal_active = false;
                     dns_server_deinit();
+                    tcp443_server_deinit();
                     dhcp_server_deinit(&ap_dhcp_server_);
                     cyw43_arch_disable_ap_mode();
                     ap_mode_active_ = false;
                     printf("WiFiMgr: AP mode stopped\n");
                 }
                 cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
-                printf("WiFiMgr: Radio off — power cycle to resume\n");
+                printf("WiFiMgr: Radio off - power cycle to resume\n");
                 // Stay here until power cycle
                 while (true) {
                     vTaskDelay(pdMS_TO_TICKS(10000));
@@ -483,6 +536,108 @@ void WiFiManager::WiFiManager_task()
     }
 }
 
+// ----------------------------------------------------------------------------------
+// Server auto-discovery: broadcast when no server address is configured.
+// The server replies unicast with {"type":"announce","port":N}.
+// We extract the server IP from the UDP source address and port from the JSON.
+// All lwIP state changes happen in the lwIP tcpip thread (callback), but flash
+// writes and check-in are deferred to the WiFiManager task via server_discovered_.
+
+void WiFiManager::sendDiscoveryBroadcast()
+{
+    char ip_str[16];
+    if (!getIPAddress(ip_str, sizeof(ip_str))) return;
+
+    uint8_t mac[6];
+    char mac_str[18];
+    cyw43_hal_get_mac(CYW43_HAL_MAC_WLAN0, mac);
+    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    char payload[192];
+    snprintf(payload, sizeof(payload),
+             "{\"type\":\"discover\",\"device_name\":\"%s\",\"device_mac\":\"%s\",\"ip\":\"%s\"}",
+             g_flash_config.device_name, mac_str, ip_str);
+
+    cyw43_arch_lwip_begin();
+
+    if (!discovery_pcb_) {
+        discovery_pcb_ = udp_new();
+        if (!discovery_pcb_) {
+            printf("WiFiMgr: Discovery: failed to allocate PCB\n");
+            cyw43_arch_lwip_end();
+            return;
+        }
+        ip_set_option(discovery_pcb_, SOF_BROADCAST);
+        udp_recv(discovery_pcb_, discoveryReplyCallback, this);
+        udp_bind(discovery_pcb_, IP_ANY_TYPE, 0);  // ephemeral port for reply
+    }
+
+    struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)strlen(payload), PBUF_RAM);
+    if (p) {
+        memcpy(p->payload, payload, strlen(payload));
+        const ip_addr_t broadcast = IPADDR4_INIT_BYTES(255, 255, 255, 255);
+        err_t err = udp_sendto(discovery_pcb_, p, &broadcast, 8081);
+        pbuf_free(p);
+        if (err == ERR_OK) {
+            printf("WiFiMgr: Discovery broadcast sent\n");
+        } else {
+            printf("WiFiMgr: Discovery broadcast failed (err=%d)\n", err);
+        }
+    }
+
+    cyw43_arch_lwip_end();
+}
+
+void WiFiManager::stopDiscovery()
+{
+    if (discovery_pcb_) {
+        cyw43_arch_lwip_begin();
+        udp_remove(discovery_pcb_);
+        discovery_pcb_ = NULL;
+        cyw43_arch_lwip_end();
+    }
+    discovery_countdown_ = 0;
+}
+
+void WiFiManager::discoveryReplyCallback(void* arg, struct udp_pcb* pcb,
+                                          struct pbuf* p, const ip_addr_t* addr, u16_t port)
+{
+    (void)pcb;
+    (void)port;
+    if (!p || !addr || !arg) { if (p) pbuf_free(p); return; }
+
+    WiFiManager* self = static_cast<WiFiManager*>(arg);
+
+    // Copy server IP from source address immediately (string is valid only during callback)
+    const char* ip_str = ipaddr_ntoa(addr);
+    strncpy(self->discovered_server_ip_, ip_str, sizeof(self->discovered_server_ip_) - 1);
+    self->discovered_server_ip_[sizeof(self->discovered_server_ip_) - 1] = '\0';
+
+    // Parse "port" from reply JSON: {"type":"announce","port":8081}
+    char buf[128];
+    uint16_t len = p->tot_len < (u16_t)(sizeof(buf) - 1) ? p->tot_len : (u16_t)(sizeof(buf) - 1);
+    pbuf_copy_partial(p, buf, len, 0);
+    buf[len] = '\0';
+    pbuf_free(p);
+
+    self->discovered_server_port_ = 8081;  // default
+    const char* port_key = strstr(buf, "\"port\":");
+    if (port_key) {
+        uint16_t parsed = (uint16_t)atoi(port_key + 7);
+        if (parsed > 0) self->discovered_server_port_ = parsed;
+    }
+
+    printf("WiFiMgr: Server discovered at %s:%u\n",
+           self->discovered_server_ip_, self->discovered_server_port_);
+
+    // Signal the WiFiManager task to save to flash and send check-in.
+    // Do NOT call flash_config_save() or sendCheckInNotification() here —
+    // this callback runs on the lwIP tcpip thread.
+    self->server_discovered_ = true;
+}
+
+// ----------------------------------------------------------------------------------
 void WiFiManager::setServerAddress(const char* server_hostname, uint16_t server_port)
 {
     if (server_hostname && strlen(server_hostname) < sizeof(serverHostname_)) {
@@ -504,6 +659,7 @@ void WiFiManager::setCredentials(const char* ssid, const char* password)
         strncpy(wifiPassword_, password, sizeof(wifiPassword_) - 1);
         wifiPassword_[sizeof(wifiPassword_) - 1] = '\0';
     }
+    auth_failed_ = false;  // new credentials — allow STA reconnect attempt
     printf("WiFiMgr: Credentials set (SSID='%s')\n", wifiSsid_);
 }
 
@@ -537,7 +693,7 @@ void WiFiManager::sendCheckInNotification()
 
     // Resolve address before acquiring the lwIP lock.
     // netconn_gethostbyname() posts to the tcpip thread and blocks waiting for
-    // the reply — calling it while holding the lwIP lock would deadlock because
+    // the reply - calling it while holding the lwIP lock would deadlock because
     // the tcpip thread can't run while we hold the mutex.
     ip_addr_t server_addr;
 
@@ -561,7 +717,7 @@ void WiFiManager::sendCheckInNotification()
 
     // All lwIP raw API calls must be made with the lwIP lock held.
     // This function is called from the WiFiMgr task and from the FreeRTOS timer
-    // daemon task (heartbeatTimerCallback) — neither is the lwIP tcpip thread,
+    // daemon task (heartbeatTimerCallback) - neither is the lwIP tcpip thread,
     // so cyw43_arch_lwip_begin()/end() is required to prevent racing with the
     // tcpip thread and corrupting lwIP's internal memory structures.
     cyw43_arch_lwip_begin();

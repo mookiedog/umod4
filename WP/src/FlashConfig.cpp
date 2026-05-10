@@ -2,6 +2,7 @@
 #include "hardware/flash.h"
 #include "hardware/sync.h"
 #include "pico/bootrom.h"
+#include "pico/flash.h"
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -146,8 +147,20 @@ bool flash_config_load(flash_config_t *out)
 }
 
 // ---------------------------------------------------------------------------
-// flash_config_save — called from FreeRTOS task context (configNUMBER_OF_CORES=1)
+// flash_config_save — called from FreeRTOS SMP task context
 // ---------------------------------------------------------------------------
+
+// Must be in SRAM: flash_range_erase/program disable XIP, so this cannot
+// execute from flash.  Placed at file scope so the callback can reach it.
+static uint8_t s_config_sector_buf[FLASH_SECTOR_SIZE] __attribute__((aligned(4)));
+
+static void __not_in_flash_func(do_flash_config_save)(void *param)
+{
+    (void)param;
+    flash_range_erase(FLASH_CONFIG_OFFSET, FLASH_SECTOR_SIZE);
+    flash_range_program(FLASH_CONFIG_OFFSET, s_config_sector_buf, FLASH_SECTOR_SIZE);
+}
+
 bool flash_config_save(const flash_config_t *cfg)
 {
     // Recalculate CRC on a mutable copy so the stored CRC is always correct
@@ -158,17 +171,19 @@ bool flash_config_save(const flash_config_t *cfg)
     buf.crc32   = crc32_compute(&buf, CRC_DATA_LEN);
 
     // Pad to full sector with 0xFF (flash erases to 0xFF, so this is a no-op for unwritten bytes)
-    static uint8_t sector_buf[FLASH_SECTOR_SIZE] __attribute__((aligned(4)));
-    memset(sector_buf, 0xFF, sizeof(sector_buf));
-    memcpy(sector_buf, &buf, sizeof(buf));
+    memset(s_config_sector_buf, 0xFF, sizeof(s_config_sector_buf));
+    memcpy(s_config_sector_buf, &buf, sizeof(buf));
 
-    // flash_range_erase/program handle XIP disable/re-enable internally.
-    // Disable interrupts to prevent any ISR from being interrupted mid-write.
-    // Core 1 is not used (configNUMBER_OF_CORES=1), so no multi-core coordination needed.
-    uint32_t irq_state = save_and_disable_interrupts();
-    flash_range_erase(FLASH_CONFIG_OFFSET, FLASH_SECTOR_SIZE);
-    flash_range_program(FLASH_CONFIG_OFFSET, sector_buf, FLASH_SECTOR_SIZE);
-    restore_interrupts(irq_state);
+    // flash_safe_execute coordinates with the core-1 flash helper task so that
+    // neither core is executing from flash during the erase/program window.
+    // Using raw save_and_disable_interrupts here is wrong: it only masks interrupts
+    // on core 0, leaving core 1 free to run FreeRTOS tasks that hold the kernel
+    // spin lock — causing a deadlock when SysTick fires on core 0 after re-enabling.
+    int rc = flash_safe_execute(do_flash_config_save, NULL, 1000 /*ms timeout*/);
+    if (rc != PICO_OK) {
+        printf("FlashConfig: flash_safe_execute failed (%d)\n", rc);
+        return false;
+    }
 
     // Flush XIP cache so subsequent reads via memcpy see the freshly programmed data
     rom_flash_flush_cache();

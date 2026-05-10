@@ -288,18 +288,18 @@ int fs_open_custom(struct fs_file *file, const char *name)
 
         // Allocate struct and data buffer in a single block to avoid two separate heap
         // allocations per request, which accumulate fragmentation over many requests.
-        // info and sha256 need 512 bytes, list and sd-info need 8KB for ~100 files
-        // image-store/scan needs 4KB for up to ~127 slot entries
-        // image-store and image-store/selector need 1KB for the selector JSON
+        // info needs 1KB (device_name + wifi_ssid + fs_message can approach 512 bytes),
+        // list and sd-info need 8KB for ~100 files, image-store/scan needs 4KB.
         size_t api_buffer_size = (strcmp(api_name, "list") == 0 ||
                                    strcmp(api_name, "sd-info") == 0) ? 8192 :
                                   (strcmp(api_name, "image-store/scan") == 0 ||
                                    strcmp(api_name, "wifi-scan") == 0) ? 4096 :
-                                  (strcmp(api_name, "image-store") == 0 ||
-                                   strcmp(api_name, "image-store/selector") == 0 ||
-                                   strcmp(api_name, "ecu-live-data") == 0) ? 1024 :
                                   (strcmp(api_name, "ecu-live-meta") == 0) ? 2048 :
-                                  (strncmp(api_name, "ep-stdio/", 9) == 0) ? 1536 : 512;
+                                  (strncmp(api_name, "ep-stdio/", 9) == 0) ? 1536 :
+                                  (strcmp(api_name, "info") == 0 ||
+                                   strcmp(api_name, "image-store") == 0 ||
+                                   strcmp(api_name, "image-store/selector") == 0 ||
+                                   strcmp(api_name, "ecu-live-data") == 0) ? 1024 : 512;
 
         struct lfs_custom_file* api_file =
             (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file) + api_buffer_size);
@@ -646,10 +646,12 @@ int fs_open_custom(struct fs_file *file, const char *name)
     // Captive portal: in AP mode, redirect unrecognised URIs to wifi_config.html.
     // This makes iOS, Android, Windows, and macOS show a "Sign in to network"
     // notification automatically when the user connects to the AP.
-    // Exempt: wifi_config.html itself (the redirect target), api/ (form submission),
-    // logs/ (file downloads), and POST response JSON files.
+    // Exempt: wifi_config.html itself (the redirect target), status.html (device
+    // info page), api/ (form submission), logs/ (file downloads), and POST response
+    // JSON files.
     if (g_captive_portal_active &&
         strcmp(path, "wifi_config.html") != 0 &&
+        strcmp(path, "status.html") != 0 &&
         strncmp(path, "api/", 4) != 0 &&
         strncmp(path, "logs/", 5) != 0 &&
         strcmp(path, "upload_success.json") != 0 &&
