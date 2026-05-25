@@ -26,7 +26,6 @@
 ; Define build options here
 
 #define SPARK_ISR
-#define VTA_INCLUDES_TS
 #define VTA_CONVERSION_SMOOTHING
 ;#define RELOCATED_STACK
 ;--------------------------------------------------------------------------------
@@ -781,15 +780,12 @@ L017B   =       0x017B                  ;holds the calculated checksum (written,
 ; These next variables are new, and extend into the original stack space.
 ; They are used by the ECU data logging mechanisms to detect changes that should get reported.
 PORTG_DB_U8_prev              = 0x017D
-RAW_THA_U8_prev               = 0x017E
+half_overflow                 = 0x017E
 ECU_ERROR_L000C_U8_prev       = 0x017F
 ECU_ERROR_L000D_U8_prev       = 0x0180
-RAW_AAP_U8_prev               = 0x0181
-FUEL_PUMP_B_prev              = 0x0182
-RAW_VTA_prev                  = 0x0183          ; 16-bits: 0x0183 & 0x0184
-half_overflow                 = 0x0185
+FUEL_PUMP_B_prev              = 0x0181
 #if defined SPARK_ISR
-FAKE_TFLG1                    = 0x0186          ; a fake copy of TFLG1 for use by crankshaft spark detection processing
+FAKE_TFLG1                    = 0x0182          ; a fake copy of TFLG1 for use by crankshaft spark detection processing
 #endif
 
 ;*****************************************************************
@@ -3117,13 +3113,6 @@ tbl1__00:
         lsrD
         stD     *L0024                  ;save the right-aligned, unfiltered version of VTA in L0024
 
-#if !defined VTA_INCLUDES_TS
-        cmpD    RAW_VTA_prev            ;only log good sensor readings that differ from the previous reading
-        beq     3f
-        stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
-        stD     RAW_VTA_prev
-        bra     3f
-#else
 ; Combine every VTA reading with the upper 6 bits of TCNT so that the log decoder
 ; can see time advance with more precision even when there are no crankshaft events.
         tpa                             ;save current interrupt state
@@ -3134,15 +3123,11 @@ tbl1__00:
         andA    #0xFC                   ;extract the MS 6 bits of TCNT1...
         oraA    *L0024                  ;...and insert them into the unused upper 6 bits of the 10-bit VTA
         ldaB    *(L0024+1)              ;D now contains the combined time & VTA data
-        cmpD    RAW_VTA_prev            ;Only log if either the time or the VTA reading has changed
-        beq     33f
-        stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16
-        stD     RAW_VTA_prev
+        stD     LW+LOGID_ECU_RAW_VTA_TYPE_U16 ;always log it
 
-33:     pulA                            ;restore previous interrupt state
+        pulA                            ;restore previous interrupt state
         tap
         bra     3f
-#endif
 
 1:      brclr   *L0010 #0b00100000 2f   ;if the sensor is not currently suspect, make it so
 
@@ -3208,10 +3193,7 @@ tbl1__03:
 tbl1__04:
         staA    *L001B_tmp
 
-        cmpA    *L002A
-        beq     10f
-        staA    LW+LOGID_ECU_RAW_VM_TYPE_U8  ; log the new VM conversion if it is different than before
-10:
+        staA    LW+LOGID_ECU_RAW_VM_TYPE_U8  ; always log the new VM conversion
         staA    *L002A                  ; save the raw conversion
         cmpA    #38                     ; 38 means 2.97V
         blo     2f                      ; br if the reading was below 2.97V (probably bad!)
@@ -3276,13 +3258,7 @@ tbl1__05:
         bclr    *L000C #0b00000010
         ldaA    *L001B_tmp
         staA    *L0029
-
-;We only log rawTha data if it is different from what we last sent
-        cmpA    RAW_THA_U8_prev
-        beq     9f
-        staA    RAW_THA_U8_prev
-        staA    LW+LOGID_ECU_RAW_THA_TYPE_U8
-9:
+        staA    LW+LOGID_ECU_RAW_THA_TYPE_U8 ;always log the new THA reading
         subA    #0x00
         bhs     4f
         ldaA    #0x00
@@ -3346,12 +3322,8 @@ tbl1__14:
         bclr    *L000C #0b00000001      ;clear the 'broken' bit.
 
         ldaA    *L001B_tmp              ;get the 8 MSbits of the original AAP A/D reading
-        cmpA    RAW_AAP_U8_prev
-        beq     9f
-        staA    RAW_AAP_U8_prev         ;only log if it has changed
-        staA    LW+LOGID_ECU_RAW_AAP_TYPE_U8
-9:
-        staA    *L0027                  ;but always save the new reading here
+        staA    LW+LOGID_ECU_RAW_AAP_TYPE_U8 ; always log it
+        staA    *L0027
         brset   *L0000 #0b00010000 4f
 
         sei
@@ -11673,40 +11645,14 @@ jmp     reset                                   ; Boot the ECU
 ; If the timer overflowed and we had an input capture on the same timer value (0x0000),
 ; both of the input capture ISRs have higher priority than this overflow ISR.
 T1_OFLO_ISR:
-#if 1
         ldaA    #0x80                                   ; ACK this overflow interrupt
         staA    TFLG2
         staA    half_overflow                           ; this value just needs to be non-zero
 
         clrA
         clrB
-        stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; The overflow event occurred at timer count 0x0000
+        stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; The overflow event must have occurred at timer count 0x0000
         rti
-#elif 0
-; If we see a pending capture ISR in this routine, it MUST have happened after the overflow.
-; That means we don't even have to log this rollover event.
-
-        ldaA    #0x80                                   ; ACK the overflow interrupt
-        staA    TFLG2
-        staA    half_overflow                           ; this value just needs to be non-zero
-
-        ldaA    TFLG1                                   ; check if either IC1 (cam) or IC2 (crank) has become pending
-        andA    #0x06                                   ; between the time that the counter rolled over and the time we got here
-        bne     99f                                     ; yes: there is no need to even emit this marker
-
-        clrA
-        clrB
-        stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; log the overflow event as having occurred at timer count 0x0000
-        rti
-#else
-        ldD     TCNT
-        stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; log the overflow event
-
-        ldaA    #0x80                                   ; ACK the overflow interrupt
-        staA    TFLG2
-        staA    half_overflow                           ; just needs to be non-zero
-        rti
-#endif
 
 ;----------------------------------------------------------------
 lastInstr:

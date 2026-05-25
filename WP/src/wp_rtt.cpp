@@ -31,7 +31,7 @@ void wp_rtt_init(void)
 
 static void rtt_vprintf(unsigned channel, const char* fmt, va_list args)
 {
-    char buf[256];
+    char buf[512];
     int len = vsnprintf(buf, sizeof(buf), fmt, args);
     if (len > 0) {
         if (len >= (int)sizeof(buf)) {

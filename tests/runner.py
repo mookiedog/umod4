@@ -196,13 +196,30 @@ class Results:
 
 
 # -------------------------------------------------------------------------
+# Suite ordering is load-bearing — do not rearrange without understanding the
+# dependencies below.
+#
+#  test_provisioning  Erases and reflashes WP; must run first so every
+#                     subsequent suite runs against known-good WP firmware.
+#  test_basic         WP/SD health checks; no external dependencies.
+#  test_ep_swd        Verifies EP SWD connectivity; must precede test_ota_ep
+#                     (the OTA path uses SWD to program EP).
+#  test_wifi          Connects to WiFi and stores wp_ip in context; must
+#                     precede test_ota_ep (upload uses the HTTP server).
+#  test_ota_ep        Reflashes EP via HTTP+SWD.  EP carries the ECU firmware
+#                     image, so the ECU is only on latest firmware AFTER this
+#                     suite completes.  test_ecu must not run before this.
+#  test_ecu           ECU sensor and timing checks.  Depends on EP (and
+#                     therefore ECU firmware) being up-to-date.
+#  test_ota_wp        Reflashes WP last: WP reboots at the end, which tears
+#                     down the RTT session and ends the run.
 SUITES = [
     "suites.test_provisioning",
     "suites.test_basic",
-    "suites.test_ecu",
     "suites.test_ep_swd",
     "suites.test_wifi",
     "suites.test_ota_ep",
+    "suites.test_ecu",
     "suites.test_ota_wp",
 ]
 

@@ -20,7 +20,7 @@
 #include <limits.h>
 
 extern uint16_t ecuLiveLog[256];
-extern uint16_t ecuEventCounts[256];
+extern uint16_t ecuLogidRxCount[256];
 extern const char* get_ecu_metadata_str(void);
 extern bool        get_ecu_metadata_complete(void);
 extern Gps* gps;
@@ -47,7 +47,7 @@ extern bool        wifi_get_ip_address(char* out, size_t outlen);
 //
 // Future: if a /api/status HTTP endpoint is added, the underlying data
 // sources (gps->getHealth(), sdCard->state, lfs_mounted, lfs_reformatted,
-// lfs_mount_ms, FlashWp statics, ecuLiveLog/ecuEventCounts) are all
+// lfs_mount_ms, FlashWp statics, ecuLiveLog/ecuLogidRxCount) are all
 // accessible to an HTTP handler directly.  The cmd_xxx() functions here are
 // specific to the VFY RTT channel and should not be re-used for HTTP.
 
@@ -184,20 +184,24 @@ static void emit_ecu(void)
     vfy_printf("\"ecu\":{\"eclk_khz\":%u,\"meta\":%s,"
                "\"cpu_events\":%u,\"cpu_last\":%u,"
                "\"t1_oflo\":%u,\"t1_period_us\":%lu,"
-               "\"aap_count\":%u,\"aap_last\":%u,"
-               "\"vm_count\":%u,\"vm_last\":%u,"
+               "\"vta_count\":%u,\"vm_count\":%u,"
+               "\"tha_count\":%u,\"aap_count\":%u,\"thw_count\":%u,"
+               "\"tp1_count\":%u,\"tp2_count\":%u,"
                "\"l000c_count\":%u,\"l000c_last\":%u}",
                (unsigned)ecuLiveLog[LOGID_EP_ECLK_KHZ_TYPE_U16],
                meta,
-               (unsigned)ecuEventCounts[LOGID_ECU_CPU_EVENT_TYPE_U8],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_CPU_EVENT_TYPE_U8],
                (unsigned)ecuLiveLog[LOGID_ECU_CPU_EVENT_TYPE_U8],
-               (unsigned)ecuEventCounts[LOGID_ECU_T1_OFLO_TYPE_TS],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_T1_OFLO_TYPE_TS],
                (unsigned long)t1_period,
-               (unsigned)ecuEventCounts[LOGID_ECU_RAW_AAP_TYPE_U8],
-               (unsigned)ecuLiveLog[LOGID_ECU_RAW_AAP_TYPE_U8],
-               (unsigned)ecuEventCounts[LOGID_ECU_RAW_VM_TYPE_U8],
-               (unsigned)ecuLiveLog[LOGID_ECU_RAW_VM_TYPE_U8],
-               (unsigned)ecuEventCounts[LOGID_ECU_ECU_ERROR_L000C_TYPE_U8],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_VTA_TYPE_U16],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_VM_TYPE_U8],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_THA_TYPE_U8],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_AAP_TYPE_U8],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_THW_TYPE_U8],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_TP_CO1_RAW_TYPE_U8],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_TP_CO2_RAW_TYPE_U8],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_ECU_ERROR_L000C_TYPE_U8],
                (unsigned)ecuLiveLog[LOGID_ECU_ECU_ERROR_L000C_TYPE_U8]);
 }
 

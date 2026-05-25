@@ -85,7 +85,7 @@ uint16_t ecuLiveLog[256];
 
 // Saturating count of each log ID received since boot, indexed by log ID.
 // Written only from isr_rx32; individual uint16_t reads are atomic on Cortex-M33.
-uint16_t ecuEventCounts[256];
+uint16_t ecuLogidRxCount[256];
 
 // Timestamp (time_us_32) of the most recent word received from the EP via UART.
 // Updated inside isr_rx32 on every log event. Zero until first event arrives.
@@ -243,7 +243,13 @@ void reset_ep_capture(void)
     ecu_metadata_complete = false;
 }
 
-uint32_t elapsed_max;
+// WP-side dedup: suppress logging of consecutive identical sensor readings.
+// Initialized to 0xFFFF which is never a valid reading for any of these.
+static uint16_t dedup_prev_vta = 0xFFFF;
+static uint16_t dedup_prev_vm  = 0xFFFF;
+static uint16_t dedup_prev_tha = 0xFFFF;
+static uint16_t dedup_prev_thw = 0xFFFF;
+
 void __time_critical_func(isr_rx32)()
 {
     // If we are getting behind in our receiving duties, tell the EP to pause sending
@@ -259,56 +265,79 @@ void __time_critical_func(isr_rx32)()
     while(!pio_sm_is_rx_fifo_empty(PIO_UART, pio_sm_uart)) {
         uint32_t t0 = time_us_32();
         uint32_t rxWord = uart_rx32_program_get(PIO_UART, pio_sm_uart);
-        logger->logData_fromISR(rxWord);
 
-        // Update the live ECU log data array
         uint8_t logId  = (rxWord >> 8)  & 0xFF;
         uint8_t data8  = (rxWord >> 16) & 0xFF;
+
+        // Certain logIds need special processing: take care of that here
+        bool log_it = true;
+        switch (logId) {
+            case LOGID_ECU_RAW_VTA_TYPE_U16: {
+                uint16_t vta = (rxWord >> 16) & 0xFFFF;
+                if (vta == dedup_prev_vta) log_it = false;
+                else dedup_prev_vta = vta;
+                break;
+            }
+            case LOGID_ECU_RAW_VM_TYPE_U8:
+                if (data8 == dedup_prev_vm) log_it = false;
+                else dedup_prev_vm = data8;
+                break;
+            case LOGID_ECU_RAW_THA_TYPE_U8:
+                if (data8 == dedup_prev_tha) log_it = false;
+                else dedup_prev_tha = data8;
+                break;
+            case LOGID_ECU_RAW_THW_TYPE_U8:
+                if (data8 == dedup_prev_thw) log_it = false;
+                else dedup_prev_thw = data8;
+                break;
+            case LOGID_ECU_CRANKREF_ID_TYPE_U8:
+                g_last_crank_event_us = t0;
+                break;
+            case LOGID_ECU_T1_OFLO_TYPE_TS:
+                g_t1_oflo_prev_us = g_t1_oflo_last_us;
+                g_t1_oflo_last_us = t0;
+                break;
+            case LOGID_EP_IMGSEL_TYPE_CS:
+                if (!ep_imgsel_complete) {
+                    char c = (char)data8;
+                    if (c != '\0') {
+                        if (ep_imgsel_str_pos < EP_IMGSEL_STR_LEN - 1) {
+                            ep_imgsel_str[ep_imgsel_str_pos++] = c;
+                        }
+                    }
+                    else {
+                        ep_imgsel_str[ep_imgsel_str_pos] = '\0';
+                        ep_imgsel_complete = true;
+                    }
+                }
+                break;
+            case LOGID_ECU_METADATA_TYPE_CS:
+                if (!ecu_metadata_complete) {
+                    char c = (char)data8;
+                    if (c != '\0') {
+                        if (ecu_metadata_str_pos < ECU_METADATA_STR_LEN - 1) {
+                            ecu_metadata_str[ecu_metadata_str_pos++] = c;
+                        }
+                    }
+                    else {
+                        ecu_metadata_str[ecu_metadata_str_pos] = '\0';
+                        ecu_metadata_complete = true;
+                    }
+                }
+                break;
+            default:
+                break;
+        }
+
+        // We log all received events unless the dedup tests (above) have forbidden it
+        if (log_it) {
+            logger->logData_fromISR(rxWord);
+        }
+
+        // Always update live data and receive counts regardless of dedup
         ecuLiveLog[logId] = (rxWord >> 16) & 0xFFFF;
-        if (ecuEventCounts[logId] < 0xFFFF) ecuEventCounts[logId]++;
+        if (ecuLogidRxCount[logId] < 0xFFFF) ecuLogidRxCount[logId]++;
         g_last_ecu_data_us = t0;
-
-        // Track last crank event for engine-running detection
-        if (logId == LOGID_ECU_CRANKREF_ID_TYPE_U8) {
-            g_last_crank_event_us = t0;
-        }
-
-        // Track consecutive T1_OFLO arrival times for period measurement
-        if (logId == LOGID_ECU_T1_OFLO_TYPE_TS) {
-            g_t1_oflo_prev_us = g_t1_oflo_last_us;
-            g_t1_oflo_last_us = t0;
-        }
-
-        // Capture image_selector string from EP (sent once after the loading pass completes)
-        if (logId == LOGID_EP_IMGSEL_TYPE_CS && !ep_imgsel_complete) {
-            char c = (char)data8;
-            if (c != '\0') {
-                if (ep_imgsel_str_pos < EP_IMGSEL_STR_LEN - 1) {
-                    ep_imgsel_str[ep_imgsel_str_pos++] = c;
-                }
-            } else {
-                ep_imgsel_str[ep_imgsel_str_pos] = '\0';
-                ep_imgsel_complete = true;
-            }
-        }
-
-        // Capture ECU metadata string (build date/version, sent once at ECU startup)
-        if (logId == LOGID_ECU_METADATA_TYPE_CS && !ecu_metadata_complete) {
-            char c = (char)data8;
-            if (c != '\0') {
-                if (ecu_metadata_str_pos < ECU_METADATA_STR_LEN - 1) {
-                    ecu_metadata_str[ecu_metadata_str_pos++] = c;
-                }
-            } else {
-                ecu_metadata_str[ecu_metadata_str_pos] = '\0';
-                ecu_metadata_complete = true;
-            }
-        }
-
-        uint32_t elapsed = time_us_32() - t0;
-        if (elapsed > elapsed_max) {
-            elapsed_max = elapsed;
-        }
     }
 
     // FIFO is known to be empty now so EP can resume
