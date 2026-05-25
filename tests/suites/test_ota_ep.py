@@ -4,15 +4,17 @@ OTA EP reflash test suite.
 Exercises the full end-to-end EP reflash path:
   test harness → DeviceClient.upload_file → HTTP upload → WP LFS
                → DeviceClient.reflash_ep  → /api/reflash/ep → FlashEp::flashUf2
-               → SwdReflash → EP flash → EP reboot → SWD reconnect
+               → SwdReflash → EP flash → EP reboot → swd_test_connect
 
 Prerequisites: test_wifi must have run and stored wp_ip in context.
 
 Run with build/.venv/bin/python3 (needs 'requests').
 """
 
+import json
 import os
 import sys
+import time
 
 from harness.rtt import RttChannel, RttError
 
@@ -29,7 +31,6 @@ EP_UF2_FILENAME = "EP.uf2"
 
 
 def run(ocd, results, context):
-    # Preflight: 'requests' must be importable.
     try:
         from device_client import DeviceClient
     except ImportError as e:
@@ -66,19 +67,33 @@ def run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
 
         # ----------------------------------------------------------------
-        # ep_runs_after — SWD reconnect confirms EP alive after reboot
+        # ep_runs_after — swd_test_connect confirms EP alive after reboot
         # FlashEp::flashUf2 reboots EP at the end of programming.
         # ----------------------------------------------------------------
 
+        # Poll until EP finishes booting after reflash.
+        # EP's BSS memset during boot clobbers the SRAM test pattern, causing
+        # roundtrip_fail if we check too early.  Retry until ready or timeout.
         results.start("ep_runs_after")
-        try:
-            reply = vfy.command("swd_reconnect_after_boot", timeout=SWD_TIMEOUT)
-            if "PASS" in reply:
-                results.passed("ep_runs_after", reply)
-            else:
-                results.abort("ep_runs_after", reply)
-        except RttError as e:
-            results.abort("ep_runs_after", str(e))
+        deadline = time.monotonic() + SWD_TIMEOUT
+        reply = ""
+        while True:
+            try:
+                reply = vfy.command("swd_test_connect", timeout=5.0)
+                state = json.loads(reply).get("swd_test_connect", {}).get("state")
+                if state == "ready":
+                    results.passed("ep_runs_after", reply)
+                    break
+                if state == "inhibited":
+                    results.abort("ep_runs_after", reply)
+                    break
+            except (RttError, json.JSONDecodeError):
+                pass
+            if time.monotonic() >= deadline:
+                results.abort("ep_runs_after",
+                              f"EP not ready after {SWD_TIMEOUT:.0f}s: {reply}")
+                break
+            time.sleep(1.0)
 
         # ----------------------------------------------------------------
         # ep_cleanup — delete EP.uf2 from WP LFS after successful reflash
@@ -86,10 +101,11 @@ def run(ocd, results, context):
 
         results.start("ep_cleanup")
         try:
-            reply = vfy.command(f"lfs_delete {EP_UF2_FILENAME}", timeout=5.0)
-            if "PASS" in reply:
+            reply = vfy.command(f"filesystem_test_delete {EP_UF2_FILENAME}", timeout=5.0)
+            state = json.loads(reply).get("filesystem_test_delete", {}).get("state")
+            if state == "ok":
                 results.passed("ep_cleanup", reply)
             else:
                 results.failed("ep_cleanup", reply)
-        except RttError as e:
+        except (RttError, json.JSONDecodeError) as e:
             results.failed("ep_cleanup", str(e))

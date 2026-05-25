@@ -187,4 +187,19 @@ void generate_api_wifi_scan_json(char* buffer, size_t size);
  */
 void image_store_invalidate_scan_cache(void);
 
+/**
+ * Read raw bytes from a named flash region.
+ *
+ * Regions:
+ *   "wp-config"      — WP flash config partition (sizeof(flash_config_t) bytes)
+ *   "ep-image-store" — EP SPI flash IMAGE_STORE partition, read via SWD
+ *
+ * Reads up to len bytes starting at offset within the region, capped at buf_size.
+ * For ep-image-store, offset and len are rounded to 4-byte boundaries for SWD alignment.
+ *
+ * Returns bytes read (>= 0) or -1 on error (SWD failure, unknown region, etc.).
+ */
+int api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
+                   uint32_t offset, uint32_t len);
+
 #endif // API_HANDLERS_H

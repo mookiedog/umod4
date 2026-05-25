@@ -10,6 +10,7 @@
 # Prerequisites:
 #   - Debug probe (CMSIS-DAP) connected to WP SWD header
 #   - WP powered on (any firmware state is fine)
+#   - USB cable connected from WP to this machine (required for BOOTSEL enumeration)
 #
 # On success: RP2350 has rebooted into USB mass-storage (BOOTSEL) mode.
 # Run flash_WP afterwards to attach the device via usbipd and program it.
@@ -54,6 +55,26 @@ openocd \
 if [ $? -ne 0 ]; then
     echo "Error: OpenOCD failed. Check that the debug probe is connected and WP is powered."
     exit 1
+fi
+
+# On WSL2, verify that the RP2350 actually appeared on the Windows USB bus.
+# OpenOCD's 'sleep 5000' already gives the device 5s to enumerate, so this
+# check runs immediately after OpenOCD exits.
+if grep -qi "WSL2" /proc/version 2>/dev/null; then
+    echo "Verifying RP2350 Boot device appeared on USB..."
+    VERIFY_TIMEOUT=5
+    FOUND=""
+    for i in $(seq 1 $VERIFY_TIMEOUT); do
+        FOUND=$(usbipd.exe list 2>/dev/null | grep -E "^[0-9]+-[0-9]+" | grep "RP2350 Boot")
+        [ -n "$FOUND" ] && break
+        echo "  Waiting for RP2350 Boot device... (${i}/${VERIFY_TIMEOUT}s)"
+        sleep 1
+    done
+    if [ -z "$FOUND" ]; then
+        echo "Error: RP2350 Boot device did not appear on USB after ${VERIFY_TIMEOUT}s."
+        echo "Check that a USB cable is connected from the WP board to this machine."
+        exit 1
+    fi
 fi
 
 echo "WP is now in USB BOOTSEL mode."

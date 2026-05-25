@@ -1,4 +1,5 @@
 #include "api_handlers.h"
+#include "ep_flash_layout.h"
 #include "log_meta.h"
 #include "WiFiManager.h"
 #include "bsonlib.h"
@@ -896,7 +897,7 @@ void image_store_init(void)
     }
 
     // Slot 0 of the IMAGE_STORE partition holds the image_selector BSON doc.
-    const uint32_t IMAGE_STORE_ADDR = 0x10200000;
+    const uint32_t IMAGE_STORE_ADDR = EP_IMAGE_STORE_BASE;
     const size_t   READ_BUF_SIZE    = 4096;
     const uint32_t CHUNK            = 1024;  // max per read_target_mem call
 
@@ -1033,8 +1034,6 @@ void image_store_invalidate_scan_cache(void)
 static void do_image_store_scan(void)
 {
     SWDLock lock;
-    const uint32_t IMAGE_STORE_BASE = 0x10200000;
-    const uint32_t SLOT_SIZE        = 65536;
     const uint32_t HEADER_PROBE     = 512;   // bytes read per slot (enough for all fields)
     const uint32_t CHUNK            = 512;   // max per read_target_mem call (keep ≤ 1024)
 
@@ -1050,7 +1049,7 @@ static void do_image_store_scan(void)
     bool first = true;
 
     for (int slot = 1; slot < 128; slot++) {
-        uint32_t slot_addr = IMAGE_STORE_BASE + (uint32_t)slot * SLOT_SIZE;
+        uint32_t slot_addr = EP_IMAGE_STORE_BASE + (uint32_t)slot * EP_IMAGE_STORE_SLOT_SIZE;
 
         // Read first 4 bytes to check if empty (all 0xFF)
         uint32_t first_word = 0;
@@ -1234,4 +1233,55 @@ void generate_api_ep_stdio_json(char* buffer, size_t size, uint32_t client_offse
     snprintf(buffer + pos, size - pos,
              "\",\"next\":%lu,\"overflow\":%s}",
              (unsigned long)next, overflow ? "true" : "false");
+}
+
+// ---------------------------------------------------------------------------
+// Flash region read (backup endpoint)
+
+int api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
+                   uint32_t offset, uint32_t len)
+{
+    if (!buf || buf_size == 0 || len == 0) return 0;
+
+    if (strcmp(region, "wp-config") == 0) {
+        const uint32_t region_size = sizeof(flash_config_t);
+        if (offset >= region_size) return 0;
+        uint32_t actual = len;
+        if (actual > region_size - offset) actual = region_size - offset;
+        if (actual > (uint32_t)buf_size) actual = (uint32_t)buf_size;
+        memcpy(buf, (const uint8_t*)&g_flash_config + offset, actual);
+        return (int)actual;
+    }
+
+    if (strcmp(region, "ep-image-store") == 0) {
+        const uint32_t region_size = EP_IMAGE_STORE_SIZE;
+        if (offset >= region_size) return 0;
+        uint32_t actual = len;
+        if (actual > region_size - offset) actual = region_size - offset;
+        if (actual > (uint32_t)buf_size) actual = (uint32_t)buf_size;
+        actual &= ~3u;  // round down to 4-byte boundary for SWD
+        if (actual == 0) return 0;
+
+        SWDLock lock;
+        if (!swd || !swd->connect_target(0, false)) {
+            printf("api_flash_read: ep-image-store SWD connect failed\n");
+            return -1;
+        }
+
+        const uint32_t CHUNK = 512;
+        for (uint32_t off = 0; off < actual; off += CHUNK) {
+            uint32_t n = actual - off;
+            if (n > CHUNK) n = CHUNK;
+            if (!swd->read_target_mem(EP_IMAGE_STORE_BASE + offset + off,
+                                      (uint32_t*)(buf + off), n)) {
+                printf("api_flash_read: ep-image-store SWD read failed at offset %lu\n",
+                       (unsigned long)(offset + off));
+                return -1;
+            }
+        }
+        return (int)actual;
+    }
+
+    printf("api_flash_read: unknown region '%s'\n", region);
+    return -1;
 }

@@ -1,6 +1,5 @@
 #include "VfyTask.h"
 #include "wp_rtt.h"
-#include "wp_health.h"
 #include "lfsMgr.h"
 #include "umod4_WP.h"
 #include "swd_lock.h"
@@ -8,6 +7,8 @@
 #include "FlashBuffer.h"
 #include "swdreflash_binary.h"
 #include "FlashWp.h"
+#include "Gps.h"
+#include "log_ids.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -16,83 +17,274 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
 
-// Build timestamp from compile-time macros
+extern uint16_t ecuLiveLog[256];
+extern uint16_t ecuEventCounts[256];
+extern const char* get_ecu_metadata_str(void);
+extern bool        get_ecu_metadata_complete(void);
+extern Gps* gps;
+
+extern volatile uint32_t g_t1_oflo_prev_us;
+extern volatile uint32_t g_t1_oflo_last_us;
+
 #define VFY_BUILD_TIME __DATE__ " " __TIME__
 
 extern volatile uint32_t g_heap_remaining;
 extern volatile uint32_t g_heap_free;
-extern const char* get_wp_version(void);
+
+extern bool        wifi_is_connected(void);
+extern bool        wifi_is_ap_mode(void);
+extern const char* wifi_get_ssid(void);
+extern const char* wifi_get_ap_ssid(void);
+extern int32_t     wifi_get_rssi(void);
+extern bool        wifi_get_ip_address(char* out, size_t outlen);
 
 // -------------------------------------------------------------------------
-// Command handlers — each writes one JSON line then returns.
+// SWD boot-time connectivity state — set once by swd_boot_check(), read by
+// cmd_swd() and cmd_health().  States form a sequence: each value names the
+// step that failed, or "ready" if all steps passed.
+//
+// Future: if a /api/status HTTP endpoint is added, the underlying data
+// sources (gps->getHealth(), sdCard->state, lfs_mounted, lfs_reformatted,
+// lfs_mount_ms, FlashWp statics, ecuLiveLog/ecuEventCounts) are all
+// accessible to an HTTP handler directly.  The cmd_xxx() functions here are
+// specific to the VFY RTT channel and should not be re-used for HTTP.
 
-static void cmd_ping(void)
+typedef enum {
+    SWD_INHIBITED,       // SPARE2 grounded — WP→EP SWD disabled
+    SWD_CONNECT_FAIL,    // could not connect to running EP
+    SWD_ROUNDTRIP_FAIL,  // RAM write/read/verify failed
+    SWD_READY,           // full check passed, SWD operational
+} SwdBootState;
+
+static SwdBootState s_swd_state = SWD_CONNECT_FAIL;
+
+static const char* swd_state_str(SwdBootState s)
 {
-    vfy_printf("{\"ping\":\"PASS\"}\n");
+    switch (s) {
+        case SWD_INHIBITED:      return "inhibited";
+        case SWD_CONNECT_FAIL:   return "connect_fail";
+        case SWD_ROUNDTRIP_FAIL: return "roundtrip_fail";
+        case SWD_READY:          return "ready";
+        default:                 return "unknown";
+    }
 }
 
-static void cmd_version(void)
+// -------------------------------------------------------------------------
+// SD card hw state string — mirrors SdCardBase::state_t
+
+static const char* hw_state_str(SdCardBase::state_t s)
 {
-    vfy_printf("{\"version\":\"PASS\",\"bt\":\"%s\"}\n", VFY_BUILD_TIME);
+    switch (s) {
+        case SdCardBase::NO_CARD:     return "no_card";
+        case SdCardBase::MAYBE_CARD:  return "maybe_card";
+        case SdCardBase::POWER_UP:    return "power_up";
+        case SdCardBase::INIT_CARD:   return "init_card";
+        case SdCardBase::VERIFYING:   return "verifying";
+        case SdCardBase::OPERATIONAL: return "operational";
+        default:                      return "unknown";
+    }
 }
+
+// -------------------------------------------------------------------------
+// GPS presence string
+
+static const char* gps_presence_str(GpsPresence p)
+{
+    switch (p) {
+        case GPS_NOT_PRESENT:   return "not_present";
+        case GPS_MAYBE_PRESENT: return "pending";
+        case GPS_PRESENT:       return "present";
+        default:                return "unknown";
+    }
+}
+
+// -------------------------------------------------------------------------
+// emit_xxx() — write "key":{...} fragment, no outer braces, no newline.
+// Used by both cmd_xxx() (which wraps in { }\n) and cmd_status().
+
+static void emit_boot(void)
+{
+    vfy_printf("\"boot\":{\"slot\":%ld,\"target\":%ld,\"built\":\"%s\"}",
+               (long)FlashWp::get_boot_slot(),
+               (long)FlashWp::get_target_slot(),
+               VFY_BUILD_TIME);
+}
+
+static void emit_sd(void)
+{
+    if (!sdCard) {
+        vfy_printf("\"sd\":{\"state\":\"not_started\"}");
+        return;
+    }
+    vfy_printf("\"sd\":{\"state\":\"%s\",\"size_mb\":%lu}",
+               hw_state_str(sdCard->state),
+               (unsigned long)sdCard->getCapacityMB());
+}
+
+static void emit_filesystem(void)
+{
+    vfy_printf("\"filesystem\":{\"state\":\"%s\",\"reformatted\":%s,\"mount_ms\":%lu}",
+               lfs_mounted ? "mounted" : "not_mounted",
+               lfs_reformatted ? "true" : "false",
+               (unsigned long)lfs_mount_ms);
+}
+
+static void emit_gps(void)
+{
+    if (!gps) {
+        vfy_printf("\"gps\":{\"state\":\"not_started\"}");
+        return;
+    }
+
+    GpsHealth h;
+    gps->getHealth(&h);
+
+    const char* state;
+    if (h.presence == GPS_NOT_PRESENT) {
+        state = "not_present";
+    } else if (h.presence == GPS_MAYBE_PRESENT) {
+        state = "pending";
+    } else if (h.nav_pvt_count == 0) {
+        state = "pending";
+    } else if (h.nav_pvt_age_ms < 2000) {
+        state = "connected";
+    } else {
+        state = "stale";
+    }
+
+    int32_t tim_tp_age     = (h.tim_tp_age_ms     == UINT32_MAX) ? -1 : (int32_t)h.tim_tp_age_ms;
+    int32_t nav_timels_age = (h.nav_timels_age_ms == UINT32_MAX) ? -1 : (int32_t)h.nav_timels_age_ms;
+    int32_t nav_pvt_age    = (h.nav_pvt_age_ms    == UINT32_MAX) ? -1 : (int32_t)h.nav_pvt_age_ms;
+
+    vfy_printf("\"gps\":{\"state\":\"%s\",\"present\":\"%s\","
+               "\"rx_err\":%lu,\"cksum_err\":%lu,"
+               "\"tim_tp\":%lu,\"nav_timels\":%lu,\"nav_pvt\":%lu,\"unknown\":%lu,"
+               "\"tim_tp_age_ms\":%ld,\"nav_timels_age_ms\":%ld,\"nav_pvt_age_ms\":%ld}",
+               state,
+               gps_presence_str(h.presence),
+               (unsigned long)h.rx_errors,
+               (unsigned long)h.cksum_errors,
+               (unsigned long)h.tim_tp_count,
+               (unsigned long)h.nav_timels_count,
+               (unsigned long)h.nav_pvt_count,
+               (unsigned long)h.unknown_count,
+               (long)tim_tp_age,
+               (long)nav_timels_age,
+               (long)nav_pvt_age);
+}
+
+static void emit_ecu(void)
+{
+    const char* meta = get_ecu_metadata_complete() ? get_ecu_metadata_str() : "null";
+    uint32_t prev = g_t1_oflo_prev_us;
+    uint32_t last = g_t1_oflo_last_us;
+    uint32_t t1_period = (prev && last) ? (last - prev) : 0;
+    vfy_printf("\"ecu\":{\"eclk_khz\":%u,\"meta\":%s,"
+               "\"cpu_events\":%u,\"cpu_last\":%u,"
+               "\"t1_oflo\":%u,\"t1_period_us\":%lu,"
+               "\"aap_count\":%u,\"aap_last\":%u,"
+               "\"vm_count\":%u,\"vm_last\":%u,"
+               "\"l000c_count\":%u,\"l000c_last\":%u}",
+               (unsigned)ecuLiveLog[LOGID_EP_ECLK_KHZ_TYPE_U16],
+               meta,
+               (unsigned)ecuEventCounts[LOGID_ECU_CPU_EVENT_TYPE_U8],
+               (unsigned)ecuLiveLog[LOGID_ECU_CPU_EVENT_TYPE_U8],
+               (unsigned)ecuEventCounts[LOGID_ECU_T1_OFLO_TYPE_TS],
+               (unsigned long)t1_period,
+               (unsigned)ecuEventCounts[LOGID_ECU_RAW_AAP_TYPE_U8],
+               (unsigned)ecuLiveLog[LOGID_ECU_RAW_AAP_TYPE_U8],
+               (unsigned)ecuEventCounts[LOGID_ECU_RAW_VM_TYPE_U8],
+               (unsigned)ecuLiveLog[LOGID_ECU_RAW_VM_TYPE_U8],
+               (unsigned)ecuEventCounts[LOGID_ECU_ECU_ERROR_L000C_TYPE_U8],
+               (unsigned)ecuLiveLog[LOGID_ECU_ECU_ERROR_L000C_TYPE_U8]);
+}
+
+static void emit_swd(void)
+{
+    vfy_printf("\"swd\":{\"state\":\"%s\"}", swd_state_str(s_swd_state));
+}
+
+static void emit_wifi(void)
+{
+    if (wifi_is_ap_mode()) {
+        const char* ssid = wifi_get_ap_ssid();
+        vfy_printf("\"wifi\":{\"state\":\"ap_mode\",\"ssid\":\"%s\"}",
+                   ssid ? ssid : "");
+        return;
+    }
+    if (!wifi_is_connected()) {
+        vfy_printf("\"wifi\":{\"state\":\"not_connected\"}");
+        return;
+    }
+    const char* ssid = wifi_get_ssid();
+    int32_t rssi = wifi_get_rssi();
+    char ip[20] = {};
+    wifi_get_ip_address(ip, sizeof(ip));
+    vfy_printf("\"wifi\":{\"state\":\"connected\",\"ssid\":\"%s\",\"rssi\":%ld,\"ip\":\"%s\"}",
+               ssid ? ssid : "", (long)rssi, ip);
+}
+
+static void emit_heap(void)
+{
+    vfy_printf("\"heap\":{\"remaining\":%lu,\"free\":%lu}",
+               (unsigned long)g_heap_remaining,
+               (unsigned long)g_heap_free);
+}
+
+// -------------------------------------------------------------------------
+// Status command handlers — each wraps its emit_xxx() in { }\n.
+
+static void cmd_boot(void)      { vfy_printf("{"); emit_boot();       vfy_printf("}\n"); }
+static void cmd_sd(void)        { vfy_printf("{"); emit_sd();         vfy_printf("}\n"); }
+static void cmd_filesystem(void){ vfy_printf("{"); emit_filesystem(); vfy_printf("}\n"); }
+static void cmd_gps(void)       { vfy_printf("{"); emit_gps();        vfy_printf("}\n"); }
+static void cmd_ecu(void)       { vfy_printf("{"); emit_ecu();        vfy_printf("}\n"); }
+static void cmd_swd(void)        { vfy_printf("{"); emit_swd();        vfy_printf("}\n"); }
+static void cmd_wifi(void)       { vfy_printf("{"); emit_wifi();       vfy_printf("}\n"); }
+static void cmd_heap(void)       { vfy_printf("{"); emit_heap();       vfy_printf("}\n"); }
+
+// -------------------------------------------------------------------------
+// Status aggregator — sequential emit of all status commands.
 
 static void cmd_status(void)
 {
-    uint32_t uptime_ms = pdTICKS_TO_MS(xTaskGetTickCount());
-    vfy_printf("{\"status\":\"PASS\",\"uptime_ms\":%lu,\"heap_remaining\":%lu,\"heap_free\":%lu,\"lfs_mounted\":%d}\n",
-        (unsigned long)uptime_ms,
-        (unsigned long)g_heap_remaining,
-        (unsigned long)g_heap_free,
-        (int)lfs_mounted);
+    vfy_printf("{\"status\":{");
+    emit_boot();       vfy_printf(",");
+    emit_sd();         vfy_printf(",");
+    emit_filesystem(); vfy_printf(",");
+    emit_gps();        vfy_printf(",");
+    emit_ecu();        vfy_printf(",");
+    emit_swd();        vfy_printf(",");
+    emit_wifi();       vfy_printf(",");
+    emit_heap();
+    vfy_printf("}}\n");
 }
 
-static void cmd_lfs_delete(const char* arg)
-{
-    if (!arg || *arg == '\0') {
-        vfy_printf("{\"lfs_delete\":\"FAIL\",\"reason\":\"no_filename\"}\n");
-        return;
-    }
-    if (!lfs_mounted) {
-        vfy_printf("{\"lfs_delete\":\"FAIL\",\"reason\":\"not_mounted\"}\n");
-        return;
-    }
-    // Reject anything with path separators to prevent surprises.
-    if (strchr(arg, '/') || strchr(arg, '\\')) {
-        vfy_printf("{\"lfs_delete\":\"FAIL\",\"reason\":\"invalid_filename\"}\n");
-        return;
-    }
-    char path[64];
-    snprintf(path, sizeof(path), "/%s", arg);
-    int err = lfs_remove(&lfs, path);
-    if (err < 0) {
-        vfy_printf("{\"lfs_delete\":\"FAIL\",\"reason\":\"lfs_err\",\"err\":%d,\"file\":\"%s\"}\n", err, arg);
-        return;
-    }
-    vfy_printf("{\"lfs_delete\":\"PASS\",\"file\":\"%s\"}\n", arg);
-}
+// -------------------------------------------------------------------------
+// Operation command handlers.
 
-static void cmd_lfs_test(void)
+static void cmd_filesystem_test_rw(void)
 {
     if (!lfs_mounted) {
-        vfy_printf("{\"lfs_test\":\"FAIL\",\"reason\":\"not_mounted\"}\n");
+        vfy_printf("{\"filesystem_test_rw\":{\"state\":\"not_mounted\"}}\n");
         return;
     }
 
-    // Write a small temp file, read it back, verify, delete it.
     const char* path  = "/vfy_test.tmp";
     const char* magic = "vfy_ok";
 
     lfs_file_t f;
     int err = lfs_file_open(&lfs, &f, path, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
     if (err < 0) {
-        vfy_printf("{\"lfs_test\":\"FAIL\",\"reason\":\"open_write\",\"err\":%d}\n", err);
+        vfy_printf("{\"filesystem_test_rw\":{\"state\":\"open_write_failed\",\"err\":%d}}\n", err);
         return;
     }
     lfs_ssize_t written = lfs_file_write(&lfs, &f, magic, strlen(magic));
     lfs_file_close(&lfs, &f);
     if (written != (lfs_ssize_t)strlen(magic)) {
-        vfy_printf("{\"lfs_test\":\"FAIL\",\"reason\":\"write_short\",\"written\":%d}\n", (int)written);
+        vfy_printf("{\"filesystem_test_rw\":{\"state\":\"write_failed\",\"written\":%d}}\n", (int)written);
         lfs_remove(&lfs, path);
         return;
     }
@@ -100,7 +292,7 @@ static void cmd_lfs_test(void)
     char readbuf[16] = {};
     err = lfs_file_open(&lfs, &f, path, LFS_O_RDONLY);
     if (err < 0) {
-        vfy_printf("{\"lfs_test\":\"FAIL\",\"reason\":\"open_read\",\"err\":%d}\n", err);
+        vfy_printf("{\"filesystem_test_rw\":{\"state\":\"open_read_failed\",\"err\":%d}}\n", err);
         lfs_remove(&lfs, path);
         return;
     }
@@ -109,22 +301,40 @@ static void cmd_lfs_test(void)
     lfs_remove(&lfs, path);
 
     if (nread != (lfs_ssize_t)strlen(magic) || strcmp(readbuf, magic) != 0) {
-        vfy_printf("{\"lfs_test\":\"FAIL\",\"reason\":\"verify_mismatch\"}\n");
+        vfy_printf("{\"filesystem_test_rw\":{\"state\":\"verify_failed\"}}\n");
         return;
     }
 
-    vfy_printf("{\"lfs_test\":\"PASS\"}\n");
+    vfy_printf("{\"filesystem_test_rw\":{\"state\":\"ok\"}}\n");
+}
+
+static void cmd_filesystem_test_delete(const char* arg)
+{
+    if (!arg || *arg == '\0') {
+        vfy_printf("{\"filesystem_test_delete\":{\"state\":\"no_filename\"}}\n");
+        return;
+    }
+    if (!lfs_mounted) {
+        vfy_printf("{\"filesystem_test_delete\":{\"state\":\"not_mounted\"}}\n");
+        return;
+    }
+    if (strchr(arg, '/') || strchr(arg, '\\')) {
+        vfy_printf("{\"filesystem_test_delete\":{\"state\":\"invalid_filename\"}}\n");
+        return;
+    }
+    char path[64];
+    snprintf(path, sizeof(path), "/%s", arg);
+    int err = lfs_remove(&lfs, path);
+    if (err < 0) {
+        vfy_printf("{\"filesystem_test_delete\":{\"state\":\"error\",\"err\":%d,\"file\":\"%s\"}}\n", err, arg);
+        return;
+    }
+    vfy_printf("{\"filesystem_test_delete\":{\"state\":\"ok\",\"file\":\"%s\"}}\n", arg);
 }
 
 // -------------------------------------------------------------------------
-// EP_RUN helpers for test commands.
-//
-// NOTE: RP2040 SWD does not respond when RUN is held low — the debug port
-// requires the chip to be executing (at minimum, the bootrom).  All SWD
-// tests therefore pulse-reset EP and connect after release, not while held.
-//
-// ep_pulse_reset_and_wait() asserts EP_RUN for 10 ms then releases it and
-// waits 50 ms for the bootrom to start accepting SWD connections.
+// EP_RUN helpers.
+
 static void ep_pulse_reset_and_wait(void)
 {
     gpio_init(EP_RUN_PIN);
@@ -135,334 +345,223 @@ static void ep_pulse_reset_and_wait(void)
     vTaskDelay(pdMS_TO_TICKS(50));
 }
 
-// ep_release_reset() re-pulses EP_RUN to reboot EP cleanly after tests.
-static void ep_release_reset(void)
-{
-    ep_pulse_reset_and_wait();
-}
-
 // -------------------------------------------------------------------------
-// Phase 1 SWD tests — EP held in reset throughout.
+// swd_test_flash — full SWD flash programming cycle in a single command.
+// Proves the flash mechanism works end-to-end: load flasher stub to EP SRAM,
+// write a 4K test pattern to the scratch block, release EP from reset, then
+// re-run the SWD connectivity check to confirm EP booted cleanly.
+// The scratch address (last 64K of UNUSED_FLASH) is passed as the argument.
 
-static void cmd_swd_spare2_check(void)
+static void cmd_swd_test_flash(const char* arg)
 {
-    // SPARE2 (GPIO 5) must be floating/high for WP→EP SWD to work.
-    // When grounded, the Swd constructor sets swd_inhibit=true and
-    // connect_target() returns false unconditionally.
-    int level = gpio_get(SPARE2_PIN);
-    if (level) {
-        vfy_printf("{\"swd_spare2_check\":\"PASS\",\"level\":\"high\"}\n");
-    } else {
-        vfy_printf("{\"swd_spare2_check\":\"FAIL\",\"reason\":\"spare2_grounded\"}\n");
-    }
-}
-
-static void cmd_swd_connect_in_reset(void)
-{
-    SWDLock lock;
-    ep_pulse_reset_and_wait();
-    // halt=true: stop EP in bootrom so subsequent tests can safely read/write
-    // SRAM without racing the running CPU.
-    if (swd->connect_target(0, true)) {
-        vfy_printf("{\"swd_connect_in_reset\":\"PASS\",\"idcode\":\"0x0bc12477\"}\n");
-    } else {
-        vfy_printf("{\"swd_connect_in_reset\":\"FAIL\",\"reason\":\"connect_failed\"}\n");
-    }
-}
-
-static void cmd_swd_read_flash_in_reset(void)
-{
-    SWDLock lock;
-    if (!swd->connect_target(0, false)) {
-        vfy_printf("{\"swd_read_flash_in_reset\":\"FAIL\",\"reason\":\"connect_failed\"}\n");
-        return;
-    }
-    uint32_t buf[4];
-    if (!swd->read_target_mem(0x10000000u, buf, sizeof(buf))) {
-        vfy_printf("{\"swd_read_flash_in_reset\":\"FAIL\",\"reason\":\"read_failed\"}\n");
-        return;
-    }
-    bool blank = (buf[0] == 0xFFFFFFFFu && buf[1] == 0xFFFFFFFFu &&
-                  buf[2] == 0xFFFFFFFFu && buf[3] == 0xFFFFFFFFu);
-    vfy_printf("{\"swd_read_flash_in_reset\":\"PASS\",\"state\":\"%s\",\"w0\":\"0x%08lx\"}\n",
-        blank ? "blank" : "programmed", (unsigned long)buf[0]);
-}
-
-static void cmd_swd_ram_roundtrip(void)
-{
-    SWDLock lock;
-    if (!swd->connect_target(0, false)) {
-        vfy_printf("{\"swd_ram_roundtrip\":\"FAIL\",\"reason\":\"connect_failed\"}\n");
-        return;
-    }
-    // Use mid-SRAM: above where swdreflash loads (0x20000000) and below
-    // the bootrom stack (near top of SRAM).  DPSRAM (0x50100000) requires
-    // USB init which hasn't happened in bootrom.
-    static const uint32_t ADDR = 0x20020000u;
-    static const uint32_t PAT[4] = {
-        0xDEADBEEFu, 0x12345678u, 0xCAFEBABEu, 0xA5A5A5A5u
-    };
-    if (!swd->write_target_mem(ADDR, PAT, sizeof(PAT))) {
-        vfy_printf("{\"swd_ram_roundtrip\":\"FAIL\",\"reason\":\"write_failed\"}\n");
-        return;
-    }
-    uint32_t rb[4] = {};
-    if (!swd->read_target_mem(ADDR, rb, sizeof(rb))) {
-        vfy_printf("{\"swd_ram_roundtrip\":\"FAIL\",\"reason\":\"read_failed\"}\n");
-        return;
-    }
-    if (memcmp(PAT, rb, sizeof(PAT)) != 0) {
-        vfy_printf("{\"swd_ram_roundtrip\":\"FAIL\",\"reason\":\"mismatch\",\"got\":\"0x%08lx\"}\n",
-            (unsigned long)rb[0]);
-        return;
-    }
-    vfy_printf("{\"swd_ram_roundtrip\":\"PASS\"}\n");
-}
-
-static void cmd_swd_load_swdreflash(void)
-{
-    SWDLock lock;
-    if (!swd->connect_target(0, false)) {
-        vfy_printf("{\"swd_load_swdreflash\":\"FAIL\",\"reason\":\"connect_failed\"}\n");
-        return;
-    }
-    const uint32_t EP_RAM = 0x20000000u;
-    if (!swd->write_target_mem(EP_RAM, swdreflash_data, swdreflash_size)) {
-        vfy_printf("{\"swd_load_swdreflash\":\"FAIL\",\"reason\":\"write_failed\"}\n");
-        return;
-    }
-    // Read back first 64 bytes and compare to the source binary.
-    const uint32_t VERIFY_BYTES = 64u;
-    uint32_t rb[VERIFY_BYTES / 4];
-    if (!swd->read_target_mem(EP_RAM, rb, VERIFY_BYTES)) {
-        vfy_printf("{\"swd_load_swdreflash\":\"FAIL\",\"reason\":\"readback_failed\"}\n");
-        return;
-    }
-    if (memcmp(swdreflash_data, rb, VERIFY_BYTES) != 0) {
-        vfy_printf("{\"swd_load_swdreflash\":\"FAIL\",\"reason\":\"verify_mismatch\"}\n");
-        return;
-    }
-    vfy_printf("{\"swd_load_swdreflash\":\"PASS\",\"size\":%u}\n", (unsigned)swdreflash_size);
-}
-
-// -------------------------------------------------------------------------
-// Phase 2 — flash write test.
-//
-// swd_write_flash <hex_addr>
-//   Launches swdreflash (already loaded by swd_load_swdreflash), programs a
-//   4096-byte test pattern to <hex_addr> in EP flash, reads it back via XIP,
-//   and verifies the data.  EP is left running (swdreflash polling loop).
-//
-// Sequence mirrors FlashEp::flashSlot() but without an EP reset at the end.
-static void cmd_swd_write_flash(const char* arg)
-{
-    // Parse hex address from argument (e.g. "0x10FF0000")
     uint32_t scratch_addr = 0;
     if (arg == nullptr || *arg == '\0' ||
         sscanf(arg, "0x%lx", (unsigned long*)&scratch_addr) != 1) {
-        vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"bad_arg\",\"arg\":\"%s\"}\n",
-            arg ? arg : "");
+        vfy_printf("{\"swd_test_flash\":{\"state\":\"bad_arg\",\"arg\":\"%s\"}}\n",
+                   arg ? arg : "");
         return;
     }
 
-    SWDLock lock;
-
-    // EP is halted from Phase 1.  swdreflash is in RAM but not yet launched.
-    if (!swd->connect_target(0, true)) {
-        vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"connect_failed\"}\n");
-        return;
-    }
-
-    // Clear FBI struct so we can detect when swdreflash initialises it.
-    uint32_t zeros[sizeof(flashBufferInterface_1_t) / 4 + 1] = {};
-    if (!swd->write_target_mem(FLASH_BUFFER_INTERFACE_ADDR, zeros, sizeof(zeros))) {
-        vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"clear_fbi_failed\"}\n");
-        return;
-    }
-
-    // Launch swdreflash — same entry point and stack as production code.
-    if (!swd->start_target(0x20000001u, 0x20042000u)) {
-        vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"start_target_failed\"}\n");
-        return;
-    }
-
-    // Wait up to 1 s for swdreflash to write MAGIC_1 into the FBI struct.
-    flashBufferInterface_1_t fbi = {};
-    uint32_t t0 = time_us_32();
-    while (1) {
-        if (!swd->read_target_mem(FLASH_BUFFER_INTERFACE_ADDR,
-                                   (uint32_t*)&fbi, sizeof(fbi))) {
-            vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"fbi_read_failed\"}\n");
-            return;
-        }
-        if (fbi.magic == MAGIC_1) break;
-        if (time_us_32() - t0 > 1000000u) {
-            vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"flasher_timeout\"}\n");
-            return;
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
-    // Build a 4096-byte test pattern (one flash page, the minimum erase unit).
-    // Pattern: words counting up from a recognisable seed.
-    const uint32_t PAGE = 4096u;
-    const uint32_t NWORDS = PAGE / 4u;
-    static uint32_t pat[NWORDS];
-    for (uint32_t i = 0; i < NWORDS; i++)
-        pat[i] = 0xC0DE0000u + i;
-
-    // Write pattern to flasher's SRAM buffer in 1 KB chunks.
-    const uint32_t CHUNK = 1024u;
-    for (uint32_t off = 0; off < PAGE; off += CHUNK) {
-        if (!swd->write_target_mem(fbi.bufferStartAddr + off,
-                                    pat + off / 4, CHUNK)) {
-            vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"buf_write_failed\",\"off\":%lu}\n",
-                (unsigned long)off);
-            return;
-        }
-    }
-
-    // Issue MAILBOX_CMD_PGM.
-    mailbox_t mbox = {};
-    mbox.cmd         = MAILBOX_CMD_PGM;
-    mbox.buffer_addr = fbi.bufferStartAddr;
-    mbox.target_addr = scratch_addr;
-    mbox.length      = PAGE;
-    mbox.status      = 0;
-    if (!swd->write_target_mem(fbi.mailboxAddr, (uint32_t*)&mbox, sizeof(mbox))) {
-        vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"mailbox_write_failed\"}\n");
-        return;
-    }
-
-    // Wait up to 10 s for flasher to complete.
-    t0 = time_us_32();
-    while (1) {
-        if (!swd->read_target_mem(fbi.mailboxAddr,
-                                   (uint32_t*)&mbox, sizeof(mbox))) {
-            vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"mailbox_read_failed\"}\n");
-            return;
-        }
-        if (mbox.status > MAILBOX_STATUS_BUSY) break;
-        if (time_us_32() - t0 > 10000000u) {
-            vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"flash_timeout\"}\n");
-            return;
-        }
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-    if (mbox.status != MAILBOX_STATUS_SUCCESS) {
-        vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"flash_error\",\"status\":%ld}\n",
-            (long)mbox.status);
-        return;
-    }
-
-    // Verify: read first 16 bytes back from the XIP flash address.
-    uint32_t rb[4];
-    if (!swd->read_target_mem(scratch_addr, rb, sizeof(rb))) {
-        vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"readback_failed\"}\n");
-        return;
-    }
-    if (memcmp(pat, rb, sizeof(rb)) != 0) {
-        vfy_printf("{\"swd_write_flash\":\"FAIL\",\"reason\":\"verify_mismatch\","
-                   "\"got\":\"0x%08lx\",\"exp\":\"0x%08lx\"}\n",
-            (unsigned long)rb[0], (unsigned long)pat[0]);
-        return;
-    }
-
-    vfy_printf("{\"swd_write_flash\":\"PASS\",\"addr\":\"0x%08lx\"}\n",
-        (unsigned long)scratch_addr);
-}
-
-// -------------------------------------------------------------------------
-// Phase 3 — Release reset, verify SWD survives the transition.
-
-static void cmd_swd_release_reset(void)
-{
-    // Pulse EP_RUN to reboot EP, then wait for firmware to start.
+    // Phase 1: reset EP, halt it in bootrom, load flasher to SRAM.
+    // Must reset first so core 1 is not running during flash_exit_xip().
     ep_pulse_reset_and_wait();
-    // Extra 2 s for EP firmware to fully boot before the reconnect test.
+    {
+        SWDLock lock;
+        if (!swd->connect_target(0, true)) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"load_connect_failed\"}}\n");
+            return;
+        }
+        const uint32_t EP_RAM = 0x20000000u;
+        if (!swd->write_target_mem(EP_RAM, swdreflash_data, swdreflash_size)) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"load_write_failed\"}}\n");
+            return;
+        }
+        const uint32_t VERIFY_BYTES = 64u;
+        uint32_t rb[VERIFY_BYTES / 4];
+        if (!swd->read_target_mem(EP_RAM, rb, VERIFY_BYTES) ||
+            memcmp(swdreflash_data, rb, VERIFY_BYTES) != 0) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"load_verify_failed\"}}\n");
+            return;
+        }
+    }
+
+    // Phase 2: launch flasher (connect with reset), write scratch block.
+    {
+        SWDLock lock;
+
+        if (!swd->connect_target(0, true)) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"flash_connect_failed\"}}\n");
+            return;
+        }
+
+        uint32_t zeros[sizeof(flashBufferInterface_1_t) / 4 + 1] = {};
+        if (!swd->write_target_mem(FLASH_BUFFER_INTERFACE_ADDR, zeros, sizeof(zeros))) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"clear_fbi_failed\"}}\n");
+            return;
+        }
+
+        if (!swd->start_target(0x20000001u, 0x20042000u)) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"start_failed\"}}\n");
+            return;
+        }
+
+        flashBufferInterface_1_t fbi = {};
+        uint32_t t0 = time_us_32();
+        while (1) {
+            if (!swd->read_target_mem(FLASH_BUFFER_INTERFACE_ADDR,
+                                       (uint32_t*)&fbi, sizeof(fbi))) {
+                vfy_printf("{\"swd_test_flash\":{\"state\":\"fbi_read_failed\"}}\n");
+                return;
+            }
+            if (fbi.magic == MAGIC_1) break;
+            if (time_us_32() - t0 > 1000000u) {
+                vfy_printf("{\"swd_test_flash\":{\"state\":\"flasher_timeout\"}}\n");
+                return;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+
+        const uint32_t PAGE = 4096u;
+        const uint32_t NWORDS = PAGE / 4u;
+        static uint32_t pat[NWORDS];
+        for (uint32_t i = 0; i < NWORDS; i++)
+            pat[i] = 0xC0DE0000u + i;
+
+        const uint32_t CHUNK = 1024u;
+        for (uint32_t off = 0; off < PAGE; off += CHUNK) {
+            if (!swd->write_target_mem(fbi.bufferStartAddr + off,
+                                        pat + off / 4, CHUNK)) {
+                vfy_printf("{\"swd_test_flash\":{\"state\":\"buf_write_failed\",\"off\":%lu}}\n",
+                           (unsigned long)off);
+                return;
+            }
+        }
+
+        mailbox_t mbox = {};
+        mbox.cmd         = MAILBOX_CMD_PGM;
+        mbox.buffer_addr = fbi.bufferStartAddr;
+        mbox.target_addr = scratch_addr;
+        mbox.length      = PAGE;
+        mbox.status      = 0;
+        if (!swd->write_target_mem(fbi.mailboxAddr, (uint32_t*)&mbox, sizeof(mbox))) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"mailbox_write_failed\"}}\n");
+            return;
+        }
+
+        t0 = time_us_32();
+        while (1) {
+            if (!swd->read_target_mem(fbi.mailboxAddr,
+                                       (uint32_t*)&mbox, sizeof(mbox))) {
+                vfy_printf("{\"swd_test_flash\":{\"state\":\"mailbox_read_failed\"}}\n");
+                return;
+            }
+            if (mbox.status > MAILBOX_STATUS_BUSY) break;
+            if (time_us_32() - t0 > 10000000u) {
+                vfy_printf("{\"swd_test_flash\":{\"state\":\"flash_timeout\"}}\n");
+                return;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        if (mbox.status != MAILBOX_STATUS_SUCCESS) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"flash_error\",\"status\":%ld}}\n",
+                       (long)mbox.status);
+            return;
+        }
+
+        uint32_t rb[4];
+        if (!swd->read_target_mem(scratch_addr, rb, sizeof(rb))) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"readback_failed\"}}\n");
+            return;
+        }
+        if (memcmp(pat, rb, sizeof(rb)) != 0) {
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"verify_failed\","
+                       "\"got\":\"0x%08lx\",\"exp\":\"0x%08lx\"}}\n",
+                       (unsigned long)rb[0], (unsigned long)pat[0]);
+            return;
+        }
+    }
+
+    // Phase 3: release EP from reset, wait for boot, re-check connectivity.
+    ep_pulse_reset_and_wait();
     vTaskDelay(pdMS_TO_TICKS(2000));
-    vfy_printf("{\"swd_release_reset\":\"PASS\"}\n");
+
+    {
+        SWDLock lock;
+        if (!swd->connect_target(0, false)) {
+            s_swd_state = SWD_CONNECT_FAIL;
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"ep_reconnect_failed\"}}\n");
+            return;
+        }
+        static const uint32_t ADDR = 0x20040000u;  // SCRATCH_X — safe from Core 1 writes
+        static const uint32_t PAT[4] = {
+            0xDEADBEEFu, 0x12345678u, 0xCAFEBABEu, 0xA5A5A5A5u
+        };
+        uint32_t rb[4] = {};
+        if (!swd->write_target_mem(ADDR, PAT, sizeof(PAT)) ||
+            !swd->read_target_mem(ADDR, rb, sizeof(rb))    ||
+            memcmp(PAT, rb, sizeof(PAT)) != 0) {
+            s_swd_state = SWD_ROUNDTRIP_FAIL;
+            vfy_printf("{\"swd_test_flash\":{\"state\":\"ep_roundtrip_failed\"}}\n");
+            return;
+        }
+        s_swd_state = SWD_READY;
+    }
+
+    vfy_printf("{\"swd_test_flash\":{\"state\":\"ok\",\"addr\":\"0x%08lx\"}}\n",
+               (unsigned long)scratch_addr);
 }
 
-static void cmd_swd_reconnect_after_boot(void)
+// Re-run the SWD connectivity check against the running EP and update the
+// cached state.  Used by the OTA EP test suite after reflashing EP to
+// confirm the new image booted successfully.
+static void cmd_swd_test_connect(void)
 {
     SWDLock lock;
-    // halt=false: EP is running normally; we only want to verify SWD is live.
+
+    if (!gpio_get(SPARE2_PIN)) {
+        s_swd_state = SWD_INHIBITED;
+        vfy_printf("{\"swd_test_connect\":{\"state\":\"inhibited\"}}\n");
+        return;
+    }
+
     if (!swd->connect_target(0, false)) {
-        vfy_printf("{\"swd_reconnect_after_boot\":\"FAIL\",\"reason\":\"connect_failed\"}\n");
+        s_swd_state = SWD_CONNECT_FAIL;
+        vfy_printf("{\"swd_test_connect\":{\"state\":\"connect_fail\"}}\n");
         return;
     }
-    // Read the EP's IDCODE register as a simple live-target check.
-    uint32_t buf[1];
-    if (!swd->read_target_mem(0x10000000u, buf, sizeof(buf))) {
-        vfy_printf("{\"swd_reconnect_after_boot\":\"FAIL\",\"reason\":\"read_failed\"}\n");
+
+    static const uint32_t ADDR = 0x20040000u;  // SCRATCH_X — safe from Core 1 writes
+    static const uint32_t PAT[4] = {
+        0xDEADBEEFu, 0x12345678u, 0xCAFEBABEu, 0xA5A5A5A5u
+    };
+    uint32_t rb[4] = {};
+    if (!swd->write_target_mem(ADDR, PAT, sizeof(PAT)) ||
+        !swd->read_target_mem(ADDR, rb, sizeof(rb))    ||
+        memcmp(PAT, rb, sizeof(PAT)) != 0) {
+        s_swd_state = SWD_ROUNDTRIP_FAIL;
+        vfy_printf("{\"swd_test_connect\":{\"state\":\"roundtrip_fail\"}}\n");
         return;
     }
-    vfy_printf("{\"swd_reconnect_after_boot\":\"PASS\",\"w0\":\"0x%08lx\"}\n",
-        (unsigned long)buf[0]);
+
+    s_swd_state = SWD_READY;
+    vfy_printf("{\"swd_test_connect\":{\"state\":\"ready\"}}\n");
 }
 
 // -------------------------------------------------------------------------
-// Suite 5 — WiFi status.
-
-extern bool wifi_is_connected(void);
-extern bool wifi_is_ap_mode(void);
-extern const char* wifi_get_ssid(void);
-extern const char* wifi_get_ap_ssid(void);
-extern int32_t wifi_get_rssi(void);
-extern bool wifi_get_ip_address(char* out, size_t outlen);
-
-static void cmd_ap_status(void)
-{
-    if (!wifi_is_ap_mode()) {
-        vfy_printf("{\"ap_status\":\"FAIL\",\"reason\":\"not_ap_mode\"}\n");
-        return;
-    }
-    const char* ssid = wifi_get_ap_ssid();
-    if (!ssid || ssid[0] == '\0') ssid = "(unknown)";
-    vfy_printf("{\"ap_status\":\"PASS\",\"ssid\":\"%s\"}\n", ssid);
-}
-
-static void cmd_wifi_status(void)
-{
-    if (!wifi_is_connected()) {
-        vfy_printf("{\"wifi_status\":\"FAIL\",\"reason\":\"not_connected\"}\n");
-        return;
-    }
-    const char* ssid = wifi_get_ssid();
-    if (!ssid || ssid[0] == '\0') ssid = "(unknown)";
-    int32_t rssi = wifi_get_rssi();
-    char ip[20] = {};
-    bool have_ip = wifi_get_ip_address(ip, sizeof(ip));
-    if (!have_ip || ip[0] == '\0') {
-        vfy_printf("{\"wifi_status\":\"FAIL\",\"reason\":\"no_ip\",\"ssid\":\"%s\",\"rssi\":%ld}\n",
-            ssid, (long)rssi);
-        return;
-    }
-    vfy_printf("{\"wifi_status\":\"PASS\",\"ssid\":\"%s\",\"rssi\":%ld,\"ip\":\"%s\"}\n",
-        ssid, (long)rssi, ip);
-}
-
-// -------------------------------------------------------------------------
-static void cmd_ota_status(void)
+static void cmd_ota(void)
 {
     int32_t boot_slot   = FlashWp::get_boot_slot();
     int32_t target_slot = FlashWp::get_target_slot();
     bool    available   = FlashWp::get_ota_availability();
-    vfy_printf("{\"ota_status\":\"PASS\",\"boot_slot\":%ld,\"target_slot\":%ld,\"available\":%d}\n",
-        (long)boot_slot, (long)target_slot, (int)available);
-}
-
-// -------------------------------------------------------------------------
-static void cmd_health(const char *arg)
-{
-    health_report(arg && strcmp(arg, "-h") == 0);
+    vfy_printf("{\"ota\":{\"state\":\"%s\",\"boot_slot\":%ld,\"target_slot\":%ld}}\n",
+               available ? "available" : "unavailable",
+               (long)boot_slot, (long)target_slot);
 }
 
 // -------------------------------------------------------------------------
 static void cmd_unknown(const char* name)
 {
-    vfy_printf("{\"unknown\":\"FAIL\",\"cmd\":\"%s\"}\n", name);
+    vfy_printf("{\"unknown\":{\"cmd\":\"%s\"}}\n", name);
 }
 
 // -------------------------------------------------------------------------
@@ -492,29 +591,25 @@ static void vfy_task(void*)
                     buf[pos] = '\0';
                     rtrim(buf);
 
-                    // Split "cmd arg" on first space for commands that take arguments.
                     char* sp = strchr(buf, ' ');
                     const char* arg = sp ? sp + 1 : nullptr;
                     if (sp) *sp = '\0';
 
-                    if      (strcmp(buf, "ping")       == 0) cmd_ping();
-                    else if (strcmp(buf, "version")   == 0) cmd_version();
-                    else if (strcmp(buf, "status")    == 0) cmd_status();
-                    else if (strcmp(buf, "lfs_test")  == 0) cmd_lfs_test();
-                    else if (strcmp(buf, "lfs_delete") == 0) cmd_lfs_delete(arg);
-                    else if (strcmp(buf, "swd_spare2_check")        == 0) cmd_swd_spare2_check();
-                    else if (strcmp(buf, "swd_connect_in_reset")    == 0) cmd_swd_connect_in_reset();
-                    else if (strcmp(buf, "swd_read_flash_in_reset") == 0) cmd_swd_read_flash_in_reset();
-                    else if (strcmp(buf, "swd_ram_roundtrip")       == 0) cmd_swd_ram_roundtrip();
-                    else if (strcmp(buf, "swd_load_swdreflash")        == 0) cmd_swd_load_swdreflash();
-                    else if (strcmp(buf, "swd_write_flash")            == 0) cmd_swd_write_flash(arg);
-                    else if (strcmp(buf, "swd_release_reset")          == 0) cmd_swd_release_reset();
-                    else if (strcmp(buf, "swd_reconnect_after_boot")   == 0) cmd_swd_reconnect_after_boot();
-                    else if (strcmp(buf, "ap_status")                  == 0) cmd_ap_status();
-                    else if (strcmp(buf, "wifi_status")                == 0) cmd_wifi_status();
-                    else if (strcmp(buf, "ota_status")                 == 0) cmd_ota_status();
-                    else if (strcmp(buf, "health")                     == 0) cmd_health(arg);
-                    else                                      cmd_unknown(buf);
+                    if      (strcmp(buf, "boot")                    == 0) cmd_boot();
+                    else if (strcmp(buf, "sd")                      == 0) cmd_sd();
+                    else if (strcmp(buf, "filesystem")              == 0) cmd_filesystem();
+                    else if (strcmp(buf, "gps")                     == 0) cmd_gps();
+                    else if (strcmp(buf, "ecu")                     == 0) cmd_ecu();
+                    else if (strcmp(buf, "swd")                     == 0) cmd_swd();
+                    else if (strcmp(buf, "wifi")                    == 0) cmd_wifi();
+                    else if (strcmp(buf, "heap")                    == 0) cmd_heap();
+                    else if (strcmp(buf, "status")                  == 0) cmd_status();
+                    else if (strcmp(buf, "ota")                     == 0) cmd_ota();
+                    else if (strcmp(buf, "swd_test_connect")        == 0) cmd_swd_test_connect();
+                    else if (strcmp(buf, "swd_test_flash")          == 0) cmd_swd_test_flash(arg);
+                    else if (strcmp(buf, "filesystem_test_rw")      == 0) cmd_filesystem_test_rw();
+                    else if (strcmp(buf, "filesystem_test_delete")  == 0) cmd_filesystem_test_delete(arg);
+                    else                                                   cmd_unknown(buf);
 
                     pos = 0;
                 }
@@ -527,6 +622,39 @@ static void vfy_task(void*)
             vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
+}
+
+// -------------------------------------------------------------------------
+// Run the SWD boot-time connectivity check against the already-running EP.
+// Call from main after swd is created and g_swd_mutex exists.
+// No EP reset is performed — EP is already running normally at this point.
+void swd_boot_check(void)
+{
+    if (!gpio_get(SPARE2_PIN)) {
+        s_swd_state = SWD_INHIBITED;
+        return;
+    }
+
+    SWDLock lock;
+
+    if (!swd->connect_target(0, false)) {
+        s_swd_state = SWD_CONNECT_FAIL;
+        return;
+    }
+
+    static const uint32_t ADDR = 0x20040000u;  // SCRATCH_X — safe from Core 1 writes
+    static const uint32_t PAT[4] = {
+        0xDEADBEEFu, 0x12345678u, 0xCAFEBABEu, 0xA5A5A5A5u
+    };
+    uint32_t rb[4] = {};
+    if (!swd->write_target_mem(ADDR, PAT, sizeof(PAT)) ||
+        !swd->read_target_mem(ADDR, rb, sizeof(rb))    ||
+        memcmp(PAT, rb, sizeof(PAT)) != 0) {
+        s_swd_state = SWD_ROUNDTRIP_FAIL;
+        return;
+    }
+
+    s_swd_state = SWD_READY;
 }
 
 // -------------------------------------------------------------------------

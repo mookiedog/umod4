@@ -64,11 +64,20 @@ done
 
 if [ "$IS_WSL2" = true ]; then
     echo "Scanning for RP2350 Boot device via usbipd..."
-    USBIPD_LINE=$(usbipd.exe list 2>/dev/null | grep -E "^[0-9]+-[0-9]+" | grep "RP2350 Boot")
+    USBIPD_LINE=""
+    BOOTSEL_TIMEOUT=15
+    for i in $(seq 1 $BOOTSEL_TIMEOUT); do
+        USBIPD_LINE=$(usbipd.exe list 2>/dev/null | grep -E "^[0-9]+-[0-9]+" | grep "RP2350 Boot")
+        [ -n "$USBIPD_LINE" ] && break
+        echo "  Waiting for RP2350 Boot device... (${i}/${BOOTSEL_TIMEOUT}s)"
+        sleep 1
+    done
 
     if [ -z "$USBIPD_LINE" ]; then
-        echo "Error: No 'RP2350 Boot' device found in usbipd list."
-        echo "Make sure WP is in BOOTSEL mode (press&hold BOOTSEL while powering up)."
+        echo "Error: No 'RP2350 Boot' device found in usbipd list after ${BOOTSEL_TIMEOUT}s."
+        echo "Check:"
+        echo "  1. A USB cable is connected from the WP board to this machine."
+        echo "  2. WP is in BOOTSEL mode (run wp_enter_bootsel, or hold BOOTSEL while pressing RESET)."
         exit 1
     fi
 

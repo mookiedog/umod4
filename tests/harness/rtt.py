@@ -8,11 +8,82 @@ RttChannel wraps a TCP socket to one OpenOCD RTT server port.
 """
 
 import socket
+import threading
 import time
 
 
 class RttError(Exception):
     pass
+
+
+class RttCapture:
+    """
+    Passively drains one RTT channel into a line buffer.
+    Starts immediately and reconnects automatically when OpenOCD restarts.
+    Used to capture WP printf output (ch0) across all test suites.
+
+    Usage:
+        cap = RttCapture(port)       # starts background thread
+        cap.mark()                   # call before each suite
+        text = cap.since_mark()      # call after each suite
+        cap.stop()                   # call in finally block
+    """
+
+    def __init__(self, port):
+        self._port   = port
+        self._lines  = []
+        self._lock   = threading.Lock()
+        self._stop   = threading.Event()
+        self._mark   = 0
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def mark(self):
+        """Mark the start of a new capture window (call before each suite)."""
+        with self._lock:
+            self._mark = len(self._lines)
+
+    def since_mark(self):
+        """Return lines captured since the last mark() call, as a single string."""
+        with self._lock:
+            return "\n".join(self._lines[self._mark:])
+
+    def _run(self):
+        buf = b""
+        while not self._stop.is_set():
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1.0)
+                try:
+                    sock.connect(("localhost", self._port))
+                except (ConnectionRefusedError, socket.timeout, OSError):
+                    sock.close()
+                    time.sleep(0.5)
+                    continue
+                buf = b""
+                while not self._stop.is_set():
+                    sock.settimeout(0.1)
+                    try:
+                        chunk = sock.recv(256)
+                        if not chunk:
+                            break
+                        buf += chunk
+                        while b"\n" in buf:
+                            idx  = buf.index(b"\n")
+                            line = buf[:idx].decode(errors="replace").rstrip("\r")
+                            buf  = buf[idx + 1:]
+                            with self._lock:
+                                self._lines.append(line)
+                    except socket.timeout:
+                        pass
+                    except OSError:
+                        break
+                sock.close()
+            except Exception:
+                time.sleep(0.5)
 
 
 class RttChannel:
@@ -76,8 +147,9 @@ class RttChannel:
             self._sock.settimeout(min(remaining, 0.1))
             try:
                 chunk = self._sock.recv(256)
-                if chunk:
-                    self._buf += chunk
+                if not chunk:
+                    raise OSError("RTT socket closed by peer")
+                self._buf += chunk
             except socket.timeout:
                 pass
             finally:

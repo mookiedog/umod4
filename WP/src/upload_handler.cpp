@@ -7,6 +7,7 @@
  */
 
 #include "upload_handler.h"
+#include "ep_flash_layout.h"
 #include "file_io_task.h"
 #include "api_handlers.h"
 #include "FlashConfig.h"
@@ -231,13 +232,11 @@ static bool imgstore_engine_running(void)
 static uint32_t find_empty_slot(void)
 {
     SWDLock lock;
-    const uint32_t BASE = 0x10200000;
-    const uint32_t SLOT = 65536;
     if (!swd || !swd->connect_target(0, false)) return 0;
-    for (int i = 1; i < 128; i++) {
+    for (int i = 1; i < EP_IMAGE_STORE_SLOT_COUNT; i++) {
         uint32_t first_word = 0;
-        if (!swd->read_target_mem(BASE + (uint32_t)i * SLOT, &first_word, 4)) continue;
-        if (first_word == 0xFFFFFFFF) return BASE + (uint32_t)i * SLOT;
+        if (!swd->read_target_mem(EP_IMAGE_STORE_BASE + (uint32_t)i * EP_IMAGE_STORE_SLOT_SIZE, &first_word, 4)) continue;
+        if (first_word == 0xFFFFFFFF) return EP_IMAGE_STORE_BASE + (uint32_t)i * EP_IMAGE_STORE_SLOT_SIZE;
     }
     return 0;
 }
@@ -247,14 +246,11 @@ static uint32_t find_empty_slot(void)
 static uint32_t resolve_slot_addr_from_json(const char* body)
 {
     SWDLock lock;
-    const uint32_t BASE = 0x10200000;
-    const uint32_t SLOT = 65536;
-
     // Try "slot": N
     char val[32];
     if (json_get_str(body, "slot", val, sizeof(val))) {
         int n = atoi(val);
-        if (n >= 1 && n <= 127) return BASE + (uint32_t)n * SLOT;
+        if (n >= 1 && n < (int)EP_IMAGE_STORE_SLOT_COUNT) return EP_IMAGE_STORE_BASE + (uint32_t)n * EP_IMAGE_STORE_SLOT_SIZE;
     }
     // Also try integer form: "slot":N without quotes
     const char* sp = strstr(body, "\"slot\":");
@@ -262,7 +258,7 @@ static uint32_t resolve_slot_addr_from_json(const char* body)
         sp += 7; while (*sp == ' ') sp++;
         if (*sp >= '0' && *sp <= '9') {
             int n = atoi(sp);
-            if (n >= 1 && n <= 127) return BASE + (uint32_t)n * SLOT;
+            if (n >= 1 && n < (int)EP_IMAGE_STORE_SLOT_COUNT) return EP_IMAGE_STORE_BASE + (uint32_t)n * EP_IMAGE_STORE_SLOT_SIZE;
         }
     }
 
@@ -271,8 +267,8 @@ static uint32_t resolve_slot_addr_from_json(const char* body)
     if (!swd || !swd->connect_target(0, false)) return 0;
 
     static uint8_t hdr[256 + 4];
-    for (int i = 1; i < 128; i++) {
-        uint32_t slot_addr = BASE + (uint32_t)i * SLOT;
+    for (int i = 1; i < (int)EP_IMAGE_STORE_SLOT_COUNT; i++) {
+        uint32_t slot_addr = EP_IMAGE_STORE_BASE + (uint32_t)i * EP_IMAGE_STORE_SLOT_SIZE;
         uint32_t first_word = 0;
         if (!swd->read_target_mem(slot_addr, &first_word, 4)) continue;
         if (first_word == 0xFFFFFFFF) continue;
@@ -346,8 +342,6 @@ err_t upload_post_begin(void *connection, const char *uri,
                         int content_len, char *response_uri,
                         u16_t response_uri_len, u8_t *post_auto_wnd)
 {
-    UPLOAD_LOG("u_p_b: URI=%s, content_len=%d\n", uri, content_len);
-
     // Handle POST /api/config
     if (strcmp(uri, "/api/config") == 0) {
         if (content_len > CONFIG_POST_BODY_MAX - 1) {
@@ -434,7 +428,7 @@ err_t upload_post_begin(void *connection, const char *uri,
                 int si = atoi(slot_str);
                 if (si >= 1 && si <= 127) {
                     imgstore_upload_session.target_slot_addr =
-                        0x10200000u + (uint32_t)si * 65536u;
+                        EP_IMAGE_STORE_BASE + (uint32_t)si * EP_IMAGE_STORE_SLOT_SIZE;
                 }
             }
         }
@@ -1306,10 +1300,9 @@ void upload_post_finished(void *connection, char *response_uri, u16_t response_u
         printf("u_p_f: /api/image-store/selector: writing %d-entry selector (%zu bytes BSON)\n",
                entry_count, bson_size);
 
-        // Write to slot 0 (IMAGE_STORE_BASE)
-        const uint32_t IMAGE_STORE_BASE = 0x10200000;
+        // Write to slot 0 (image_selector)
         file_io_result_t io_result;
-        if (!file_io_flash_ep_slot(bson_buf, bson_size, nullptr, IMAGE_STORE_BASE,
+        if (!file_io_flash_ep_slot(bson_buf, bson_size, nullptr, EP_IMAGE_STORE_BASE,
                                    60000, &io_result) || !io_result.success) {
             UPLOAD_ERROR("u_p_f: /api/image-store/selector: flash failed\n");
             snprintf(response_uri, response_uri_len, "/upload_error.json");
@@ -1326,7 +1319,7 @@ void upload_post_finished(void *connection, char *response_uri, u16_t response_u
     if (imgstore_edit_session.active && imgstore_edit_session.connection == connection) {
         imgstore_edit_session.active = false;
 
-        uint32_t slot_addr = 0x10200000u + (uint32_t)imgstore_edit_session.slot_index * 65536u;
+        uint32_t slot_addr = EP_IMAGE_STORE_BASE + (uint32_t)imgstore_edit_session.slot_index * EP_IMAGE_STORE_SLOT_SIZE;
         printf("u_p_f: /api/image-store/edit: rewriting header for slot %d (0x%08X) name='%s'\n",
                imgstore_edit_session.slot_index, slot_addr, imgstore_edit_session.name);
 

@@ -2,8 +2,6 @@
 
 #include "umod4_WP.h"
 #include "lfsMgr.h"
-#include "health_sd.h"
-#include "health_fs.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "SdCardSDIO.h"
@@ -13,6 +11,10 @@ extern void pico_set_led(bool on);
 
 // SD card instance - owned by lfsMgr, created in startFileSystem()
 SdCardBase* sdCard = nullptr;
+
+// Filesystem mount state — readable by VfyTask for status reporting
+bool     lfs_reformatted = false;
+uint32_t lfs_mount_ms    = 0;
 
 // Helper function for checking if SD card is inserted
 bool sdcard_is_inserted(SdCardBase* card) {
@@ -355,8 +357,9 @@ bool comingOnline(SdCardBase* sdCard)
     #endif
 
     printf("%s: Filesystem mounted in %.2f milliseconds\n", __FUNCTION__, mountTime_us/1000.0);
-    lfs_mounted = true;  // Mark filesystem as successfully mounted
-    health_fs_set_mounted(reformatted, mountTime_us / 1000);
+    lfs_mounted      = true;
+    lfs_reformatted  = reformatted;
+    lfs_mount_ms     = mountTime_us / 1000;
 
     // Notify registered callback (e.g. Logger) that filesystem is now available
     if (on_mount_cb) {
@@ -372,7 +375,6 @@ bool comingOnline(SdCardBase* sdCard)
 // ----------------------------------------------------------------------------------
 void goingOffline(SdCardBase* sdCard)
 {
-    health_fs_set_unmounted();
     if (on_unmount_cb) {
         on_unmount_cb();
     }
@@ -434,7 +436,6 @@ void startFileSystem(void)
 
     // Create the SdCardSDIO object - uses proven SDIO_RP2350 library low-level functions
     sdCard = new SdCardSDIO(SD_CARD_PIN);
-    health_sd_init(sdCard);
 
     // Set up a configuration object required by the hotPlugManager so that it knows what SdCard instance to
     // use, and what callback routines to call when that SdCard instance is coming up or going down.

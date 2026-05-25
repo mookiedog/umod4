@@ -36,13 +36,12 @@
 #include "api_handlers.h"
 #include "ep_rtt_forwarder.h"
 #include "swd_lock.h"
-#include "health_boot.h"
-#include "health_gps.h"
 #include "lwip/netif.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/stats.h"
 #include "lwip/memp.h"
 #include "hardware/structs/systick.h"
+#include "hardware/structs/powman.h"
 
 
 
@@ -58,6 +57,7 @@ const char* SYSTEM_JSON = "{\"BT\":\"" __DATE__ " " __TIME__ "\"}";
 
 NeoPixelConnect* rgb_led;
 Logger* logger;
+uint16_t wp_reset_reason;
 Shell* dbgShell;
 Swd* swd;
 SemaphoreHandle_t g_swd_mutex;
@@ -83,6 +83,10 @@ void pico_set_led(bool led_on);
 //  * 16-bit log entries are stored in the full 16-bit word
 uint16_t ecuLiveLog[256];
 
+// Saturating count of each log ID received since boot, indexed by log ID.
+// Written only from isr_rx32; individual uint16_t reads are atomic on Cortex-M33.
+uint16_t ecuEventCounts[256];
+
 // Timestamp (time_us_32) of the most recent word received from the EP via UART.
 // Updated inside isr_rx32 on every log event. Zero until first event arrives.
 // Read by generate_api_ecu_live_data_json() to compute data age for the UI.
@@ -95,6 +99,12 @@ uint32_t get_last_ecu_data_us(void) { return g_last_ecu_data_us; }
 // is less than 1 second old. Used to guard image-store write operations.
 volatile uint32_t g_last_crank_event_us = 0;
 uint32_t get_last_crank_event_us(void) { return g_last_crank_event_us; }
+
+// Wall-clock arrival times (time_us_32) of the two most recent T1_OFLO events.
+// Written only from isr_rx32; difference gives the inter-event period (~131072 µs).
+// Both zero until two T1_OFLO events have been received.
+volatile uint32_t g_t1_oflo_prev_us = 0;
+volatile uint32_t g_t1_oflo_last_us = 0;
 
 #ifdef configSUPPORT_STATIC_ALLOCATION
 // If FreeRTOS static allocation is allowed, then we are required to
@@ -255,11 +265,18 @@ void __time_critical_func(isr_rx32)()
         uint8_t logId  = (rxWord >> 8)  & 0xFF;
         uint8_t data8  = (rxWord >> 16) & 0xFF;
         ecuLiveLog[logId] = (rxWord >> 16) & 0xFFFF;
+        if (ecuEventCounts[logId] < 0xFFFF) ecuEventCounts[logId]++;
         g_last_ecu_data_us = t0;
 
         // Track last crank event for engine-running detection
         if (logId == LOGID_ECU_CRANKREF_ID_TYPE_U8) {
             g_last_crank_event_us = t0;
+        }
+
+        // Track consecutive T1_OFLO arrival times for period measurement
+        if (logId == LOGID_ECU_T1_OFLO_TYPE_TS) {
+            g_t1_oflo_prev_us = g_t1_oflo_last_us;
+            g_t1_oflo_last_us = t0;
         }
 
         // Capture image_selector string from EP (sent once after the loading pass completes)
@@ -518,8 +535,11 @@ void boot_system(void* args)
     logger = &s_logger;
 
     // First thing we log is what version of the log we are generating:
-    uint8_t v = LOGID_GEN_WP_LOG_VER_VAL_V0;
+    uint8_t v = LOGID_GEN_WP_LOG_VER_V0_VAL;
     logger->logData(LOGID_GEN_WP_LOG_VER_TYPE_U8, LOGID_GEN_WP_LOG_VER_DLEN, &v);
+
+    // Log the reset reason captured at the top of main() before anything cleared it.
+    logger->logData(LOGID_WP_RESET_REASON_TYPE_U16, LOGID_WP_RESET_REASON_DLEN, (uint8_t*)&wp_reset_reason);
 
     // Register Logger as the filesystem mount/unmount listener
     lfs_register_mount_callbacks(
@@ -545,7 +565,6 @@ void boot_system(void* args)
 
     printf("%s: Starting the GPS\n", __FUNCTION__);
     startGps();
-    health_gps_init(gps);
 
     printf("%s: Starting the debug shell\n", __FUNCTION__);
     dbgShell = new Shell(&lfs);
@@ -586,6 +605,7 @@ void boot_system(void* args)
 
     g_swd_mutex = xSemaphoreCreateRecursiveMutex();
     configASSERT(g_swd_mutex);
+    swd_boot_check();
 
     printf("%s: Starting EP RTT forwarder\n", __FUNCTION__);
     ep_rtt_forwarder_init();
@@ -816,6 +836,9 @@ void check_tbyb()
 // That is where all the behind-the-scenes initialization of the runtime occurs.
 int main()
 {
+    // Read reset reason before anything can clear it.
+    wp_reset_reason = (uint16_t)(powman_hw->chip_reset >> 16);
+
     // Simulate having pullup resistors on EPLOG_RX_PIN and EPLOG_FLOWCTRL_PIN.
     // Any future PCB4.2 rev of the PCB must add pullups to both of these signals!
     gpio_init(EPLOG_RX_PIN);
@@ -856,7 +879,6 @@ int main()
     show_heap_stats(true);
 
     show_partition_info();
-    health_boot_init();
     check_tbyb();
 
     // Create a transient task to boot the rest of the system

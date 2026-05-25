@@ -27,6 +27,8 @@
 // Filesystem state
 extern lfs_t lfs;
 extern bool lfs_mounted;
+extern bool lfs_reformatted;
+extern uint32_t lfs_mount_ms;
 extern struct lfs_config lfs_cfg;
 
 // SD card instance (owned by lfsMgr)

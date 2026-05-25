@@ -103,6 +103,7 @@ static void cmd_connect(const char *ssid, const char *password)
     int err = cyw43_arch_wifi_connect_timeout_ms(
         ssid, password, CYW43_AUTH_WPA2_AES_PSK, 20000);
     if (err != 0) {
+        cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);  // reset STA so scan works after failure
         printf("ERR connect failed %d\n", err);
         return;
     }

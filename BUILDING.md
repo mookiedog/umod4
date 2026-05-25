@@ -1,58 +1,71 @@
 # Umod4 Project
 
-This document explains how to set up a development machine to build the umod4 project.
+This document explains how to set up a Windows development machine to build the umod4 project using WSL Linux.
+
+_If you are a linux person, I assume that you are familiar with a lot of what follows. These same instructions will work: just skip the Windows-specific stuff._
 
 To set expectations: if you are a Gen1 Aprilia enthusiast more than a software person, be warned that getting this project installed is not trivial.
 It is significantly more complicated than loading an Arduino sketch and going riding!
 
-One reason is that the project requires building tools and executables for four separate processors:
+One reason is that the project requires building tools and executables for four separate processors in a number of different programming languages:
 
 1) 68HC11 assembly code for ECU firmware
-1) C, C++ and assembly language for ARM Cortex M0+ for the EP processor (RP2040), and ARM Cortex M33 for the WP processor (RP2350).
-1) various C, C++, and Python tools that will run on the development host (an x86 PC or ARM Raspberry Pi)
+2) C, C++ and assembly language for ARM Cortex M0+ for the EP processor (RP2040), and ARM Cortex M33 for the WP processor (RP2350).
+3) various C, C++, and Python tools that will run on the development host (an x86 PC or ARM Raspberry Pi)
 
-So: the setup process will not be simple, but this guide is aimed at helping non-experts get it working.
+This guide is aimed at helping non-experts get it working.
+If you know what you are doing, you should have no problems.
+
+The goal: once everything is set up, rebuilding the entire system is as easy as pushing the `f7` key.
+
+## Troubleshooting
+
+If you hit a wall during this process, open an issue at [github.com/mookiedog/umod4/issues](https://github.com/mookiedog/umod4/issues).
+Use the issue reporting system to describe what step you're on, what problem you have encountered or what error you are seeing, and I'll try to help.
+Reporting the issues will help make the this setup process as simple and accurate as possible.
 
 ## Development System Overview
 
 Linux is __required__ to build this project.
-The development system has been tested on three different OS/machine combinations:
+The development system has been tested on two different OS/machine combinations:
 
 1) an x86-64 Windows machine running Ubuntu via Windows Subsystem for Linux (WSL2)
-1) an x86-64 machine running Linux Mint 22
-1) an ARM-based Raspberry Pi 5 running Raspberry Pi OS, its own flavor of Linux
+2) an x86-64 machine running Linux Mint 22
 
 Once the tools are installed, all project development occurs directly within the VS Code Integrated Development Environment (IDE): editing, building, flashing, and debugging of the hardware.
-VS Code is available for x86 and ARM, and runs under Windows WSL2 as well as other linux distros.
+VS Code runs under Windows WSL2 as well as other linux distros.
 
 ## Prep The Development System
 
 The list of the high-level steps to get a build system working on Windows is shown below.
 It's a long list, but it's not overly difficult, and it only needs to happen once.
 
-The instructions assume that you will be using a Windows machine and running WSL2 linux under Windows.
-If you choose to build the system on a pure Linux machine instead of Windows/WSL2, then you probably already know what you are doing and can figure out what you should be doing based on these instructions.
+The instructions assume that you will be using WSL2 linux under Windows.
+If you choose to install this system on a pure Linux machine instead of Windows/WSL2, then you probably already know what you are doing.
 
+The high-level steps:
 * [Install WSL2](#install-wsl2)
   * [Set up WSL Networking](#set-up-wsl-networking)
   * [Set up Windows Firewall](#add-windows-networking-firewall-rules)
-* [Windows Terminal App](#windows-terminal-app)
+* [Install Windows Terminal App](#windows-terminal-app)
 * [Install VS Code](#vs-code)
   * [Install VS Code extensions](#vs-code-extensions)
 * [Install Linux software](#linuxwsl2-software-installation)
   * [Host Tools](#install-linux-host-tools)
+  * [Avahi](#avahi)
+  * [Python](#python)
   * [Build a 68HC11 toolchain](#build-68hc11-toolchain) (required to create Aprilia ECU software)
-  * [Download ARM Tools](#downloading-arm-tools-for-x86-pc)
+  * [Download ARM Tools](#get-the-download-link)
   * Build [OpenOCD](#install-openocd) for on-chip debugging of EP/WP
-* [Prepare a 'projects' directory in Linux](#project-development-setup)
+* [Prepare a 'projects' directory](#project-development-setup)
   * [Install the Raspberry Pi Pico SDK](#rpi-sdk)
-  * [Install the umod4 project from github](#getting-the-umod4-source-code)
+  * [Install the umod4 repository from github](#getting-the-umod4-source-code)
 
-Once all the software is successfully installed, you will be able to use VS Code to:
+Once all the software is successfully installed, you will use VS Code to:
 
-* Configure the project build
-* Build the project software
-* Use a hardware debugger to flash the code onto a umod4 circuit board
+* [Configure the project build](#configuration)
+* [Build the project software](#building)
+* Use a [hardware debugger](#running-umod4) to run code onto a umod4 circuit board
 
 The following sections detail how to do the items listed, above.
 
@@ -84,14 +97,16 @@ By default, WSL creates its own virtual network for the WSL virtual machine.
 This means that the umod4 on the motorbike will not be able to see the server running on WSL.
 To fix this, we use 'mirrored' mode so that WSL shares the same IP address and network interface as your PC.
 
-To set up mirrored network mode in WSL, you need to edit the .wslconfig file in your Windows user directory (i.e. ``C:\users\<your-user-name>\.wslconfig'``) and add 'networkingMode=mirrored' under the [wsl2] section:
+To set up mirrored network mode in WSL, you need to edit the .wslconfig file in your Windows user directory (i.e. `C:\users\<your-user-name>\.wslconfig`).
+You can use Notepad or any other windows editor.
+Add a line 'networkingMode=mirrored' under the [wsl2] section:
 
 ```txt
 [wsl2]
 networkingMode=mirrored
 ```
 
-If there is no [wsl2] section in the file (or if the file does not exist), just add both the lines shown above.
+If there is no [wsl2] section in the file (or if the `.wslconfig` file does not exist), just add both the lines shown above.
 Write the file, then restart your WSL distribution by typing 'wsl --shutdown' in a PowerShell window.
 Open a new WSL bash terminal window to restart WLS, then type:
 
@@ -105,17 +120,6 @@ robin@Morty:~$ ipconfig.exe | findstr.exe IPv4
 The 'hostname' command reports what WSL thinks the IP address is.
 The 'ipconfig.exe' command reports what Windows thinks the IP address is.
 Both commands should now return the same IP address.
-
-An interesting point: you will notice in the example above that it is possible to execute Windows commands directly from the WSL command line.
-All you need to do is remember to append a '.exe' to the command name.
-It gets even better: you can even mix and match WSL and Windows in the same cmdline:
-
-```
-robin@Morty:~$ ipconfig.exe | grep IPv4
-   IPv4 Address. . . . . . . . . . . : 192.168.1.198
-```
-
-That example feeds the output of the Windows 'ipconfig.exe' command to the input of the WSL 'grep' command, doing exactly what you would expect!
 
 ### Add Windows Networking Firewall Rules
 
@@ -188,23 +192,17 @@ From this point on, when you type 'terminal' in the windows search box (the gree
 
 ![image](doc/images/terminal-app.jpg)
 
-Use a terminal window to get your new WSL2 Linux system.
-Get the system software up to date by typing:
-
-```bash
-sudo apt update
-sudo apt upgrade
-```
-
-The update/upgrade sequence is basically the same as a Windows Update scan.
-You need to type 'sudo' because installing software can only be performed by the super user.
-Use your new linux password when sudo asks for it.
-The first time around, these commands may install a bunch of updates.
-You should run this command pair once in a while to keep your Linux distro up-to-date for application updates and security patches.
+Once you have a single terminal window open, you can open more bash shells as separate tabs in the same terminal window.
+To try that, look at the top of the terminal window.
+You will see a 'Ubuntu' tab, a '+' icon, and an upside-down caret '^'.
+The '+' icon opens a new tab using your default choice of what to run in that tab.
+The upside-down caret lets you select what to run in the new tab.
+Selecting 'Ubuntu' opens a new WSL linux tab.
+You can even run a Windows Powershell or old-fashioned Windows Command Prompt, if needed.
 
 ### WSL and Windows Filesystems
 
-Both WSL and Windows run simultaneously, but each has its own separate filesystem.
+WSL and Windows run simultaneously, but each has its own separate filesystem.
 Even so, WSL2 arranges for the two filesystems get cross-mounted so that each one is accessible from the other.
 
 From Windows, the root of all the distros that may be installed is located at '\\\\wsl$' or '\\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
@@ -217,10 +215,17 @@ Your new linux home directory will be accessible by double clicking Ubuntu, then
 
 Having Linux access the Windows machine is just as easy.
 In Ubuntu, each Windows drive letter automatically gets mounted under '/mnt'.
-Doing an 'ls -l /mnt/c' in a linux terminal window will show you the contents of your top-level directory on Windows drive 'C:'.
+Doing an `ls -l /mnt/c` in a linux terminal window will show you the contents of your top-level directory on Windows drive 'C:'.
 
 Linux commands like 'cp' or 'mv' operate seamlessly on both filesystems.
 If you are a linux person, it's nice to be able to use linux commands like 'find' and 'grep' on the directories inside your Windows machine.
+
+### WSL and Windows Executables
+
+WSL is set to to run any Windows executable that is on your Windows PATH environment variable.
+WSL automatically includes all the directories on your Windows PATH variable to the end of your WSL PATH.
+To execute any Windows command in a WSL window, just type its full name including the Windows `.exe` suffix.
+For example, if you type `explorer.exe .` in a WSL terminal window, it will open a standard Windows explorer window pointing at your current directory (the `.` means the current directory).
 
 ## Windows Software Installation
 
@@ -234,7 +239,7 @@ One feature of VS Code is that it can edit from remote sources.
 If VS Code is running on a Windows machine, as a Windows executable, it will seamlessly connect to the 'remote' WSL2 linux environment on the same machine to allow you to edit the project files in the linux filesystem.
 
 Official Microsoft installation instructions are located [here](https://code.visualstudio.com/docs/setup/windows).
-If that link goes dead, just google 'installing VS Code', and find a Microsoft link that tells you how to do it.
+If that link goes dead, just google 'installing VS Code', and find a Microsoft link that tells you how to install VS Code.
 
 If you are developing strictly on a linux machine, VS Code can be installed as a native linux app using .deb or .rpm mechanisms.
 Google for the VS Code linux download page and there will be instructions.
@@ -271,12 +276,18 @@ VS Code will let you know if you need to install the linux versions later.
 
 ## Linux/WSL2 Software Installation
 
-Before starting the installation process for all of the Linux software, make sure your linux machine (virtual or otherwise!) is up to date. Use a terminal window talking to your linux machine:
+Before starting the installation process for all of the Linux software, make sure that all the software on your linux machine is up to date. Type the following into a terminal window:
 
 ```bash
 sudo apt update
 sudo apt upgrade
 ```
+
+The Linux "update/upgrade" sequence is basically the same as a "Windows Update" scan.
+You need to type 'sudo' because installing software can only be performed by the super user.
+Use your new linux password when sudo asks for it.
+The first time around, these commands may install a bunch of updates.
+You should run this command pair once in a while to keep your Linux distro up-to-date for application updates and security patches.
 
 ## Create a 'projects' Directory
 
@@ -292,38 +303,35 @@ mkdir ~/projects
 
 This project creates a few special executables to help build the software.
 Rather than put these tools in the standard system-wide installation locations,
-the build system will place them in a user-specific "~/.local/bin directory".
+the build system will place them in a user-specific ``~/.local/bin`` directory.
 
-If that directory does not exist, use your terminal window to create it via the following:
+The following command will create that directory if it does not already exist, then add it to your PATH:
 
 ```bash
 mkdir -p ~/.local/bin
-```
-
-The standard Ubuntu "\~/.profile" you got with your fresh distro will automatically add your new "\~/.local/bin" directory to the PATH variable.
-You will either need to close your terminal window and open a new one, or you can just re-run your .profile via:
-
-```bash
 . ~/.profile
 ```
 
-Check your PATH to verify that "~/.local/bin" directory is on it now:
+Check your PATH variable to verify that your ".local/bin" directory is part of it:
 
 ```bash
 echo $PATH|tr ':' '\n'|grep '[.]local'
 /home/<your-user-name>/.local/bin
 ```
 
-If your .profile is not adding "\~/.local/bin" to your path, edit your '\~/.profile' to add the following lines:
+If your .profile is not adding "\~/.local/bin" to your path, run the following commands to append the required lines to it:
 
 ```bash
-# set PATH so it includes user's private bin if it exists
+cat >> ~/.profile << 'EOF'
+# set PATH to include a user's private bin directory if it exists
 if [ -d "$HOME/.local/bin" ] ; then
     PATH="$HOME/.local/bin:$PATH"
 fi
+EOF
+. ~/.profile
 ```
 
-Log out and log in again (or type 'source \~/.profile'), and verify that '\~/.local/bin' is on your PATH.
+Re-run the previous 'echo' command to verify that your ``.local/bin`` directory is on your path now.
 
 ### Install Linux Host Tools
 
@@ -333,6 +341,14 @@ Install them as below:
 
 ```bash
 sudo apt install gcc g++ git unzip cmake jq ninja-build libncurses5-dev libncursesw5-dev
+```
+
+The ``gcc`` and ``g++`` compilers installed above generate code for your Linux __host__ machine, not the ARM chips on the Pico boards. The Pico SDK expects to find the host g++ compiler using an environment variable called 'CXX'.
+Run the following commands to add the appropriate CXX definition to your .bashrc file and update your environment:
+
+```bash
+echo "export CXX=/usr/bin/g++" >> ~/.bashrc
+. ~/.bashrc
 ```
 
 #### Avahi
@@ -361,21 +377,6 @@ Then restart WSL once from a PowerShell window for the change to take effect:
 
 ```powershell
 wsl --shutdown
-```
-
-#### GCC and G++
-
-The gcc and g++ compilers installed above generate code for your Linux host machine, not the ARM chips on the Pico boards. The Pico SDK expects to find the host g++ compiler using an environment variable called 'CXX'.
-Run the following command to add the appropriate CXX definition to your .bashrc file:
-
-```bash
-echo "export CXX=/usr/bin/g++" >> ~/.bashrc
-```
-
-Remember to re-run your .bashrc so that the change you just made takes effect:
-
-```bash
-. ~/.bashrc
 ```
 
 #### Python
@@ -483,137 +484,80 @@ If the system was not able to find the m68hc11-elf-as executable, make sure that
 
 ### Install ARM Cross-Compiler Toolchain
 
-ARM cross compilers are required to build code for the ARM processors used by this project.
-A cross-compiler runs on a particular machine architecture (like x86), but produces code for a different machine architecture (ARM, in this case).
-We will set things up so that your PC can have access to multiple versions of the ARM cross compiler toolchain.
+ARM cross-compilers are required to build code for the ARM processors used by this project.
+A cross-compiler runs on your x86 PC but generates code for the ARM processors inside the umod4.
 
-#### Preparing a Tools Directory
-
-We need to prepare a place for the cross-compilation tools to live.
-There are many ways to do that, but the project files are set up to expect the tools to end up in a particular hierarchy, as shown below:
+The build system expects the cross-compiler toolchains to be installed under `/opt/arm/arm-none-eabi/`, one subdirectory per version:
 
 ```text
-/opt
-└── arm
-    └── arm-none-eabi
-        └── 15.2.rel1
-
+/opt/arm/arm-none-eabi/
+    ├── 14.2.rel1    example of an older version (if any)
+    └── 15.2.rel1    the most recent version
 ```
 
-Subsequent versions like some hypothetical xx.y version would be downloaded into the same arm-none-eabi directory.
-All the installed versions would live side-by-side, as shown:
+This layout lets you switch toolchain versions by editing one CMake file.
+It also means that old projects aren't forced to upgrade when a new release comes out.
 
-```text
-/opt
-└── arm
-    └── arm-none-eabi
-        ├── 14.2.rel1
-        └── 15.2.rel1
-```
+#### Get the Download Link
 
-To set this up, (and assuming that the version you downloaded was named 15.2.rel1), type the following to create the basic directory structure:
+Go to the [Arm GNU Toolchain download page](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
 
-```bash
-sudo mkdir -p /opt/arm/arm-none-eabi/15.2.rel1
-```
+* __x86 PC / WSL2:__ scroll to _x86_64 Linux hosted cross toolchains_ → _AArch32 bare-metal target (arm-none-eabi)_ → the `.tar.xz` file.
 
-You will be able switch over to the new tools or switch back to the old ones by just changing an appropriate CMake toolchain file to point at the proper directory.
-This really helps keeping old projects alive when some new release breaks compatibility with your old project: the old project can just continue to use the old tools.
-
-Now that the toolchain has a place to live, it's time to get it, then install it.
-
-#### Downloading ARM Tools For x86 PC
-
-The umod4 uses a pair of ARM processors.
-They need a "cross compiler" which means that the compiler runs on an x86-style Intel processor, but generates code for an ARM processor.
-This next section explains how to get an appropriate ARM cross-compiler toolchain loaded onto your PC.
-
-__Important:__
-
-The build system for umod4 assumes that the various versions of the ARM toolchains that get installed on your system will be stored in a directory structure that looks like this:
-
-```text
-/opt/arm
-└── arm-none-eabi
-    ├── 14.2.rel1
-    └── 15.2.rel1
-```
-
-If you install the ARM toolchains somewhere else, you will need to symlink some directories to make your installation look like this, or else CMake will not be able to find them!
-
-To get the Arm cross-compiler software installed, start off by downloading an appropriate toolchain from the [Arm download page](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
-Click that link to view the download page.
-Assuming that your PC host is an x86 machine capable of running linux/WSL2, scroll down until you see the section called:
-
-```x86_64 Linux hosted cross toolchains```
-
-Inside that section, you will see a heading:
-
-```AArch32 bare-metal target (arm-none-eabi)```
-
-What you are looking for is:
-
-```arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz```
-
-Pictorially, you are looking for this entry on the webpage:
+The download page looks like this:
 
 ![image](./doc/images/arm-tools.jpg)
 
-The version number in the picture (above) may have changed since this document was last updated, so just locate the most recent version, whatever it is.
-__Don't download the file though__: right click the link and select "copy link" as shown above, then skip to [Downloading & Installing](#downloading--installing)
+__Don't click the link to download it.__
+Instead: Right-click the link and choose "Copy link address."
 
-#### Tools For ARM Raspberry Pi 5
+The filename tells you the version number — for example `arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz` means the version is `15.2.rel1`.
 
-If you are developing on a Pi 5, scroll down the ARM download page until you see the section titled 'AArch64 Linux hosted cross toolchains'. You want the version 'AArch32 bare-metal target (arm-none-eabi)', downloaded via the file 'arm-gnu-toolchain-15.2.rel1-aarch64-arm-none-eabi.tar.xz'. As with the x86 instructions, don't actually download the file, but right-click the link and select 'copy link'.
+#### Download and Install
 
-#### Downloading & Installing
-
-Assuming that the link to the toolchain on the ARM download website is still in your copy buffer, you can paste it onto your command line after typing the 'wget' command to avoid a bunch of typing in the example below.
-Make sure you are in the proper directory before downloading the code, then get it using 'wget':
+Set `ARM_VERSION` to the version string you just identified from the filename:
 
 ```bash
-cd /opt/arm/arm-none-eabi/15.2.rel1
-sudo wget https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz
+ARM_VERSION=15.2.rel1
+echo $ARM_VERSION
 ```
 
-The version number in the example above may not match what you downloaded.
-Regardless, if you downloaded some version, you should have a very large archive file in your 15.2.rel1 (or equivalent) directory:
+Double-check that the version that gets printed from the commands above matches the version on the download page.
+If not, retry those commands with the proper version name.
+
+Once ARM_VERSION is correct, execute the following:
 
 ```bash
-$ ls -l
--rw-r--r-- 1 root root 155499480 Dec 15 06:38 arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz
+sudo mkdir -p /opt/arm/arm-none-eabi/$ARM_VERSION
+cd /opt/arm/arm-none-eabi/$ARM_VERSION
 ```
 
-Next up is to extract the files from the archive that was downloaded.
-One problem (at least, for me) is that every single file in the entire archive is prepended with an annoyingly long initial directory name: "arm-gnu-toolchain-\*.\*Rel\*-x86_64-arm-none-eabi", where the '\*' characters represent specific version numbers.
-
-It might be useful if a system needed to install cross compilers for every single Arm architecture, but this project doesn't need that level of complexity.
-To get rid of that long pathname, extract files in the archive using the following command:
+For the next command, you will be pasting in the link that you copied from the download webpage a few steps back:
 
 ```bash
-# assuming you are still in /opt/arm/arm-none-eabi/15.2.rel1 from the previous download step:
-sudo tar xf ./arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz --strip-components 1
+sudo wget <paste the link you copied here>
 ```
 
-Once tar completes, the cross-compilation executable tools will be located at /opt/arm/arm-none-eabi/15.2.rel1/bin.
-Verify that the new tools are functioning by running gcc directly from its bin directory:
+If wget succeeded, type the following to extract the archive:
+
+```bash
+sudo tar xf arm-gnu-toolchain-*.tar.xz --strip-components 1
+```
+
+The `--strip-components 1` strips a very long directory prefix that ARM buries inside the archive.
+
+Once tar completes, verify the tools work by asking them what version they are:
 
 ```bash
 $ ./bin/arm-none-eabi-gcc --version
 arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
-Copyright (C) 2025 Free Software Foundation, Inc.
-```
 
-Do __not__ add the cross-compiler's bin directory to your PATH variable.
-By default, CMake will look for the most recent ARM compiler version it can find underneath /opt/arm/arm-none-eabi.
-
-Verify that GDB runs, too:
-
-```bash
 $ ./bin/arm-none-eabi-gdb --version
 GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git
-Copyright (C) 2024 Free Software Foundation, Inc.
 ```
+
+Do __not__ add the `bin` directory to your PATH.
+The umod4 project's build system will locate it automatically from the `/opt/arm/arm-none-eabi` structure.
 
 ### Install OpenOCD
 
@@ -773,27 +717,18 @@ git checkout 2.2.0
 ```
 
 Our new git tag now matches its directory name.
-Update the new branch so that it can do WiFi & Bluetooth on a Pico2 W:
+Update the new branch so that it can do WiFi, Bluetooth, and FreeRTOS:
 
 ```bash
-git submodule update --init
-```
-
-Now, make FreeRTOS for the Pico family available to any project using this version of the SDK:
-
-```bash
-git submodule add https://github.com/FreeRTOS/FreeRTOS-Kernel
-cd FreeRTOS-Kernel
-git submodule update --init
+git submodule update --init --recursive
 ```
 
 Finally, create an environment variable used by various parts of the build system to explain where to find the version of SDK they should be using:
 
 ```bash
 echo "export PICO_SDK_PATH=/home/$(id -u -n)/projects/pico-sdk/2.2.0" >> ~/.bashrc
+. ~/.bashrc
 ```
-
-Either close the terminal and reopen it, or execute ". \~/.bashrc" to make sure that the variable is defined in your current shell.
 
 #### Maintaining Multiple SDK Versions
 
@@ -808,21 +743,16 @@ In fact, there are benefits to leaving old versions around:
 
 By following the instructions above to load new SDK versions 'beside' the old ones, your system can contain multiple versions of the SDK and each project can use the version that it needs.
 
-## Picotool
-
-Picotool is a tool used by the SDK to perform various tasks while building project binaries.
-Building the umod4 project will automatically download the picotool sources,
-then build and install the tool in ~/.local/bin.
-The installation occurs in a fashion that will allow other pico SDK projects to reuse the same picotool binary.
+Note that if you ever upgrade the SDK at some point, you will need to re-export the PICO_SDK_PATH to point at the new version, as shown in the previous section.
 
 ## Getting the Umod4 Source Code
 
 Now that all the tools are in place, it is finally time to get the umod4 code loaded onto your system!
 
 Start by cloning the umod4 project onto your own machine.
-Still inside ~/projects, type:
 
 ```bash
+cd ~/projects
 git clone https://github.com/mookiedog/umod4.git
 ```
 
@@ -841,7 +771,6 @@ If you type 'ls' inside ~/projects, you should now see ~/projects/umod4.
 ```text
 projects
     ├── openocd
-    ├── pico-sdk
     └── umod4
 ```
 
@@ -993,10 +922,10 @@ The server program will reflash the umod4 OTA (Over The Air) using the EP.uf2 an
 ## Running Umod4
 
 The next step would be to flash the WP software onto onto a umod4 circuit board.
-But for that, you would need an umod4 circuit board and an ECU that has been modified to accept it.
-And that's where things will stop for now because I am not aware of anyone who has replicated the umod4 hardware yet.
+If you have a umod4 board, check out [GETTING_STARTED.md](./GETTING_STARTED.md) to see how to prep your ECU and get the software installed onto it.
 
-But if you do have hardware, check out [GETTING_STARTED.md](./GETTING_STARTED.md) to see how to prep your ECU and get the software installed onto it.
+If you do not have a board, there are still plenty of areas of the project to explore though.
+Check out the project's [README](./README.md) for a high-level tour of the various pieces.
 
 ## Final Thoughts
 

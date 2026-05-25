@@ -7,7 +7,7 @@
             // Requires setup_usb_wsl.ps1 to have been run once as Administrator.
             "label": "usbipd: attach debug probe",
             "type": "shell",
-            "command": "usbipd.exe attach --hardware-id 2e8a:000c --wsl",
+            "command": "out=$(usbipd.exe attach --hardware-id 2e8a:000c --wsl 2>&1); rc=$?; echo \"$out\"; [ $rc -eq 0 ] || echo \"$out\" | grep -q \"already attached to a client\"",
             "presentation": {
                 "reveal": "silent",
                 "panel": "shared",

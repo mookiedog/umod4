@@ -1,18 +1,18 @@
 # umod4 Test Plan
 
-## Outstanding
-
-Design resolved — see [System Health Reporting](#system-health-reporting) below.
-
 ## Goal
 
-Automated testing of umod4 hardware via a debug probe (CMSIS-DAP) connected to WP's SWD
-header.  The harness flashes firmware, resets the board, drives the WP_VFY RTT channel to
-run tests, and uses WP's HTTP API for bulk operations (firmware upload, OTA).
+The goal is for all testing to be performed from an automated test harness — including
+starting from a completely erased device, interacting with WP in AP mode via the ap_proxy,
+and exercising every firmware subsystem without any manual steps.
 
-Some tests (first-run flash, captive portal, WiFi UX, browser UI) cannot be driven
-programmatically and require a phone and manual steps.  These are documented in
-[Manual Tests](#6-manual-tests-wifi--first-run--ui).
+The harness uses a debug probe (CMSIS-DAP) connected to WP's SWD header to flash firmware
+and drive the WP_VFY RTT channel, and WP's HTTP API over WiFi for bulk operations (firmware
+upload, OTA).  The ap_proxy device provides a WiFi bridge that allows the harness to reach
+WP when it is in AP mode before home-WiFi credentials have been configured.
+
+A small number of tests — captive portal behaviour, browser UX, and phone OS interactions —
+are intrinsically impossible to automate and remain documented as manual procedures.
 
 ---
 
@@ -40,7 +40,7 @@ The guiding priority is:
 
 - PC to drive the automated testing
 - umod4 board
-    - WP connected to USB power
+    - WP connected to USB power **and USB cable to PC** (required for BOOTSEL flashing)
     - Micro SD Card inserted
     - SPARE2 pin must be floating (i.e. not grounded!)
     - Raspberry Pi SWD Debug probe connected to WP SWD header
@@ -96,7 +96,10 @@ any device that is redistributed, sold, or manufactured.
 ### `tools/wp_enter_bootsel`
 
 Puts WP into USB BOOTSEL (mass-storage) mode via SWD, without pressing any buttons.
-Requires the debug probe and OpenOCD.
+Requires the debug probe and OpenOCD.  **A USB cable must be connected from WP to the
+PC** — SWD can enter BOOTSEL mode but the RP2350 needs USB to enumerate as a mass-storage
+device.  On WSL2 the script verifies the RP2350 Boot device appeared in usbipd after
+triggering BOOTSEL, and exits non-zero with a clear error message if it does not.
 
 ```
 tools/wp_enter_bootsel build/WpUsbBoot/WpUsbBoot
@@ -119,13 +122,34 @@ server address).  Use it when you need a known-blank starting point.
 
 On WSL2 the script handles usbipd attach/re-attach automatically.
 
+### `tools/flash_EP`
+
+Flashes EP firmware over WiFi via WP's HTTP API.  Unlike `flash_WP`, no BOOTSEL mode or
+physical USB connection to EP is required — WP receives the image over WiFi and programs
+EP via its internal SWD connection.
+
+```bash
+tools/flash_EP umod4_garage                          # release mode (EP.uf2 beside script)
+tools/flash_EP umod4_garage ~/projects/umod4/build/EP  # dev mode
+```
+
+Prerequisites: WP must be running and connected to home WiFi.  The device is located via
+mDNS (`<device-name>.local`).  The SD card must be inserted (WP uses it as staging storage
+for the EP image before programming).
+
+This is the end-user tool for EP firmware updates.  The automated test harness exercises
+the same code path via `test_ota_ep` using the HTTP API directly.
+
 ### `tools/ap_proxy`
 
-Allows the test harness software running on a PC to connect to a umod4 running in AP (Access Point) mode, then supply the wifi credentials to allow the umod4 to connect to the home network.
+Allows the test harness software running on a PC to connect to a umod4 running in AP
+(Access Point) mode, then supply the WiFi credentials to allow the umod4 to connect to
+the home network.
 
-When powered up, ap_proxy continuously scans for WiFi SSIDs that correspond to a umod4 in AP mode.
-When one is found, it connects to the AP using the default AP password (same as SSID).
-The ap_proxy software uses its USB serial connection as a proxy for the host PC to send and receive wifi traffic to the umod4 in AP mode.
+When powered up, ap_proxy continuously scans for WiFi SSIDs that correspond to a umod4
+in AP mode.  When one is found, it connects to the AP using the default AP password
+(same as the SSID).  The ap_proxy software uses its USB serial connection as a proxy
+for the host PC to send and receive WiFi traffic to the umod4 in AP mode.
 
 ---
 
@@ -145,8 +169,8 @@ openocd -f interface/cmsis-dap.cfg -f target/rp2350.cfg \
     -c "rtt server start 9092 2"     # WP_SHELL  (human interactive shell)
 
 # Manual test command
-echo "ping" | nc -q1 localhost 9091
-# → {"ping":"PASS"}
+echo "boot" | nc -q1 localhost 9091
+# → {"boot":{"slot":1,"built":"May 12 2026 10:30:00"}}
 ```
 
 `nc` timeout behavior varies across Linux versions; always use `harness/rtt.py` in scripts.
@@ -155,7 +179,7 @@ echo "ping" | nc -q1 localhost 9091
 
 Once WiFi is running, the harness calls WP's HTTP server directly.  Used for bulk
 operations (firmware upload, file management) that are awkward over RTT.  The
-`wifi_status` VFY command returns the WP IP address — no address is ever hardcoded.
+`wifi` VFY command returns the WP IP address — no address is ever hardcoded.
 
 ---
 
@@ -172,119 +196,76 @@ bidirectional, ASCII on both sides — drive it with `nc` for manual debugging.
 
 **Response format (device → host):**
 
-```
-{"<cmd>":"PASS"[, key:value ...]}
-{"<cmd>":"FAIL","reason":"<why>"[, key:value ...]}
+Every response is a single-line JSON object terminated with `\n`.  The top-level key
+is always the command name; the value is an object with a `state` field plus any
+command-specific fields.
+
+Status commands report current state, no side effects:
+
+```json
+{"wifi":{"state":"connected","ssid":"MyNet","ip":"192.168.1.42","rssi":-55}}
+{"filesystem":{"state":"mounted","reformatted":false,"mount_ms":312}}
 ```
 
-Every response is a single-line JSON object.  The first key is always the command name.
-PASS responses include command-specific detail fields.  FAIL responses always include
-a `"reason"` field.
+Test commands report the operation result via `state`:
+
+```json
+{"swd_test_connect":{"state":"ready"}}
+{"swd_test_flash":{"state":"ok"}}
+```
+
+Error states use descriptive strings rather than a generic code:
+
+```json
+{"swd_test_flash":{"state":"flasher_timeout"}}
+{"filesystem":{"state":"not_mounted"}}
+```
+
+The `status` aggregate calls all status commands and wraps their output:
+
+```json
+{"status":{"boot":{...},"heap":{...},"wifi":{...},"swd":{...},...}}
+```
 
 **Important:** `vfy_printf()` uses `BLOCK_IF_FIFO_FULL`.  Only call it in response to an
-explicit test command — never unconditionally during boot or normal operation.  If no
+explicit command — never unconditionally during boot or normal operation.  If no
 debugger is draining the buffer, the calling task blocks permanently.  Boot status
 belongs on WP_STDIO.
 
-### Basic Command Set
+### VFY Command Naming Convention
 
-| Command | Response | Purpose |
-| --- | --- | --- |
-| `ping` | `{"ping":"PASS"}` | Proves channel is alive |
-| `version` | `{"version":"PASS","bt":"May 1 2026 16:39:26"}` | Proves firmware identity |
-| `status` | `{"status":"PASS","uptime_ms":5420,"heap_remaining":...,"lfs_mounted":1}` | Catches most boot regressions |
-| `lfs_test` | `{"lfs_test":"PASS"}` | LittleFS smoke test, self-contained |
-| `health` | `{"health":{"boot":{...},"sd":{...},"fs":{...}}}` | Full system health — all component states + per-component detail JSON |
+Commands follow a two-category scheme:
 
----
+- **`xxx`** — *status*: reads current state of subsystem `xxx`, no side effects.
+- **`xxx_test_<name>`** — *test*: active operation on subsystem `xxx`, named `<name>`.
+  Has a result; side effects are permitted.
+- **`status`** — *aggregate*: calls all status commands; returns their combined output.
 
-## System Health Reporting
+The `state` field is always present.  For status commands it describes the current
+condition (`"connected"`, `"mounted"`, `"ready"`, `"ap_mode"`, etc.).  For test commands
+it reports the outcome — `"ok"` or `"ready"` on success, or a failure reason string
+(`"flasher_timeout"`, `"not_mounted"`) on failure.  The test harness always makes the
+pass/fail decision based on `state`; the firmware only reports facts.
 
-Targeted VFY tests (ping, lfs_test, swd_* etc.) verify specific subsystems but cannot
-answer the broader question: *did everything come up correctly after a reflash or reboot?*
-The `health` VFY command answers this.
+### Full Command Set
 
-### `health` command
-
-Reads the current state of all registered firmware components and returns a single JSON
-object on one line.  Normal command/response — safe to poll repeatedly.
-
-```
-{"health":{"boot":{"state":"pass","slot":0,"target":0,"built":"May  1 2026 14:23:01"},"sd":{"state":"pass","size_mb":30436},"fs":{"state":"pass","reformatted":false,"mount_ms":312}}}
-```
-
-No overall `result` field.  The firmware reports per-component states as facts.
-The harness decides what constitutes pass or fail for the current test context —
-whether `na` is acceptable, whether `degraded` blocks a suite, etc.
-
-### Harness usage pattern after reflash/reboot
-
-1. Wait for `ping` to prove VFY channel is alive
-2. Poll `health` every few seconds until no component shows `---`, or overall timeout (60 s)
-3. Gate all further test suites on expected component states
-
-### Component states
-
-| State | Meaning | Harness treatment |
-| --- | --- | --- |
-| `pass` | Nominal | Counts as healthy |
-| `degraded` | Functional but sub-nominal | Harness decides per test |
-| `fail` | Unrecoverable error | Mark test suite failed |
-| `na` | Hardware not present | Excluded from health decision |
-| `disabled` | Turned off in config | Excluded (or warn) |
-| `---` | Still initialising, verdict pending | Keep polling |
-
-### Components tracked
-
-| Component | Key detail fields | Nominal |
-| --- | --- | --- |
-| `boot` | `slot`, `target`, `built` | `pass` always (reports facts) |
-| `sd` | `size_mb` | `pass` |
-| `lfs` | `used_kb`, `free_kb` | `pass` (`degraded` if nearly full) — *planned* |
-| `logger` | `bytes_written`, `filename`, `error_count` | `pass` — *planned* |
-| `ep` | `msg_count`, `ep_version` | `pass` (boot message received over UART) — *planned* |
-| `ecu` | `msg_count` | `pass` (log events arriving from EP) — *planned* |
-
-RTOS is implicit — if VFY responds to `ping`, the scheduler is running.
-
-### Implementation design
-
-Each component owns:
-
-1. A `ComponentState` enum value — read by `health_report()` without parsing JSON.
-2. A typed struct holding component-specific fields, updated independently by
-   whichever task owns that data.
-3. A `to_json()` function pointer that writes its JSON fragment directly to the VFY
-   channel via `vfy_printf()` — no fixed-size intermediate buffer, no size ceiling.
-
-```c
-typedef enum {
-    COMP_PASS, COMP_DEGRADED, COMP_FAIL,
-    COMP_NA, COMP_DISABLED, COMP_PENDING
-} ComponentState;
-
-typedef void (*health_json_fn)(void);
-
-typedef struct {
-    const char     *name;
-    ComponentState *state;    // for aggregate logic without JSON parsing
-    health_json_fn  to_json;  // called on demand when "health" fires
-} ComponentHealth;
-```
-
-`health_report()` in `WP/src/wp_health.cpp` walks the registered component list
-and assembles the JSON response incrementally — one component at a time.
-`BLOCK_IF_FIFO_FULL` on the VFY channel ensures no data is lost.
-
-Key files: `WP/src/wp_health.h`, `WP/src/wp_health.cpp`,
-`WP/src/health_boot.h/.cpp`, `WP/src/health_sd.h/.cpp`.
-
-### RTT access note
-
-All RTT channels are accessible via OpenOCD TCP throughout the entire test session
-(before provisioning, during AP mode, and after home-network connection).  OpenOCD
-is always running because SWD is required for flashing.  The ap_proxy plays no role
-in RTT access.
+| Command | Type | Purpose | Status |
+| --- | --- | --- | --- |
+| `status` | aggregate | All subsystem status in one response | ✓ passing |
+| `boot` | status | Boot slot, build timestamp | ✓ passing |
+| `heap` | status | Free heap statistics | ✓ passing |
+| `wifi` | status | WiFi state, SSID, IP address, RSSI | ✓ passing |
+| `swd` | status | Cached boot-time SWD connectivity state | ✓ passing |
+| `ep` | status | EP boot, UART data flowing, image loaded, ECU started | planned |
+| `ecu` | status | ECU E-clock frequency, event counts, metadata | ✓ passing |
+| `gps` | status | GPS fix state, satellite count | ✓ passing |
+| `sd` | status | SD card detected, capacity | ✓ passing |
+| `filesystem` | status | LFS mount state, mount time | ✓ passing |
+| `ota` | status | OTA boot slot, target slot | ✓ passing |
+| `swd_test_connect` | test | Live SWD round-trip: write/read pattern to EP SRAM | ✓ passing |
+| `swd_test_flash` | test | Full SWD flash cycle: load stub → write scratch block → release EP → verify alive | ✓ passing |
+| `filesystem_test_rw` | test | LFS write/read/verify/delete a temp file | ✓ passing |
+| `filesystem_test_delete <file>` | test | Delete named file from LFS | ✓ passing |
 
 ---
 
@@ -361,8 +342,8 @@ through WiFi provisioning to home-network connectivity (Suite 0).  At the end of
 phase the board has WP firmware running, a device name configured, home WiFi credentials
 stored in the config partition, and an IP address on the home network stored in `context`.
 
-**Phase 2 — Run All Tests:** With the board in a known provisioned state, run suites 1–5
-in order.  Each suite gates the next.  The EP image store suite (Suite 5) erases and
+**Phase 2 — Run All Tests:** With the board in a known provisioned state, run suites 1–6
+in order.  Each suite gates the next.  The EP image store suite (Suite 6) erases and
 restores only the EP image store, not WP config.
 
 After a completed run the board is left provisioned with the test WiFi credentials and
@@ -378,8 +359,8 @@ device name — the next run starts from Phase 1 and erases everything anyway.
 
 ### Running Order
 
-```
-test_provisioning → test_basic → test_ep_swd → test_wifi → test_ota_ep → test_ota_wp → test_image_store
+```text
+test_provisioning → test_basic → test_ecu → test_ep_swd → test_wifi → test_ota_ep → test_ota_wp → test_image_store
 ```
 
 `test_provisioning` runs first and gates all subsequent suites — if the device cannot
@@ -389,7 +370,7 @@ Each subsequent suite gates the next.  A failure in an earlier suite aborts the 
 
 ---
 
-### 0. Provisioning / First-Run (`test_provisioning.py`) — PLANNED
+### 0. Provisioning / First-Run (`test_provisioning.py`) ✓
 
 Brings a WP from **zero state** (flash fully erased — no firmware, no config partition,
 no partition table) through WiFi provisioning to home-network connectivity.  This is the
@@ -404,31 +385,26 @@ firmware state.
 
 | ID | Description | Destructive | Status |
 | --- | --- | --- | --- |
-| prov_enter_bootsel | Put WP into BOOTSEL mode via SWD (`wp_enter_bootsel`) | No | planned |
-| prov_erase_flash | Erase all WP flash and write latest WP.uf2 (`flash_WP -e`) | Yes | planned |
-| prov_ap_visible | ap_proxy SCAN confirms `umod4_XXXX` AP is visible within 30 s of boot | No | planned |
-| prov_ap_info | ap_proxy GET /api/info returns valid JSON in AP mode (confirms HTTP server is up) | No | planned |
-| prov_configure | ap_proxy POST device name + WiFi credentials to `/api/config` (name, SSID, password from runner args) | Yes | planned |
-| prov_ap_gone | ap_proxy confirms `umod4_XXXX` AP is no longer reachable; WP has left AP mode | No | planned |
-| prov_home_checkin | UDP listener on home network receives WP discovery broadcast; captures device IP into `context['wp_ip']` | No | planned |
-| prov_http_reachable | HTTP GET /api/info via `context['wp_ip']` returns valid JSON (confirms WP fully up on home network) | No | planned |
+| prov_enter_bootsel | Put WP into BOOTSEL mode via SWD (`wp_enter_bootsel`) | No | ✓ passing |
+| prov_flash_wp | Erase all WP flash and write latest WP.uf2 (`flash_WP -e`) | Yes | ✓ passing |
+| prov_ocd_restart | Start OpenOCD and wait for RTT; settle for post-flash boot cycle | No | ✓ passing |
+| prov_ap_boot | `wifi` VFY command confirms `state == "ap_mode"` | No | ✓ passing |
+| prov_ap_connect | ap_proxy scans for `umod4_XXXX`, connects using default password (= SSID) | No | ✓ passing |
+| prov_set_wifi | ap_proxy POST device name + WiFi credentials to `/api/config` | Yes | ✓ passing |
+| prov_wait_reboot | Wait for WP config-save reboot; reconnect OpenOCD | No | ✓ passing |
+| prov_wifi_connect | Poll `wifi` VFY command until `state == "connected"` (60 s timeout) | No | ✓ passing |
 
 **Notes:**
 
 - `--ssid`, `--password`, and `--device-name` are required `runner.py` arguments; never hardcoded.
-- `prov_configure` is the only step that writes to WP config flash.  It posts all three
-  fields (device name, SSID, password) in a single request, matching the `wifi_config.html`
-  form submission.
-- `prov_ap_gone` timeout is 20 s.  Failure means credentials were not accepted or WP failed
-  to reboot — abort suite immediately.
-- `prov_home_checkin` timeout is 60 s.  WP must obtain a DHCP address and emit a discovery
-  broadcast before the timer expires.
-- `context['wp_ip']` is populated by `prov_home_checkin` and used by all subsequent suites
-  for HTTP API access.  No IP address is ever hardcoded anywhere in the harness.
+- Default AP password = device name = AP SSID (e.g. `umod4_3BFF`).  Generated from MAC
+  bytes on first boot, written to both `ap_ssid` and `ap_password` in flash config.
+- `prov_set_wifi` posts all three fields (device name, SSID, password) in a single request
+  to `/api/config`.  WP saves to flash and reboots; the AP disappears immediately after.
 - After this suite passes WP is on the home network; subsequent suites communicate with it
   via RTT (SWD through the CMSIS-DAP) and HTTP (via `context['wp_ip']`).
-- EP is not flashed during provisioning.  Suite 2 (EP SWD) verifies the SWD path on a
-  blank EP; Suite 4a (OTA EP) flashes EP firmware via the WP HTTP API.
+- EP is not flashed during provisioning.  Suite 3 (EP SWD) verifies the SWD path; Suite 5a
+  (OTA EP) flashes EP firmware via the WP HTTP API.
 
 ---
 
@@ -437,102 +413,106 @@ firmware state.
 Verifies the VFY channel itself and basic firmware health.  Must pass before any other
 suite is meaningful.
 
-| ID       | Description                                 | Destructive | Status    |
-|----------|---------------------------------------------|-------------|-----------|
-| ping     | VFY channel round-trip                      | No          | ✓ passing |
-| version  | Build timestamp present in response         | No          | ✓ passing |
-| status   | Heap and LFS mount state reported           | No          | ✓ passing |
-| lfs_test | Write/read/verify/delete a temp file on LFS | No          | ✓ passing |
+| ID | Description | Destructive | Status |
+| --- | --- | --- | --- |
+| `boot` | Boot slot and build timestamp present in response | No | ✓ passing |
+| `heap` | Free heap reported | No | ✓ passing |
+| `sd` | SD card detected and operational; **fatal** if not — no OTA without it | No | ✓ passing |
+| `filesystem_test_rw` | Write/read/verify/delete a temp file on LFS; **fatal** if fails | No | ✓ passing |
 
 ---
 
-### 2. EP SWD (`test_ep_swd.py`) ✓
+### 2. ECU Status (`test_ecu.py`) ✓
 
-Verifies the WP↔EP SWD communication path.  Prerequisite for OTA testing (Suite 4)
-and image store testing (Suite 5).  Structured in three phases around the EP reset line
-so it works identically on blank and programmed boards.
+Verifies ECU firmware identity and correct operation.  Uses the `ecu` VFY command, which
+reports data forwarded from EP over the UART link.
 
-#### Phase 0 — Prerequisites
+ECU power is detected via E-clock frequency: if `eclk_khz` is below 1800 kHz the ECU is
+unpowered and all ECU-specific tests are skipped with a `ecu_not_powered` PASS result.
+Otherwise the suite waits 30 s for the ECU to accumulate log events before sampling.
 
-| ID               | Description                                                  | Destructive | Status    |
-|------------------|--------------------------------------------------------------|-------------|-----------|
-| swd_spare2_check | Verify SPARE2 pin is high (not grounded); gates entire suite | No          | ✓ passing |
+| ID | Description | Destructive | Status |
+| --- | --- | --- | --- |
+| `ecu_not_powered` | ECU unpowered (eclk_khz below threshold) — **aborts suite**, runner continues | No | ✓ passing |
+| `ecu_powered` | ECU powered; continues to accumulation phase | No | ✓ passing |
+| `ecu_metadata` | ECU firmware identity (build tag, date) present | No | ✓ passing |
+| `cpu_events` | Exactly 1 RESET CPU event, no others | No | ✓ passing |
+| `t1_overflows` | T1 timer overflows > 0 (ECU main loop running) | No | ✓ passing |
+| `aap_count` | AAP sample count (informational, always passes) | No | ✓ passing |
+| `vm_count` | VM event count (informational, always passes) | No | ✓ passing |
+| `error_l000c` | Error register at 0xL000C (informational, always passes) | No | ✓ passing |
 
-If `swd_spare2_check` fails the suite aborts immediately.  SPARE2 must be ungrounded for
-WP→EP SWD to function.  (SPARE2 is grounded only when an external debug probe is attached to EP.)
-
-#### Phase 1 — EP halted in bootrom (blank-board safe)
-
-`reset halt` is required (not plain `halt`).  EP is halted in bootrom for the duration.
-
-| ID                      | Description                                                    | Destructive | Status    |
-|-------------------------|----------------------------------------------------------------|-------------|-----------|
-| swd_connect_in_reset    | Pulse EP_RUN, halt EP in bootrom, verify IDCODE                | No          | ✓ passing |
-| swd_read_flash_in_reset | Read EP flash at 0x10000000, report blank (0xFF) vs programmed | No          | ✓ passing |
-| swd_ram_roundtrip       | Write/read test pattern to SRAM scratch (0x20020000)           | No          | ✓ passing |
-| swd_load_swdreflash     | Load SwdReflash binary to EP RAM, verify readback (no launch)  | No          | ✓ passing |
-
-#### Phase 2 — Flash write (must pass before Phase 3)
-
-Uses `__unused_flash_start__` / `__unused_flash_size__` from `EP/src/memmap_eprom.ld`.
-The last 64K block of the unused region is used as the scratch target.
-
-| ID              | Description                                                               | Destructive | Status    |
-|-----------------|---------------------------------------------------------------------------|-------------|-----------|
-| swd_write_flash | Launch SwdReflash, write pattern to unused-flash scratch, verify readback | No*         | ✓ passing |
-
-*Writes to the last 64K of `UNUSED_FLASH` — does not touch EP code, image store, or active slots.
-
-#### Phase 3 — Release reset, verify SWD survives transition
-
-| ID                       | Description                            | Destructive | Status    |
-|--------------------------|----------------------------------------|-------------|-----------|
-| swd_release_reset        | Pulse EP_RUN, wait 2s for EP to boot   | No          | ✓ passing |
-| swd_reconnect_after_boot | Reconnect SWD, verify still responsive | No          | ✓ passing |
-
-`swd_reconnect_after_boot` failure is a hard abort — SWD unresponsive after boot
-means a bad image or hung EP.
-
-**Notes:**
-
-- All EP access goes through WP's SWD infrastructure: harness → VfyTask (RTT) → WP SWD → EP.
-  These tests therefore also implicitly verify WP's SWD driver.
-- Suite 2 only verifies the SWD path — it makes no claims about EP firmware behaviour
-  (that is Suite 4's job).  A blank board can pass all of Suite 2.
-- SRAM scratch at 0x20020000 (mid-SRAM, above SwdReflash load area at 0x20000000,
-  below the bootrom stack near top of SRAM).
+**Note:** This suite requires the motorcycle ECU to be installed and the engine running
+(or at least cranking) to advance past `ecu_powered`.  On a bench without an ECU the
+suite terminates cleanly at `ecu_not_powered`.
 
 ---
 
-### 3. WiFi / Connectivity (`test_wifi.py`) ✓
+### 3. EP SWD (`test_ep_swd.py`) ✓
+
+Verifies the WP↔EP SWD communication path and the SWD flash-programming mechanism.
+Prerequisite for OTA EP testing (Suite 5a) and EP image store testing (Suite 6).
+
+All EP access goes through WP's SWD driver: harness → VfyTask (RTT) → WP SWD → EP.
+These tests therefore also implicitly verify WP's SWD infrastructure.  A blank EP board
+can pass all three tests.
+
+SPARE2 must be floating for WP→EP SWD to function.  If SPARE2 is grounded (indicating
+an external probe is attached to EP), the `swd` command reports `state == "inhibited"`
+and the suite aborts.
+
+| ID | Description | Destructive | Status |
+| --- | --- | --- | --- |
+| `swd` | Cached boot-time SWD connectivity state; aborts suite if not `"ready"` | No | ✓ passing |
+| `swd_test_connect` | Live SWD round-trip: write test pattern to EP SRAM, read back, verify | No | ✓ passing |
+| `swd_test_flash` | Full SWD flash cycle: load flasher stub → write 64K scratch block → release EP from reset → verify EP alive | No* | ✓ passing |
+
+*Writes to the last 64K of `UNUSED_FLASH` (derived from `__unused_flash_start__` and
+`__unused_flash_size__` symbols in EP.elf).  Does not touch EP code, image store, or
+active partition slots.
+
+**Why `swd_test_flash` matters:** It proves the SWD flash-programming mechanism works
+end-to-end from WP to EP and back.  This is the underpinning of both EP OTA (`test_ota_ep`)
+and EP image store manipulation (`test_image_store`): if `swd_test_flash` fails, those
+suites cannot be trusted.
+
+**`swd_test_flash` implementation:** A single firmware VFY command that runs the full
+three-phase sequence internally: load flasher stub into EP SRAM → program scratch block →
+release EP from reset → reconnect SWD and verify EP alive.  The scratch address is derived
+by the test harness from `__unused_flash_start__` and `__unused_flash_size__` ELF symbols
+and passed as an argument: `swd_test_flash 0x<addr>`.
+
+---
+
+### 4. WiFi / Connectivity (`test_wifi.py`) ✓
 
 Verifies WiFi association and HTTP server operation.  Required before OTA tests.
-`wifi_status` stores `wp_ip` in `context` for subsequent suites.
+The `wifi` command stores `wp_ip` in `context` for subsequent suites.
 
-| ID           | Description                                          | Destructive | Status    |
-|--------------|------------------------------------------------------|-------------|-----------|
-| wifi_status  | WiFi SSID, RSSI, and IP reported via RTT VFY channel | No          | ✓ passing |
-| http_status  | HTTP GET /api/info returns valid JSON                | No          | ✓ passing |
-| http_sd_info | HTTP GET /api/sd-info returns total_mb/used_mb       | No          | ✓ passing |
+| ID | Description | Destructive | Status |
+| --- | --- | --- | --- |
+| `wifi` | WiFi state, SSID, RSSI, and IP reported; aborts if not `"connected"` | No | ✓ passing |
+| `http_status` | HTTP GET `/api/info` returns valid JSON | No | ✓ passing |
+| `http_sd_info` | HTTP GET `/api/sd-info` returns `total_mb`/`used_mb` | No | ✓ passing |
 
-`wifi_status` failure aborts the suite; HTTP tests require a known IP.
+`wifi` failure aborts the suite; HTTP tests require a known IP stored in `context['wp_ip']`.
 
 ---
 
-### 4. OTA Reflash
+### 5. OTA Reflash
 
 Highest-stakes tests — a failure here means a potentially unrecoverable board.
-**Prerequisites:** Suite 2 (EP SWD) and Suite 3 (WiFi) must pass first.
+**Prerequisites:** Suite 3 (EP SWD) and Suite 4 (WiFi) must pass first.
 
-#### 4a. EP Reflash (`test_ota_ep.py`) — PARTIAL
+#### 5a. EP Reflash (`test_ota_ep.py`) ✓
 
 `harness → DeviceClient → HTTP upload → WP LFS → FlashEp::flashUf2 → SwdReflash → EP flash → EP reboot`
 
-| ID             | Description                                                      | Destructive | Status    |
-|----------------|------------------------------------------------------------------|-------------|-----------|
-| ep_reflash     | Upload EP.uf2 and trigger reflash via HTTP API                   | Yes*        | ✓ passing |
-| ep_runs_after  | SWD reconnect confirms EP is alive after reflash+reboot          | No          | ✓ passing |
-| ep_cleanup     | Delete EP.uf2 from WP LFS via lfs_delete VFY command             | No          | ✓ passing |
+| ID | Description | Destructive | Status |
+| --- | --- | --- | --- |
+| `ep_reflash` | Upload EP.uf2 and trigger reflash via HTTP API | Yes* | ✓ passing |
+| `ep_runs_after` | `swd_test_connect` confirms EP is alive after reflash+reboot | No | ✓ passing |
+| `ep_cleanup` | `filesystem_test_delete EP.uf2` removes file from WP LFS | No | ✓ passing |
 
 *Reflashes EP with the same firmware — exercises the full flash write path without
 changing behaviour.  No snapshot/restore needed since the image is identical.
@@ -546,17 +526,17 @@ changing behaviour.  No snapshot/restore needed since the image is identical.
 - **Future:** extend `ep_runs_after` to verify ECU log data stream events after reboot,
   confirming the flashed image actually initialises (not just that SWD can connect).
 
-#### 4b. WP Self-Reflash (`test_ota_wp.py`) — IMPLEMENTED
+#### 5b. WP Self-Reflash (`test_ota_wp.py`) ✓
 
-| ID                 | Description                                                               | Destructive | Status      |
-|--------------------|---------------------------------------------------------------------------|-------------|-------------|
-| wp_ota_status      | Pre-flight: verify OTA available; report boot_slot and target_slot        | No          | implemented |
-| wp_ota_upload      | Upload WP.uf2 to device LFS via HTTP                                      | Yes         | implemented |
-| wp_ota_flash_start | Trigger reflash; confirm OTA task began (`{"wp_ota":"FLASH_START",...}`)  | Yes         | implemented |
-| wp_ota_flash_done  | Wait for flash complete (`{"wp_ota":"FLASH_DONE",...}`, max 120s)         | Yes         | implemented |
-| wp_ota_tbyb_reboot | Confirm reboot imminent (`{"wp_ota":"TBYB_REBOOT"}`), reconnect OpenOCD   | Yes         | implemented |
-| wp_ota_verify      | After reboot, ping + version check on VFY channel                         | No          | implemented |
-| wp_ota_cleanup     | Delete WP.uf2 from LFS via lfs_delete VFY command                         | No          | implemented |
+| ID | Description | Destructive | Status |
+| --- | --- | --- | --- |
+| `wp_ota_status` | Pre-flight: `ota` command confirms OTA available; captures `boot_slot` and `target_slot` | No | ✓ passing |
+| `wp_ota_upload` | Upload WP.uf2 to device LFS via HTTP | Yes | ✓ passing |
+| `wp_ota_flash_start` | Trigger reflash; confirm OTA task began (`{"wp_ota":"FLASH_START",...}`) | Yes | ✓ passing |
+| `wp_ota_flash_done` | Wait for flash complete (`{"wp_ota":"FLASH_DONE",...}`, max 120 s) | Yes | ✓ passing |
+| `wp_ota_tbyb_reboot` | Confirm reboot imminent (`{"wp_ota":"TBYB_REBOOT"}`), reconnect OpenOCD | Yes | ✓ passing |
+| `wp_ota_verify` | After reboot, `boot` + `ota` check on VFY channel; confirm new boot slot | No | ✓ passing |
+| `wp_ota_cleanup` | `filesystem_test_delete WP.uf2` removes file from LFS | No | ✓ passing |
 
 **VFY milestone sequence** emitted by `ota_flash_task.cpp`:
 
@@ -569,25 +549,26 @@ call `ocd.reconnect()` **without** resetting WP — a debug reset would abort TB
 
 ---
 
-### 5. EP Image Store (`test_image_store.py`) — PLANNED
+### 6. EP Image Store (`test_image_store.py`) — PLANNED
 
 Verifies the EP image store at `0x10200000` (image selector BSON doc + 32KB image slots).
-**Prerequisite:** Suite 2 (EP SWD) must pass first.
+**Prerequisite:** Suite 3 (EP SWD) must pass first, specifically `swd_test_flash` which
+proves the SWD flash-programming mechanism that this suite depends on.
 
-| ID                      | Description                                                        | Destructive | Status  |
-|-------------------------|--------------------------------------------------------------------|-------------|---------|
-| imgstore_snapshot       | Read image store selector slot (0x10200000, 32KB) via SWD          | No          | planned |
-| imgstore_selector_valid | Parse selector BSON, verify structure and at least one image entry | No          | planned |
-| imgstore_slot_read      | Read slot 1 raw binary, verify not all-0xFF (slot populated)       | No          | planned |
-| imgstore_erase_selector | Erase selector slot, verify EP falls back to limp mode             | Yes         | planned |
-| imgstore_restore        | Restore selector from snapshot, verify EP reloads correctly        | Yes         | planned |
+| ID | Description | Destructive | Status |
+| --- | --- | --- | --- |
+| `imgstore_snapshot` | Read image store selector slot (0x10200000, 32KB) via SWD | No | planned |
+| `imgstore_selector_valid` | Parse selector BSON, verify structure and at least one image entry | No | planned |
+| `imgstore_slot_read` | Read slot 1 raw binary, verify not all-0xFF (slot populated) | No | planned |
+| `imgstore_erase_selector` | Erase selector slot, verify EP falls back to limp mode | Yes | planned |
+| `imgstore_restore` | Restore selector from snapshot, verify EP reloads correctly | Yes | planned |
 
 "Limp mode" = EP runs with blank image store — engine will not run but board is recoverable.
 The erase/restore cycle proves the snapshot mechanism works before it protects OTA tests.
 
 ---
 
-## 6. Manual Tests (WiFi / First-Run / UI)
+## Manual Tests (WiFi / First-Run / UI)
 
 These tests cover first-time setup, WiFi UX, and browser behaviour that cannot be
 driven by RTT or HTTP alone.  A phone is required.
@@ -614,12 +595,13 @@ on a nearby phone or laptop.
 
 **Fail indicators:**
 
-- `wp_enter_bootsel` non-zero → check debug probe is connected and powered
+- `wp_enter_bootsel` non-zero → check debug probe is connected and WP is powered
+- `wp_enter_bootsel` "RP2350 Boot device did not appear" → check USB cable is connected from WP to PC
 - `flash_WP` "No RP2350 Boot device found" → re-enter BOOTSEL and retry immediately
 - SSID never appears → firmware running but WiFiManager not starting; check RTT
 
-**Automation potential:** Flash steps already scripted.  AP appearance not yet checked
-automatically (needs `wifi_status` VFY poll after boot).
+**Automation potential:** Flash steps already scripted.  AP appearance checked via
+`wifi` VFY poll after boot (`state == "ap_mode"`).
 
 ---
 
@@ -636,7 +618,7 @@ should remain visible throughout.
 **Pass:** SSID stable for 60 s.
 **Fail:** SSID disappears and reappears — thrash loop still present.
 
-**Automation potential:** Could poll `wifi_status` VFY for 60 s after a `wifi_reset`
+**Automation potential:** Could poll `wifi` VFY for 60 s after a `wifi_reset`
 VFY command (not yet implemented).
 
 ---
@@ -816,8 +798,8 @@ need not be saved.
 
 | Test | Current status | What is needed to automate |
 | --- | --- | --- |
-| T1 first-run flash | Flash steps scripted; AP appearance not checked | Add `wifi_status` VFY poll after boot |
-| T2 AP stability | Manual | Add `wifi_reset` VFY command; poll `wifi_status` for 60 s |
+| T1 first-run flash | Flash steps scripted; AP appearance not checked | `wifi` VFY poll after boot (`state == "ap_mode"`) |
+| T2 AP stability | Manual | Add `wifi_reset` VFY command; poll `wifi` for 60 s |
 | T3 Captive portal | Manual — always | Requires real phone OS; cannot be automated |
 | T4 Settings page | Manual | HTTP fetch + HTML parse in test suite |
 | T5 Status page | Manual | HTTP fetch + HTML parse in test suite |
@@ -831,3 +813,6 @@ Highest-value additions:
 2. **UDP discovery test** — a Python socket listener can verify T6 end-to-end.
 3. **HTML structure checks** — `urllib.request` fetch + regex covers T4/T5 structural
    verification without a browser.
+4. **`ep` status command** — reports EP boot state, UART data flowing, image loaded,
+   ECU started.  Enables automated verification of the EP→WP data path without
+   requiring a running engine.

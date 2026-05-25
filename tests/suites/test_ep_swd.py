@@ -1,142 +1,102 @@
 """
-EP SWD test suite — verifies the WP↔EP SWD communication path.
+EP SWD test suite — verifies the WP↔EP SWD communication path and flash
+programming mechanism.
 
-Phase 0: Prerequisites (SPARE2 check).
-Phase 1: EP halted in bootrom — blank-board safe, pure SWD driver.
-Phase 2: Flash write — prove we can program EP flash before releasing EP.
-Phase 3: Release reset — verify EP boots and SWD survives the transition.
+swd             — cached boot-time connectivity state (set at WP startup).
+swd_test_connect — live round-trip: write/read test pattern to EP SRAM.
+swd_test_flash  — full flash cycle: load flasher stub → write 4K scratch block
+                   → release EP from reset → re-verify connectivity.
+
+swd_test_flash proves the SWD flash-programming mechanism works end-to-end.
+It is the underpinning of EP OTA (test_ota_ep) and EP image store tests.
 """
 
+import json
 import os
+
 from harness.rtt import RttChannel, RttError
 from harness.elf_symbols import read_symbols, ElfError
 
 
 WP_VFY_CHANNEL = 1
 
-# Generous timeout for SWD operations (connect + memory read/write)
-SWD_TIMEOUT = 15.0
-# Flash write can take up to ~5 s (erase + program + verify)
-FLASH_TIMEOUT = 30.0
+SWD_TIMEOUT   = 15.0
+FLASH_TIMEOUT = 60.0   # load + erase + program + release + reconnect
 
-# Path to EP ELF, relative to the project root (where runner.py lives).
 EP_ELF = os.path.join(os.path.dirname(__file__), "../../build/EP/EP")
 
 
 def _unused_flash_scratch():
     """
-    Read __unused_flash_start__ and __unused_flash_size__ from EP.elf and
-    return the address of the last 64K block in the unused region.
+    Return the address of the last 64K block in EP's unused flash region.
+    Reads __unused_flash_start__ and __unused_flash_size__ from EP.elf.
     Raises ElfError on any failure.
     """
     syms = read_symbols(EP_ELF, ["__unused_flash_start__", "__unused_flash_size__"])
     start = syms["__unused_flash_start__"]
     size  = syms["__unused_flash_size__"]
-    # Use the last 64K slot so forward-allocation from the region start is safe.
     return start + size - 64 * 1024
+
+
+def _state(reply, key):
+    """Parse reply JSON and return data[key]['state'], or None on error."""
+    try:
+        return json.loads(reply).get(key, {}).get("state")
+    except (json.JSONDecodeError, AttributeError):
+        return None
 
 
 def run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
 
         # ----------------------------------------------------------------
-        # Phase 0 — Prerequisite: SPARE2 must not be grounded
+        # swd — cached boot-time connectivity state
         # ----------------------------------------------------------------
 
-        results.start("swd_spare2_check")
+        results.start("swd")
         try:
-            reply = vfy.command("swd_spare2_check", timeout=SWD_TIMEOUT)
-            if "PASS" in reply:
-                results.passed("swd_spare2_check", reply)
+            reply = vfy.command("swd", timeout=SWD_TIMEOUT)
+            state = _state(reply, "swd")
+            if state == "ready":
+                results.passed("swd", reply)
             else:
-                results.abort("swd_spare2_check", reply + " — SPARE2 must be floating")
+                results.abort("swd", f"state={state} — SWD not ready: {reply}")
         except RttError as e:
-            results.abort("swd_spare2_check", str(e))
+            results.abort("swd", str(e))
 
         # ----------------------------------------------------------------
-        # Phase 1 — EP halted in bootrom
+        # swd_test_connect — live round-trip to EP SRAM
         # ----------------------------------------------------------------
 
-        results.start("swd_connect_in_reset")
+        results.start("swd_test_connect")
         try:
-            reply = vfy.command("swd_connect_in_reset", timeout=SWD_TIMEOUT)
-            if "PASS" in reply:
-                results.passed("swd_connect_in_reset", reply)
+            reply = vfy.command("swd_test_connect", timeout=SWD_TIMEOUT)
+            state = _state(reply, "swd_test_connect")
+            if state == "ready":
+                results.passed("swd_test_connect", reply)
             else:
-                results.abort("swd_connect_in_reset", reply)
+                results.abort("swd_test_connect", reply)
         except RttError as e:
-            results.abort("swd_connect_in_reset", str(e))
-
-        results.start("swd_read_flash_in_reset")
-        try:
-            reply = vfy.command("swd_read_flash_in_reset", timeout=SWD_TIMEOUT)
-            if "PASS" in reply:
-                results.passed("swd_read_flash_in_reset", reply)
-            else:
-                results.failed("swd_read_flash_in_reset", reply)
-        except RttError as e:
-            results.failed("swd_read_flash_in_reset", str(e))
-
-        results.start("swd_ram_roundtrip")
-        try:
-            reply = vfy.command("swd_ram_roundtrip", timeout=SWD_TIMEOUT)
-            if "PASS" in reply:
-                results.passed("swd_ram_roundtrip")
-            else:
-                results.failed("swd_ram_roundtrip", reply)
-        except RttError as e:
-            results.failed("swd_ram_roundtrip", str(e))
-
-        results.start("swd_load_swdreflash")
-        try:
-            reply = vfy.command("swd_load_swdreflash", timeout=SWD_TIMEOUT)
-            if "PASS" in reply:
-                results.passed("swd_load_swdreflash", reply)
-            else:
-                results.abort("swd_load_swdreflash", reply)
-        except RttError as e:
-            results.abort("swd_load_swdreflash", str(e))
+            results.abort("swd_test_connect", str(e))
 
         # ----------------------------------------------------------------
-        # Phase 2 — Flash write
+        # swd_test_flash — full flash programming cycle
         # ----------------------------------------------------------------
 
-        results.start("swd_write_flash")
+        results.start("swd_test_flash")
         try:
             scratch = _unused_flash_scratch()
         except ElfError as e:
-            results.abort("swd_write_flash", f"ELF symbol read failed: {e}")
+            results.abort("swd_test_flash", f"ELF symbol read failed: {e}")
+            return
 
         try:
-            cmd = f"swd_write_flash 0x{scratch:08x}"
+            cmd = f"swd_test_flash 0x{scratch:08x}"
             reply = vfy.command(cmd, timeout=FLASH_TIMEOUT)
-            if "PASS" in reply:
-                results.passed("swd_write_flash", reply)
+            state = _state(reply, "swd_test_flash")
+            if state == "ok":
+                results.passed("swd_test_flash", reply)
             else:
-                results.failed("swd_write_flash", reply)
+                results.failed("swd_test_flash", reply)
         except RttError as e:
-            results.failed("swd_write_flash", str(e))
-
-        # ----------------------------------------------------------------
-        # Phase 3 — Release reset, verify SWD survives the transition
-        # ----------------------------------------------------------------
-
-        results.start("swd_release_reset")
-        try:
-            reply = vfy.command("swd_release_reset", timeout=SWD_TIMEOUT + 2.0)
-            if "PASS" in reply:
-                results.passed("swd_release_reset", reply)
-            else:
-                results.abort("swd_release_reset", reply)
-        except RttError as e:
-            results.abort("swd_release_reset", str(e))
-
-        results.start("swd_reconnect_after_boot")
-        try:
-            reply = vfy.command("swd_reconnect_after_boot", timeout=SWD_TIMEOUT)
-            if "PASS" in reply:
-                results.passed("swd_reconnect_after_boot", reply)
-            else:
-                results.abort("swd_reconnect_after_boot", reply + " — bad image or EP hang")
-        except RttError as e:
-            results.abort("swd_reconnect_after_boot", str(e))
+            results.failed("swd_test_flash", str(e))

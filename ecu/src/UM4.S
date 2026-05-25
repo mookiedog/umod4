@@ -11591,10 +11591,10 @@ LF734:  ldaA    *L00C7
 
 #if !defined SPARK_ISR
 _oc5ic4f:
-        ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC5F
+        ldaA    #LOGID_ECU_CPU_EVENT_OC5F_VAL
         bra     _log
 
-_ic3:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_IC3
+_ic3:   ldaA    #LOGID_ECU_CPU_EVENT_IC3_VAL
         bra     _log
 #else
 ; IC4: Coil #2 event
@@ -11629,38 +11629,38 @@ log_metadata:
         rts
 
 ;-----------------------------------------------------------------
-_oc4f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC4F
+_oc4f:  ldaA    #LOGID_ECU_CPU_EVENT_OC4F_VAL
         bra     _log
 
-_oc3f:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_OC3F
+_oc3f:  ldaA    #LOGID_ECU_CPU_EVENT_OC3F_VAL
         bra     _log
 
-_rti:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_RTI
+_rti:   ldaA    #LOGID_ECU_CPU_EVENT_RTI_VAL
         bra     _log
 
-_irq:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_IRQ
+_irq:   ldaA    #LOGID_ECU_CPU_EVENT_IRQ_VAL
         bra     _log
 
-_xirq:  ldaA    #LOGID_ECU_CPU_EVENT_VAL_XIRQ
+_xirq:  ldaA    #LOGID_ECU_CPU_EVENT_XIRQ_VAL
         bra     _log
 
-_swi:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_SWI
+_swi:   ldaA    #LOGID_ECU_CPU_EVENT_SWI_VAL
         bra     _log
 
 _illegalOp:
-        ldaA    #LOGID_ECU_CPU_EVENT_VAL_IOP
+        ldaA    #LOGID_ECU_CPU_EVENT_IOP_VAL
         bra     _log
 
-_cop:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_COP
+_cop:   ldaA    #LOGID_ECU_CPU_EVENT_COP_VAL
         bra     _log
 
-_cmf:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_CMF
+_cmf:   ldaA    #LOGID_ECU_CPU_EVENT_CMF_VAL
         bra     _log
 
-_por:   ldaA    #LOGID_ECU_CPU_EVENT_VAL_RESET
+_por:   ldaA    #LOGID_ECU_CPU_EVENT_RESET_VAL
 ; Intentional fall through!
 
-_log:   ldaB    #LOGID_GEN_ECU_LOG_VER_VAL_V0
+_log:   ldaB    #LOGID_GEN_ECU_LOG_VER_V0_VAL
         staB    LW+LOGID_GEN_ECU_LOG_VER_TYPE_U8        ; #1: log version information before anything else
 
         staA    LW+LOGID_ECU_CPU_EVENT_TYPE_U8          ; #2: log the specific CPU event that got us here

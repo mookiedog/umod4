@@ -5,10 +5,13 @@ umod4 automated test runner.
 Usage:
     build/.venv/bin/python3 tests/runner.py [suite ...] [--ssid S --password P --device-name N]
 
-    suite       One or more suite names (e.g. test_basic test_wifi).  Omit to run all.
-    --ssid      WiFi SSID for provisioning (or set UMOD4_WIFI_SSID env var)
-    --password  WiFi password for provisioning (or set UMOD4_WIFI_PASSWORD env var)
-    --device-name  Device name to assign during provisioning
+    suite          One or more suite names (e.g. test_basic test_wifi).  Omit to run all.
+    --sta-ssid     WiFi (STA) SSID  (or set UMOD4_STA_SSID env var)
+    --sta-password WiFi (STA) password  (or set UMOD4_STA_PASSWORD env var)
+    --device-name  Device name to assign  (or set UMOD4_DEVICE_NAME env var)
+    --ap-ssid      AP SSID to write to device config  (or set UMOD4_AP_SSID env var)
+    --ap-password  AP password to write to device config  (or set UMOD4_AP_PASSWORD env var)
+    --no-flash     Skip reflashing WP; run tests against already-loaded firmware
 
 The build venv is required because test_ota_ep imports DeviceClient which needs 'requests'.
 All other suites use only stdlib.
@@ -23,6 +26,8 @@ The runner:
 """
 
 import argparse
+import contextlib
+import io
 import sys
 import os
 import importlib
@@ -32,8 +37,10 @@ import time
 # Allow 'from harness.xxx import ...' and 'from suites.xxx import ...'
 sys.path.insert(0, os.path.dirname(__file__))
 
-from harness.openocd import OpenOCD, OpenOCDError
+from harness.openocd import OpenOCD, OpenOCDError, RTT_PORT_BASE
 from harness import preflight
+from harness import build_state
+from harness.rtt import RttChannel, RttCapture, RttError
 from harness.usbipd import ensure_attached, ensure_detached
 
 CMSIS_DAP_HW_ID = "2e8a:000c"
@@ -58,58 +65,78 @@ class RunnerFatal(Exception):
 
 class Results:
     def __init__(self):
-        self._entries = []   # (status, suite, name, detail)
-        self._suite   = "preflight"
-        self._t0      = time.monotonic()
+        self._entries      = []   # (status, suite, name, detail)
+        self._suite_output = {}   # suite_name -> captured stdout text
+        self._suite_ch0    = {}   # suite_name -> WP printf (ch0) text
+        self._suite_heap   = {}   # suite_name -> (remaining, free)
+        self._suite        = "preflight"
+        self._t0           = time.monotonic()
 
     def start_suite(self, name):
         self._suite = name
 
     def start(self, name):
-        pass   # kept for API compatibility
+        print(f"  ----  {name}", end="\r", file=sys.__stdout__, flush=True)
 
     def passed(self, name, detail=""):
         self._record("PASS", name, detail)
-        print(f"  PASS  {name}" + (f"  {detail}" if detail else ""))
+        print(f"  PASS  {name}" + (f"  {detail}" if detail else ""), file=sys.__stdout__, flush=True)
 
     def failed(self, name, detail=""):
         self._record("FAIL", name, detail)
-        print(f"  FAIL  {name}" + (f"  {detail}" if detail else ""))
+        print(f"  FAIL  {name}" + (f"  {detail}" if detail else ""), file=sys.__stdout__, flush=True)
+
+    def warn(self, name, detail=""):
+        """Record WARN — noted in report but does not fail the run."""
+        self._record("WARN", name, detail)
+        print(f"  WARN  {name}" + (f"  {detail}" if detail else ""), file=sys.__stdout__, flush=True)
 
     def abort(self, name, detail=""):
         """Record ABORT and stop the current suite."""
         self._record("ABORT", name, detail)
-        print(f"  ABORT {name}" + (f"  {detail}" if detail else ""))
+        print(f"  ABORT {name}" + (f"  {detail}" if detail else ""), file=sys.__stdout__, flush=True)
         raise SuiteAbort(name)
 
     def fatal(self, name, detail=""):
         """Record FATAL and stop the entire runner."""
         self._record("FATAL", name, detail)
-        print(f"  FATAL {name}" + (f"  {detail}" if detail else ""))
+        print(f"  FATAL {name}" + (f"  {detail}" if detail else ""), file=sys.__stdout__, flush=True)
         raise RunnerFatal(name)
+
+    def record_suite_output(self, suite_name, text):
+        self._suite_output[suite_name] = text
+
+    def record_ch0_output(self, suite_name, text):
+        self._suite_ch0[suite_name] = text
+
+    def record_heap(self, suite_name, remaining, free):
+        self._suite_heap[suite_name] = (remaining, free)
 
     def _record(self, status, name, detail):
         self._entries.append((status, self._suite, name, detail))
 
     @property
     def all_passed(self):
-        return all(e[0] == "PASS" for e in self._entries)
+        return all(e[0] in ("PASS", "WARN") for e in self._entries)
 
     @property
     def counts(self):
         passed  = sum(1 for e in self._entries if e[0] == "PASS")
+        warned  = sum(1 for e in self._entries if e[0] == "WARN")
         aborted = sum(1 for e in self._entries if e[0] in ("ABORT", "FATAL"))
-        return passed, len(self._entries), aborted
+        return passed, len(self._entries), aborted, warned
 
     def write_report(self, path):
         import datetime
         import shutil
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        passed, total, aborted = self.counts
+        passed, total, aborted, warned = self.counts
         duration = time.monotonic() - self._t0
         run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         overall  = "PASS" if self.all_passed else "FAIL"
         summary  = f"{passed}/{total} passed"
+        if warned:
+            summary += f"  •  {warned} stale (--allow-stale)"
         if aborted:
             summary += f"  •  {aborted} aborted"
 
@@ -119,12 +146,47 @@ class Results:
             f"**Duration:** {duration:.1f} s",
             f"**Status:** {overall} — {summary}",
             "", "---", "",
-            "| Status | Suite | Test | Message |",
-            "| --- | --- | --- | --- |",
         ]
+
+        # Group entries by suite, preserving run order
+        suites_seen  = []
+        suite_entries = {}
         for status, suite, name, detail in self._entries:
-            lines.append(f"| {status} | {suite} | {name} | {detail.replace('|', chr(92) + '|')} |")
-        lines += ["", "---", "", summary]
+            if suite not in suite_entries:
+                suite_entries[suite] = []
+                suites_seen.append(suite)
+            suite_entries[suite].append((status, name, detail))
+
+        for suite_name in suites_seen:
+            entries     = suite_entries[suite_name]
+            suite_pass  = sum(1 for s, _, _ in entries if s == "PASS")
+            lines.append(f"## {suite_name}  ({suite_pass}/{len(entries)})")
+            lines.append("")
+            lines.append("| Status | Test | Message |")
+            lines.append("| --- | --- | --- |")
+            for status, name, detail in entries:
+                lines.append(f"| {status} | {name} | {str(detail).replace('|', chr(92) + '|')} |")
+            heap = self._suite_heap.get(suite_name)
+            if heap:
+                remaining, free = heap
+                lines.append("")
+                lines.append(f"*Heap after: remaining={remaining} free={free}*")
+            output = self._suite_output.get(suite_name, "").strip()
+            if output:
+                lines.append("")
+                lines.append("```")
+                lines.extend(output.splitlines())
+                lines.append("```")
+            ch0 = self._suite_ch0.get(suite_name, "").strip()
+            if ch0:
+                lines.append("")
+                lines.append("**WP printf (ch0):**")
+                lines.append("```")
+                lines.extend(ch0.splitlines())
+                lines.append("```")
+            lines.append("")
+
+        lines += ["---", "", summary]
 
         with open(path, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -137,6 +199,7 @@ class Results:
 SUITES = [
     "suites.test_provisioning",
     "suites.test_basic",
+    "suites.test_ecu",
     "suites.test_ep_swd",
     "suites.test_wifi",
     "suites.test_ota_ep",
@@ -147,6 +210,20 @@ def load_suites(names=None):
     if names:
         return [importlib.import_module(f"suites.{n.removeprefix('suites.')}") for n in names]
     return [importlib.import_module(s) for s in SUITES]
+
+
+WP_VFY_CHANNEL = 1
+
+def _check_heap(ocd):
+    """Query WP heap via RTT. Returns (remaining, free) or (None, None) on failure."""
+    import json
+    try:
+        with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
+            reply = vfy.command("heap", timeout=5.0)
+            h = json.loads(reply).get("heap", {})
+            return h.get("remaining"), h.get("free")
+    except Exception:
+        return None, None
 
 
 def flash_wp():
@@ -181,15 +258,30 @@ def _parse_args():
                                 add_help=True)
     p.add_argument("suites", nargs="*",
                    help="Suite names to run (default: all)")
-    p.add_argument("--ssid",        default=os.environ.get("UMOD4_WIFI_SSID", ""),
-                   help="WiFi SSID for provisioning (or set UMOD4_WIFI_SSID)")
-    p.add_argument("--password",    default=os.environ.get("UMOD4_WIFI_PASSWORD", ""),
-                   help="WiFi password for provisioning (or set UMOD4_WIFI_PASSWORD)")
-    p.add_argument("--device-name", default="umod4_test_hw", dest="device_name",
-                   help="Device name to assign during provisioning (default: umod4_test_hw)")
+    p.add_argument("--sta-ssid",     dest="ssid",
+                   default=os.environ.get("UMOD4_STA_SSID", ""),
+                   help="WiFi (STA) SSID for provisioning (or set UMOD4_STA_SSID)")
+    p.add_argument("--sta-password", dest="password",
+                   default=os.environ.get("UMOD4_STA_PASSWORD", ""),
+                   help="WiFi (STA) password for provisioning (or set UMOD4_STA_PASSWORD)")
+    p.add_argument("--device-name",  dest="device_name",
+                   default=os.environ.get("UMOD4_DEVICE_NAME", "umod4_test_hw"),
+                   help="Device name to assign during provisioning (or set UMOD4_DEVICE_NAME)")
+    p.add_argument("--ap-ssid",      dest="ap_ssid",
+                   default=os.environ.get("UMOD4_AP_SSID", ""),
+                   help="AP SSID to write to device config (or set UMOD4_AP_SSID)")
+    p.add_argument("--ap-password",  dest="ap_password",
+                   default=os.environ.get("UMOD4_AP_PASSWORD", ""),
+                   help="AP password to write to device config (or set UMOD4_AP_PASSWORD)")
+    p.add_argument("--l000c", dest="l000c",
+                   default=None, type=lambda x: int(x, 0),
+                   help="Expected ECU L000C register value (hex or decimal; default: use test constant 0x16)")
     p.add_argument("--preflight-only", action="store_true", dest="preflight_only",
                    help="Run pre-flight checks only, then exit")
-    # Future: --restore-board for non-destructive snapshot/restore mode
+    p.add_argument("--no-flash", action="store_true", dest="no_flash",
+                   help="Skip reflashing WP and run tests against the already-loaded firmware")
+    p.add_argument("--allow-stale", action="store_true", dest="allow_stale",
+                   help="Warn instead of abort when build artifacts are older than their sources")
     return p.parse_args()
 
 
@@ -202,14 +294,12 @@ def main():
     report_dir  = os.path.join(PROJECT_ROOT, "build", "test_reports")
     report_path = os.path.join(report_dir, f"run_{run_ts}.md")
 
-    print("umod4 test harness")
-    print("------------------")
-
     results = Results()
     ocd     = OpenOCD(verbose=False)
+    ch0     = RttCapture(RTT_PORT_BASE + 0)   # WP printf; reconnects automatically
 
     try:
-        # ── Pre-flight (flat list — every item uses results.fatal() on failure) ──
+        print("[harness.preflight]", file=sys.__stdout__, flush=True)
         results.start_suite("preflight")
 
         suite_names = [s.__name__ for s in suites]
@@ -220,16 +310,23 @@ def main():
         except RuntimeError as e:
             results.fatal("cmsis_dap_attach", str(e))
 
+        print("[harness.build_state]", file=sys.__stdout__, flush=True)
+        results.start_suite("build_state")
+        build_state.run_all(results, PROJECT_ROOT, allow_stale=args.allow_stale)
+
         if not args.preflight_only:
             prov_selected = any("test_provisioning" in s.__name__ for s in suites)
 
             if not prov_selected:
-                # Normal run: flash WP then start OpenOCD.
+                # Normal run: (optionally) flash WP then start OpenOCD.
                 # Provisioning suite skips this and handles erase+flash+OCD itself.
-                try:
-                    flash_wp()
-                except RuntimeError as e:
-                    results.fatal("wp_flash", str(e))
+                if args.no_flash:
+                    print("Skipping WP flash (--no-flash).", flush=True)
+                else:
+                    try:
+                        flash_wp()
+                    except RuntimeError as e:
+                        results.fatal("wp_flash", str(e))
 
                 print("Starting OpenOCD...", flush=True)
                 try:
@@ -252,26 +349,47 @@ def main():
                 "ssid":        args.ssid,
                 "password":    args.password,
                 "device_name": args.device_name,
+                "ap_ssid":     args.ap_ssid,
+                "ap_password": args.ap_password,
+                "l000c":       args.l000c,
             }
             for suite in suites:
-                results.start_suite(suite.__name__.removeprefix("suites."))
-                print(f"[{suite.__name__}]")
+                suite_name = suite.__name__.removeprefix("suites.")
+                results.start_suite(suite_name)
+                ch0.mark()
+                print(f"[{suite.__name__}]", file=sys.__stdout__, flush=True)
+                buf = io.StringIO()
                 try:
-                    suite.run(ocd, results, context)
+                    with contextlib.redirect_stdout(buf):
+                        suite.run(ocd, results, context)
                 except SuiteAbort:
                     pass   # suite recorded ABORT; continue to next suite
-                print()
+                captured = buf.getvalue().strip()
+                if captured:
+                    results.record_suite_output(suite_name, captured)
+                ch0_text = ch0.since_mark().strip()
+                if ch0_text:
+                    results.record_ch0_output(suite_name, ch0_text)
+                remaining, free = _check_heap(ocd)
+                if remaining is not None:
+                    results.record_heap(suite_name, remaining, free)
+                    print(f"  heap: remaining={remaining} free={free}",
+                          file=sys.__stdout__, flush=True)
+                print(file=sys.__stdout__)
 
     except RunnerFatal:
         pass   # FATAL recorded; fall through to report + exit 1
 
     finally:
+        ch0.stop()
         ocd.stop()
         ensure_detached(CMSIS_DAP_HW_ID)
 
     results.write_report(report_path)
-    passed, total, aborted = results.counts
+    passed, total, aborted, warned = results.counts
     summary = f"{passed}/{total} passed"
+    if warned:
+        summary += f"  •  {warned} stale (--allow-stale)"
     if aborted:
         summary += f"  •  {aborted} aborted"
     print(f"{'OK' if results.all_passed else 'FAILED'}  {summary}")

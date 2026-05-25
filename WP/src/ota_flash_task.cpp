@@ -255,7 +255,11 @@ static void ota_flash_task(void* params)
                 // prepare_for_reboot() suspends the scheduler and disables interrupts.
                 vTaskDelay(pdMS_TO_TICKS(100));
                 vfy_printf("{\"wp_ota\":\"TBYB_REBOOT\"}\n");
-                vTaskDelay(pdMS_TO_TICKS(100));
+                // Give OpenOCD time to drain the RTT buffer before prepare_for_reboot()
+                // suspends the scheduler.  vfy_printf only guarantees the data reached
+                // the RTT SRAM ring buffer — OpenOCD still needs a poll cycle (~100ms)
+                // to read it via SWD and forward it to the TCP socket.
+                vTaskDelay(pdMS_TO_TICKS(500));
             } else {
                 printf("OTA: FLASH PROGRAMMING FAILED, error=%ld\n", (long)flash_result);
                 vfy_printf("{\"wp_ota\":\"FLASH_FAILED\",\"err\":%ld}\n", (long)flash_result);

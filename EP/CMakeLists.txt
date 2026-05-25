@@ -365,6 +365,7 @@ target_link_libraries(${PROJECT_NAME}
   hardware_pio
   hardware_flash
   hardware_timer
+  hardware_pwm
   cmsis_core
   murmur3
   bsonlib

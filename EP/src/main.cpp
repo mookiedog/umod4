@@ -18,10 +18,13 @@
 #include "hardware/irq.h"
 #include "hardware/resets.h"
 #include "hardware/structs/bus_ctrl.h"
+#include "hardware/structs/vreg_and_chip_reset.h"
+#include "hardware/structs/watchdog.h"
 #include "hardware/structs/systick.h"
 #include "hardware/clocks.h"
 #include "hardware/flash.h"
 #include "hardware/timer.h"
+#include "hardware/pwm.h"
 
 #include "tx_encoder.h"
 #include "uart_tx32.pio.h"
@@ -67,6 +70,8 @@ const uint uart_sm = 0;
 
 // To track the amount of time it takes to get the ECU booted
 uint64_t epoch;
+
+uint8_t ep_reset_reason;
 
 // --------------------------------------------------------------------------------------------
 #if defined HAS_DESCRAMBLER
@@ -193,6 +198,16 @@ void mainCore1(void)
 // Initialize any shared global CPU resources that need to get set up early on in the boot process.
 void initCpu(void)
 {
+    // Read before any SDK init that could clear these registers.
+    uint32_t chip_reset = vreg_and_chip_reset_hw->chip_reset;
+    uint32_t wd         = watchdog_hw->reason;
+    ep_reset_reason = 0;
+    if (chip_reset & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_POR_BITS)         ep_reset_reason |= LOGID_EP_RESET_REASON_POR_MASK;
+    if (chip_reset & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_RUN_BITS)         ep_reset_reason |= LOGID_EP_RESET_REASON_RUN_MASK;
+    if (chip_reset & VREG_AND_CHIP_RESET_CHIP_RESET_HAD_PSM_RESTART_BITS) ep_reset_reason |= LOGID_EP_RESET_REASON_PSM_MASK;
+    if (wd         & WATCHDOG_REASON_TIMER_BITS)                           ep_reset_reason |= LOGID_EP_RESET_REASON_WD_TIMER_MASK;
+    if (wd         & WATCHDOG_REASON_FORCE_BITS)                           ep_reset_reason |= LOGID_EP_RESET_REASON_WD_FORCE_MASK;
+
     #if 0
     // This appears to be unnecessary and just slows down the boot process
     // Reset Core1 into a known state while we initialize Core0
@@ -244,12 +259,6 @@ void flicker(uint32_t flickerCount, uint32_t onDuration, uint32_t offDuration)
 void hello(uint32_t flickerCount)
 {
     flicker(3, 5000, 45000);
-}
-
-void blinkCode(uint32_t count)
-{
-    flicker(count, 10000, 290000);
-    busy_wait_ms(500);
 }
 
 // --------------------------------------------------------------------------------------------
@@ -503,12 +512,13 @@ void core0Mainloop(void)
 }
 
 // --------------------------------------------------------------------------------------------
-void showBootMessages()
+void showBootMessages(uint16_t eclk_khz)
 {
     const char* fname = "bt";
     printf("\n%s: EP <Built %s>\n", fname, ep_build_datetime());
     uint32_t f_clk_sys_khz = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
-    printf("%s: Sysclk: %u MHz\n", fname, (f_clk_sys_khz + 500) / 1000);
+    printf("%s: Sysclk:  %u MHz\n", fname, (f_clk_sys_khz + 500) / 1000);
+    printf("%s: HC11clk: %u KHz\n", fname, eclk_khz);
 }
 
 
@@ -575,6 +585,25 @@ void init_stdio()
     ep_info->magic = EP_INFO_MAGIC;
 }
 
+// --------------------------------------------------------------------------------------------
+// Measure E-clock frequency (in KHz) while HC11 is still in reset
+// We are free to configure the HC11_E_LSB because initPins() will reconfigure it afterwards.
+static uint16_t measure_e_clk()
+{
+    uint slice = pwm_gpio_to_slice_num(HC11_E_LSB);
+    pwm_config eclk_cfg = pwm_get_default_config();
+    pwm_config_set_clkdiv_mode(&eclk_cfg, PWM_DIV_B_RISING);
+    pwm_config_set_wrap(&eclk_cfg, 0xFFFF);
+    gpio_set_function(HC11_E_LSB, GPIO_FUNC_PWM);
+    pwm_init(slice, &eclk_cfg, true);
+
+    busy_wait_us(1000);
+
+    uint16_t count = pwm_get_counter(slice);
+    pwm_set_enabled(slice, false);
+
+    return count;
+}
 
 // --------------------------------------------------------------------------------------------
 void init_hardware()
@@ -606,14 +635,21 @@ int main(void)
 
     // Basic sign of life & low-level pin initialization comes first
     hello(3);
+
+    // Measure the HC11 E-clk freq while the HC11 is still in RESET.
+    uint16_t eclk_khz = measure_e_clk();
+
     initPins();
 
     // First thing to be logged must be the log version!
-    enqueue(LOGID_GEN_EP_LOG_VER_TYPE_U8, LOGID_GEN_EP_LOG_VER_VAL_V0);
+    enqueue(LOGID_GEN_EP_LOG_VER_TYPE_U8,    LOGID_GEN_EP_LOG_VER_V0_VAL);
+    enqueue(LOGID_EP_ECLK_KHZ_TYPE_U16,      eclk_khz >> 8);
+    enqueue(LOGID_EP_ECLK_KHZ_TYPE_U16 + 1,  eclk_khz & 0xFF);
+    enqueue(LOGID_EP_RESET_REASON_TYPE_U8,   ep_reset_reason);
 
     // Get our RTT IO working first
     init_stdio();
-    showBootMessages();
+    showBootMessages(eclk_khz);
 
     // Init the higher-level hardware mechanisms
     init_hardware();

@@ -36,6 +36,10 @@ def find_port(vid=AP_PROXY_VID, pid=AP_PROXY_PID):
 class ApProxyError(Exception):
     pass
 
+class ApProxyAuthError(ApProxyError):
+    """Raised when the AP rejects credentials (wrong password)."""
+    pass
+
 
 class ApProxy:
     AP_IP = "192.168.4.1"
@@ -135,6 +139,8 @@ class ApProxy:
         pw = password if password is not None else ssid
         resp = self._cmd(f"CONNECT {ssid} {pw}", timeout=timeout)
         if resp.startswith('ERR'):
+            if resp.endswith('-3'):   # CYW43_LINK_BADAUTH
+                raise ApProxyAuthError(f"CONNECT failed (bad password): {resp}")
             raise ApProxyError(f"CONNECT failed: {resp}")
         # "OK connected <ip>"
         parts = resp.split()
@@ -177,17 +183,26 @@ class ApProxy:
         """
         Scan for a umod4_XXXX network and connect to it automatically.
         Returns the assigned IP address.
-        Raises ApProxyError if no umod4 network is found after all retries.
+        Raises ApProxyError if no umod4 network is found/connected after all retries.
         """
+        last_error = None
         for attempt in range(scan_retries):
             ssids = self.scan(timeout=scan_timeout)
             umod4 = [s for s in ssids if s.startswith('umod4_')]
             if umod4:
                 ssid = umod4[0]
                 print(f"  proxy: found {ssid}, connecting...")
-                return self.connect(ssid, timeout=connect_timeout)
-            if attempt < scan_retries - 1:
+                try:
+                    return self.connect(ssid, timeout=connect_timeout)
+                except ApProxyAuthError:
+                    raise  # wrong password — no point retrying
+                except ApProxyError as e:
+                    last_error = e
+                    print(f"  proxy: connect failed ({e}), retrying in 5s...")
+            else:
+                last_error = ApProxyError(f"No umod4_XXXX network found (attempt {attempt + 1})")
                 print(f"  proxy: no umod4 network found, retrying in 5s...")
+            if attempt < scan_retries - 1:
                 time.sleep(5.0)
         raise ApProxyError(
-            f"No umod4_XXXX network found after {scan_retries} scans")
+            f"Could not connect after {scan_retries} attempts: {last_error}")

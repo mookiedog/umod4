@@ -23,6 +23,7 @@ import sys
 import time
 
 from harness.rtt import RttChannel, RttError
+from harness.udp_checkin import wait_for_checkin, CheckInError
 
 _SERVER_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../tools/server"))
 sys.path.insert(0, _SERVER_DIR)
@@ -33,9 +34,9 @@ _PROJ_ROOT      = os.path.normpath(os.path.join(os.path.dirname(__file__), "../.
 WP_UF2          = os.path.join(_PROJ_ROOT, "build/WP/WP.uf2")
 WP_UF2_FILENAME = "WP.uf2"
 
-# After TBYB_REBOOT, WP does two reboots (TBYB warm boot ~5s + cold boot ~5s).
-# Wait this long before attempting OpenOCD reconnect.
-REBOOT_SETTLE    = 15.0
+# Fallback sleep if UDP check-in is not received (TBYB warm boot ~5s + cold boot ~5s).
+REBOOT_SETTLE     = 15.0
+# UDP check-in and SWD reconnect each get this budget.
 RECONNECT_TIMEOUT = 60.0
 
 
@@ -51,31 +52,27 @@ def run(ocd, results, context):
         results.abort("wp_ota_upload", "no wp_ip in context — test_wifi must run first")
 
     # ----------------------------------------------------------------
-    # wp_ota_status — pre-flight: verify WP reports OTA as available
-    # Reports boot_slot and target_slot so partition mapping is visible
-    # on failure, without having to dig into RTT ch0 printf output.
+    # wp_ota — pre-flight: verify WP reports OTA as available
     # ----------------------------------------------------------------
 
-    results.start("wp_ota_status")
-    with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
-        try:
-            reply = vfy.command("ota_status", timeout=5.0)
-        except RttError as e:
-            results.abort("wp_ota_status", str(e))
-    if '"available":0' in reply:
-        results.abort("wp_ota_status", f"OTA unavailable: {reply}")
-    results.passed("wp_ota_status", reply)
-
-    # Parse boot_slot and target_slot for post-OTA verification.
-    # Reply format: {"ota_status":"PASS","boot_slot":N,"target_slot":M,"available":1}
+    results.start("wp_ota")
     pre_boot_slot   = None
     pre_target_slot = None
-    try:
-        data = json.loads(reply)
-        pre_boot_slot   = data.get("boot_slot")
-        pre_target_slot = data.get("target_slot")
-    except (json.JSONDecodeError, AttributeError):
-        pass
+    with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
+        try:
+            reply = vfy.command("ota", timeout=5.0)
+        except RttError as e:
+            results.abort("wp_ota", str(e))
+        try:
+            data            = json.loads(reply)
+            ota             = data.get("ota", {})
+            pre_boot_slot   = ota.get("boot_slot")
+            pre_target_slot = ota.get("target_slot")
+            if ota.get("state") != "available":
+                results.abort("wp_ota", f"OTA unavailable: {reply}")
+        except (json.JSONDecodeError, AttributeError):
+            results.abort("wp_ota", f"bad reply: {reply}")
+    results.passed("wp_ota", reply)
 
     # ----------------------------------------------------------------
     # wp_ota_upload — upload WP.uf2 via HTTP
@@ -107,8 +104,6 @@ def run(ocd, results, context):
         if not ok:
             results.abort("wp_ota_flash_start", f"reflash trigger failed: {error}")
 
-        # OTA task starts ~200ms after HTTP ack, then shuts down logger + WiFi,
-        # then emits FLASH_START. Give it 30s.
         try:
             reply = vfy.wait_for('{"wp_ota":"FLASH_START"', timeout=30.0)
             results.passed("wp_ota_flash_start", reply)
@@ -116,36 +111,54 @@ def run(ocd, results, context):
             results.abort("wp_ota_flash_start", str(e))
 
         # ----------------------------------------------------------------
-        # wp_ota_flash_done — wait for flash programming to complete
-        # Flash time for a 2.3 MB UF2 is ~30-60s; allow 120s.
+        # wp_ota_flash_done — informational milestone: flash programming complete
+        # Not aborting on timeout/lost-connection: the post-reboot boot-slot
+        # check (wp_ota_verify) is the definitive success indicator.
+        # FLASH_FAILED is the only result that warrants stopping here.
         # ----------------------------------------------------------------
 
         results.start("wp_ota_flash_done")
+        rtt_alive = True
         try:
-            reply = vfy.wait_for('{"wp_ota":"FLASH_', timeout=120.0)
+            reply = vfy.wait_for('{"wp_ota":"FLASH_', timeout=20.0)
             if "FLASH_DONE" in reply:
                 results.passed("wp_ota_flash_done", reply)
-            else:
-                # FLASH_FAILED
+            elif "FLASH_FAILED" in reply:
                 results.abort("wp_ota_flash_done", reply)
+            else:
+                results.warn("wp_ota_flash_done", reply)
         except RttError as e:
-            results.abort("wp_ota_flash_done", str(e))
+            results.warn("wp_ota_flash_done", f"not observed (RTT): {e}")
+            rtt_alive = False
 
-        # ----------------------------------------------------------------
-        # wp_ota_tbyb_reboot — confirm WP is about to reboot, then
-        # close VFY, wait for both reboots, reconnect OpenOCD.
-        # ----------------------------------------------------------------
+        # Wait for WP's "about to reboot" RTT signal — informational only.
+        if rtt_alive:
+            try:
+                vfy.wait_for('{"wp_ota":"TBYB_REBOOT"', timeout=10.0)
+            except RttError:
+                print("  (TBYB_REBOOT not seen on RTT — continuing)")
 
-        results.start("wp_ota_tbyb_reboot")
-        try:
-            reply = vfy.wait_for('{"wp_ota":"TBYB_REBOOT"', timeout=10.0)
-        except RttError as e:
-            results.abort("wp_ota_tbyb_reboot", str(e))
-        # VFY channel closes here as 'with' block exits
+    # ----------------------------------------------------------------
+    # wp_ota_checkin — device checks in via UDP after WiFi reconnect.
+    # Proves the full network stack (WiFi + HTTP server) came up on the
+    # new firmware.  This is a critical operational feature.
+    # ----------------------------------------------------------------
 
-    print(f"  WP is rebooting (TBYB + cold boot), waiting {REBOOT_SETTLE:.0f}s ...")
-    time.sleep(REBOOT_SETTLE)
+    results.start("wp_ota_checkin")
+    print(f"  Waiting for WP UDP check-in (up to {RECONNECT_TIMEOUT:.0f}s) ...")
+    try:
+        device_ip = wait_for_checkin(timeout=RECONNECT_TIMEOUT)
+        results.passed("wp_ota_checkin", f"checked in from {device_ip}")
+    except CheckInError as e:
+        results.failed("wp_ota_checkin", str(e))
+        print(f"  Falling back to {REBOOT_SETTLE:.0f}s settle wait ...")
+        time.sleep(REBOOT_SETTLE)
 
+    # ----------------------------------------------------------------
+    # wp_ota_tbyb_reboot — SWD reconnect confirms device came back.
+    # ----------------------------------------------------------------
+
+    results.start("wp_ota_tbyb_reboot")
     print(f"  Reconnecting OpenOCD (no reset, timeout={RECONNECT_TIMEOUT:.0f}s) ...")
     try:
         ocd.reconnect(timeout=RECONNECT_TIMEOUT)
@@ -157,40 +170,31 @@ def run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
 
         # ----------------------------------------------------------------
-        # wp_ota_verify — ping + version on rebooted firmware
+        # wp_ota_verify — boot + ota on rebooted firmware
         # ----------------------------------------------------------------
 
         results.start("wp_ota_verify")
         try:
-            reply = vfy.command("ping", timeout=5.0)
-            if "PASS" not in reply:
-                results.abort("wp_ota_verify", f"ping failed: {reply}")
-        except RttError as e:
-            results.abort("wp_ota_verify", f"ping error: {e}")
+            reply = vfy.command("boot", timeout=5.0)
+            data  = json.loads(reply)
+            if "boot" not in data:
+                results.abort("wp_ota_verify", f"boot failed: {reply}")
+        except (RttError, json.JSONDecodeError) as e:
+            results.abort("wp_ota_verify", f"boot error: {e}")
 
-        try:
-            reply = vfy.command("version", timeout=5.0)
-            if "PASS" not in reply:
-                results.abort("wp_ota_verify", f"version failed: {reply}")
-        except RttError as e:
-            results.abort("wp_ota_verify", f"version error: {e}")
-
-        # Confirm WP is now running from the expected slot (proves TBYB commit
-        # succeeded and the new image is live, even if firmware is identical).
-        try:
-            reply = vfy.command("ota_status", timeout=5.0)
-        except RttError as e:
-            results.abort("wp_ota_verify", f"ota_status error: {e}")
         post_boot_slot = None
         try:
-            data = json.loads(reply)
-            post_boot_slot = data.get("boot_slot")
-        except (json.JSONDecodeError, AttributeError):
-            pass
+            reply = vfy.command("ota", timeout=5.0)
+            data  = json.loads(reply)
+            post_boot_slot = data.get("ota", {}).get("boot_slot")
+        except (RttError, json.JSONDecodeError) as e:
+            results.abort("wp_ota_verify", f"ota error: {e}")
+
         if pre_target_slot is not None and post_boot_slot != pre_target_slot:
             results.abort("wp_ota_verify",
                 f"wrong boot slot: expected {pre_target_slot}, got {post_boot_slot}  ({reply})")
-        results.passed("wp_ota_verify", f"version OK, booted slot {post_boot_slot} (was {pre_boot_slot})")
+        results.passed("wp_ota_verify",
+                       f"boot OK, booted slot {post_boot_slot} (was {pre_boot_slot})")
 
         # ----------------------------------------------------------------
         # wp_ota_cleanup — delete WP.uf2 from LFS
@@ -198,10 +202,11 @@ def run(ocd, results, context):
 
         results.start("wp_ota_cleanup")
         try:
-            reply = vfy.command(f"lfs_delete {WP_UF2_FILENAME}", timeout=5.0)
-            if "PASS" in reply:
+            reply = vfy.command(f"filesystem_test_delete {WP_UF2_FILENAME}", timeout=5.0)
+            state = json.loads(reply).get("filesystem_test_delete", {}).get("state")
+            if state == "ok":
                 results.passed("wp_ota_cleanup", reply)
             else:
                 results.failed("wp_ota_cleanup", reply)
-        except RttError as e:
+        except (RttError, json.JSONDecodeError) as e:
             results.failed("wp_ota_cleanup", str(e))

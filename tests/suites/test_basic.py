@@ -2,52 +2,71 @@
 Basic VFY channel tests — verifies firmware is alive and responding.
 """
 
+import json
+
 from harness.rtt import RttChannel, RttError
 
 
 WP_VFY_CHANNEL = 1
 
 
+def _cmd(vfy, name, timeout=5.0):
+    """Send a command and return parsed JSON, or raise RttError / ValueError."""
+    reply = vfy.command(name, timeout=timeout)
+    try:
+        return json.loads(reply)
+    except json.JSONDecodeError:
+        raise ValueError(f"non-JSON reply to '{name}': {reply}")
+
+
 def run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
 
         # ----------------------------------------------------------------
-        results.start("ping")
+        results.start("boot")
         try:
-            reply = vfy.command("ping")
-            results.passed("ping") if "PASS" in reply else results.failed("ping", reply)
-        except RttError as e:
-            results.failed("ping", str(e))
+            data = _cmd(vfy, "boot")
+            b = data.get("boot", {})
+            if "slot" in b and "built" in b:
+                results.passed("boot", f"slot={b['slot']} built={b['built']}")
+            else:
+                results.failed("boot", f"missing keys: {data}")
+        except (RttError, ValueError) as e:
+            results.failed("boot", str(e))
 
         # ----------------------------------------------------------------
-        results.start("version")
+        results.start("heap")
         try:
-            reply = vfy.command("version")
-            if "PASS" in reply and '"bt"' in reply:
-                results.passed("version", reply)
+            data = _cmd(vfy, "heap")
+            h = data.get("heap", {})
+            if "remaining" in h:
+                results.passed("heap", f"remaining={h['remaining']} free={h.get('free','?')}")
             else:
-                results.failed("version", reply)
-        except RttError as e:
-            results.failed("version", str(e))
+                results.failed("heap", f"missing keys: {data}")
+        except (RttError, ValueError) as e:
+            results.failed("heap", str(e))
 
         # ----------------------------------------------------------------
-        results.start("status")
+        results.start("sd")
         try:
-            reply = vfy.command("status")
-            if "PASS" in reply and '"uptime_ms"' in reply:
-                results.passed("status", reply)
+            data = _cmd(vfy, "sd")
+            s = data.get("sd", {})
+            sd_state = s.get("state", "")
+            if sd_state == "operational":
+                results.passed("sd", f"size_mb={s.get('size_mb','?')}")
             else:
-                results.failed("status", reply)
-        except RttError as e:
-            results.failed("status", str(e))
+                results.fatal("sd", f"SD card not present or not operational (state={sd_state}) — insert card and retry")
+        except (RttError, ValueError) as e:
+            results.fatal("sd", str(e))
 
         # ----------------------------------------------------------------
-        results.start("lfs_test")
+        results.start("filesystem_test_rw")
         try:
-            reply = vfy.command("lfs_test", timeout=30.0)
-            if "PASS" in reply:
-                results.passed("lfs_test")
+            data = _cmd(vfy, "filesystem_test_rw", timeout=30.0)
+            state = data.get("filesystem_test_rw", {}).get("state", "")
+            if state == "ok":
+                results.passed("filesystem_test_rw")
             else:
-                results.failed("lfs_test", reply)
-        except RttError as e:
-            results.failed("lfs_test", str(e))
+                results.fatal("filesystem_test_rw", f"state={state}")
+        except (RttError, ValueError) as e:
+            results.fatal("filesystem_test_rw", str(e))

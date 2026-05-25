@@ -32,6 +32,8 @@ extern void generate_api_image_store_scan_json(char* buffer, size_t size);
 extern void generate_api_wifi_scan_start_json(char* buffer, size_t size);
 extern void generate_api_wifi_scan_json(char* buffer, size_t size);
 extern void generate_api_ep_stdio_json(char* buffer, size_t size, uint32_t client_offset);
+extern int  api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
+                            uint32_t offset, uint32_t len);
 
 // Global LittleFS context (set by fs_custom_init)
 static lfs_t* g_lfs = NULL;
@@ -66,6 +68,7 @@ struct lfs_custom_file {
     bool is_open;             // Track if file is open
     bool is_api;              // True if this is an API response or pre-read chunk (in-memory)
     bool is_chunk;            // True if data points to s_chunk_data_buf (do not free; clear busy flag)
+    bool is_flash_read;       // True if data points to s_flash_read_buf (do not free; clear busy flag)
     pico_sha256_state_t sha_state;  // SHA-256 state for calculating hash during transfer
     bool sha_enabled;         // True if SHA-256 calculation is in progress
     char sha_filename[64];    // Filename for this transfer (for caching)
@@ -82,6 +85,17 @@ static uint8_t s_chunk_buf[CHUNK_HEADER_RESERVE + CHUNK_DOWNLOAD_MAX_SIZE];
 // Static file struct for chunk downloads — safe because s_chunk_in_progress serialises access.
 static struct lfs_custom_file s_chunk_file;
 static bool s_chunk_in_progress = false;
+
+// Flash region read buffer (GET /api/flash/<region>).
+// FLASH_READ_HEADER_MAX is a multiple of 4 so the data[] array is naturally aligned for SWD reads.
+#define FLASH_READ_MAX_SIZE    4096
+#define FLASH_READ_HEADER_MAX  304
+static struct {
+    char     header[FLASH_READ_HEADER_MAX];
+    uint32_t data[FLASH_READ_MAX_SIZE / 4];
+} s_flash_read_buf;
+static struct lfs_custom_file s_flash_read_file;
+static bool s_flash_read_in_progress = false;
 
 // Timing instrumentation — populated in fs_open_custom, printed in fs_close_custom.
 // Produces one "CHK ..." line per chunk on the RTT console.
@@ -279,6 +293,75 @@ int fs_open_custom(struct fs_file *file, const char *name)
                            FS_FILE_FLAGS_HEADER_PERSISTENT |
                            FS_FILE_FLAGS_CUSTOM;
         s_chunk_in_progress = true;
+        return 1;
+    }
+
+    // Flash region read: GET /api/flash/<region>?offset=N&len=M
+    // Returns raw bytes as application/octet-stream.
+    if (strncmp(path, "api/flash/", 10) == 0) {
+        if (s_flash_read_in_progress) {
+            printf("fs_custom: flash read busy\n");
+            return 0;
+        }
+
+        // Parse region name and optional query params
+        const char* region_start = path + 10;
+        const char* q = strchr(region_start, '?');
+        size_t region_len = q ? (size_t)(q - region_start) : strlen(region_start);
+        if (region_len == 0 || region_len >= 32) return 0;
+
+        char region[32] = {0};
+        memcpy(region, region_start, region_len);
+
+        uint32_t offset = 0;
+        uint32_t len    = FLASH_READ_MAX_SIZE;
+        if (q) {
+            const char* p = strstr(q + 1, "offset=");
+            if (p) offset = (uint32_t)strtoul(p + 7, NULL, 10);
+            p = strstr(q + 1, "len=");
+            if (p) len = (uint32_t)strtoul(p + 4, NULL, 10);
+        }
+        if (len > FLASH_READ_MAX_SIZE) len = FLASH_READ_MAX_SIZE;
+
+        int bytes_read = api_flash_read((uint8_t*)s_flash_read_buf.data,
+                                        sizeof(s_flash_read_buf.data),
+                                        region, offset, len);
+        if (bytes_read < 0) {
+            printf("fs_custom: flash read failed for '%s' offset=%lu len=%lu\n",
+                   region, (unsigned long)offset, (unsigned long)len);
+            return 0;
+        }
+
+        size_t header_len = (size_t)snprintf(
+            s_flash_read_buf.header, sizeof(s_flash_read_buf.header),
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/octet-stream\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n",
+            bytes_read);
+
+        // Combine header and data into one contiguous region.
+        // header[] and data[] are adjacent in the struct (header is 304 bytes, a multiple
+        // of 4, so data[] is naturally 4-byte aligned). memmove closes the gap between
+        // the actual header (header_len <= 304) and the data.
+        uint8_t* data_ptr = (uint8_t*)s_flash_read_buf.data;
+        size_t total_len  = header_len + (size_t)bytes_read;
+        if (header_len < FLASH_READ_HEADER_MAX && bytes_read > 0)
+            memmove(s_flash_read_buf.header + header_len, data_ptr, (size_t)bytes_read);
+
+        memset(&s_flash_read_file, 0, sizeof(s_flash_read_file));
+        s_flash_read_file.is_open       = true;
+        s_flash_read_file.is_flash_read = true;
+
+        file->data       = s_flash_read_buf.header;
+        file->len        = (int)total_len;
+        file->index      = (int)total_len;
+        file->pextension = &s_flash_read_file;
+        file->flags      = FS_FILE_FLAGS_HEADER_INCLUDED |
+                           FS_FILE_FLAGS_HEADER_PERSISTENT |
+                           FS_FILE_FLAGS_CUSTOM;
+        s_flash_read_in_progress = true;
         return 1;
     }
 
@@ -805,6 +888,9 @@ void fs_close_custom(struct fs_file *file)
             s_chunk_has_prev     = true;
 
             s_chunk_in_progress  = false;
+        } else if (lfs_file->is_flash_read) {
+            // Flash region read — data points to static s_flash_read_buf, do not free
+            s_flash_read_in_progress = false;
         } else if (lfs_file->is_api) {
             // data is part of the same allocation as the struct; freed below with free(lfs_file)
         } else {

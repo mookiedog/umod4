@@ -25,10 +25,6 @@ HTTP_SERVER_WAIT  = 15.0
 
 
 def _http_get_json(ip, path, timeout=HTTP_TIMEOUT):
-    """
-    GET http://<ip><path> and return the parsed JSON dict.
-    Raises urllib.error.URLError or json.JSONDecodeError on failure.
-    """
     url = f"http://{ip}{path}"
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         body = resp.read().decode()
@@ -36,10 +32,6 @@ def _http_get_json(ip, path, timeout=HTTP_TIMEOUT):
 
 
 def _http_get_json_with_retry(ip, path, wait=HTTP_SERVER_WAIT):
-    """
-    Retry _http_get_json until it succeeds or wait seconds elapse.
-    Only retries on ConnectionRefusedError (HTTP server not up yet).
-    """
     deadline = time.monotonic() + wait
     last_err  = None
     while True:
@@ -60,34 +52,36 @@ def run(ocd, results, context):
         # Retry while WP reports not_connected (WiFi association in progress).
         # ----------------------------------------------------------------
 
-        results.start("wifi_status")
-        wp_ip   = None
-        reply   = None
+        results.start("wifi")
+        wp_ip    = None
+        reply    = None
         deadline = time.monotonic() + WIFI_CONNECT_WAIT
         while True:
             try:
-                reply = vfy.command("wifi_status", timeout=WIFI_TIMEOUT)
+                reply = vfy.command("wifi", timeout=WIFI_TIMEOUT)
             except RttError as e:
-                results.abort("wifi_status", str(e))
+                results.abort("wifi", str(e))
 
-            if "PASS" in reply:
+            try:
+                data  = json.loads(reply)
+                state = data.get("wifi", {}).get("state", "")
+            except (json.JSONDecodeError, AttributeError):
+                results.abort("wifi", f"non-JSON reply: {reply}")
+
+            if state == "connected":
+                wp_ip = data.get("wifi", {}).get("ip")
                 break
-            if "not_connected" not in reply or time.monotonic() >= deadline:
-                results.abort("wifi_status", reply + " — WP must be connected to WiFi")
+            if state != "not_connected" or time.monotonic() >= deadline:
+                results.abort("wifi", reply + " — WP must be connected to WiFi")
             time.sleep(2.0)
 
-        try:
-            wp_ip = json.loads(reply).get("ip")
-        except (json.JSONDecodeError, AttributeError):
-            wp_ip = None
         if not wp_ip:
-            results.abort("wifi_status", "no IP address in reply")
+            results.abort("wifi", "no IP address in reply")
         context["wp_ip"] = wp_ip
-        results.passed("wifi_status", reply)
+        results.passed("wifi", reply)
 
         # ----------------------------------------------------------------
         # Phase 2 — HTTP server reachability and response validation
-        # Retry on ConnectionRefused while the HTTP server is starting up.
         # ----------------------------------------------------------------
 
         results.start("http_status")

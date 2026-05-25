@@ -6,7 +6,7 @@ a fully provisioned state connected to the home WiFi network.
 
 Steps:
   1. Erase and reflash WP (via SWD BOOTSEL + flash_WP -e)
-  2. Verify WP starts in AP mode (RTT ap_status command)
+  2. Verify WP starts in AP mode (RTT wifi command)
   3. Connect ap_proxy to WP's AP network
   4. POST WiFi credentials to WP via HTTP (/api/config)
   5. Wait for WP to reboot and connect to the home WiFi network
@@ -18,6 +18,7 @@ Prerequisites:
   - OpenOCD is running when this suite is invoked
 """
 
+import json
 import os
 import subprocess
 import time
@@ -44,7 +45,7 @@ POST_FLASH_SETTLE = 10.0
 # ~3s cold-boot).  Reconnect OCD after this grace period.
 POST_CONFIG_SETTLE = 8.0
 
-# How long to poll wifi_status after config reboot before giving up.
+# How long to poll wifi after config reboot before giving up.
 WIFI_CONNECT_WAIT = 60.0
 
 
@@ -88,10 +89,10 @@ def _run(ocd, results, context):
     r = subprocess.run([WP_ENTER_BOOTSEL, WP_USB_BOOT_BINARY],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        msg = f"wp_enter_bootsel failed (exit {r.returncode}): {r.stderr.strip()}"
-        if "unable to find a matching CMSIS-DAP device" in r.stderr:
-            results.fatal("prov_enter_bootsel", msg)
-        results.abort("prov_enter_bootsel", msg)
+        detail = r.stderr.strip() or r.stdout.strip()
+        print("  NOTE: ensure that the WP is connected to the test PC via USB cable")
+        results.fatal("prov_enter_bootsel",
+            f"wp_enter_bootsel failed (exit {r.returncode}): {detail}")
 
     results.passed("prov_enter_bootsel")
 
@@ -105,8 +106,9 @@ def _run(ocd, results, context):
     print(f"  Erasing and flashing WP from {WP_BUILD_DIR} ...")
     r = subprocess.run([FLASH_WP, "-e", WP_BUILD_DIR], capture_output=True, text=True)
     if r.returncode != 0:
-        results.abort("prov_flash_wp",
-            f"flash_WP -e failed (exit {r.returncode}): {r.stderr.strip()}")
+        detail = r.stderr.strip() or r.stdout.strip()
+        results.fatal("prov_flash_wp",
+            f"flash_WP -e failed (exit {r.returncode}): {detail}")
     results.passed("prov_flash_wp")
 
     # ----------------------------------------------------------------
@@ -121,7 +123,7 @@ def _run(ocd, results, context):
         ocd.start(reset=True)
         ocd.wait_ready()
     except (OpenOCDError, OSError) as e:
-        results.abort("prov_ocd_restart", f"OpenOCD failed: {e}")
+        results.fatal("prov_ocd_restart", f"OpenOCD failed: {e}")
 
     print(f"  Waiting {POST_FLASH_SETTLE:.0f}s for WP boot...")
     time.sleep(POST_FLASH_SETTLE)
@@ -134,12 +136,13 @@ def _run(ocd, results, context):
     results.start("prov_ap_boot")
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
         try:
-            reply = vfy.command("ap_status", timeout=10.0)
-            if "PASS" not in reply:
-                results.abort("prov_ap_boot", f"WP not in AP mode: {reply}")
+            reply = vfy.command("wifi", timeout=10.0)
+            state = json.loads(reply).get("wifi", {}).get("state", "")
+            if state != "ap_mode":
+                results.fatal("prov_ap_boot", f"WP not in AP mode: {reply}")
             results.passed("prov_ap_boot", reply)
         except RttError as e:
-            results.abort("prov_ap_boot", str(e))
+            results.fatal("prov_ap_boot", str(e))
 
     # ----------------------------------------------------------------
     # prov_ap_connect — ap_proxy scans for umod4_XXXX and connects
@@ -149,19 +152,19 @@ def _run(ocd, results, context):
     results.start("prov_ap_connect")
     port = find_port()
     if port is None:
-        results.abort("prov_ap_connect",
+        results.fatal("prov_ap_connect",
             "ap_proxy serial port not found — is the device attached?")
 
     print(f"  Opening ap_proxy on {port} ...")
     with ApProxy(port) as proxy:
         if not proxy.ping():
-            results.abort("prov_ap_connect", "ap_proxy not responding to PING")
+            results.fatal("prov_ap_connect", "ap_proxy not responding to PING")
         try:
             ip = proxy.find_and_connect()
             context["ap_proxy_port"] = port
             results.passed("prov_ap_connect", f"connected  proxy_ip={ip}")
         except ApProxyError as e:
-            results.abort("prov_ap_connect", str(e))
+            results.fatal("prov_ap_connect", str(e))
 
         # ----------------------------------------------------------------
         # prov_set_wifi — POST WiFi credentials to WP via HTTP
@@ -176,17 +179,21 @@ def _run(ocd, results, context):
         }
         if context.get("password"):
             config_body["wifi_password"] = context["password"]
+        if context.get("ap_ssid"):
+            config_body["ap_ssid"] = context["ap_ssid"]
+        if context.get("ap_password"):
+            config_body["ap_password"] = context["ap_password"]
 
         print(f"  POSTing WiFi config (ssid={context['ssid']}, "
               f"device={context['device_name']}) ...")
         try:
             code, body = proxy.post("/api/config", config_body)
             if code != 200:
-                results.abort("prov_set_wifi",
+                results.fatal("prov_set_wifi",
                     f"POST /api/config returned HTTP {code}: {body}")
             results.passed("prov_set_wifi", "config accepted — WP rebooting")
         except ApProxyError as e:
-            results.abort("prov_set_wifi", str(e))
+            results.fatal("prov_set_wifi", str(e))
 
     # ----------------------------------------------------------------
     # prov_wait_reboot — wait for WP to save config and reboot
@@ -199,11 +206,11 @@ def _run(ocd, results, context):
     try:
         ocd.reconnect()
     except (OpenOCDError, OSError) as e:
-        results.abort("prov_wait_reboot", f"OpenOCD reconnect failed: {e}")
+        results.fatal("prov_wait_reboot", f"OpenOCD reconnect failed: {e}")
     results.passed("prov_wait_reboot", "RTT live after reboot")
 
     # ----------------------------------------------------------------
-    # prov_wifi_connect — poll RTT wifi_status until WP joins home WiFi
+    # prov_wifi_connect — poll RTT wifi until WP joins home WiFi
     # ----------------------------------------------------------------
 
     results.start("prov_wifi_connect")
@@ -211,13 +218,17 @@ def _run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
         while True:
             try:
-                reply = vfy.command("wifi_status", timeout=10.0)
+                reply = vfy.command("wifi", timeout=10.0)
             except RttError as e:
-                results.abort("prov_wifi_connect", str(e))
-            if "PASS" in reply:
+                results.fatal("prov_wifi_connect", str(e))
+            try:
+                state = json.loads(reply).get("wifi", {}).get("state", "")
+            except (json.JSONDecodeError, AttributeError):
+                state = ""
+            if state == "connected":
                 break
-            if "not_connected" not in reply or time.monotonic() >= deadline:
-                results.abort("prov_wifi_connect",
+            if state != "not_connected" or time.monotonic() >= deadline:
+                results.fatal("prov_wifi_connect",
                     reply + f" — WiFi did not connect within {WIFI_CONNECT_WAIT:.0f}s")
             time.sleep(2.0)
         results.passed("prov_wifi_connect", reply)

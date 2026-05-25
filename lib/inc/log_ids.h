@@ -35,18 +35,23 @@
 // A matching LOGID_<subsystem>_<name>_DLEN macro must be defined to specify how many bytes of payload accompany the ID.
 
 // The system may optionally define literal constants to help decode raw data associated with a specific LOGID.
-// If present, the naming convention is chosen to make sure that literals are to be associated with specific LOGID values:
-//    LOGID_<subsystem>_<name>_VAL_<constant_name>
+// Constants are either values (the constant must equal the entire raw data byte)
+// or masks (only the flagged bits matter).
+// The naming convention ties each literal to its parent LOGID:
+//    LOGID_<subsystem>_<name>_<constant_name>_VAL
+//    LOGID_<subsystem>_<name>_<constant_name>_MASK
+
 //
 // Data Types
 //
 // The data associated with each LOGID is typed. The type information will be encoded in the TYPE name
 // by appending the various type ID strings 'XX' shown below using the general form LOGID_<subsystem>_<name>_TYPE_XX:
 //
-// *** WARNING:
-// *** If you make changes to the naming convention, you MUST update the generate_encoder.py utility
-// *** to properly generate the logEncoder data structure!!!
-// ***
+// *** NOTE:
+// *** The build system automatically regenerates the logEncoder table (tx_encoder.c) whenever
+// *** this file changes. However, the data type naming convention (the "_TYPE_" token itself
+// *** or the actual data type tokens _I16, _U16, _TS, etc.) is hardcoded in
+// *** generate_encoder.py. Renaming any of those tokens requires manually editing that tool to match.
 //
 //    _I16  int16   Signed 16-bit int
 //    _U16  uint16  Unsigned 16-bit int
@@ -82,11 +87,11 @@
 // #define LOGID_ECU_CPU_EVENT_TYPE_U8      ((LOGID_ECU_BASE) + 0x00)   // Assign this log event its own ID value relative to the start of the ECU subspace
 // #define LOGID_ECU_CPU_EVENT_DLEN         1                           // Type U8 indicates that a single byte will follow the LOGID_ECU_CPU_EVENT_TYPE_U8 byte in the log
 // Value constants for LOGID_ECU_CPU_EVENT_TYPE_U8:
-// #define     LOGID_ECU_CPU_EVENT_VAL_RTI             (0x0)
-// #define     LOGID_ECU_CPU_EVENT_VAL_IRQ             (0x1)
+// #define     LOGID_ECU_CPU_EVENT_RTI_VAL             (0x0)
+// #define     LOGID_ECU_CPU_EVENT_IRQ_VAL             (0x1)
 
 // Usage of symbols (using HC11 assembly language as an example)
-//      ldaA    #LOGID_ECU_CPU_EVENT_VAL_RTI        ; LOGID_ECU_CPU_EVENT_TYPE_U8 will fit in an 8-bit register
+//      ldaA    #LOGID_ECU_CPU_EVENT_RTI_VAL        ; LOGID_ECU_CPU_EVENT_TYPE_U8 will fit in an 8-bit register
 //      staA    LW + LOGID_ECU_CPU_EVENT_TYPE_U8
 
 
@@ -146,7 +151,7 @@
 //
 
 // The LOG_VER refers to the version of this ECU-specific header file.
-#define     LOGID_GEN_ECU_LOG_VER_VAL_V0            (0x00)      // Value constant for LOGID_GEN_ECU_LOG_VER_U8
+#define     LOGID_GEN_ECU_LOG_VER_V0_VAL            (0x00)      // Value constant for LOGID_GEN_ECU_LOG_VER_U8
 
 // Except for RESET, all of these events represent bad things going on inside the CPU.
 // They mainly represent situations where interrupts handlers got invoked
@@ -154,18 +159,18 @@
 #define   LOGID_ECU_CPU_EVENT_TYPE_U8               ((LOGID_ECU_BASE) + 0x00)
 #define   LOGID_ECU_CPU_EVENT_DLEN                  1
 // Value constants for LOGID_ECU_CPU_EVENT_TYPE_U8:
-#define     LOGID_ECU_CPU_EVENT_VAL_RTI             (0x0)
-#define     LOGID_ECU_CPU_EVENT_VAL_IRQ             (0x1)
-#define     LOGID_ECU_CPU_EVENT_VAL_XIRQ            (0x2)
-#define     LOGID_ECU_CPU_EVENT_VAL_SWI             (0x3)
-#define     LOGID_ECU_CPU_EVENT_VAL_IOP             (0x4)
-#define     LOGID_ECU_CPU_EVENT_VAL_COP             (0x5)
-#define     LOGID_ECU_CPU_EVENT_VAL_CMF             (0x6)
-#define     LOGID_ECU_CPU_EVENT_VAL_RESET           (0x7)
-#define     LOGID_ECU_CPU_EVENT_VAL_OC5F            (0x8)
-#define     LOGID_ECU_CPU_EVENT_VAL_OC4F            (0x9)
-#define     LOGID_ECU_CPU_EVENT_VAL_OC3F            (0xA)
-#define     LOGID_ECU_CPU_EVENT_VAL_IC3             (0xB)
+#define     LOGID_ECU_CPU_EVENT_RTI_VAL             (0x0)
+#define     LOGID_ECU_CPU_EVENT_IRQ_VAL             (0x1)
+#define     LOGID_ECU_CPU_EVENT_XIRQ_VAL            (0x2)
+#define     LOGID_ECU_CPU_EVENT_SWI_VAL             (0x3)
+#define     LOGID_ECU_CPU_EVENT_IOP_VAL             (0x4)
+#define     LOGID_ECU_CPU_EVENT_COP_VAL             (0x5)
+#define     LOGID_ECU_CPU_EVENT_CMF_VAL             (0x6)
+#define     LOGID_ECU_CPU_EVENT_RESET_VAL           (0x7)
+#define     LOGID_ECU_CPU_EVENT_OC5F_VAL            (0x8)
+#define     LOGID_ECU_CPU_EVENT_OC4F_VAL            (0x9)
+#define     LOGID_ECU_CPU_EVENT_OC3F_VAL            (0xA)
+#define     LOGID_ECU_CPU_EVENT_IC3_VAL             (0xB)
 
 #define   LOGID_ECU_METADATA_TYPE_CS                ((LOGID_ECU_BASE) + 0x01)       // The build metadata string
 #define   LOGID_ECU_METADATA_DLEN                   1
@@ -357,7 +362,7 @@
 //    LOGID_EP_LOAD_M3, 0x22
 //    LOGID_EP_LOAD_M3, 0x11
 
-#define     LOGID_GEN_EP_LOG_VER_VAL_V0                 (0x00)                          // Version 0
+#define     LOGID_GEN_EP_LOG_VER_V0_VAL                 (0x00)                          // Version 0
 
 #define LOGID_EP_LOAD_NAME_TYPE_CS                      ((LOGID_EP_BASE) + 0x00)        // The name of the EPROM to be loaded, written as sequence of UTF-8 chars, NULL terminated
 #define LOGID_EP_LOAD_NAME_DLEN                         1
@@ -373,31 +378,31 @@
 
 #define LOGID_EP_LOAD_ERR_TYPE_U8                       ((LOGID_EP_BASE) + 0x06)        // The error status byte of the most recent load operation
 #define LOGID_EP_LOAD_ERR_DLEN                          1
-#define     LOGID_EP_LOAD_ERR_VAL_NOERR                 0x00                            //   * no error: the load succeeded
-#define     LOGID_EP_LOAD_ERR_VAL_NOTFOUND              0x01                            //   * The specified image name was not found in the BSON lib
-#define     LOGID_EP_LOAD_ERR_VAL_NONAME                0x02                            //   * BSON EPROM object does not contain a name key
-#define     LOGID_EP_LOAD_ERR_VAL_CKSUMERR              0x03                            //   * BSON memory contents verification failure
-#define     LOGID_EP_LOAD_ERR_VAL_VERIFYERR             0x04                            //   * Verification failure after being copied to RAM
-#define     LOGID_EP_LOAD_ERR_VAL_BADOFFSET             0x05                            //   * start offset is outside of EPROM size
-#define     LOGID_EP_LOAD_ERR_VAL_BADLENGTH             0x06                            //   * the desired start offset plus length goes beyond end of EPROM
-#define     LOGID_EP_LOAD_ERR_VAL_NODAUGHTERBOARDKEY    0x07                            //   * BSON doc is missing a DAUGHTERBOARD key
-#define     LOGID_EP_LOAD_ERR_VAL_NOMEMKEY              0x08                            //   * BSON doc is missing a MEM key
-#define     LOGID_EP_LOAD_ERR_VAL_M3FAIL                0x09                            //   * M3 checksum does not match the binary data
-#define     LOGID_EP_LOAD_ERR_VAL_MISSINGKEYSTART       0x0A                            //   * mem object is missing its 'start' key
-#define     LOGID_EP_LOAD_ERR_VAL_MISSINGKEYLENGTH      0x0B                            //   * mem object is missing its 'length' key
-#define     LOGID_EP_LOAD_ERR_VAL_MISSINGKEYM3          0x0C                            //   * mem object is missing its 'm3' key
-#define     LOGID_EP_LOAD_ERR_VAL_BADM3BSONTYPE         0x0D                            //   * m3 key has invalid data type (should be int32 or int64)
-#define     LOGID_EP_LOAD_ERR_VAL_BADM3VALUE            0x0E                            //   * int64 m3 values should only contain 32 bits of data
-#define     LOGID_EP_LOAD_ERR_VAL_NOBINKEY              0x0F                            //   * mem object is missing its 'bin' key: no binary data present
-#define     LOGID_EP_LOAD_ERR_VAL_BADBINLENGTH          0x10                            //   * bin object must be exactly 32768 bytes
-#define     LOGID_EP_LOAD_ERR_VAL_BADBINSUBTYPE         0x11                            //   * bin object has invalid BSON subtype
+#define     LOGID_EP_LOAD_ERR_NOERR_VAL                 0x00                            //   * no error: the load succeeded
+#define     LOGID_EP_LOAD_ERR_NOTFOUND_VAL              0x01                            //   * The specified image name was not found in the BSON lib
+#define     LOGID_EP_LOAD_ERR_NONAME_VAL                0x02                            //   * BSON EPROM object does not contain a name key
+#define     LOGID_EP_LOAD_ERR_CKSUMERR_VAL              0x03                            //   * BSON memory contents verification failure
+#define     LOGID_EP_LOAD_ERR_VERIFYERR_VAL             0x04                            //   * Verification failure after being copied to RAM
+#define     LOGID_EP_LOAD_ERR_BADOFFSET_VAL             0x05                            //   * start offset is outside of EPROM size
+#define     LOGID_EP_LOAD_ERR_BADLENGTH_VAL             0x06                            //   * the desired start offset plus length goes beyond end of EPROM
+#define     LOGID_EP_LOAD_ERR_NODAUGHTERBOARDKEY_VAL    0x07                            //   * BSON doc is missing a DAUGHTERBOARD key
+#define     LOGID_EP_LOAD_ERR_NOMEMKEY_VAL              0x08                            //   * BSON doc is missing a MEM key
+#define     LOGID_EP_LOAD_ERR_M3FAIL_VAL                0x09                            //   * M3 checksum does not match the binary data
+#define     LOGID_EP_LOAD_ERR_MISSINGKEYSTART_VAL       0x0A                            //   * mem object is missing its 'start' key
+#define     LOGID_EP_LOAD_ERR_MISSINGKEYLENGTH_VAL      0x0B                            //   * mem object is missing its 'length' key
+#define     LOGID_EP_LOAD_ERR_MISSINGKEYM3_VAL          0x0C                            //   * mem object is missing its 'm3' key
+#define     LOGID_EP_LOAD_ERR_BADM3BSONTYPE_VAL         0x0D                            //   * m3 key has invalid data type (should be int32 or int64)
+#define     LOGID_EP_LOAD_ERR_BADM3VALUE_VAL            0x0E                            //   * int64 m3 values should only contain 32 bits of data
+#define     LOGID_EP_LOAD_ERR_NOBINKEY_VAL              0x0F                            //   * mem object is missing its 'bin' key: no binary data present
+#define     LOGID_EP_LOAD_ERR_BADBINLENGTH_VAL          0x10                            //   * bin object must be exactly 32768 bytes
+#define     LOGID_EP_LOAD_ERR_BADBINSUBTYPE_VAL         0x11                            //   * bin object has invalid BSON subtype
 
-#define     LOGID_EP_LOAD_ERR_VAL_BADMAGIC              0x20                            //   * Bad Magic number in the image_store
-#define     LOGID_EP_LOAD_ERR_VAL_NOIMAGES              0x21                            //   * No images found in the image_store
-#define     LOGID_EP_LOAD_ERR_VAL_SELECTORIZETOOBIG     0x22                            //   * The image selector structure is too big to fit in slot 0
-#define     LOGID_EP_LOAD_ERR_VAL_BAD_SLOT              0x23                            //   * The image selector structure contains an invalid slot number, must be [1..255]
-#define     LOGID_EP_LOAD_ERR_VAL_BAD_HASH              0x24                            //   * The hash in the image selector did not match the data in the slot
-#define     LOGID_EP_LOAD_ERR_VAL_LIMP_MODE             0x25                            //   * The EP is in limp mode, unable to load any other images
+#define     LOGID_EP_LOAD_ERR_BADMAGIC_VAL              0x20                            //   * Bad Magic number in the image_store
+#define     LOGID_EP_LOAD_ERR_NOIMAGES_VAL              0x21                            //   * No images found in the image_store
+#define     LOGID_EP_LOAD_ERR_SELECTORIZETOOBIG_VAL     0x22                            //   * The image selector structure is too big to fit in slot 0
+#define     LOGID_EP_LOAD_ERR_BAD_SLOT_VAL              0x23                            //   * The image selector structure contains an invalid slot number, must be [1..255]
+#define     LOGID_EP_LOAD_ERR_BAD_HASH_VAL              0x24                            //   * The hash in the image selector did not match the data in the slot
+#define     LOGID_EP_LOAD_ERR_LIMP_MODE_VAL             0x25                            //   * The EP is in limp mode, unable to load any other images
 
 #define LOGID_EP_LOAD_IMAGESLOT_TYPE_U8                 ((LOGID_EP_BASE) + 0x07)        // Report the image slot number that we are loading (max is 255, slot 0 reserved for built-in fallback image)
 #define LOGID_EP_LOAD_IMAGESLOT_DLEN                    1
@@ -405,6 +410,13 @@
 #define LOGID_EP_INFO_TYPE_CS                           ((LOGID_EP_BASE) + 0x08)        // Generic informational string, NULL terminated. Content is self-describing (e.g. "dsc: user text")
 #define LOGID_EP_INFO_DLEN                              1
 
+#define LOGID_EP_RESET_REASON_TYPE_U8                   ((LOGID_EP_BASE) + 0x09)        // RP2040 reset reason bitmask, captured at boot before registers can be cleared
+#define LOGID_EP_RESET_REASON_DLEN                      1
+#define     LOGID_EP_RESET_REASON_POR_MASK              0x01                            //   HAD_POR: power-on reset or brownout (RP2040 does not distinguish the two)
+#define     LOGID_EP_RESET_REASON_RUN_MASK              0x02                            //   HAD_RUN: RUN pin was asserted
+#define     LOGID_EP_RESET_REASON_PSM_MASK              0x04                            //   HAD_PSM_RESTART: PSM restart (software or watchdog)
+#define     LOGID_EP_RESET_REASON_WD_TIMER_MASK         0x08                            //   watchdog timer expired (will also have PSM_MASK set)
+#define     LOGID_EP_RESET_REASON_WD_FORCE_MASK         0x10                            //   watchdog force reset (will also have PSM_MASK set)
 
 #define LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16              ((LOGID_EP_BASE) + 0x0A)        // The EPROM load map blob, written as a sequence of 2-byte values, LSB first.
 #define LOGID_EP_LOAD_RP58MAPBLOB_DLEN                  2                               // The number of elements written to the log will be (RP58_MAPBLOB_LENGTH)/2
@@ -412,10 +424,13 @@
 #define LOGID_EP_IMGSEL_TYPE_CS                         ((LOGID_EP_BASE) + 0x0C)        // Per-image load results as a compact JSON array string, NULL-terminated char stream.
 #define LOGID_EP_IMGSEL_DLEN                            1                               // Sent once after the loading pass completes (success or failsafe).
 
+#define LOGID_EP_ECLK_KHZ_TYPE_U16                      ((LOGID_EP_BASE) + 0x0E)        // HC11 E-clock count over a 1 mSec span: should be ~2000
+#define LOGID_EP_ECLK_KHZ_DLEN                          2
+
 
 // ====================================================================================================
 // Define the LOGID space reserved for the WP.
-#define LOGID_GEN_WP_LOG_VER_VAL_V0                     (0x00)                          // Version 0
+#define LOGID_GEN_WP_LOG_VER_V0_VAL                     (0x00)                          // Version 0
 
 #define LOGID_WP_CSECS_TYPE_U8                          ((LOGID_WP_BASE) + 0x01)
 #define LOGID_WP_CSECS_DLEN                             1
@@ -474,5 +489,22 @@
 #define LOGID_WP_WR_TIME_DLEN                           2
 #define LOGID_WP_SYNC_TIME_TYPE_U16                     ((LOGID_WP_BASE) + 0x0D)
 #define LOGID_WP_SYNC_TIME_DLEN                         2
+
+// Upper 16 bits of RP2350 powman_hw->chip_reset register, logged at WP startup.
+#define LOGID_WP_RESET_REASON_TYPE_U16                  ((LOGID_WP_BASE) + 0x0E)
+#define LOGID_WP_RESET_REASON_DLEN                      2
+#define     LOGID_WP_RESET_REASON_POR_MASK                  0x0001  //   HAD_POR: power-on reset
+#define     LOGID_WP_RESET_REASON_BOR_MASK                  0x0002  //   HAD_BOR: brown-out reset
+#define     LOGID_WP_RESET_REASON_RUN_LOW_MASK              0x0004  //   HAD_RUN_LOW: RUN pin asserted low
+#define     LOGID_WP_RESET_REASON_DP_RESET_REQ_MASK         0x0008  //   HAD_DP_RESET_REQ: debug port requested reset
+//                                                          0x0010  //   Note: not defined by silicon
+#define     LOGID_WP_RESET_REASON_RESCUE_MASK               0x0020  //   HAD_RESCUE: rescue reset from debug port
+#define     LOGID_WP_RESET_REASON_WD_RESET_POWMAN_ASYNC_MASK 0x0040 //   HAD_WATCHDOG_RESET_POWMAN_ASYNC
+#define     LOGID_WP_RESET_REASON_WD_RESET_POWMAN_MASK      0x0080  //   HAD_WATCHDOG_RESET_POWMAN
+#define     LOGID_WP_RESET_REASON_WD_RESET_SWCORE_MASK      0x0100  //   HAD_WATCHDOG_RESET_SWCORE
+#define     LOGID_WP_RESET_REASON_SWCORE_PD_MASK            0x0200  //   HAD_SWCORE_PD: switched-core power domain reset
+#define     LOGID_WP_RESET_REASON_GLITCH_DETECT_MASK        0x0400  //   HAD_GLITCH_DETECT: voltage glitch detected
+#define     LOGID_WP_RESET_REASON_HZD_SYS_RESET_REQ_MASK    0x0800  //   HAD_HZD_SYS_RESET_REQ: hazardous system reset request
+#define     LOGID_WP_RESET_REASON_WD_RESET_RSM_MASK         0x1000  //   HAD_WATCHDOG_RESET_RSM: watchdog reset state machine
 
 #endif
