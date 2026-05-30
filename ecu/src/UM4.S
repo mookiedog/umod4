@@ -431,10 +431,13 @@ L003C   =       0x003C
 L003E   =       0x003E                  ;used in AAP (Ambient Air Pressure) calculations
 L0040   =       0x0040                  ;used in AAP (Ambient Air Pressure) calculations
 L0041   =       0x0041
-L0042   =       0x0042                  ;holds the filtered VTA (Throttle Angle) A/D reading.
+L0042   =       0x0042                  ;holds the filtered VTA (Throttle Angle) A/D reading, 10-bit, right-aligned
+
 L0044   =       0x0044                  ;holds the left-aligned VTA (not sure how much filtering happens)
 L0046   =       0x0046                  ; some sort of 16-bit value in 46/47
-L0048   =       0x0048
+
+L0048   =       0x0048                  ;holds an 8-bit version of the 10-bit VTA where VTA values >= 0x00FF are clamped to 0xFF
+                                        ;used by the TPS DIAG calibration mechanism
 
 L0049_PORTG_debounced = 0x0049
 L004A_PORTG_prev      = 0x004A
@@ -1776,8 +1779,12 @@ L9A5D:  .word   0x0340
 L9A5F:  .byte   0xB0                    ;used by water temp converter as a default temperature if the sensor is broken
 L9A60:  .byte   0x70                    ;used by air   temp converter as a default temperature if the sensor is broken
 L9A61:  .byte   0xBA
-L9A62:  .byte   0x80
-L9A63:  .byte   0x84
+
+; VTA ADC constants used by TPS calibration mechanism.
+; Constants are in 8-bit clamped format (all 10-bit VTA values > 0x00FF must be clamped to 0xFF)
+L9A62:  .byte   0x80                    ;The low limit: readings below this value report -1 in DIAG mode
+L9A63:  .byte   0x84                    ;The high limit: readings above this value report +1 in DIAG mode
+
 L9A64:  .byte   0x0A
 
 L9A65:  .word   0x2700                  ;1/6 period = 500 RPM
@@ -6089,16 +6096,24 @@ LD82E_10:
         cmpA    L9A2A
         blo     LD82E_11
         bset    *L0008 #0b01000000
+
+;Compute L0048, an 8-bit variant of the 10-bit VTA, used by the TPS calibration logic.
+;Any 10-bit VTA value > 0x00FF gets clamped to an 8-bit VTA value of 0xFF.
+;This allows the comparison code for checking against the calibration limit
+;constants to use simpler byte comparison operations.
 LD82E_11:
-        ldaA    *L0042
-        bne     LD82E_12
-        ldD     *L0042
+        ldaA    *L0042                  ;L0042:L0043 holds the filtered 10-bit right-aligned VTA as a 16-bit word
+        bne     LD82E_12                ;upper byte is non-zero: we need to clamp it!
+        ldD     *L0042                  ;B holds the 8-bit ADC reading
         bra     LD82E_13
 
 LD82E_12:
-        ldaB    #0xFF
+        ldaB    #0xFF                   ;VTA>0x00FF: clamp L0048 to 0xFF
+
+;When we get here, B holds right-shifted throttle angle ADC reading clamped to a maximum of 0x00FF
 LD82E_13:
-        staB    *L0048
+        staB    *L0048                  ;save it for use by the TPS calibration reporting code
+
         ldaA    *L004D                  ;8.8 RPM50
         ldX     #L917C
         jsr     LF3C2
@@ -7168,7 +7183,7 @@ LDF4D_2:
         bclr    *L0005 #0b00001000      ;disable diag mode
         clr     L0145                   ;reset the 1.0 second counter
 
-
+; We are in DIAG TEST mode
 LDF4D_3:
         brclr   *L0008 #0b00000010 LDF4D_5
         ldaA    *L002A                  ;get the raw VM A/D reading
@@ -7293,6 +7308,10 @@ LDF4D_14:
         jmp     LDF4D_31
 
 LDF4D_15:
+;In DIAG TEST mode with no active fault-code transmission.
+;If sensor error bits (L000E/L000F) are all clear, route to LDF4D_31,
+;which is the TPS/VTA calibration WL feedback section.
+;If any error bits are set, fall through to the fault-code display path instead.
         clr     L0143
         ldD     *L000E
 
@@ -7302,7 +7321,7 @@ LDF4D_15:
         bne     LDF4D_18
 
 LDF4D_16:
-        jmp     LDF4D_31                ;no sensor error bits are set
+        jmp     LDF4D_31                ;no sensor errors: enter TPS calibration WL feedback
 
 ;We get here if we are NOT in DIAG TEST mode
 LDF4D_17:
@@ -7399,99 +7418,143 @@ LDF4D_30:
         jmp     LDF4D_47                ;skips all the WL processing
 
 
+;-----------------------------------------------------------------
+;TPS / VTA calibration WL feedback (LDF4D_31..LDF4D_42)
+;
+;Entered from DIAG TEST mode (TEST connector grounded 1 second) when no sensor fault codes are pending.
+;Also entered from normal-run mode when L0008:bit2 is set (active WL condition).
+;
+;Starting conditions:
+;  - the throttle is closed, resting against its stop
+;  - the idle stop control is screwed all the way out to have no effect
+
+;L0048 holds the 8-bit clamped VTA ADC reading.
+;There is a three-zone decision against the calibration target window:
+;
+;   L0048 > L9A63 (0x84)  TPS reading too HIGH  -> WL turns OFF   after 10-step delay  (+1)
+;   0x80..0x84            TPS in target window  -> WL unchanged   (hysteresis hold)    ( 0)
+;   L0048 < L9A62 (0x80)  TPS reading too LOW   -> WL turns ON    after 10-step delay  (-1)
+;
+;WL OFF = closed-throttle ADC count above 132  -> TPS angle too high (+1): rotate TPS sensor down
+;WL ON  = closed-throttle ADC count below 128  -> TPS angle too low  (-1): rotate TPS sensor up
+;
+;L013D  : 10-step hysteresis countdown (10 × 40 ms = 400 ms) before WL change
+;L0005:bit2 : sticky "was-in-high-zone" flag, prevents countdown reset on exit
+;L0144  : cycles-in-this-state counter; once it reaches 72 (~2.9 s) the WL
+;         starts blinking instead of holding steady (see LDF4D_38 below)
+;-----------------------------------------------------------------
+
 LDF4D_31:
         ldaA    L0144
         addA    #0x01
         sbcA    #0x00
-        staA    L0144
+        staA    L0144                   ;saturating count of cycles in this calibration state
 
-        bset    *L0008 #0b00000100
-        ldaA    *L0048
-        cmpA    L9A63                   ;0x84 (132.)
-        bls     LDF4D_33
-        brset   *L0005 #0b00000100 LDF4D_32
+        bset    *L0008 #0b00000100      ;mark WL-active condition
+        ldaA    *L0048                  ;load effective closed-throttle VTA count
 
-        ldaA    L9A64                   ;0x0A (10.)
+;Zone test: is VTA too HIGH? (L0048 > upperlimit)
+        cmpA    L9A63                   ;0x84 (132.) upper calibration threshold
+        bls     LDF4D_33                ;br if VTA <= 0x84 (not in the too-high zone)
+
+;VTA is too high.  Load hysteresis countdown on first entry to this zone.
+        brset   *L0005 #0b00000100 LDF4D_32  ;skip reload if we were already in high zone
+
+        ldaA    L9A64                   ;0x0A (10.) load 400 ms hysteresis countdown
         staA    L013D
 
 LDF4D_32:
-        bset    *L0005 #0b00000100
+;Count down before committing to WL-off (TPS too high signal).
+        bset    *L0005 #0b00000100      ;remember we are in the high zone
         ldaA    L013D
-        beq     LDF4D_37
-        dec     L013D
+        beq     LDF4D_37                ;countdown expired → turn WL off (TPS too high: -1)
+        dec     L013D                   ;still counting down
         jmp     LDF4D_38
 
+;Zone test: is VTA in the target window? (lowerlimit <= L0048 <= upperlimit) ---
 LDF4D_33:
-        cmpA    L9A62                   ;0x80 (128.)
-        blo     LDF4D_34
-        ldaA    L9A64                   ;0x0A (10.)
+        cmpA    L9A62                   ;0x80 (128.) lower calibration threshold
+        blo     LDF4D_34                ;br if VTA < 0x80 (in the too-low zone)
+
+;VTA is inside the 0x80..0x84 calibration window: reload countdown and hold.
+        ldaA    L9A64                   ;0x0A (10.) keep reloading — do not commit to a change
         staA    L013D
-        jmp     LDF4D_38
+        jmp     LDF4D_38                ;WL state unchanged: TPS is correct (0)
 
 
+;Zone test: VTA too LOW (L0048 < lowerlimit)
 LDF4D_34:
-        brclr   *L0005 #0b00000100 LDF4D_35
+;If we just came down from the high zone, reload the countdown to prevent
+;immediately snapping to WL-on.
+        brclr   *L0005 #0b00000100 LDF4D_35  ;skip reload if we were already in low zone
 
-        ldaA    L9A64                   ;0x0A (10.)
+        ldaA    L9A64                   ;0x0A (10.) reload countdown on high→low transition
         staA    L013D
 
 LDF4D_35:
-        bclr    *L0005 #0b00000100
+        bclr    *L0005 #0b00000100      ;clear the high-zone sticky flag
         ldaA    L013D
-        beq     LDF4D_36                ;br if L013D==0
-        dec     L013D                   ;else decrement L013D
+        beq     LDF4D_36                ;countdown expired → turn WL on (TPS too low: +1)
+        dec     L013D                   ;still counting down
         bra     LDF4D_38
 
+;WL ON: closed-throttle VTA is too LOW → rotate TPS up (-1)
 LDF4D_36:
         bclr    *L0008 #0b00000100
         clr     L0141
         ldaB    PORTH
-        oraB    #0b00000100             ;sets the WL bit
+        oraB    #0b00000100             ;WL = 1: TPS calibration signal -1 (reading too low)
         staB    PORTH
         bra     LDF4D_42
 
+;WL OFF: closed-throttle VTA is too HIGH → rotate TPS down (+1)
 LDF4D_37:
         clr     L0141
         ldaA    PORTH
-        andA    #0b11111011             ;clears the WL bit
+        andA    #0b11111011             ;WL = 0: TPS calibration signal +1 (reading too high)
         staA    PORTH
         bclr    *L0008 #0b00000100
         bra     LDF4D_42
 
+;Blink phase: once L0144 reaches 72 (~2.9 s), WL starts toggling
+;Before that threshold L0141 just mirrors L0144 (no visible blink).
+;After it, L0141 counts 0..11 (L9FF0/L9FF1 = 0x0B) and toggles WL each cycle,
+;giving a ~440 ms blink period (11 × 40 ms ON, 11 × 40 ms OFF).
 LDF4D_38:
         ldaA    L0144
-        cmpA    L9FF6                   ;0x48
+        cmpA    L9FF6                   ;0x48 (72.) blink-phase threshold (~2.9 s)
         bhs     LDF4D_39
-        staA    L0141
+        staA    L0141                   ;pre-blink: L0141 tracks L0144, no toggle yet
         jmp     LDF4D_42
 
 LDF4D_39:
-        inc     L0141
-        ldaA    L9FF0                   ;0x0b (11.)
+        inc     L0141                   ;advance blink counter
+        ldaA    L9FF0                   ;0x0B (11.) half-period in 40 ms ticks
         cmpA    L0141
-        bhs     LDF4D_41
+        bhs     LDF4D_41                ;half-period not elapsed yet
 
+;Half-period expired while WL is currently ON → turn it OFF
         ldaA    PORTH
         bitA    #0b00000100             ;test WL
-        beq     LDF4D_40                ;if clear, we are done
+        beq     LDF4D_40                ;WL already off: go check the off-half-period
 
-        clr     L0141
-        ldaA    PORTH                   ;if WL is set,
-        andA    #0b11111011             ;we clear WL
+        clr     L0141                   ;reset blink counter
+        ldaA    PORTH
+        andA    #0b11111011             ;WL = 0 (end of ON half)
         staA    PORTH
 
         bclr    *L0008 #0b00000100
         bra     LDF4D_41
 
-
+;Half-period expired while WL is currently OFF → turn it ON
 LDF4D_40:
-        ldaA    L9FF1                   ;0x0B (11.)
+        ldaA    L9FF1                   ;0x0B (11.) off half-period (same duration)
         cmpA    L0141
-        bhs     LDF4D_41
+        bhs     LDF4D_41                ;not yet
 
-        clr     L0141
+        clr     L0141                   ;reset blink counter
         ldaA    PORTH
-        oraA    #0b00000100             ;sets WL
+        oraA    #0b00000100             ;WL = 1 (start of ON half)
         staA    PORTH
 
 LDF4D_41:

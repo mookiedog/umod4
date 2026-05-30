@@ -20,6 +20,7 @@ from log_convert import (
     logconv_ecu_raw_thw, logconv_ecu_raw_tha,
     logconv_ecu_raw_map, logconv_ecu_raw_aap,
     logconv_ecu_raw_vm, logconv_ecu_ign_dly,
+    logconv_ecu_vta_pct,
     convertApriliaTempSensorAdcToDegC, convertPressureSensorAdcToKpa,
 )
 
@@ -1932,9 +1933,12 @@ def _process_single_file(logfile_path, output_path, args, L):
                     # Also handles missed-OFLO detection (63→0 transition).
                     timekeeper.try_update_timer_bits(timer_bits)
                     timekeeper.advance_time_by_ns(1)
-                    print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta} ADC{f' ({(timer_bits << 10):04X})'}")
+                    vta_pct = logconv_ecu_vta_pct(vta)
+                    vta_v = vta * 5.0 / 1024.0
+                    print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta} ADC  {vta_v:.3f}V  {vta_pct:.1f}%{f' ({(timer_bits << 10):04X})'}")
                     if h5_writer:
                         h5_writer.append_data('ecu_throttle_adc', [timekeeper.get_time_ns(), vta])
+                        h5_writer.append_data('ecu_throttle_pct', [timekeeper.get_time_ns(), vta_pct])
 
                 elif byte == L.LOGID_ECU_RAW_MAP_TYPE_U8:
                     map_adc = read(f, L.LOGID_ECU_RAW_MAP_DLEN)[0]

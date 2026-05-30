@@ -741,8 +741,8 @@ void api_handlers_register(void)
 // ECU Live Stream configuration
 
 int16_t g_ecu_live_items[ECU_LIVE_ITEMS_MAX] = {
-    // Battery Voltage, Manifold Pressure, Coolant Temp, Air Temp, Trim Pot 1, Trim Pot 2
-    0x66, 0x62, 0x64, 0x65, 0x56, 0x57, -1, -1, -1, -1
+    // Battery Voltage, Manifold Pressure, Coolant Temp, Air Temp, Trim Pot 1, Trim Pot 2, Throttle Position
+    0x66, 0x62, 0x64, 0x65, 0x56, 0x57, 0x60, -1, -1, -1
 };
 
 void ecu_live_config_load(void)

@@ -9,8 +9,11 @@ open(FILES, "find . -type f |");
 
 while($file = <FILES>) {
 
-    # Do not include files in CVS directories nor backup files.
+    # Do not include files in CVS directories, backup files, or __ prefixed files.
     if($file =~ /(CVS|~)/) {
+    	next;
+    }
+    if($file =~ /\/__/) {
     	next;
     }
 
@@ -31,6 +34,8 @@ while($file = <FILES>) {
 	print(HEADER "Content-type: image/gif\r\n");
     } elsif($file =~ /\.png$/) {
 	print(HEADER "Content-type: image/png\r\n");
+    } elsif($file =~ /\.svg$/) {
+	print(HEADER "Content-type: image/svg+xml\r\n");
     } elsif($file =~ /\.jpg$/) {
 	print(HEADER "Content-type: image/jpeg\r\n");
 	print(HEADER "Cache-Control: max-age=1\r\n");

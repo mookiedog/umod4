@@ -14,10 +14,10 @@ import math
 
 
 def logconv_ecu_raw_thw(adc):
-    """Convert coolant or air temperature sensor ADC value (0–255) to degrees Celsius.
+    """Convert coolant or air temperature sensor ADC value (0-255) to degrees Celsius.
 
     Uses the Steinhart-Hart equation for an NTC thermistor.
-    Circuit: Rtop = 2.70 kΩ (R751/R781), Vref = 5.0 V, 8-bit ADC.
+    Circuit: Rtop = 2.70 kΩ (R751/R781), Vref = 5.0 V, 8-bit SAR ADC (scale factor 256).
 
     Steinhart-Hart coefficients derived from measurements at 0 °C, 25 °C, and 90 °C:
         A = 1.142579776e-3
@@ -25,7 +25,7 @@ def logconv_ecu_raw_thw(adc):
         C = -0.5305974726e-7
     """
     Vref = 5.0
-    Vmeas = adc * Vref / 255.0
+    Vmeas = adc * Vref / 256.0
 
     # Resistance of the NTC thermistor
     Rtop = 2700
@@ -46,7 +46,7 @@ logconv_ecu_raw_tha = logconv_ecu_raw_thw
 
 
 def logconv_ecu_raw_map(adc):
-    """Convert MAP/AAP pressure sensor ADC value (0–255) to kPa.
+    """Convert MAP/AAP pressure sensor ADC value (0-255) to kPa.
 
     Sensor output formula: Vo = Vcc * (0.006 * Pi + 0.12)
     Solving for Pi: Pi = (Vo - 0.6) / 0.03
@@ -62,10 +62,11 @@ logconv_ecu_raw_aap = logconv_ecu_raw_map
 
 
 def logconv_ecu_raw_vm(adc):
-    """Convert battery voltage monitor ADC value (0–255) to volts.
+    """Convert battery voltage monitor ADC value (0-255) to volts.
 
     The VM circuit divides the battery voltage by 4 via a resistor divider,
-    then feeds it to an 8-bit ADC where 5 V → 0xFF (256 counts).
+    then feeds it to an 8-bit SAR ADC. Scale factor is 256 (= 2^8); max output
+    is 0xFF = 255, which represents Vref x 255/256, not Vref itself.
     """
     return (adc / 256.0) * 5.0 * 4.0
 
@@ -73,8 +74,9 @@ def logconv_ecu_raw_vm(adc):
 def logconv_ecu_ign_dly(raw):
     """Convert 0.8 fixed-point ignition delay byte to ignition advance in degrees.
 
-    The ECU stores ignition timing as a fraction of 90 degrees, offset by −18°.
-    Formula: advance = (raw / 256) * 90 − 18
+    The ECU stores ignition timing as a 0.8 fixed-point fraction of 90 degrees, offset by -18 deg.
+    Dividing by 256 is correct fixed-point arithmetic (not an ADC scale factor).
+    Formula: advance = (raw / 256) * 90 - 18
     """
     return (raw / 256.0) * 90.0 - 18.0
 
@@ -83,9 +85,27 @@ def logconv_ecu_raw_vta(raw_u16):
     """Extract throttle position ADC value from the 16-bit VTA word.
 
     The upper 6 bits carry timer information; the lower 10 bits are the ADC value.
-    Returns an integer in the range 0–1023.
+    Returns an integer in the range 0-1023.
     """
     return raw_u16 & 0x3FF
+
+
+def logconv_ecu_vta_pct(adc):
+    """Convert VTA throttle position ADC value (0-1023) to throttle opening percentage.
+
+    Sensor: linear potentiometer, 0.04 V/deg slope, line through origin (V = 0.04 × resistor_angle).
+    Full Close: resistor angle 13.5° (≈ 0.54 V). Action angle: 84° → Full Open at 97.5° (≈ 3.9 V).
+    ADC: 10-bit SAR, 1024 counts = 5.0 V (Vref).
+
+    Returns 0.0 at full close, 100.0 at full open. Clamps to [0, 100].
+    """
+    Vref = 5.0
+    V = adc * Vref / 1024.0
+    resistor_angle = V / 0.04          # degrees; 25 × V
+    throttle_angle = resistor_angle - 13.5  # 0° at full close
+    pct = throttle_angle / 84.0 * 100.0
+    # pct = max(0.0, min(100.0, pct))
+    return pct
 
 
 # ---------------------------------------------------------------------------

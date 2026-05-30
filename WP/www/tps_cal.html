@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - TPS Calibration</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        #ecu-status {
+            display: inline-block;
+            margin-bottom: 20px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        #ecu-status.online  { background: #e6fffa; color: #234e52; border: 1px solid #b2f5ea; }
+        #ecu-status.offline { background: #fff5f5; color: #9b2c2c; border: 1px solid #feb2b2; }
+
+        .cal-area {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* SVG contains both the image and the arc arrows */
+        #cal-svg { width: 100%; max-width: 380px; display: block; }
+
+        .val-dec {
+            font-size: 3em;
+            font-family: 'Courier New', monospace;
+            font-weight: 700;
+            color: #2d3748;
+        }
+        .val-dec.inrange  { color: #276749; }
+        .val-dec.outrange { color: #9b2c2c; }
+
+        .tgt-range {
+            font-size: 0.9em;
+            color: #718096;
+            font-family: 'Courier New', monospace;
+        }
+
+        .cal-status {
+            font-size: 1.1em;
+            font-weight: 700;
+            padding: 8px 24px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .cal-status.inrange  { background: #c6f6d5; color: #276749; }
+        .cal-status.outrange { background: #fed7d7; color: #9b2c2c; }
+        .cal-status.waiting  { background: #fff3cd; color: #856404; }
+
+        #no-vta-msg {
+            display: none;
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 12px 20px;
+            font-size: 0.9em;
+            line-height: 1.6;
+        }
+        #no-vta-msg a { color: #856404; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">TPS Calibration</span>
+                <div class="ribbon-status">
+                    <a href="/" class="ribbon-icon-link" title="Home">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+
+        <div id="ecu-status">Connecting...</div>
+
+        <div id="no-vta-msg">
+            Throttle Position (VTA) not found in live stream data.<br>
+            Go to <a href="/ecu_live.html">Live Stream</a>, click <strong>Edit Layout</strong>,
+            and add <strong>Throttle Position</strong> to any slot.
+        </div>
+
+        <div class="cal-area" id="cal-area">
+
+            <!--
+                SVG layout — viewBox 0 0 380 230
+                Image: x=90 y=10 width=200 height=200  (scale_x=200/1142, scale_y=200/1136)
+
+                Arc geometry derived from TPS.svg pixel measurements:
+                  Left  arrow start: SVG (80,660)  -> display (104, 126)
+                  Right arrow start: SVG (1062,660) -> display (276, 126)  [mirrored]
+                  Arc center (softened): SVG (0,1140) -> display (90, 211)
+                  Computed arc radius: ~86 px
+
+                CW  arc: 33° CW  sweep from (104,126) to (148,147)
+                CCW arc: 33° CCW sweep from (276,126) to (232,147)
+            -->
+            <svg id="cal-svg" viewBox="0 0 380 250"
+                 xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <marker id="arw" markerWidth="44" markerHeight="32"
+                            refX="0" refY="16"
+                            orient="auto" markerUnits="userSpaceOnUse">
+                        <polygon points="0,0 44,16 0,32" fill="#c53030"/>
+                    </marker>
+                </defs>
+
+                <image href="/TPS.svg" x="90" y="10" width="200" height="200"/>
+
+                <!-- CW arc (left side) — shown when reading is too HIGH
+                     Center ~(180,60), r=101, 16° CW sweep; arrowhead points up-left -->
+                <path id="arc-cw"
+                      d="M 104,126 A 101,101 0 0,1 88,102"
+                      stroke="#c53030" stroke-width="12" fill="none"
+                      marker-end="url(#arw)"
+                      style="display:none"/>
+
+                <!-- CCW arc (right side) — shown when reading is too LOW
+                     Mirror of CW arc across diagonal x+y=300; arrowhead points right-down -->
+                <path id="arc-ccw"
+                      d="M 174,196 A 101,101 0 0,0 198,212"
+                      stroke="#c53030" stroke-width="12" fill="none"
+                      marker-end="url(#arw)"
+                      style="display:none"/>
+            </svg>
+
+            <div class="val-dec" id="val-dec">---</div>
+            <div class="tgt-range">Target: 128..132</div>
+            <div class="cal-status waiting" id="cal-status">Waiting for data&#x2026;<br>&nbsp;</div>
+
+        </div>
+        </div>
+    </div>
+
+    <script>
+    'use strict';
+
+    // ── Calibration constants ────────────────────────────────────────────────
+    // Rotation direction to increase the closed-throttle ADC reading.
+    // Swap these two if the directions turn out to be backwards.
+    var TPS_DIR_INCREASE = 'CCW';   // rotate this way when reading is too LOW
+    var TPS_DIR_DECREASE = 'CW';    // rotate this way when reading is too HIGH
+
+    var TPS_CAL_MIN = 128;    // lower bound of acceptable closed-throttle ADC (0x80)
+    var TPS_CAL_MAX = 132;    // upper bound of acceptable closed-throttle ADC (0x84)
+    var VTA_LOGID   = 0x60;   // LOGID_ECU_RAW_VTA_TYPE_U16
+
+    var inSetupPhase = true;
+
+    // ── Setup phase ─────────────────────────────────────────────────────────
+    function continueCalibration()
+    {
+        inSetupPhase = false;
+    }
+
+    // ── Startup ──────────────────────────────────────────────────────────────
+    fetch('/api/info')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
+        })
+        .catch(function() {});
+
+    setInterval(pollData, 500);
+    pollData();
+
+    // ── Polling ──────────────────────────────────────────────────────────────
+    function pollData()
+    {
+        fetch('/api/ecu-live-data')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var badge = document.getElementById('ecu-status');
+                if (data.ecu_alive) {
+                    badge.className = 'online';
+                    badge.textContent = '● ECU Online';
+                } else {
+                    badge.className = 'offline';
+                    badge.textContent = '○ ECU Offline — Turn Ignition ON';
+                }
+
+                var vtaRaw = null;
+                for (var i = 0; i < data.items.length; i++) {
+                    if (data.items[i].logid === VTA_LOGID && data.items[i].raw !== null) {
+                        vtaRaw = data.items[i].raw & 0x3FF;   // lower 10 bits = ADC value
+                        break;
+                    }
+                }
+
+                if (vtaRaw === null) {
+                    document.getElementById('no-vta-msg').style.display = 'block';
+                    document.getElementById('cal-area').style.display = 'none';
+                    return;
+                }
+
+                document.getElementById('no-vta-msg').style.display = 'none';
+                document.getElementById('cal-area').style.display = '';
+                updateDisplay(vtaRaw, data.ecu_alive);
+            })
+            .catch(function(e) { console.error('Poll error:', e); });
+    }
+
+    // ── Display update ───────────────────────────────────────────────────────
+    function updateDisplay(raw, ecuAlive)
+    {
+        var decEl    = document.getElementById('val-dec');
+        var statusEl = document.getElementById('cal-status');
+        var cwEl     = document.getElementById('arc-cw');
+        var ccwEl    = document.getElementById('arc-ccw');
+
+        decEl.textContent = raw.toString(10);
+
+        if (!ecuAlive) {
+            decEl.className     = 'val-dec';
+            statusEl.className  = 'cal-status waiting';
+            statusEl.innerHTML  = 'ECU Offline<br>&nbsp;';
+            cwEl.style.display  = 'none';
+            ccwEl.style.display = 'none';
+            return;
+        }
+
+        if (inSetupPhase) {
+            decEl.className     = 'val-dec';
+            statusEl.className  = 'cal-status waiting';
+            statusEl.innerHTML  = 'Back out the idle screw a few more turns after the ADCs stop decreasing.' +
+                                  '<br><button onclick="continueCalibration()"' +
+                                  ' style="margin-top:8px;padding:6px 20px;font-size:0.9em;' +
+                                  'border-radius:6px;border:none;background:#276749;color:#fff;cursor:pointer;">' +
+                                  'Continue &#x2192;</button>';
+            cwEl.style.display  = 'none';
+            ccwEl.style.display = 'none';
+            return;
+        }
+
+        if (raw >= TPS_CAL_MIN && raw <= TPS_CAL_MAX) {
+            decEl.className     = 'val-dec inrange';
+            statusEl.className  = 'cal-status inrange';
+            statusEl.innerHTML  = 'In Range<br>Tighten and Verify';
+            cwEl.style.display  = 'none';
+            ccwEl.style.display = 'none';
+        } else if (raw < TPS_CAL_MIN) {
+            decEl.className     = 'val-dec outrange';
+            statusEl.className  = 'cal-status outrange';
+            statusEl.innerHTML  = 'Too Low<br>Turn ' + TPS_DIR_INCREASE;
+            cwEl.style.display  = TPS_DIR_INCREASE === 'CW'  ? '' : 'none';
+            ccwEl.style.display = TPS_DIR_INCREASE === 'CCW' ? '' : 'none';
+        } else {
+            decEl.className     = 'val-dec outrange';
+            statusEl.className  = 'cal-status outrange';
+            statusEl.innerHTML  = 'Too High<br>Turn ' + TPS_DIR_DECREASE;
+            cwEl.style.display  = TPS_DIR_DECREASE === 'CW'  ? '' : 'none';
+            ccwEl.style.display = TPS_DIR_DECREASE === 'CCW' ? '' : 'none';
+        }
+    }
+    </script>
+</body>
+</html>
