@@ -1439,11 +1439,7 @@ def read(f, readCount, showAddress=False, newLine=True):
     return bytes
 
 def get_hex_prefix():
-    """Return formatted hex prefix for current record (address + padded hex bytes).
-
-    Returns string like: "0x00000000: 03 00           "
-    Pads to width of 4 bytes (12 chars for hex: "XX XX XX XX ")
-    """
+    """Return formatted hex prefix for current record (address + hex bytes)."""
     global current_record_hex
     global current_record_address
     global showBinData
@@ -1451,9 +1447,7 @@ def get_hex_prefix():
     if not showBinData:
         return ""
 
-    # Pad hex string to 4 bytes width (each byte is "XX ", so 12 chars total)
-    hex_padded = current_record_hex.ljust(12)
-    return f"0x{current_record_address:08X}: {hex_padded} "
+    return f"{current_record_address:08X}: {current_record_hex.ljust(9)}"
 
 def _process_single_file(logfile_path, output_path, args, L):
     global cr_ts, fc_off, rc_off, aap, map, vm_V, vta, vtaPrev
@@ -1651,7 +1645,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     if (c != 0):
                         # Print first byte only (skip intermediate bytes)
                         if showBinData and ecuMetadataString == "":
-                            print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
+                            print(f"{address-2:08X}: {byte:02X} {c:02X} ")
                         ecuMetadataString = "".join([ecuMetadataString, chr(c)])
                     else:
                         print(f"{fmt_record(recordCnt, timekeeper)} BUILD_INFO: \"{ecuMetadataString}\"")
@@ -1662,7 +1656,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
                     # This is a timer overflow event, so mark it specially for wraparound handling
                     timekeeper.process_ts_event(oflo_ts, is_oflo=True)
-                    print(f"{fmt_record(recordCnt, timekeeper)} OFLO_TS: {oflo_ts}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} OF_TS:  {oflo_ts}")
                     # OFLO not written to HDF5 - used only for time tracking
 
                 elif byte == L.LOGID_ECU_L4000_EVENT_TYPE_U8:
@@ -1676,7 +1670,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     # RETROSPECTIVE timestamp - event HAS occurred (b15 went 0→1)
                     # This is a time anchor event, marks ~65536 ticks from previous anchor
                     timekeeper.process_ts_event(marker_ts, is_hoflo=True)
-                    print(f"{fmt_record(recordCnt, timekeeper)} HOFLO_TS: {marker_ts}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} HOF_TS: {marker_ts}")
                     # HOFLO not written to HDF5 - used only for time tracking
 
                 elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_PTS:
@@ -1845,6 +1839,9 @@ def _process_single_file(logfile_path, output_path, args, L):
                     print(f"{fmt_record(recordCnt, timekeeper)} CMX:    Crank Max")
                     if h5_writer:
                         h5_writer.append_data('ecu_marker_p6_max', timekeeper.get_time_ns())
+                        if rpm_avg > 0:
+                            h5_writer.append_data('ecu_rpm_instantaneous', [timekeeper.get_time_ns(), float('nan')])
+                            h5_writer.append_data('ecu_rpm_smoothed', [timekeeper.get_time_ns(), float('nan')])
 
                 elif byte == L.LOGID_ECU_FUEL_PUMP_TYPE_B:
                     pumpstate = read(f, L.LOGID_ECU_FUEL_PUMP_DLEN)[0]
@@ -1882,25 +1879,25 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_TP_CO1_RAW_TYPE_U8:
                     tp_co1_raw = read(f, L.LOGID_ECU_TP_CO1_RAW_DLEN)[0]
-                    print(f"{fmt_record(recordCnt, timekeeper)} TP1_RAW: 0x{tp_co1_raw:02X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP1_RW: 0x{tp_co1_raw:02X}")
                     if h5_writer:
                         h5_writer.append_data('ecu_tp_co1_raw', [timekeeper.get_time_ns(), tp_co1_raw])
 
                 elif byte == L.LOGID_ECU_TP_CO2_RAW_TYPE_U8:
                     tp_co2_raw = read(f, L.LOGID_ECU_TP_CO2_RAW_DLEN)[0]
-                    print(f"{fmt_record(recordCnt, timekeeper)} TP2_RAW: 0x{tp_co2_raw:02X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP2_RW: 0x{tp_co2_raw:02X}")
                     if h5_writer:
                         h5_writer.append_data('ecu_tp_co2_raw', [timekeeper.get_time_ns(), tp_co2_raw])
 
                 elif byte == L.LOGID_ECU_TP_CO1_DB_TYPE_U8:
                     tp_co1_db = read(f, L.LOGID_ECU_TP_CO1_DB_DLEN)[0]
-                    print(f"{fmt_record(recordCnt, timekeeper)} TP1_DB:  0x{tp_co1_db:02X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP1_DB: 0x{tp_co1_db:02X}")
                     if h5_writer:
                         h5_writer.append_data('ecu_tp_co1_db', [timekeeper.get_time_ns(), tp_co1_db])
 
                 elif byte == L.LOGID_ECU_TP_CO2_DB_TYPE_U8:
                     tp_co2_db = read(f, L.LOGID_ECU_TP_CO2_DB_DLEN)[0]
-                    print(f"{fmt_record(recordCnt, timekeeper)} TP2_DB:  0x{tp_co2_db:02X}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} TP2_DB: 0x{tp_co2_db:02X}")
                     if h5_writer:
                         h5_writer.append_data('ecu_tp_co2_db', [timekeeper.get_time_ns(), tp_co2_db])
 
@@ -1934,8 +1931,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     timekeeper.try_update_timer_bits(timer_bits)
                     timekeeper.advance_time_by_ns(1)
                     vta_pct = logconv_ecu_vta_pct(vta)
-                    vta_v = vta * 5.0 / 1024.0
-                    print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta} ADC  {vta_v:.3f}V  {vta_pct:.1f}%{f' ({(timer_bits << 10):04X})'}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} VTA:    {vta}, {vta_pct:.1f}% ({(timer_bits << 10):04X})")
                     if h5_writer:
                         h5_writer.append_data('ecu_throttle_adc', [timekeeper.get_time_ns(), vta])
                         h5_writer.append_data('ecu_throttle_pct', [timekeeper.get_time_ns(), vta_pct])
@@ -2225,7 +2221,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     if (c != 0):
                         # Print first byte only (skip intermediate bytes)
                         if showBinData and epromIdString == "":
-                            print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
+                            print(f"{address-2:08X}: {byte:02X} {c:02X} ")
                         epromIdString = "".join([epromIdString, chr(c)])
                         #if h5_writer:
                         #    h5_writer.current_eprom_name += chr(c)
@@ -2240,7 +2236,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     if (c != 0):
                         # Print first byte only (skip intermediate bytes)
                         if showBinData and epromIdString == "":
-                            print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
+                            print(f"{address-2:08X}: {byte:02X} {c:02X} ")
                         epromIdString = "".join([epromIdString, chr(c)])
                         if h5_writer:
                             h5_writer.current_eprom_name += chr(c)
@@ -2338,7 +2334,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     if (c != 0):
                         # Print first byte only (skip intermediate bytes)
                         if showBinData and epromIdString == "":
-                            print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
+                            print(f"{address-2:08X}: {byte:02X} {c:02X} ")
                         epromIdString = "".join([epromIdString, chr(c)])
                     else:
                         print(f"{fmt_record(recordCnt, timekeeper)} LD_DSC:    \"{epromIdString}\"")
@@ -2349,7 +2345,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     if (c != 0):
                         # Print first byte only (skip intermediate bytes)
                         if showBinData and epromIdString == "":
-                            print(f"0x{address-2:08X}: {byte:02X} {c:02X} ")
+                            print(f"{address-2:08X}: {byte:02X} {c:02X} ")
                         epromIdString = "".join([epromIdString, chr(c)])
                     else:
                         print(f"{fmt_record(recordCnt, timekeeper)} IMGSEL:    \"{epromIdString}\"")
@@ -2402,24 +2398,20 @@ def _process_single_file(logfile_path, output_path, args, L):
                     current_file_pos = f.tell()
 
                     # Track GPS SEC events for drift calculation and data rate
+                    current_time_ns = timekeeper.get_time_ns()
                     if gps_last_sec_time_ns < 0:
                         # First GPS SEC - just record it
                         print(f"{fmt_record(recordCnt, timekeeper)} SEC:    {secs:02}  (first GPS SEC)")
                     elif gps_first_sec_time_ns < 0:
                         # Second GPS SEC - use this as the reference point for drift calculation
-                        gps_first_sec_time_ns = global_time_ns
-                        elapsed_since_last_ns = global_time_ns - gps_last_sec_time_ns
-                        print(f"{fmt_record(recordCnt, timekeeper)} SEC:    {secs:02}  " +
-                              f"(Δlast: {elapsed_since_last_ns/1e9:.6f}s, reference point for drift tracking)")
+                        gps_first_sec_time_ns = current_time_ns
+                        print(f"{fmt_record(recordCnt, timekeeper)} SEC:    {secs:02}  (reference point for drift tracking)")
                     else:
                         # Third and subsequent GPS SEC events - calculate drift and data rate
                         gps_sec_count += 1
 
-                        # Calculate elapsed time since last SEC
-                        elapsed_since_last_ns = global_time_ns - gps_last_sec_time_ns
-
                         # Calculate total elapsed retrospective time since second GPS SEC
-                        total_elapsed_ns = global_time_ns - gps_first_sec_time_ns
+                        total_elapsed_ns = current_time_ns - gps_first_sec_time_ns
                         total_elapsed_sec = total_elapsed_ns / 1e9
 
                         # Calculate expected elapsed time based on GPS SEC count
@@ -2445,11 +2437,10 @@ def _process_single_file(logfile_path, output_path, args, L):
                                     h5_writer.append_data('wp_log_data_rate_bps', [timekeeper.get_time_ns(), data_rate_bytes_per_sec])
 
                         print(f"{fmt_record(recordCnt, timekeeper)} SEC:    {secs:02}  " +
-                              f"(Δlast: {elapsed_since_last_ns/1e9:.6f}s, " +
-                              f"Σretro: {total_elapsed_sec:.3f}s, " +
+                              f"(Σretro: {total_elapsed_sec:.3f}s, " +
                               f"drift: {drift_sec:+.3f}s = {drift_ppm:+.1f}ppm{data_rate_str})")
 
-                    gps_last_sec_time_ns = global_time_ns
+                    gps_last_sec_time_ns = current_time_ns
                     gps_last_sec_value = secs
                     gps_last_sec_file_pos = current_file_pos
 
@@ -2510,7 +2501,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     alen = L.LOGID_WP_GPS_POSN_DLEN // 2
                     lat =  int.from_bytes(read(f, alen, newLine=False), byteorder='little', signed=True) / 10000000.0
                     long = int.from_bytes(read(f, alen), byteorder='little', signed=True) / 10000000.0
-                    print(f"{fmt_record(recordCnt, timekeeper)} GPS_POSN: {lat:.8f} {long:.8f}")
+                    print(f"{fmt_record(recordCnt, timekeeper)} GPS_P:  {lat:.8f} {long:.8f}")
                     if h5_writer:
                         h5_writer.append_data('gps_position', [timekeeper.get_time_ns(), lat, long])
 
@@ -2521,7 +2512,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                         # Trouble: This reading is way too fast!
                         print(f"ERR: At byte {(f.tell()-L.LOGID_WP_GPS_VELO_DLEN):08X}: L.LOGID_WP_GPS_VELO_TYPE_U16 is beyond 200 MPH: {vel/10.0}, ignoring!", file=sys.stderr)
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} GPS_VEL: {vel:.1f}")
+                        print(f"{fmt_record(recordCnt, timekeeper)} GPS_V:  {vel:.1f}")
                         if h5_writer:
                             h5_writer.append_data('gps_velocity_mph', [timekeeper.get_time_ns(), vel])
 

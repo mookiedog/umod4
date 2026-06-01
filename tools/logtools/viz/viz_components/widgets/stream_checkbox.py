@@ -2,6 +2,8 @@
 Custom stream selection widget with checkbox, label, and drag-drop support.
 """
 
+import re
+
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QLabel, QApplication,
                              QColorDialog, QMenu)
 from PySide6.QtCore import Qt, QMimeData
@@ -16,12 +18,17 @@ class StreamCheckbox(QWidget):
         super().__init__(parent)
         self.stream_name = stream_name
         self.display_name = display_name or stream_name  # Use display name if provided
+        # Base name strips any trailing "(unit)" so we can rebuild it when units change
+        self.base_display_name = re.sub(r'\s*\([^)]*\)\s*$', '', self.display_name).strip()
         self.color = color
         self.drag_start_pos = None
         self.dark_theme = False  # Track current theme
         self.display_mode = "line"  # "line" or "points"
         self.color_change_callback = None  # Callback for color changes
         self.display_mode_callback = None  # Callback for display mode changes
+        self.unit_options = None  # list of (label, units_key) or None if no conversions
+        self.current_unit = None  # active units_key
+        self.unit_change_callback = None  # Callback for unit changes
 
         layout = QHBoxLayout()
         layout.setContentsMargins(2, 2, 2, 2)
@@ -100,7 +107,29 @@ class StreamCheckbox(QWidget):
         toggle_action.triggered.connect(self.toggle_display_mode)
         menu.addAction(toggle_action)
 
+        # Unit conversion options (radio group)
+        if self.unit_options and len(self.unit_options) > 1:
+            menu.addSeparator()
+            for label, units_key in self.unit_options:
+                action = QAction(label, self)
+                action.setCheckable(True)
+                action.setChecked(units_key == self.current_unit)
+                action.triggered.connect(lambda checked, uk=units_key: self.select_unit(uk))
+                menu.addAction(action)
+
         menu.exec(self.label.mapToGlobal(pos))
+
+    def select_unit(self, units_key):
+        """Switch to a new display unit and notify parent."""
+        if units_key == self.current_unit:
+            return
+        self.current_unit = units_key
+        if self.unit_change_callback:
+            self.unit_change_callback(self.stream_name, units_key)
+
+    def update_unit_label(self, unit_label):
+        """Update the sidebar label to show the active unit in parentheses."""
+        self.label.setText(f"{self.base_display_name} ({unit_label})")
 
     def toggle_display_mode(self):
         """Toggle between line and points display mode"""

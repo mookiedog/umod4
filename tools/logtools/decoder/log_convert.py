@@ -90,22 +90,24 @@ def logconv_ecu_raw_vta(raw_u16):
     return raw_u16 & 0x3FF
 
 
+# TPS calibration constants (see ecu/doc/TPS_OPERATION.md, "The Conversion Formula")
+# 0% open: center of the ECU DIAG calibration acceptance range (128..132 ADC counts)
+# 100% open: measured full-open ADC value
+TPS_ADC_CLOSED = 130
+TPS_ADC_OPEN   = 799
+
+
 def logconv_ecu_vta_pct(adc):
     """Convert VTA throttle position ADC value (0-1023) to throttle opening percentage.
 
-    Sensor: linear potentiometer, 0.04 V/deg slope, line through origin (V = 0.04 × resistor_angle).
-    Full Close: resistor angle 13.5° (≈ 0.54 V). Action angle: 84° → Full Open at 97.5° (≈ 3.9 V).
-    ADC: 10-bit SAR, 1024 counts = 5.0 V (Vref).
+    Ratiometric formula (ecu/doc/TPS_OPERATION.md, "The Conversion Formula"):
+      pct = (ADC - TPS_ADC_CLOSED) / (TPS_ADC_OPEN - TPS_ADC_CLOSED) * 100
 
-    Returns 0.0 at full close, 100.0 at full open. Clamps to [0, 100].
+    ADC values 0 and 1023 are sensor fault sentinels; callers should check for them
+    before calling this function.  Values slightly below TPS_ADC_CLOSED yield small
+    negative percentages (not clamped -- preserves real sensor data).
     """
-    Vref = 5.0
-    V = adc * Vref / 1024.0
-    resistor_angle = V / 0.04          # degrees; 25 × V
-    throttle_angle = resistor_angle - 13.5  # 0° at full close
-    pct = throttle_angle / 84.0 * 100.0
-    # pct = max(0.0, min(100.0, pct))
-    return pct
+    return (adc - TPS_ADC_CLOSED) / (TPS_ADC_OPEN - TPS_ADC_CLOSED) * 100.0
 
 
 # ---------------------------------------------------------------------------

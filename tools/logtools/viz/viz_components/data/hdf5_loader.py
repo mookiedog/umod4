@@ -94,6 +94,8 @@ class HDF5DataLoader:
                             display_units = app_config.get_velocity_units()
                         elif data_type == 'pressure':
                             display_units = app_config.get_pressure_units()
+                        elif data_type == 'throttle':
+                            display_units = 'percent_open'  # always default to % open
 
                         # Store metadata for this stream
                         stream_metadata[key] = {
@@ -104,23 +106,21 @@ class HDF5DataLoader:
 
                         # Load and convert data
                         time_data = ds[:, 0] / 1e9  # Convert ns to seconds
-                        value_data = ds[:, 1]
+                        native_values = ds[:, 1].astype(float)
 
-                        # Apply unit conversion if needed
-                        if data_type == 'temperature' and native_units != display_units:
-                            value_data = UnitConverter.convert_temperature(value_data, native_units, display_units)
+                        # Apply unit conversion if needed; keep native copy for live re-conversion
+                        if native_units != display_units:
+                            value_data = UnitConverter.convert(native_values, data_type, native_units, display_units)
                             print(f"    Converted from {native_units} to {display_units}")
-                        elif data_type == 'velocity' and native_units != display_units:
-                            value_data = UnitConverter.convert_velocity(value_data, native_units, display_units)
-                            print(f"    Converted from {native_units} to {display_units}")
-                        elif data_type == 'pressure' and native_units != display_units:
-                            value_data = UnitConverter.convert_pressure(value_data, native_units, display_units)
-                            print(f"    Converted from {native_units} to {display_units}")
+                        else:
+                            value_data = native_values
+                            native_values = None  # no copy needed when no conversion applied
 
-                        # Store converted data
+                        # Store data; native_values enables unit switching without re-reading the file
                         raw_data[key] = {
                             'time': time_data,
-                            'values': value_data
+                            'values': value_data,
+                            'native_values': native_values,
                         }
 
                         # Don't add hidden streams to stream_names
@@ -154,8 +154,11 @@ class HDF5DataLoader:
             all_times = []
 
             for stream in stream_names:
-                stream_min = float(raw_data[stream]['values'].min())
-                stream_max = float(raw_data[stream]['values'].max())
+                # Use nan-safe min/max: streams like throttle % open contain NaN
+                # sentinel values (ADC=0 and 1023) that must not corrupt the range.
+                vals = raw_data[stream]['values']
+                stream_min = float(np.nanmin(vals))
+                stream_max = float(np.nanmax(vals))
                 # Add epsilon to avoid division by zero for constant streams
                 if stream_max - stream_min < 1e-10:
                     stream_max = stream_min + 1.0

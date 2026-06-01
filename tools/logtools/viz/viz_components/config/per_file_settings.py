@@ -28,6 +28,7 @@ class PerFileSettings:
     enabled_streams: List[str] = field(default_factory=list)
     stream_colors: Dict[str, str] = field(default_factory=dict)
     stream_display_modes: Dict[str, str] = field(default_factory=dict)
+    stream_units: Dict[str, str] = field(default_factory=dict)
     stream_order: List[str] = field(default_factory=list)
 
     # Axis assignments
@@ -120,6 +121,7 @@ class PerFileSettingsManager:
                 enabled_streams=data.get('enabled_streams', []),
                 stream_colors=data.get('stream_colors', {}),
                 stream_display_modes=data.get('stream_display_modes', {}),
+                stream_units=data.get('stream_units', {}),
                 stream_order=data.get('stream_order', []),
                 axis_owner=data.get('axis_owner'),
                 right_axis_owner=data.get('right_axis_owner'),
@@ -209,6 +211,10 @@ class PerFileSettingsManager:
         settings.stream_display_modes = {k: v for k, v in settings.stream_display_modes.items()
                                          if k in stream_set}
 
+        # Filter stream units
+        settings.stream_units = {k: v for k, v in settings.stream_units.items()
+                                 if k in stream_set}
+
         # Filter stream order
         settings.stream_order = [s for s in settings.stream_order
                                 if s in stream_set]
@@ -295,6 +301,7 @@ class PerFileSettingsManager:
             enabled_streams=app_state.get('enabled_streams', []).copy(),
             stream_colors=app_state.get('stream_colors', {}).copy(),
             stream_display_modes=app_state.get('stream_display_modes', {}).copy(),
+            stream_units=app_state.get('stream_units', {}).copy(),
             stream_order=app_state.get('stream_order', []).copy(),
             axis_owner=app_state.get('axis_owner'),
             right_axis_owner=app_state.get('right_axis_owner'),

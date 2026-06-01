@@ -137,7 +137,7 @@ streams:
     display_name: "MAP (kPa)"
     default_color: "#FF00FF"
     units: kPa
-    owns_axis: false
+    owns_axis: true
     normalize: true
 
   ecu_aap_kpa:
@@ -145,7 +145,7 @@ streams:
     display_name: "AAP (kPa)"
     default_color: "#00FFFF"
     units: kPa
-    owns_axis: false
+    owns_axis: true
     normalize: true
     display_range_min_top: 120.0       # Minimum value for top of display
     display_range_max_bottom: 80.0     # Maximum value for bottom of display

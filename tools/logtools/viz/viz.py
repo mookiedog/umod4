@@ -821,6 +821,7 @@ class DataVisualizationTool(QMainWindow):
             # Set up callbacks
             stream_widget.color_change_callback = self.on_stream_color_changed
             stream_widget.display_mode_callback = self.on_stream_display_mode_changed
+            stream_widget.unit_change_callback = self.on_stream_unit_changed
 
             # Load saved preferences: per-file → global QSettings → YAML default → color cycle
             # Color precedence
@@ -850,6 +851,29 @@ class DataVisualizationTool(QMainWindow):
             else:
                 saved_mode = self.config.get(f"stream_display_mode_{stream}", "line")
             stream_widget.display_mode = saved_mode
+
+            # Unit conversion options
+            meta = self.stream_metadata.get(stream, {})
+            data_type = meta.get('data_type')
+            if data_type:
+                unit_options = UnitConverter.get_conversion_options(data_type)
+                if len(unit_options) > 1:
+                    stream_widget.unit_options = unit_options
+                    # Precedence: per-file settings > global QSettings > load-time default
+                    if per_file_settings and stream in per_file_settings.stream_units:
+                        saved_unit = per_file_settings.stream_units[stream]
+                    else:
+                        saved_unit = self.config.get(f"stream_unit_{stream}", meta.get('display_units'))
+                    stream_widget.current_unit = saved_unit
+                    # Always apply the unit: initialises stream_cfg display ranges,
+                    # native value cache, and stream_ranges even on first run when
+                    # saved_unit matches the load-time default.
+                    if saved_unit:
+                        self._apply_stream_unit(stream, saved_unit)
+                    # Update sidebar label to reflect the active unit
+                    unit_label = next((lbl for lbl, uk in unit_options if uk == saved_unit), None)
+                    if unit_label:
+                        stream_widget.update_unit_label(unit_label)
 
             # Connect signal before setting default state so it fires
             stream_widget.checkbox.stateChanged.connect(
@@ -921,6 +945,84 @@ class DataVisualizationTool(QMainWindow):
         # Redraw plots with new display mode
         self.update_graph_plot()
         self.update_navigation_plot()
+
+    def on_stream_unit_changed(self, stream_name, units_key):
+        """Called when a stream's display unit is changed via the right-click menu."""
+        self.config.set(f"stream_unit_{stream_name}", units_key)
+        self._apply_stream_unit(stream_name, units_key)
+        # Update the sidebar label on the stream widget
+        for widget in self.stream_list_widget.stream_widgets:
+            if widget.stream_name == stream_name and widget.unit_options:
+                unit_label = next((lbl for lbl, uk in widget.unit_options if uk == units_key), None)
+                if unit_label:
+                    widget.update_unit_label(unit_label)
+                break
+        self.update_graph_plot()
+        self.update_navigation_plot()
+
+    def _apply_stream_unit(self, stream_name, new_units):
+        """Re-derive display values for stream_name from stored native values."""
+        if stream_name not in self.raw_data:
+            return
+        meta = self.stream_metadata.get(stream_name, {})
+        data_type = meta.get('data_type')
+        native_units = meta.get('native_units')
+        if not data_type or not native_units:
+            return
+
+        entry = self.raw_data[stream_name]
+        # Use the native copy if present. On the first conversion, entry['values'] is
+        # still in native units — save a copy now so round-trips back to native work.
+        native_values = entry.get('native_values')
+        if native_values is None:
+            native_values = entry['values'].copy()
+            entry['native_values'] = native_values
+
+        display_values = UnitConverter.convert(native_values, data_type, native_units, new_units)
+        entry['values'] = display_values
+        meta['display_units'] = new_units
+
+        # Recalculate range in new units (ignore NaNs from sentinel values)
+        valid = display_values[~np.isnan(display_values)]
+        if len(valid) > 0:
+            new_min, new_max = float(valid.min()), float(valid.max())
+            if new_max - new_min < 1e-10:
+                new_max = new_min + 1.0
+            self.stream_ranges[stream_name] = (new_min, new_max)
+
+        # Update the fixed display range on the stream config object.
+        stream_cfg = self.stream_config.get_stream(stream_name)
+        if stream_cfg:
+            if data_type == 'throttle':
+                # Always use a fixed display range equivalent to -5% .. 110% in the
+                # current unit.  This keeps data points at the same visual (normalized)
+                # position when switching between ADC and % open — only the axis tick
+                # labels change, matching the behaviour of C <-> F for temperature.
+                span = UnitConverter.TPS_ADC_OPEN - UnitConverter.TPS_ADC_CLOSED
+                if new_units == 'percent_open':
+                    stream_cfg.display_range_min = -5.0
+                    stream_cfg.display_range_max = 110.0
+                else:  # ADC
+                    stream_cfg.display_range_min = -5.0  / 100.0 * span + UnitConverter.TPS_ADC_CLOSED
+                    stream_cfg.display_range_max = 110.0 / 100.0 * span + UnitConverter.TPS_ADC_CLOSED
+            else:
+                # For temperature, velocity, pressure: YAML stores range values in
+                # native units.  Convert each bound to display units on every switch;
+                # cache the native value the first time so round-trips are exact.
+                def _convert_bound(attr_name):
+                    native_attr = f'_native_{attr_name}'
+                    val = getattr(stream_cfg, attr_name, None)
+                    if val is None:
+                        return
+                    if not hasattr(stream_cfg, native_attr):
+                        setattr(stream_cfg, native_attr, val)
+                    setattr(stream_cfg, attr_name, float(UnitConverter.convert(
+                        getattr(stream_cfg, native_attr), data_type, native_units, new_units)))
+
+                _convert_bound('display_range_min')
+                _convert_bound('display_range_max')
+                _convert_bound('display_range_min_top')
+                _convert_bound('display_range_max_bottom')
 
     def update_recent_files_menu(self):
         """Update the recent files menu."""
@@ -2045,7 +2147,7 @@ class DataVisualizationTool(QMainWindow):
             else:
                 # Display as line (default)
                 pen = pg.mkPen(color=color, width=2)
-                self.graph_plot.plot(plot_time, normalized_data, pen=pen)
+                self.graph_plot.plot(plot_time, normalized_data, pen=pen, connect='finite')
 
         # Set axis properties based on owner (for display purposes only)
         if self.axis_owner and self.axis_owner in self.enabled_streams:
@@ -2163,7 +2265,7 @@ class DataVisualizationTool(QMainWindow):
             import math
             def get_nice_tick_spacing(data_range):
                 """Calculate a nice round number for tick spacing"""
-                if data_range == 0:
+                if not data_range or not math.isfinite(data_range) or data_range <= 0:
                     return 1
                 # Get order of magnitude
                 exponent = math.floor(math.log10(data_range))
@@ -2188,9 +2290,13 @@ class DataVisualizationTool(QMainWindow):
             # Apply minimum spacing constraints for specific stream types
             # Check if this is a temperature stream (contains "temp" in name)
             if 'temp' in self.axis_owner.lower():
-                if tick_spacing_real < MIN_TEMPERATURE_TICK_SPACING_C:
-                    tick_spacing_real = MIN_TEMPERATURE_TICK_SPACING_C
-                    self.debug_print(f"  Applied MIN_TEMPERATURE_TICK_SPACING_C: {MIN_TEMPERATURE_TICK_SPACING_C}°C")
+                owner_display_units = self.stream_metadata.get(self.axis_owner, {}).get('display_units', 'celsius')
+                min_temp_spacing = UnitConverter.convert(
+                    MIN_TEMPERATURE_TICK_SPACING_C, 'temperature', 'celsius', owner_display_units
+                ) - UnitConverter.convert(0.0, 'temperature', 'celsius', owner_display_units)
+                if tick_spacing_real < min_temp_spacing:
+                    tick_spacing_real = min_temp_spacing
+                    self.debug_print(f"  Applied min temp tick spacing: {min_temp_spacing:.1f} {owner_display_units}")
 
             # Round axis_min DOWN to nearest tick spacing multiple
             # This ensures ticks start at nice round numbers (0, 500, 1000, etc)
@@ -2319,7 +2425,7 @@ class DataVisualizationTool(QMainWindow):
                         visible_values = all_values[mask]
 
                         if len(visible_values) > 0:
-                            visible_max = float(visible_values.max())
+                            visible_max = float(np.nanmax(visible_values))
                             axis_min = full_min
 
                             # Check for minimum top constraint
@@ -2337,12 +2443,14 @@ class DataVisualizationTool(QMainWindow):
                         axis_max = full_max
 
             axis_range = axis_max - axis_min
+            if not np.isfinite(axis_range) or axis_range <= 0:
+                axis_min, axis_max, axis_range = 0.0, 1.0, 1.0
 
             # Calculate nice round tick spacing
             import math
             def get_nice_tick_spacing(data_range):
                 """Calculate a nice round number for tick spacing"""
-                if data_range == 0:
+                if not data_range or not math.isfinite(data_range) or data_range <= 0:
                     return 1
                 # Get order of magnitude
                 exponent = math.floor(math.log10(data_range))
@@ -2367,9 +2475,13 @@ class DataVisualizationTool(QMainWindow):
             # Apply minimum spacing constraints for specific stream types
             # Check if this is a temperature stream (contains "temp" in name)
             if 'temp' in self.right_axis_owner.lower():
-                if tick_spacing_real < MIN_TEMPERATURE_TICK_SPACING_C:
-                    tick_spacing_real = MIN_TEMPERATURE_TICK_SPACING_C
-                    self.debug_print(f"  Applied MIN_TEMPERATURE_TICK_SPACING_C: {MIN_TEMPERATURE_TICK_SPACING_C}°C")
+                right_display_units = self.stream_metadata.get(self.right_axis_owner, {}).get('display_units', 'celsius')
+                min_temp_spacing = UnitConverter.convert(
+                    MIN_TEMPERATURE_TICK_SPACING_C, 'temperature', 'celsius', right_display_units
+                ) - UnitConverter.convert(0.0, 'temperature', 'celsius', right_display_units)
+                if tick_spacing_real < min_temp_spacing:
+                    tick_spacing_real = min_temp_spacing
+                    self.debug_print(f"  Applied min temp tick spacing: {min_temp_spacing:.1f} {right_display_units}")
 
             # Round axis_min DOWN to nearest tick spacing multiple
             # This ensures ticks start at nice round numbers (0, 500, 1000, etc)
@@ -2590,7 +2702,7 @@ class DataVisualizationTool(QMainWindow):
         visible_base_mask = (base_time >= self.view_start) & (base_time <= self.view_end)
         visible_base_values = base_values[visible_base_mask]
         if len(visible_base_values) > 0:
-            visible_base_max = float(visible_base_values.max())
+            visible_base_max = float(np.nanmax(visible_base_values))
             base_min = full_base_min
             base_max = visible_base_max
         else:
@@ -2663,7 +2775,11 @@ class DataVisualizationTool(QMainWindow):
                     normalized_base = normalized_base + bar_offset
             else:
                 base_at_marker = np.interp(marker_time, base_time, base_values)
-                normalized_base = ((base_at_marker - base_min) / (base_max - base_min)) * normalize_max
+                if np.isnan(base_at_marker):
+                    # Interpolated into a NaN region (e.g. near a CMX break) — float freely
+                    normalized_base = normalize_max / 2.0
+                else:
+                    normalized_base = ((base_at_marker - base_min) / (base_max - base_min)) * normalize_max
 
                 # Shift up by bar offset if bars are enabled
                 if bar_offset > 0:
@@ -3480,6 +3596,7 @@ class DataVisualizationTool(QMainWindow):
             'enabled_streams': self.enabled_streams.copy(),
             'stream_colors': self.stream_colors.copy(),
             'stream_display_modes': {},
+            'stream_units': {},
             'stream_order': [],
             'axis_owner': self.axis_owner,
             'right_axis_owner': self.right_axis_owner,
@@ -3488,9 +3605,11 @@ class DataVisualizationTool(QMainWindow):
             'view_history': self.view_history
         }
 
-        # Get display modes from stream widgets
+        # Get display modes and unit selections from stream widgets
         for widget in self.stream_list_widget.stream_widgets:
             app_state['stream_display_modes'][widget.stream_name] = widget.display_mode
+            if widget.current_unit is not None:
+                app_state['stream_units'][widget.stream_name] = widget.current_unit
 
         # Get stream order from widget order
         for widget in self.stream_list_widget.stream_widgets:

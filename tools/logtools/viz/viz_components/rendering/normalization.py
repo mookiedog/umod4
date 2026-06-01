@@ -113,8 +113,8 @@ class DataNormalizer:
                 self.debug_print(f"Stream {stream_name}: fixed range [{stream_min:.1f}, {stream_max:.1f}] (median: {visible_median:.1f})")
             else:
                 # Dynamic scaling with optional constraints
-                visible_min = float(visible_values.min())
-                visible_max = float(visible_values.max())
+                visible_min = float(np.nanmin(visible_values))
+                visible_max = float(np.nanmax(visible_values))
                 stream_min = full_min
                 stream_max = visible_max
 

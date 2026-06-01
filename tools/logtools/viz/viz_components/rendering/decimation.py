@@ -50,12 +50,13 @@ def min_max_decimate(time_array, value_array, target_points):
         first_idx = 0
         last_idx = len(bin_values) - 1
 
-        # Find min and max indices within this bin
-        min_idx = bin_values.argmin()
-        max_idx = bin_values.argmax()
+        # Find min and max indices within this bin (nanarg* ignores NaN sentinel values)
+        min_idx = np.nanargmin(bin_values)
+        max_idx = np.nanargmax(bin_values)
 
-        # Collect unique indices in time order
-        indices = sorted(set([first_idx, min_idx, max_idx, last_idx]))
+        # Collect unique indices in time order; also preserve any NaN break-points
+        nan_indices = list(np.where(np.isnan(bin_values))[0])
+        indices = sorted(set([first_idx, min_idx, max_idx, last_idx] + nan_indices))
 
         # Add all unique points in time order
         for idx in indices:

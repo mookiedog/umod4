@@ -432,9 +432,9 @@ void Logger::logTask()
 {
     static uint32_t totalByteCount;
 
-    enum {UNUSED, UNMOUNTED, OPEN_LOG, RENAME_TMPLOG, CALC_WR_SIZE, WAIT_FOR_DATA, WRITE_DATA, WRITE_FAILURE} state, state_prev;
+    enum {UNUSED, UNMOUNTED, OPEN_LOG, BOOT_SYNC, RENAME_TMPLOG, CALC_WR_SIZE, WAIT_FOR_DATA, WRITE_DATA, WRITE_FAILURE} state, state_prev;
     const char* decodeState[]={
-        "UNUSED", "UNMOUNTED", "OPEN_LOG", "RENAME_TMPLOG", "CALC_WR_SIZE", "WAIT_FOR_DATA", "WRITE_DATA", "WRITE_FAILURE"
+        "UNUSED", "UNMOUNTED", "OPEN_LOG", "BOOT_SYNC", "RENAME_TMPLOG", "CALC_WR_SIZE", "WAIT_FOR_DATA", "WRITE_DATA", "WRITE_FAILURE"
     };
 
     uint32_t bytesToWriteBeforeSyncing;
@@ -487,8 +487,7 @@ void Logger::logTask()
             {
                 bool success = openNewLog();
                 if (success) {
-                    vTaskDelay(pdMS_TO_TICKS(250));
-                    state = CALC_WR_SIZE;
+                    state = BOOT_SYNC;
                 }
                 else {
                     // fixme: not sure this is right
@@ -496,6 +495,22 @@ void Logger::logTask()
                 }
             }
 
+            break;
+
+        case BOOT_SYNC:
+            // Immediately write and sync whatever boot header data is in the buffer
+            // (log version + WP reset reason). This ensures that data survives even
+            // if we crash again before accumulating a full block.
+            {
+                int32_t available = inUse();
+                if (available > 0) {
+                    bytesToWriteBeforeSyncing = available;
+                    state = WRITE_DATA;
+                }
+                else {
+                    state = CALC_WR_SIZE;
+                }
+            }
             break;
 
         case CALC_WR_SIZE:
@@ -564,6 +579,11 @@ void Logger::logTask()
                             printf("%s: Writes: min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeWriting, maxTimeWriting, totalTimeWriting/totalWriteEvents);
                             printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeSyncing, maxTimeSyncing, totalTimeSyncing/totalSyncEvents);
                         }
+                        // Proactively populate the lookahead buffer while idle, so the
+                        // next write finds free blocks without triggering an internal scan.
+                        absolute_time_t gc_t0 = get_absolute_time();
+                        lfs_fs_gc(lfs);
+                        printf("%s: lfs_fs_gc() time: %lld uSec\n", __FUNCTION__, (int64_t)(get_absolute_time() - gc_t0));
                         // Calculate when to do the next sync:
                         state = CALC_WR_SIZE;
                     }
