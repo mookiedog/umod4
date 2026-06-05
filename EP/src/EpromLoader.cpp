@@ -148,7 +148,7 @@ void EpromLoader::loadImage()
 
         // Extract "name"
         element_t nameElem;
-        if (Bson::findElement(headerPtr, "name", nameElem) && nameElem.elementType == BSON_TYPE_UTF8) {
+        if (Bson::findElement(headerPtr, "name", nameElem) && nameElem.elementType == Bson::TYPE_UTF8) {
             const char* n = (const char*)nameElem.data + 4;
             if (strlen(n) >= sizeof(si.name))
                 printf("%s: WARN: slot %u name truncated to %u chars\n", fname, i, (unsigned)(sizeof(si.name) - 1));
@@ -159,7 +159,7 @@ void EpromLoader::loadImage()
         // Extract "image_m3"
         element_t m3Elem;
         if (Bson::findElement(headerPtr, "image_m3", m3Elem)) {
-            if (m3Elem.elementType == BSON_TYPE_INT32 || m3Elem.elementType == BSON_TYPE_INT64) {
+            if (m3Elem.elementType == Bson::TYPE_INT32 || m3Elem.elementType == Bson::TYPE_INT64) {
                 si.image_m3 = Bson::read_unaligned_uint32(m3Elem.data);
             }
         }
@@ -168,7 +168,7 @@ void EpromLoader::loadImage()
         // Unknown values are fatal — silently treating a protected image as 'N'
         // would feed descrambled garbage to the ECU.
         element_t protElem;
-        if (Bson::findElement(headerPtr, "protection", protElem) && protElem.elementType == BSON_TYPE_UTF8) {
+        if (Bson::findElement(headerPtr, "protection", protElem) && protElem.elementType == Bson::TYPE_UTF8) {
             const char* p = (const char*)protElem.data + 4;
             if (p[0] == 'A') {
                 si.protection = 'A';
@@ -204,7 +204,7 @@ void EpromLoader::loadImage()
     }
 
     if (!Bson::findElement(selectorDoc, "images", imagesArray) ||
-        imagesArray.elementType != BSON_TYPE_ARRAY) {
+        imagesArray.elementType != Bson::TYPE_ARRAY) {
         printf("%s: ERR: No \"images\" array in selector BSON\n", fname);
         enqueue(LOGID_EP_LOAD_ERR_TYPE_U8, LOGID_EP_LOAD_ERR_NOIMAGES_VAL);
         goto limp_mode;
@@ -217,7 +217,7 @@ void EpromLoader::loadImage()
         if (!Bson::findElement(imagesArray.data, indexStr, entry)) {
             break;  // no more selector entries
         }
-        if (entry.elementType != BSON_TYPE_EMBEDDED_DOC) {
+        if (entry.elementType != Bson::TYPE_EMBEDDED_DOC) {
             continue;
         }
 
@@ -225,7 +225,7 @@ void EpromLoader::loadImage()
         // Extract selector entry fields.
         element_t codeElem;
         const char* codeName = nullptr;
-        if (Bson::findElement(entry.data, "code", codeElem) && codeElem.elementType == BSON_TYPE_UTF8) {
+        if (Bson::findElement(entry.data, "code", codeElem) && codeElem.elementType == Bson::TYPE_UTF8) {
             codeName = (const char*)codeElem.data + 4;
         }
         if (!codeName || codeName[0] == '\0' || strcmp(codeName, "limp-mode") == 0) {
@@ -237,7 +237,7 @@ void EpromLoader::loadImage()
 
         element_t mapblobElem;
         const char* mapblobName = nullptr;
-        if (Bson::findElement(entry.data, "mapblob", mapblobElem) && mapblobElem.elementType == BSON_TYPE_UTF8) {
+        if (Bson::findElement(entry.data, "mapblob", mapblobElem) && mapblobElem.elementType == Bson::TYPE_UTF8) {
             mapblobName = (const char*)mapblobElem.data + 4;
             if (mapblobName[0] == '\0') mapblobName = nullptr;
         }
@@ -479,7 +479,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
         return LOGID_EP_LOAD_ERR_NODAUGHTERBOARDKEY_VAL;
     }
 
-    if (db_element.elementType == BSON_TYPE_UTF8) {
+    if (db_element.elementType == Bson::TYPE_UTF8) {
         // This is problematic: I might need something that converts the data pointed at by *data to a real type
         if (0 == strcmp((const char*)db_element.data+4, "A")) {
             printf("%s: Daughterboard: Aprilia V1\n", __FUNCTION__);
@@ -493,7 +493,7 @@ uint8_t EpromLoader::loadRange(bsonDoc_t epromDoc, uint32_t startOffset, uint32_
     // The "mem" document at the top-level inside this epromDoc describes the entire image
     element_t mem_element;
     found = Bson::findElement(epromDoc, "mem", mem_element);
-    if (!found || (mem_element.elementType != BSON_TYPE_EMBEDDED_DOC)) {
+    if (!found || (mem_element.elementType != Bson::TYPE_EMBEDDED_DOC)) {
         printf("%s: ERR: Unable to find the \"mem\" key in the BSON doc\n", __FUNCTION__);
         return LOGID_EP_LOAD_ERR_NOMEMKEY_VAL;
     }
@@ -548,14 +548,14 @@ uint8_t EpromLoader::getMemInfo(bsonDoc_t memDoc, meminfo_t& meminfo)
     element_t e;
 
     bool found = Bson::findElement(memDoc, "startOffset", e);
-    if (!found || (e.elementType != BSON_TYPE_INT32)) {
+    if (!found || (e.elementType != Bson::TYPE_INT32)) {
         printf("%s: ERR: missing key \"startOffset\"\n", __FUNCTION__);
         return LOGID_EP_LOAD_ERR_MISSINGKEYSTART_VAL;
     }
     meminfo.startOffset = Bson::read_unaligned_uint32(e.data);
 
     found = Bson::findElement(memDoc, "length", e);
-    if (!found || (e.elementType != BSON_TYPE_INT32)) {
+    if (!found || (e.elementType != Bson::TYPE_INT32)) {
         printf("%s: ERR: missing key \"length\"\n", __FUNCTION__);
         return LOGID_EP_LOAD_ERR_MISSINGKEYLENGTH_VAL;
     }
@@ -568,11 +568,11 @@ uint8_t EpromLoader::getMemInfo(bsonDoc_t memDoc, meminfo_t& meminfo)
     }
     // The M3 output is always a 32-bit number. However, the JSON to BSON library will generate a 64-bit BSON data type if the
     // MS bit of the M3 output is a '1'. As a result, we need to be ready to deal with either data type we might find here:
-    if ((e.elementType != BSON_TYPE_INT32) && (e.elementType != BSON_TYPE_INT64)) {
+    if ((e.elementType != Bson::TYPE_INT32) && (e.elementType != Bson::TYPE_INT64)) {
         printf("%s: ERR: m3 data has bad BSON data type 0x%02X, expected 0x10 or 0x12\n", __FUNCTION__, e.elementType);
         return LOGID_EP_LOAD_ERR_BADM3BSONTYPE_VAL;
     }
-    if (e.elementType == BSON_TYPE_INT64) {
+    if (e.elementType == Bson::TYPE_INT64) {
         uint32_t ms_word = Bson::read_unaligned_uint32(e.data+4);
         if (ms_word != 0) {
             printf("%s: ERR: 64-bit M3 value has a non-zero MS word: %u\n", __FUNCTION__, ms_word);
@@ -584,7 +584,7 @@ uint8_t EpromLoader::getMemInfo(bsonDoc_t memDoc, meminfo_t& meminfo)
 
 
     found = Bson::findElement(memDoc, "bin", e);
-    if (!found || (e.elementType != BSON_TYPE_BINARY_DATA)) {
+    if (!found || (e.elementType != Bson::TYPE_BINARY_DATA)) {
         printf("%s: ERR: missing key \"bin\"\n", __FUNCTION__);
         return LOGID_EP_LOAD_ERR_NOBINKEY_VAL;
     }

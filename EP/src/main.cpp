@@ -305,7 +305,7 @@ void startCore1(void)
     // Now that core1 is serving memory transactions, we can finally release the HC11 out of RESET.
     // Driving the HC11 reset output signal to '0' deasserts the HC11 RESET
     uint64_t elapsed = time_us_64() - epoch;
-    printf("%s: Releasing ECU RESET (elapsed: %lld mS)\n", fname, (elapsed+500)/1000);
+    printf("%s: Releasing ECU RESET (elapsed: %lu mS)\n", fname, (elapsed+500)/1000);
     sio_hw->gpio_clr = HC11_RESET_BITS;
 }
 
@@ -499,7 +499,7 @@ void core0Mainloop(void)
 
     // Report how long it took the WP to become ready
     uint64_t elapsed = time_us_64() - epoch;
-    printf("%s: WP RDY @ %lld mS\n", fname, (elapsed+500)/1000);
+    printf("%s: WP RDY @ %lu mS\n", fname, (elapsed+500)/1000);
 
     // Remember that wpReady is a true flow-control signal now, so we need to respect
     // it should it get deasserted during normal operation
@@ -548,7 +548,7 @@ void initUart()
     #if defined CLKOUT_GPIO
         // The UART must be disabled if the system is configured to drive its sysclk
         // to CLKOUT_GPIO for testing/verification purposes since they share the same GPIO pad!
-        printf("%s: \n****\n**** WARNING: UART functionality is disabled due to CLKOUT testing!\n****\n");
+        printf("%s: \n****\n**** WARNING: UART functionality is disabled due to CLKOUT testing!\n****\n", fname);
     #else
         // We will be implementing a PIO program to send data to the WP in 32-bit chunks
         uint offset = pio_add_program(uart_pio, &uart_tx32_program);

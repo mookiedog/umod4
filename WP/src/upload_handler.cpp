@@ -278,7 +278,7 @@ static uint32_t resolve_slot_addr_from_json(const char* body)
         if (!swd->read_target_mem(slot_addr, (uint32_t*)hdr, read_bytes)) continue;
         hdr[255] = 0;
         element_t e;
-        if (Bson::findElement(hdr, "name", e) && e.elementType == BSON_TYPE_UTF8) {
+        if (Bson::findElement(hdr, "name", e) && e.elementType == Bson::TYPE_UTF8) {
             const char* slot_name = (const char*)e.data + 4;
             if (strcmp(slot_name, val) == 0) return slot_addr;
         }
@@ -648,12 +648,12 @@ err_t upload_post_begin(void *connection, const char *uri,
             // Generate UUID (simplified - use connection pointer + timestamp + file size)
             uint32_t t = time_us_32();
             snprintf(session->session_id, sizeof(session->session_id),
-                     "%08lx-%04lx-%04lx-%04x-%012lx",
+                     "%08lx-%04lx-%04lx-%04x-%012llx",
                      (unsigned long)t,
                      (unsigned long)((uintptr_t)connection >> 16) & 0xFFFF,
                      (unsigned long)((uintptr_t)connection) & 0xFFFF,
                      (uint16_t)(total_size & 0xFFFF),
-                     (unsigned long)((uint64_t)t * 1000000ULL + total_size) & 0xFFFFFFFFFFFFULL);
+                     ((uint64_t)t * 1000000ULL + total_size) & 0xFFFFFFFFFFFFULL);
         }
         session->session_id[sizeof(session->session_id) - 1] = '\0';
 

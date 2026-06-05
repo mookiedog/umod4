@@ -15,29 +15,6 @@
 // A BSON object is a sequence of bytes with no inherent alignment of the underlying
 // data values. When reading element values, this needs to be taken into account.
 
-// Define the BSON data types
-#define BSON_TYPE_DOUBLE            ((int8_t)1)
-#define BSON_TYPE_UTF8              ((int8_t)2)
-#define BSON_TYPE_EMBEDDED_DOC      ((int8_t)3)
-#define BSON_TYPE_ARRAY             ((int8_t)4)
-#define BSON_TYPE_BINARY_DATA       ((int8_t)5)
-#define BSON_TYPE_UNDEFINED_VALUE   ((int8_t)6)     // Deprecated
-#define BSON_TYPE_OBJECT_ID         ((int8_t)7)
-#define BSON_TYPE_BOOLEAN           ((int8_t)8)
-#define BSON_TYPE_UTC_DATETIME      ((int8_t)9)
-#define BSON_TYPE_NULL_VALUE        ((int8_t)10)
-#define BSON_TYPE_REGEXP            ((int8_t)11)
-#define BSON_TYPE_DBPOINTER         ((int8_t)12)    // Deprecated
-#define BSON_TYPE_JS_CODE           ((int8_t)13)
-#define BSON_TYPE_SYMBOL            ((int8_t)14)    // Deprecated
-#define BSON_TYPE_JS_CODE_W_S       ((int8_t)15)    // Deprecated
-#define BSON_TYPE_INT32             ((int8_t)16)
-#define BSON_TYPE_TIMESTAMP         ((int8_t)17)    // uint64
-#define BSON_TYPE_INT64             ((int8_t)18)
-#define BSON_TYPE_FLOAT128          ((int8_t)19)
-#define BSON_TYPE_MINKEY            ((int8_t)-1)
-#define BSON_TYPE_MAXKEY            ((int8_t)127)
-
 // An 'element' represents a single key-value pair within a BSON document
 typedef struct {
     const uint8_t* elementP;    // points to the first byte of the element, mainly used when skipping over the element
@@ -50,6 +27,42 @@ typedef struct {
 
 class Bson {
     public:
+        // BSON element type codes (per BSON spec)
+        static constexpr int8_t TYPE_DOUBLE          =  1;
+        static constexpr int8_t TYPE_UTF8            =  2;
+        static constexpr int8_t TYPE_EMBEDDED_DOC    =  3;
+        static constexpr int8_t TYPE_ARRAY           =  4;
+        static constexpr int8_t TYPE_BINARY_DATA     =  5;
+        static constexpr int8_t TYPE_UNDEFINED_VALUE =  6;  // Deprecated
+        static constexpr int8_t TYPE_OBJECT_ID       =  7;
+        static constexpr int8_t TYPE_BOOLEAN         =  8;
+        static constexpr int8_t TYPE_UTC_DATETIME    =  9;
+        static constexpr int8_t TYPE_NULL_VALUE      = 10;
+        static constexpr int8_t TYPE_REGEXP          = 11;
+        static constexpr int8_t TYPE_DBPOINTER       = 12;  // Deprecated
+        static constexpr int8_t TYPE_JS_CODE         = 13;
+        static constexpr int8_t TYPE_SYMBOL          = 14;  // Deprecated
+        static constexpr int8_t TYPE_JS_CODE_W_S     = 15;  // Deprecated
+        static constexpr int8_t TYPE_INT32           = 16;
+        static constexpr int8_t TYPE_TIMESTAMP       = 17;  // uint64
+        static constexpr int8_t TYPE_INT64           = 18;
+        static constexpr int8_t TYPE_FLOAT128        = 19;
+        static constexpr int8_t TYPE_MINKEY          = -1;
+        static constexpr int8_t TYPE_MAXKEY          = 127;
+
+        // Fixed value sizes per BSON spec (bytes)
+        static constexpr int32_t SIZEOF_DOUBLE    =  8;
+        static constexpr int32_t SIZEOF_BOOLEAN   =  1;
+        static constexpr int32_t SIZEOF_INT32     =  4;
+        static constexpr int32_t SIZEOF_INT64     =  8;
+        static constexpr int32_t SIZEOF_FLOAT128  = 16;
+        static constexpr int32_t SIZEOF_OBJECT_ID = 12;
+
+        // Structural framing sizes per BSON spec (bytes)
+        static constexpr int32_t SIZEOF_DOC_LENGTH     = 4;  // int32 at start of every document
+        static constexpr int32_t SIZEOF_STRING_LENGTH  = 4;  // int32 length prefix on strings
+        static constexpr int32_t SIZEOF_BINARY_SUBTYPE = 1;  // subtype byte in binary values
+
         // Search a sequence of BSON documents for a specific top-level key.
         // Documents must be stored contiguously in memory with no padding between them.
         // Document must be well-formed, starting with a 4-byte length field and ending with a 0x00 byte.

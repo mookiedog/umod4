@@ -512,7 +512,7 @@ void Shell::cmd_ls(char* args)
     char globname[256];
     char* gp;
 
-    const char* name;
+    const char* name = NULL;
     int matchLen;
     int matchIdx;
 
@@ -605,7 +605,7 @@ void Shell::cmd_rm(char* args)
     char globname[256];
     char* gp;
 
-    const char* name;
+    const char* name = NULL;
     int matchLen;
     int matchIdx;
 

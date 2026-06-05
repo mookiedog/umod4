@@ -307,6 +307,7 @@ bool comingOnline(SdCardBase* sdCard)
                     lfs_mounted = false;
                     return false;
                 }
+                mountAttempts++;
                 vTaskDelay(pdMS_TO_TICKS(500));
             }
         }

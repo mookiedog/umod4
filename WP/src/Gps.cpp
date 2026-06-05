@@ -361,7 +361,7 @@ void Gps::process_NAV_PVT(uint8_t* payload)
         bool doRest = false;
         if (logger) {
             if (year != _year) {
-                if (dbg && (_year < 2025)) printf("%s: reported year %d < 2025!\n", _year);
+                if (dbg && (_year < 2025)) printf("%s: reported year %d < 2025!\n", __FUNCTION__, _year);
                 year = _year;
                 int8_t yr = year - 2000;
                 logger->logData(LOGID_WP_YEAR_TYPE_U8, LOGID_WP_YEAR_DLEN, (uint8_t*)&yr);

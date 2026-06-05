@@ -944,7 +944,7 @@ void image_store_init(void)
 
     element_t images_elem;
     if (!Bson::findElement(doc, "images", images_elem) ||
-        images_elem.elementType != BSON_TYPE_ARRAY) {
+        images_elem.elementType != Bson::TYPE_ARRAY) {
         free(doc);
         snprintf(g_image_store_json, sizeof(g_image_store_json),
                  "{\"found\":false,\"error\":\"no images array in slot 0\"}");
@@ -960,21 +960,21 @@ void image_store_init(void)
         snprintf(indexStr, sizeof(indexStr), "%d", index);
         element_t entry;
         if (!Bson::findElement(images_elem.data, indexStr, entry) ||
-            entry.elementType != BSON_TYPE_EMBEDDED_DOC) {
+            entry.elementType != Bson::TYPE_EMBEDDED_DOC) {
             break;
         }
 
         element_t codeElem;
         const char* code = "?";
         if (Bson::findElement(entry.data, "code", codeElem) &&
-            codeElem.elementType == BSON_TYPE_UTF8) {
+            codeElem.elementType == Bson::TYPE_UTF8) {
             code = (const char*)codeElem.data + 4;
         }
 
         element_t mapblobElem;
         const char* mapblob = nullptr;
         if (Bson::findElement(entry.data, "mapblob", mapblobElem) &&
-            mapblobElem.elementType == BSON_TYPE_UTF8) {
+            mapblobElem.elementType == Bson::TYPE_UTF8) {
             mapblob = (const char*)mapblobElem.data + 4;
         }
 
@@ -1093,13 +1093,13 @@ static void do_image_store_scan(void)
         const char* protection  = "N";
         uint32_t    image_m3    = 0;
 
-        if (Bson::findElement(hdr, "name", e) && e.elementType == BSON_TYPE_UTF8)
+        if (Bson::findElement(hdr, "name", e) && e.elementType == Bson::TYPE_UTF8)
             name = (const char*)e.data + 4;
-        if (Bson::findElement(hdr, "description", e) && e.elementType == BSON_TYPE_UTF8)
+        if (Bson::findElement(hdr, "description", e) && e.elementType == Bson::TYPE_UTF8)
             description = (const char*)e.data + 4;
-        if (Bson::findElement(hdr, "image_m3", e) && e.elementType == BSON_TYPE_INT32)
+        if (Bson::findElement(hdr, "image_m3", e) && e.elementType == Bson::TYPE_INT32)
             image_m3 = Bson::read_unaligned_uint32(e.data);
-        if (Bson::findElement(hdr, "protection", e) && e.elementType == BSON_TYPE_UTF8)
+        if (Bson::findElement(hdr, "protection", e) && e.elementType == Bson::TYPE_UTF8)
             protection = (const char*)e.data + 4;
 
         if (!name) {
