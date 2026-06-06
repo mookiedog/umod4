@@ -1285,3 +1285,81 @@ int api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
     printf("api_flash_read: unknown region '%s'\n", region);
     return -1;
 }
+
+// ---------------------------------------------------------------------------
+// /api/tasks  — FreeRTOS task list with CPU time stats
+
+extern volatile uint32_t g_heap_max;
+extern volatile uint32_t g_heap_committed;
+extern volatile uint32_t g_heap_remaining;
+extern volatile uint32_t g_heap_inuse;
+extern volatile uint32_t g_heap_free;
+
+static int tasks_cmp_cpu_desc(const void* a, const void* b)
+{
+    uint32_t ca = static_cast<const TaskStatus_t*>(a)->ulRunTimeCounter;
+    uint32_t cb = static_cast<const TaskStatus_t*>(b)->ulRunTimeCounter;
+    return (cb > ca) ? 1 : (cb < ca) ? -1 : 0;
+}
+
+void generate_api_tasks_json(char* buf, size_t size)
+{
+    static TaskStatus_t task_array[32];
+
+    uint32_t totalRunTime = 0;
+    UBaseType_t count = uxTaskGetSystemState(task_array, 32, &totalRunTime);
+
+    qsort(task_array, count, sizeof(TaskStatus_t), tasks_cmp_cpu_desc);
+
+    size_t pos = 0;
+    pos += snprintf(buf + pos, size - pos, "{\"total_runtime\":%lu,\"tasks\":[",
+                    (unsigned long)totalRunTime);
+
+    for (UBaseType_t i = 0; i < count && pos < size - 2; i++) {
+        const TaskStatus_t* t = &task_array[i];
+
+        const char* state;
+        switch (t->eCurrentState) {
+            case eRunning:   state = "X"; break;
+            case eReady:     state = "R"; break;
+            case eBlocked:   state = "B"; break;
+            case eSuspended: state = "S"; break;
+            case eDeleted:   state = "D"; break;
+            default:         state = "?"; break;
+        }
+
+        uint32_t pct = (totalRunTime > 0)
+            ? static_cast<uint32_t>((uint64_t)t->ulRunTimeCounter * 100ULL / totalRunTime)
+            : 0;
+
+        const char* core = (t->uxCoreAffinityMask == 1) ? "0"
+                         : (t->uxCoreAffinityMask == 2) ? "1" : "any";
+
+        pos += snprintf(buf + pos, size - pos,
+            "%s{\"name\":\"%s\",\"state\":\"%s\",\"hwm\":%u,"
+            "\"cpu_time\":%lu,\"cpu_pct\":%lu,\"core\":\"%s\"}",
+            (i > 0) ? "," : "",
+            t->pcTaskName, state,
+            (unsigned)t->usStackHighWaterMark,
+            (unsigned long)t->ulRunTimeCounter,
+            (unsigned long)pct,
+            core);
+    }
+
+    snprintf(buf + pos, size - pos, "]}");
+}
+
+// ---------------------------------------------------------------------------
+// /api/heap  — heap memory stats
+
+void generate_api_heap_json(char* buf, size_t size)
+{
+    snprintf(buf, size,
+        "{\"max\":%lu,\"committed\":%lu,\"remaining\":%lu,"
+        "\"inuse\":%lu,\"free\":%lu}",
+        (unsigned long)g_heap_max,
+        (unsigned long)g_heap_committed,
+        (unsigned long)g_heap_remaining,
+        (unsigned long)g_heap_inuse,
+        (unsigned long)g_heap_free);
+}

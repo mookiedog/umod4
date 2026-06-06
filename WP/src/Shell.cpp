@@ -851,11 +851,64 @@ void Shell::cmd_heap()
 }
 
 // ----------------------------------------------------------------------------------
-void Shell::cmd_tasks()
+void Shell::cmd_tasks(char* args)
 {
-    char buffer[1024];
-    vTaskList(buffer);
-    SHELL_PRINTF("\n%s\n", buffer);
+    static TaskStatus_t task_array[32];
+
+    bool sort_by_name = args && (args[0] == 'n' || args[0] == 'N');
+
+    uint32_t totalRunTime = 0;
+    UBaseType_t count = uxTaskGetSystemState(task_array, 32, &totalRunTime);
+
+    if (sort_by_name) {
+        qsort(task_array, count, sizeof(TaskStatus_t), [](const void* a, const void* b) -> int {
+            return strcmp(static_cast<const TaskStatus_t*>(a)->pcTaskName,
+                          static_cast<const TaskStatus_t*>(b)->pcTaskName);
+        });
+    } else {
+        qsort(task_array, count, sizeof(TaskStatus_t), [](const void* a, const void* b) -> int {
+            uint32_t ca = static_cast<const TaskStatus_t*>(a)->ulRunTimeCounter;
+            uint32_t cb = static_cast<const TaskStatus_t*>(b)->ulRunTimeCounter;
+            return (cb > ca) ? 1 : (cb < ca) ? -1 : 0;
+        });
+    }
+
+    SHELL_PRINTF("\n%-16s  St  %5s  %10s  %4s  Core\n",
+                 "Name", "HWM", "CPU Time", "CPU%");
+    SHELL_PRINTF("%-16s  --  -----  ----------  ----  ----\n",
+                 "----------------");
+
+    for (UBaseType_t i = 0; i < count; i++) {
+        const TaskStatus_t* t = &task_array[i];
+
+        char state;
+        switch (t->eCurrentState) {
+            case eRunning:   state = 'X'; break;
+            case eReady:     state = 'R'; break;
+            case eBlocked:   state = 'B'; break;
+            case eSuspended: state = 'S'; break;
+            case eDeleted:   state = 'D'; break;
+            default:         state = '?'; break;
+        }
+
+        uint32_t pct = (totalRunTime > 0)
+            ? static_cast<uint32_t>((uint64_t)t->ulRunTimeCounter * 100ULL / totalRunTime)
+            : 0;
+        char pct_str[8];
+        if (pct == 0) snprintf(pct_str, sizeof(pct_str), "<1%%");
+        else          snprintf(pct_str, sizeof(pct_str), "%lu%%", (unsigned long)pct);
+
+        const char* core = (t->uxCoreAffinityMask == 1) ? "0" : (t->uxCoreAffinityMask == 2) ? "1" : "any";
+
+        SHELL_PRINTF("%-16s  %c   %5u  %10lu  %4s  %s\n",
+                     t->pcTaskName, state,
+                     (unsigned)t->usStackHighWaterMark,
+                     (unsigned long)t->ulRunTimeCounter,
+                     pct_str, core);
+    }
+    SHELL_PRINTF("\n%u tasks  |  sort: %s  |  'tasks n' = by name, 'tasks c' = by cpu\n",
+                 (unsigned)count, sort_by_name ? "name" : "cpu (desc)");
+    SHELL_PRINTF("Note: CPU%% may sum >100%% on dual-core\n");
 }
 
 // ----------------------------------------------------------------------------------
@@ -980,7 +1033,7 @@ void Shell::cmd_sdperf(char* args)
                                 cmd_heap();
                             }
                             else if (strcmp(cmd, "tasks") == 0) {
-                                cmd_tasks();
+                                cmd_tasks(args);
                             }
                             else if (strcmp(cmd, "pwd") == 0) {
                                 cmd_pwd(args);

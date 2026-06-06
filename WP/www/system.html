@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - System</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .nav-button {
+            display: block;
+            width: 100%;
+            padding: 18px;
+            margin-bottom: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            cursor: pointer;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">System</span>
+                <div class="ribbon-status">
+                    <a href="/" class="ribbon-icon-link" title="Home">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+            <a href="/tasks.html"    class="nav-button" style="background:#6f42c1;">Tasks &amp; Heap</a>
+            <a href="/ep_stdio.html" class="nav-button" style="background:#495057;">EP Boot Log</a>
+        </div>
+    </div>
+    <script>
+        fetch('/api/info')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
+            })
+            .catch(function() {});
+    </script>
+</body>
+</html>

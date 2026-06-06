@@ -32,6 +32,8 @@ extern void generate_api_image_store_scan_json(char* buffer, size_t size);
 extern void generate_api_wifi_scan_start_json(char* buffer, size_t size);
 extern void generate_api_wifi_scan_json(char* buffer, size_t size);
 extern void generate_api_ep_stdio_json(char* buffer, size_t size, uint32_t client_offset);
+extern void generate_api_tasks_json(char* buffer, size_t size);
+extern void generate_api_heap_json(char* buffer, size_t size);
 extern int  api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
                             uint32_t offset, uint32_t len);
 
@@ -377,6 +379,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
                                    strcmp(api_name, "sd-info") == 0) ? 8192 :
                                   (strcmp(api_name, "image-store/scan") == 0 ||
                                    strcmp(api_name, "wifi-scan") == 0) ? 4096 :
+                                  (strcmp(api_name, "tasks") == 0) ? 2048 :
                                   (strcmp(api_name, "ecu-live-meta") == 0) ? 2048 :
                                   (strncmp(api_name, "ep-stdio/", 9) == 0) ? 1536 :
                                   (strcmp(api_name, "info") == 0 ||
@@ -455,6 +458,10 @@ int fs_open_custom(struct fs_file *file, const char *name)
         } else if (strncmp(api_name, "ep-stdio/", 9) == 0) {
             uint32_t offset = (uint32_t)strtoul(api_name + 9, NULL, 10);
             generate_api_ep_stdio_json(api_file->data, api_buffer_size, offset);
+        } else if (strcmp(api_name, "tasks") == 0) {
+            generate_api_tasks_json(api_file->data, api_buffer_size);
+        } else if (strcmp(api_name, "heap") == 0) {
+            generate_api_heap_json(api_file->data, api_buffer_size);
         } else {
             printf("fs_custom: Unknown API endpoint: %s\n", api_name);
             free(api_file->data);

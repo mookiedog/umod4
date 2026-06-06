@@ -34,7 +34,7 @@ class Shell {
     void cmd_heap();
     void cmd_pwd(char* args);
     void cmd_sdperf(char* args);
-    void cmd_tasks();
+    void cmd_tasks(char* args);
     void cmd_flashEp(char* args);
     void cmd_dumpEp(char* args);
     void cmd_wifi(char* args);

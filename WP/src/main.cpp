@@ -45,6 +45,9 @@
 
 
 
+// Wrapper for FreeRTOS run-time stats — avoids conflicting with the SDK's static inline time_us_32()
+extern "C" uint32_t freertos_get_runtime_counter(void) { return time_us_32(); }
+
 extern "C" {
     extern char __bss_end__;
     extern char __StackLimit;

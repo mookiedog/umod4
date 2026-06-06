@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - Tasks &amp; Heap</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .section-title {
+            font-weight: 700;
+            color: #555;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 10px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #eee;
+        }
+        .section { margin-bottom: 28px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+        th {
+            text-align: left;
+            padding: 6px 8px;
+            border-bottom: 2px solid #dee2e6;
+            color: #555;
+            font-size: 0.8em;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            white-space: nowrap;
+            cursor: pointer;
+            user-select: none;
+        }
+        th.sort-asc::after  { content: " \25B2"; font-size: 0.75em; }
+        th.sort-desc::after { content: " \25BC"; font-size: 0.75em; }
+        th.num, td.num { text-align: right; }
+        td {
+            padding: 5px 8px;
+            border-bottom: 1px solid #f0f0f0;
+            white-space: nowrap;
+        }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #f8f9fa; }
+
+        .state-X { color: #28a745; font-weight: 700; }
+        .state-R { color: #17a2b8; }
+        .state-B { color: #888; }
+        .state-S { color: #fd7e14; }
+        .state-D { color: #dc3545; }
+
+        .heap-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.9em; }
+        .heap-row:last-child { border-bottom: none; }
+        .heap-label { color: #555; }
+        .heap-value { font-variant-numeric: tabular-nums; }
+
+        .refresh-note { font-size: 0.78em; color: #aaa; text-align: right; margin-top: 6px; }
+        .error-msg { color: #dc3545; font-size: 0.9em; padding: 8px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">Tasks &amp; Heap</span>
+                <div class="ribbon-status">
+                    <a href="/system.html" class="ribbon-icon-link" title="System">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+
+            <div class="section">
+                <div class="section-title">FreeRTOS Tasks</div>
+                <div id="tasks-error" class="error-msg" style="display:none">Unable to fetch task data</div>
+                <table id="tasks-table">
+                    <thead>
+                        <tr>
+                            <th id="th-name"     onclick="setSort('name')">Name</th>
+                            <th id="th-state">St</th>
+                            <th id="th-hwm"      onclick="setSort('hwm')"      class="num">HWM</th>
+                            <th id="th-cpu_time" onclick="setSort('cpu_time')" class="num">CPU Time</th>
+                            <th id="th-cpu_pct"  class="num">CPU%</th>
+                            <th id="th-core">Core</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tasks-body"></tbody>
+                </table>
+                <div class="refresh-note" id="last-updated"></div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">Heap</div>
+                <div id="heap-error" class="error-msg" style="display:none">Unable to fetch heap data</div>
+                <div id="heap-body"></div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        var sortKey = 'cpu_time';
+        var sortAsc = false;
+        var lastTasks = [];
+
+        function setSort(key) {
+            if (sortKey === key) {
+                sortAsc = !sortAsc;
+            } else {
+                sortKey = key;
+                sortAsc = (key === 'name');
+            }
+            renderTasks(lastTasks);
+            updateSortHeaders();
+        }
+
+        function updateSortHeaders() {
+            var cols = ['name', 'hwm', 'cpu_time'];
+            cols.forEach(function(k) {
+                var th = document.getElementById('th-' + k);
+                if (!th) return;
+                th.className = (th.className.replace(/\s*(sort-asc|sort-desc)/g, '').trim());
+                if (th.classList) th.classList.remove('sort-asc', 'sort-desc');
+                if (k === sortKey) th.className += sortAsc ? ' sort-asc' : ' sort-desc';
+            });
+        }
+
+        function fmtNum(n) {
+            return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        function renderTasks(tasks) {
+            lastTasks = tasks;
+            var sorted = tasks.slice().sort(function(a, b) {
+                var av = a[sortKey], bv = b[sortKey];
+                if (typeof av === 'string') return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+                return sortAsc ? av - bv : bv - av;
+            });
+
+            var tbody = document.getElementById('tasks-body');
+            tbody.innerHTML = '';
+            sorted.forEach(function(t) {
+                var pct = t.cpu_pct === 0 ? '&lt;1%' : t.cpu_pct + '%';
+                var tr = '<tr>' +
+                    '<td>' + t.name + '</td>' +
+                    '<td class="state-' + t.state + '">' + t.state + '</td>' +
+                    '<td class="num">' + fmtNum(t.hwm) + '</td>' +
+                    '<td class="num">' + fmtNum(t.cpu_time) + '</td>' +
+                    '<td class="num">' + pct + '</td>' +
+                    '<td>' + t.core + '</td>' +
+                    '</tr>';
+                tbody.innerHTML += tr;
+            });
+
+            var now = new Date();
+            document.getElementById('last-updated').textContent =
+                'Updated ' + now.toLocaleTimeString() +
+                ' — ' + tasks.length + ' tasks' +
+                ' — click column header to sort';
+        }
+
+        function renderHeap(h) {
+            var kb = function(n) { return (n / 1024).toFixed(1) + ' KB'; };
+            var pct = function(n, total) { return total > 0 ? ' (' + Math.round(n * 100 / total) + '%)' : ''; };
+            var rows = [
+                ['Total',     kb(h.max)],
+                ['Committed', kb(h.committed) + pct(h.committed, h.max)],
+                ['Remaining', kb(h.remaining) + pct(h.remaining, h.max)],
+                ['In Use',    kb(h.inuse)     + pct(h.inuse,     h.committed)],
+                ['Free',      kb(h.free)      + pct(h.free,      h.committed)],
+            ];
+            var html = '';
+            rows.forEach(function(r) {
+                html += '<div class="heap-row"><span class="heap-label">' + r[0] +
+                        '</span><span class="heap-value">' + r[1] + '</span></div>';
+            });
+            document.getElementById('heap-body').innerHTML = html;
+        }
+
+        function refresh() {
+            fetch('/api/tasks')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    document.getElementById('tasks-error').style.display = 'none';
+                    renderTasks(d.tasks || []);
+                })
+                .catch(function() {
+                    document.getElementById('tasks-error').style.display = '';
+                });
+
+            fetch('/api/heap')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    document.getElementById('heap-error').style.display = 'none';
+                    renderHeap(d);
+                })
+                .catch(function() {
+                    document.getElementById('heap-error').style.display = '';
+                });
+        }
+
+        fetch('/api/info')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
+            })
+            .catch(function() {});
+
+        updateSortHeaders();
+        refresh();
+        setInterval(refresh, 1000);
+    </script>
+</body>
+</html>

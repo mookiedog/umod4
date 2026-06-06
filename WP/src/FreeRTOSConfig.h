@@ -80,9 +80,16 @@
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
 
 /* Run time and task stats gathering related definitions. */
-#define configGENERATE_RUN_TIME_STATS           0
+#define configGENERATE_RUN_TIME_STATS           1
 #define configUSE_TRACE_FACILITY                1
 #define configUSE_STATS_FORMATTING_FUNCTIONS    1
+#ifdef __cplusplus
+extern "C" uint32_t freertos_get_runtime_counter(void);
+#else
+extern uint32_t freertos_get_runtime_counter(void);
+#endif
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()    // pico timer already running from boot
+#define portGET_RUN_TIME_COUNTER_VALUE()            (freertos_get_runtime_counter() / 1000)
 
 /* Co-routine related definitions. */
 #define configUSE_CO_ROUTINES                   0
