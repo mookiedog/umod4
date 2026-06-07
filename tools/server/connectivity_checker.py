@@ -50,6 +50,35 @@ class ConnectivityChecker:
 
         print("ConnectivityChecker: Stopped")
 
+    def check_device_now(self, mac_address: str):
+        """Immediately check a specific device and update its status.
+
+        Called after a UDP check-in so ep_version/fs_status refresh without
+        waiting for the next 60s poll cycle.
+        """
+        session = self.database.get_session()
+        try:
+            from models.database import Device
+            device = session.query(Device).filter_by(mac_address=mac_address).first()
+            if device and device.last_ip:
+                was_online = device.is_online
+                is_online, info = self._check_device(device.last_ip)
+                fs_status = info.get('fs_status') if info else None
+                fs_message = info.get('fs_message') if info else None
+                device.is_online = is_online
+                device.filesystem_status = fs_status
+                device.filesystem_message = fs_message
+                if is_online:
+                    device.last_seen = datetime.utcnow()
+                    self._update_version_info(device, info)
+                session.commit()
+                if is_online != was_online and self.on_status_changed:
+                    self.on_status_changed(mac_address, is_online)
+        except Exception as e:
+            print(f"ConnectivityChecker: check_device_now error for {mac_address}: {e}")
+        finally:
+            session.close()
+
     def suspend_device(self, mac_address: str):
         """Suspend connectivity checking for a device (e.g., during upload)."""
         self._suspended_devices.add(mac_address)
@@ -147,14 +176,12 @@ class ConnectivityChecker:
         """
         try:
             client = DeviceClient(device_ip, timeout=5)
-            # Get device info (includes filesystem status and version)
             info = client.get_device_info()
             if info:
                 return (True, info)
             else:
                 return (False, None)
-        except Exception as e:
-            # Device is offline or unreachable
+        except Exception:
             return (False, None)
 
     def _update_version_info(self, device: Device, info: dict) -> bool:
@@ -185,7 +212,11 @@ class ConnectivityChecker:
                 print(f"ConnectivityChecker: Device {device.display_name} wp_version updated to {new_wp_version}")
 
         if 'ep_version' in info:
-            new_ep_version = info.get('ep_version')
+            ep_ver = info['ep_version']
+            if isinstance(ep_ver, dict):
+                new_ep_version = json.dumps(ep_ver)
+            else:
+                new_ep_version = ep_ver
             if device.ep_version != new_ep_version:
                 device.ep_version = new_ep_version
                 updated = True

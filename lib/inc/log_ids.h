@@ -424,6 +424,9 @@
 #define LOGID_EP_IMGSEL_TYPE_CS                         ((LOGID_EP_BASE) + 0x0C)        // Per-image load results as a compact JSON array string, NULL-terminated char stream.
 #define LOGID_EP_IMGSEL_DLEN                            1                               // Sent once after the loading pass completes (success or failsafe).
 
+#define LOGID_EP_BUILD_META_TYPE_CS                     ((LOGID_EP_BASE) + 0x0D)        // EP firmware build metadata JSON, NULL-terminated char stream. Format: {"BT":"YYYY-MM-DD HH:MM:SS"}
+#define LOGID_EP_BUILD_META_DLEN                        1                               // Sent once at EP boot.
+
 #define LOGID_EP_ECLK_KHZ_TYPE_U16                      ((LOGID_EP_BASE) + 0x0E)        // HC11 E-clock count over a 1 mSec span: should be ~2000
 #define LOGID_EP_ECLK_KHZ_DLEN                          2
 

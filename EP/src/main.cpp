@@ -262,54 +262,6 @@ void hello(uint32_t flickerCount)
 }
 
 // --------------------------------------------------------------------------------------------
-// This routine is executed by Core0:
-//  - Get Core1 started
-//  - Wait for Core1 to signal us that it is running and sync'ed to the HC11 E-clock
-//  - Release the HC11 processor from RESET
-void startCore1(void)
-{
-    const char* fname = "s1";
-
-    printf("%s: Launch Core1\n", fname);
-    // The SDK requires that we specify a tiny stack to get Core1 booted.
-    // Once the fake EPROM code is running, it won't be used any more.
-    uint32_t stackSizeBytes = (uint8_t*)&__StackOneTop - (uint8_t*)&__StackOneBottom;
-    multicore_launch_core1_with_stack(mainCore1, &__StackOneBottom, stackSizeBytes);
-
-    // Wait for core1 to signal us that it is actively servicing HC11 bus transactions
-    bool core1Rdy = false;
-    uint64_t t = time_us_64();
-    bool msg = false;
-    do {
-        if (multicore_fifo_rvalid()) {
-            uint32_t msg = multicore_fifo_pop_blocking();
-            core1Rdy = (msg == 0x12345678);     // fix me: this should not be hardcoded
-        }
-        else {
-            uint64_t tNow = time_us_64();
-            if (tNow - t > 250000) {
-                t = tNow;
-                // toggle DBG_BSY LED at 2 Hz for a visual indicator that the ECU is not powered,
-                // or Core1 has not started for some reason.
-                gpio_xor_mask(DBG_BSY_BITS);
-                if (!msg) {
-                    msg = true;
-                    printf("%s: ERR: Check ECU power!\n", fname);
-                }
-            }
-        }
-    } while (!core1Rdy);
-
-    printf("%s: Core1 is running!\n", fname);
-
-    // Now that core1 is serving memory transactions, we can finally release the HC11 out of RESET.
-    // Driving the HC11 reset output signal to '0' deasserts the HC11 RESET
-    uint64_t elapsed = time_us_64() - epoch;
-    printf("%s: Releasing ECU RESET (elapsed: %lu mS)\n", fname, (elapsed+500)/1000);
-    sio_hw->gpio_clr = HC11_RESET_BITS;
-}
-
-// --------------------------------------------------------------------------------------------
 void __time_critical_func(enqueue)(uint8_t id, uint8_t data)
 {
     if (inUse < (int32_t)(sizeof(streamBuffer)/sizeof(streamBuffer[0]))-4) {
@@ -475,6 +427,59 @@ static inline void __time_critical_func(processIncoming)(void)
     }
 }
 
+// --------------------------------------------------------------------------------------------
+// This routine is executed by Core0:
+//  - Get Core1 started
+//  - Wait for Core1 to signal us that it is running and sync'ed to the HC11 E-clock
+//  - Release the HC11 processor from RESET
+void startCore1(void)
+{
+    const char* fname = "s1";
+
+    printf("%s: Launch Core1\n", fname);
+    // The SDK requires that we specify a tiny stack to get Core1 booted.
+    // Once the fake EPROM code is running, it won't be used any more.
+    uint32_t stackSizeBytes = (uint8_t*)&__StackOneTop - (uint8_t*)&__StackOneBottom;
+    multicore_launch_core1_with_stack(mainCore1, &__StackOneBottom, stackSizeBytes);
+
+    // Wait for core1 to signal us that it is actively servicing HC11 bus transactions
+    bool core1Rdy = false;
+    uint64_t t = time_us_64();
+    bool msg = false;
+    do {
+        if (wpReady()) {
+            // Send out the EP's log requests while we wait for the ECU to power up.
+            // If the ECU never powers up, the log will contain the initial EP log data.
+            processOutgoing();
+        }
+        if (multicore_fifo_rvalid()) {
+            uint32_t msg = multicore_fifo_pop_blocking();
+            core1Rdy = (msg == 0x12345678);     // fix me: this should not be hardcoded
+        }
+        else {
+            uint64_t tNow = time_us_64();
+            if (tNow - t > 250000) {
+                t = tNow;
+                // toggle DBG_BSY LED at 2 Hz for a visual indicator that the ECU is not powered,
+                // or Core1 has not started for some reason.
+                gpio_xor_mask(DBG_BSY_BITS);
+                if (!msg) {
+                    msg = true;
+                    printf("%s: ERR: Check ECU power!\n", fname);
+                }
+            }
+        }
+    } while (!core1Rdy);
+
+    printf("%s: Core1 is running!\n", fname);
+
+    // Now that core1 is serving memory transactions, we can finally release the HC11 out of RESET.
+    // Driving the HC11 reset output signal to '0' deasserts the HC11 RESET
+    uint64_t elapsed = time_us_64() - epoch;
+    printf("%s: Releasing ECU RESET (elapsed: %lu mS)\n", fname, (elapsed+500)/1000);
+    sio_hw->gpio_clr = HC11_RESET_BITS;
+}
+
 
 // --------------------------------------------------------------------------------------------
 // Core0's whole job is to forward the incoming ECU message stream from Core1 over to the
@@ -491,14 +496,15 @@ void core0Mainloop(void)
     // ECU logging data will arrive essentially immediately!
     startCore1();
 
-    printf("%s: Waiting for WP RDY\n", fname);
+    uint64_t elapsed = time_us_64() - epoch;
+    printf("%s: Waiting for WP RDY @ %lu mS\n", fname, (elapsed+500)/1000);
     // Initially: if the WP is not ready, we just buffer incoming data.
-    while (!wpReady) {
+    while (!wpReady()) {
         processIncoming();
     }
 
     // Report how long it took the WP to become ready
-    uint64_t elapsed = time_us_64() - epoch;
+    elapsed = time_us_64() - epoch;
     printf("%s: WP RDY @ %lu mS\n", fname, (elapsed+500)/1000);
 
     // Remember that wpReady is a true flow-control signal now, so we need to respect
@@ -619,6 +625,23 @@ void init_hardware()
 }
 
 // --------------------------------------------------------------------------------------------
+// Send EP firmware build timestamp so WP can report ep_version via /api/info.
+void enqueueEpVersion()
+{
+    char ep_meta[48];
+
+    // Put the EP build information into the log in the same JSON format as the WP uses
+    // where "BT" means "Build Time":
+    snprintf(ep_meta, sizeof(ep_meta), "{\"BT\":\"%s\"}", ep_build_datetime());
+
+    // We know the string is NULL terminated:
+    const char* p = ep_meta;
+    do {
+        enqueue(LOGID_EP_BUILD_META_TYPE_CS, (uint8_t)*p);
+    } while (*p++);
+}
+
+// --------------------------------------------------------------------------------------------
 int main(void)
 {
     epoch = time_us_64();
@@ -643,11 +666,12 @@ int main(void)
 
     // First thing to be logged must be the log version!
     enqueue(LOGID_GEN_EP_LOG_VER_TYPE_U8,    LOGID_GEN_EP_LOG_VER_V0_VAL);
+    enqueue(LOGID_EP_RESET_REASON_TYPE_U8,   ep_reset_reason);
+    enqueueEpVersion();
     enqueue(LOGID_EP_ECLK_KHZ_TYPE_U16,      eclk_khz >> 8);
     enqueue(LOGID_EP_ECLK_KHZ_TYPE_U16 + 1,  eclk_khz & 0xFF);
-    enqueue(LOGID_EP_RESET_REASON_TYPE_U8,   ep_reset_reason);
 
-    // Get our RTT IO working first
+    // Get our RTT IO working to display boot messages
     init_stdio();
     showBootMessages(eclk_khz);
 

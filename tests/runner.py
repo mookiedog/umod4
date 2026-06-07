@@ -215,6 +215,7 @@ class Results:
 #                     down the RTT session and ends the run.
 SUITES = [
     "suites.test_provisioning",
+    "suites.test_config_migration",
     "suites.test_basic",
     "suites.test_ep_swd",
     "suites.test_wifi",
@@ -258,14 +259,18 @@ def flash_wp():
         raise RuntimeError(f"WP build directory not found at {WP_BUILD_DIR}")
 
     print("Entering WP BOOTSEL mode via SWD...", flush=True)
-    result = subprocess.run([WP_ENTER_BOOTSEL, WP_USB_BOOT_BINARY])
+    result = subprocess.run([WP_ENTER_BOOTSEL, WP_USB_BOOT_BINARY],
+                            capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"wp_enter_bootsel failed (exit {result.returncode})")
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"wp_enter_bootsel failed (exit {result.returncode}): {detail}")
 
     print(f"Flashing WP from {WP_BUILD_DIR} ...", flush=True)
-    result = subprocess.run([FLASH_WP, WP_BUILD_DIR])
+    result = subprocess.run([FLASH_WP, WP_BUILD_DIR],
+                            capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"flash_WP failed (exit {result.returncode})")
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"flash_WP failed (exit {result.returncode}): {detail}")
     print("Flash complete.\n", flush=True)
 
 
@@ -292,7 +297,7 @@ def _parse_args():
                    help="AP password to write to device config (or set UMOD4_AP_PASSWORD)")
     p.add_argument("--l000c", dest="l000c",
                    default=None, type=lambda x: int(x, 0),
-                   help="Expected ECU L000C register value (hex or decimal; default: use test constant 0x16)")
+                   help="Expected ECU L000C register value (hex or decimal; default: use test constant 0x10)")
     p.add_argument("--preflight-only", action="store_true", dest="preflight_only",
                    help="Run pre-flight checks only, then exit")
     p.add_argument("--no-flash", action="store_true", dest="no_flash",
@@ -332,11 +337,22 @@ def main():
         build_state.run_all(results, PROJECT_ROOT, allow_stale=args.allow_stale)
 
         if not args.preflight_only:
-            prov_selected = any("test_provisioning" in s.__name__ for s in suites)
+            # Suites that manage their own WP flash and OpenOCD lifecycle.
+            # When ALL selected suites are self-managed, the runner skips the
+            # normal pre-suite flash + OCD startup; the first self-managed suite
+            # is responsible for starting OpenOCD before subsequent suites run.
+            # When mixed with normal suites (e.g. test_basic + test_config_migration),
+            # the runner starts OCD normally; the self-managed suite restarts it
+            # in its own first step.
+            _SELF_MANAGED = {"test_provisioning", "test_config_migration"}
+            prov_selected = all(
+                any(name in s.__name__ for name in _SELF_MANAGED)
+                for s in suites
+            )
 
             if not prov_selected:
                 # Normal run: (optionally) flash WP then start OpenOCD.
-                # Provisioning suite skips this and handles erase+flash+OCD itself.
+                # Self-managed suites skip this and handle erase+flash+OCD themselves.
                 if args.no_flash:
                     print("Skipping WP flash (--no-flash).", flush=True)
                 else:

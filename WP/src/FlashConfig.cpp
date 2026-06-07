@@ -37,24 +37,6 @@ static uint32_t crc32_compute(const void *data, size_t len)
 // Field sanity helpers
 // ---------------------------------------------------------------------------
 
-// Returns true if s is a non-empty, printable (excluding control chars) string
-// that is properly null-terminated within maxlen bytes.
-static bool is_valid_string(const char *s, size_t maxlen)
-{
-    if (s[0] == '\0') return false; // empty
-    for (size_t i = 0; i < maxlen; i++) {
-        if (s[i] == '\0') return true;
-        if ((unsigned char)s[i] < 0x20 || (unsigned char)s[i] > 0x7E) return false;
-    }
-    return false; // no null terminator found
-}
-
-static bool is_valid_port(uint16_t port)
-{
-    // Exclude 0xFFFF (erased flash sentinel) and port 0
-    return port >= 1 && port != 0xFFFF;
-}
-
 // ---------------------------------------------------------------------------
 // flash_config_defaults
 // ---------------------------------------------------------------------------
@@ -63,15 +45,6 @@ void flash_config_defaults(flash_config_t *out)
     memset(out, 0, sizeof(*out));
     out->magic   = FLASH_CONFIG_MAGIC;
     out->version = FLASH_CONFIG_VERSION;
-
-#ifdef DEFAULT_SERVER_HOST
-    strncpy(out->server_host, DEFAULT_SERVER_HOST, sizeof(out->server_host) - 1);
-#endif
-#ifdef DEFAULT_SERVER_PORT
-    out->server_port = DEFAULT_SERVER_PORT;
-#else
-    out->server_port = 8081;
-#endif
 
     // device_name, ap_ssid, ap_password left empty: WiFiManager fills them in
     // from the CYW43 MAC address after hardware init and saves to flash.
@@ -98,51 +71,63 @@ bool flash_config_load(flash_config_t *out)
                  (crc32_compute(out, CRC_DATA_LEN) == out->crc32);
 
     if (valid) {
-        printf("FlashConfig: Loaded valid config from flash\n");
-        // Sanitize port even in a valid config: 0xFFFF can be present if the
-        // field was saved before is_valid_port() was tightened to reject it.
-        if (!is_valid_port(out->server_port)) {
-            flash_config_t defaults;
-            flash_config_defaults(&defaults);
-            printf("FlashConfig: Corrected invalid port 0x%04X -> %u\n",
-                   (unsigned)out->server_port, (unsigned)defaults.server_port);
-            out->server_port = defaults.server_port;
+        if (out->version == FLASH_CONFIG_VERSION) {
+            printf("FlashConfig: Loaded valid config (version %u)\n", (unsigned)out->version);
+            return true;
         }
-        return true;
+
+        if (out->version < FLASH_CONFIG_VERSION) {
+            // Flash holds an older config version — run the migration chain.
+            //
+            // HOW TO ADD A MIGRATION (example: v0 -> v1):
+            //
+            //   1. Freeze the current struct as flash_config_v0_t in FlashConfig.h
+            //      (copy it verbatim — never modify it again).
+            //   2. Define the new layout as flash_config_v1_t and update the
+            //      flash_config_t typedef to point to it.
+            //   3. Bump FLASH_CONFIG_VERSION to 1.
+            //   4. Write a migration function:
+            //        static void migrate_v0_to_v1(const flash_config_v0_t *src,
+            //                                     flash_config_v1_t       *dst)
+            //      Copy all surviving fields; fill new fields with sensible defaults.
+            //   5. Add a case below:
+            //        if (out->version == 0) {
+            //            flash_config_v0_t v0;
+            //            memcpy(&v0, out, sizeof(v0));
+            //            migrate_v0_to_v1(&v0, (flash_config_v1_t *)out);
+            //        }
+            //   6. After all cases, fall through to flash_config_save() below so
+            //      the next boot reads a clean vN config without migrating again.
+            //
+            // Each migration step only knows about its two adjacent versions.
+            // The chain handles multi-step upgrades automatically (v0->v1->v2 etc.).
+
+            printf("FlashConfig: Migrating config from version %u to %u\n",
+                   (unsigned)out->version, (unsigned)FLASH_CONFIG_VERSION);
+
+            // (no migration steps yet — v0 is the first version)
+
+            out->version = FLASH_CONFIG_VERSION;
+            out->crc32   = crc32_compute(out, CRC_DATA_LEN);
+            flash_config_save(out);
+            return true;
+        }
+
+        // out->version > FLASH_CONFIG_VERSION: config was written by newer firmware.
+        // We cannot safely interpret fields we don't know about — apply defaults.
+        printf("FlashConfig: Config version %u is newer than firmware version %u — applying defaults\n",
+               (unsigned)out->version, (unsigned)FLASH_CONFIG_VERSION);
+        flash_config_defaults(out);
+        return false;
     }
 
-    printf("FlashConfig: Flash config invalid (magic=%08lX, expected=%08lX) — applying defaults\n",
-           (unsigned long)out->magic, (unsigned long)FLASH_CONFIG_MAGIC);
-
-    // Best-effort: try to salvage fields that look valid before applying defaults
-    flash_config_t defaults;
-    flash_config_defaults(&defaults);
-
-    if (!is_valid_string(out->wifi_ssid, sizeof(out->wifi_ssid)))
-        memcpy(out->wifi_ssid, defaults.wifi_ssid, sizeof(out->wifi_ssid));
-
-    if (!is_valid_string(out->wifi_password, sizeof(out->wifi_password)))
-        memcpy(out->wifi_password, defaults.wifi_password, sizeof(out->wifi_password));
-
-    if (!is_valid_string(out->server_host, sizeof(out->server_host)))
-        memcpy(out->server_host, defaults.server_host, sizeof(out->server_host));
-
-    if (!is_valid_port(out->server_port))
-        out->server_port = defaults.server_port;
-
-    // device_name, ap_ssid, ap_password: empty is fine — just zero them cleanly
-    if (!is_valid_string(out->device_name, sizeof(out->device_name)))
-        memset(out->device_name, 0, sizeof(out->device_name));
-
-    if (!is_valid_string(out->ap_ssid, sizeof(out->ap_ssid)))
-        memset(out->ap_ssid, 0, sizeof(out->ap_ssid));
-
-    if (!is_valid_string(out->ap_password, sizeof(out->ap_password)))
-        memset(out->ap_password, 0, sizeof(out->ap_password));
-
-    out->magic   = FLASH_CONFIG_MAGIC;
-    out->version = FLASH_CONFIG_VERSION;
-
+    // Any validation failure (wrong magic or bad CRC) means the config cannot be trusted.
+    // Applying clean defaults is the only safe option — a corrupted WiFi password is
+    // useless, and a corrupted AP SSID/password leaves the device unrecoverable.
+    printf("FlashConfig: Invalid config (magic=%08lX crc_ok=%d) — applying defaults\n",
+           (unsigned long)out->magic,
+           (int)(crc32_compute(out, CRC_DATA_LEN) == out->crc32));
+    flash_config_defaults(out);
     return false;
 }
 

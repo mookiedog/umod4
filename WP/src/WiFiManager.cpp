@@ -43,7 +43,7 @@ WiFiManager::WiFiManager()
     taskHandle_ = NULL;
     state_ = State::UNINITIALIZED;
     hasServerAddress_ = false;
-    serverPort_ = 8081;
+    serverPort_ = DEFAULT_SERVER_PORT;
     serverHostname_[0] = '\0';
     wifiSsid_[0] = '\0';
     wifiPassword_[0] = '\0';
@@ -59,17 +59,19 @@ WiFiManager::WiFiManager()
     discovery_countdown_ = 0;  // broadcast on first CONNECTED tick
     server_discovered_ = false;
     discovered_server_ip_[0] = '\0';
-    discovered_server_port_ = 8081;
+    discovered_server_port_ = DEFAULT_SERVER_PORT;
 
     static StackType_t  s_stack[1024];
     static StaticTask_t s_tcb;
-    taskHandle_ = xTaskCreateStatic(
+    // Must run on Core 0: cyw43_arch_init() calls cyw43_irq_init() which asserts core == 0.
+    taskHandle_ = xTaskCreateStaticAffinitySet(
         start_wifiMgr_task,
         "WiFiMgrTask",
         1024,
         this,
         TASK_NORMAL_PRIORITY,
-        s_stack, &s_tcb
+        s_stack, &s_tcb,
+        CORE0_AFFINITY_MASK
     );
 
     if (taskHandle_ == NULL) {
@@ -304,6 +306,10 @@ void WiFiManager::WiFiManager_task()
                     if (addr && addr->addr != 0) {
                         printf("WiFiMgr: Connected! IP: %s\n", ip4addr_ntoa(addr));
 
+                        // Reset server address so discovery runs on every connect
+                        hasServerAddress_ = false;
+                        discovery_countdown_ = 0;
+
                         // Disable WiFi power save for minimum latency
                         printf("WiFiMgr: Disabling WiFi power save\n");
                         // CYW43_NONE_PM: Pure performance, no power savings
@@ -352,11 +358,6 @@ void WiFiManager::WiFiManager_task()
                 // Process discovery reply received by the lwIP callback
                 if (server_discovered_) {
                     server_discovered_ = false;
-                    strncpy(g_flash_config.server_host, discovered_server_ip_,
-                            sizeof(g_flash_config.server_host) - 1);
-                    g_flash_config.server_host[sizeof(g_flash_config.server_host) - 1] = '\0';
-                    g_flash_config.server_port = discovered_server_port_;
-                    flash_config_save(&g_flash_config);
                     setServerAddress(discovered_server_ip_, discovered_server_port_);
                     stopDiscovery();
                     sendCheckInNotification();
@@ -577,7 +578,7 @@ void WiFiManager::sendDiscoveryBroadcast()
     if (p) {
         memcpy(p->payload, payload, strlen(payload));
         const ip_addr_t broadcast = IPADDR4_INIT_BYTES(255, 255, 255, 255);
-        err_t err = udp_sendto(discovery_pcb_, p, &broadcast, 8081);
+        err_t err = udp_sendto(discovery_pcb_, p, &broadcast, DEFAULT_SERVER_PORT);
         pbuf_free(p);
         if (err == ERR_OK) {
             printf("WiFiMgr: Discovery broadcast sent\n");
@@ -614,14 +615,14 @@ void WiFiManager::discoveryReplyCallback(void* arg, struct udp_pcb* pcb,
     strncpy(self->discovered_server_ip_, ip_str, sizeof(self->discovered_server_ip_) - 1);
     self->discovered_server_ip_[sizeof(self->discovered_server_ip_) - 1] = '\0';
 
-    // Parse "port" from reply JSON: {"type":"announce","port":8081}
+    // Parse "port" from reply JSON: {"type":"announce","port":N}
     char buf[128];
     uint16_t len = p->tot_len < (u16_t)(sizeof(buf) - 1) ? p->tot_len : (u16_t)(sizeof(buf) - 1);
     pbuf_copy_partial(p, buf, len, 0);
     buf[len] = '\0';
     pbuf_free(p);
 
-    self->discovered_server_port_ = 8081;  // default
+    self->discovered_server_port_ = DEFAULT_SERVER_PORT;  // default
     const char* port_key = strstr(buf, "\"port\":");
     if (port_key) {
         uint16_t parsed = (uint16_t)atoi(port_key + 7);

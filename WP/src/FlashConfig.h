@@ -11,24 +11,29 @@ extern "C" {
 // Boot(64K) + A(2012K) + B(2012K) = 0x3FE000; config partition starts here.
 #define FLASH_CONFIG_OFFSET  0x3FE000U
 
-#define FLASH_CONFIG_MAGIC   0x55CF9A12U
-#define FLASH_CONFIG_VERSION 1
+// WARNING: changing FLASH_CONFIG_MAGIC invalidates all existing device configs.
+// Devices will boot into AP mode and require physical access (BOOTSEL) to reflash
+// if the resulting AP SSID/password is unusable. Always bench-test magic/layout
+// changes before deploying to a remote device (e.g. the motorcycle).
+#define FLASH_CONFIG_MAGIC   0x55CF0000U
+#define FLASH_CONFIG_VERSION 0
 
 // All string fields are null-terminated; an empty first byte means "not configured".
+// All members are sized as a multiple of one word (4 bytes).
 // __attribute__((packed)) ensures no compiler padding — flash layout must be deterministic.
 typedef struct __attribute__((packed)) {
     uint32_t magic;             // FLASH_CONFIG_MAGIC — detects blank/corrupt flash
-    uint8_t  version;           // Struct version (FLASH_CONFIG_VERSION)
+    uint32_t version;           // Struct version (FLASH_CONFIG_VERSION)
     char     device_name[64];   // Human-readable device name, e.g. "Robin's Tuono"
     char     wifi_ssid[64];     // Home network SSID
     char     wifi_password[64]; // Home network password
-    char     server_host[64];   // Server hostname or IP, e.g. "umod4-server.local"
-    uint16_t server_port;       // Server UDP port
     char     ap_ssid[32];       // AP mode SSID; empty = use "umod4-XXYY" from MAC
-    char     ap_password[64];   // AP mode password; empty = use FLASH_CONFIG_DEFAULT_AP_PASSWORD
-    uint8_t  _reserved[149];    // Pad to 512 bytes
+    char     ap_password[64];   // AP mode password; empty = use "umod4-XXYY" from MAC
+    uint32_t _reserved[53];     // Pad to 512 bytes
     uint32_t crc32;             // CRC32 of all preceding bytes in this struct
-} flash_config_t;               // Total: 512 bytes (packed: 4+1+64+64+64+64+2+32+64+149+4=512)
+} flash_config_v0_t;            // Total: 4+4+64+64+64+32+64+212+4=512
+
+typedef flash_config_v0_t flash_config_t;
 
 /**
  * Load config from flash into *out.
@@ -37,8 +42,8 @@ typedef struct __attribute__((packed)) {
  * field-by-field sanity checks and fills any invalid fields from compile-time
  * defaults (see flash_config_defaults).
  *
- * @return true  if magic matched and CRC32 was valid (clean config)
- *         false if blank/corrupt flash (defaults were applied)
+ * @return true  if magic matched, CRC32 was valid, and version matched
+ *         false if blank/corrupt flash or unknown version (defaults were applied)
  */
 bool flash_config_load(flash_config_t *out);
 

@@ -38,7 +38,8 @@ class DeviceClient:
         try:
             response = requests.get(
                 f"{self.base_url}/api/info",
-                timeout=self.timeout
+                timeout=self.timeout,
+                allow_redirects=False
             )
             response.raise_for_status()
             return response.json()

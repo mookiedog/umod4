@@ -1,11 +1,9 @@
 """
 Wait for a umod4 device check-in UDP packet.
 
-The WP sends one of two packet types to port 8081 when it connects to WiFi:
+The WP sends a discover broadcast to port 54549 on every WiFi connect:
   - discover broadcast  {"type":"discover","device_name":"...","device_mac":"...","ip":"..."}
-    sent to 255.255.255.255 when no server address is stored in flash.
-  - checkin unicast     {"device_mac":"...","ip":"..."}
-    sent to a specific server IP when one is stored in flash.
+    sent to 255.255.255.255; server replies so device learns its address.
 
 Binding to 0.0.0.0 with SO_BROADCAST captures both.
 
@@ -18,7 +16,7 @@ Usage:
 import json
 import socket
 
-CHECKIN_PORT = 8081
+CHECKIN_PORT = 54549
 
 
 class CheckInError(Exception):
@@ -27,7 +25,7 @@ class CheckInError(Exception):
 
 def wait_for_checkin(timeout=60.0, port=CHECKIN_PORT):
     """
-    Block until a device check-in packet arrives on UDP port 8081.
+    Block until a device check-in packet arrives on UDP port 54549.
     Returns the device's IP address string.
     Raises CheckInError on timeout or malformed packet.
     """

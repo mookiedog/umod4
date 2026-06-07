@@ -14,8 +14,8 @@ import json
 import sys
 
 def main():
-    """Listen for UDP check-in packets on port 8081."""
-    port = 8081
+    """Listen for UDP check-in packets on port 54549."""
+    port = 54549
     host = '0.0.0.0'
 
     print(f"UDP Check-In Test Listener")

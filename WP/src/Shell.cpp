@@ -18,6 +18,7 @@
 #include "swdreflash_binary.h"
 
 #include "Logger.h"
+#include "task_stats.h"
 
 // The tiny_regex_c interface library:
 #include "re.h"
@@ -853,36 +854,34 @@ void Shell::cmd_heap()
 // ----------------------------------------------------------------------------------
 void Shell::cmd_tasks(char* args)
 {
-    static TaskStatus_t task_array[32];
-
     bool sort_by_name = args && (args[0] == 'n' || args[0] == 'N');
 
-    uint32_t totalRunTime = 0;
-    UBaseType_t count = uxTaskGetSystemState(task_array, 32, &totalRunTime);
+    int count = task_stats_update();
+    const task_stat_t* stats = task_stats_get(nullptr);
+    uint64_t total_us = task_stats_get_total();
 
+    // task_stats_update() returns stats sorted by runtime_us descending.
+    // For name sort, copy locally and re-sort so we don't disturb the shared array.
+    task_stat_t local_copy[TASK_STATS_MAX_TASKS];
     if (sort_by_name) {
-        qsort(task_array, count, sizeof(TaskStatus_t), [](const void* a, const void* b) -> int {
-            return strcmp(static_cast<const TaskStatus_t*>(a)->pcTaskName,
-                          static_cast<const TaskStatus_t*>(b)->pcTaskName);
+        memcpy(local_copy, stats, count * sizeof(task_stat_t));
+        qsort(local_copy, count, sizeof(task_stat_t), [](const void* a, const void* b) -> int {
+            return strcmp(static_cast<const task_stat_t*>(a)->name,
+                          static_cast<const task_stat_t*>(b)->name);
         });
-    } else {
-        qsort(task_array, count, sizeof(TaskStatus_t), [](const void* a, const void* b) -> int {
-            uint32_t ca = static_cast<const TaskStatus_t*>(a)->ulRunTimeCounter;
-            uint32_t cb = static_cast<const TaskStatus_t*>(b)->ulRunTimeCounter;
-            return (cb > ca) ? 1 : (cb < ca) ? -1 : 0;
-        });
+        stats = local_copy;
     }
 
     SHELL_PRINTF("\n%-16s  St  %5s  %10s  %4s  Core\n",
-                 "Name", "HWM", "CPU Time", "CPU%");
+                 "Name", "HWM", "CPU ms", "CPU%");
     SHELL_PRINTF("%-16s  --  -----  ----------  ----  ----\n",
                  "----------------");
 
-    for (UBaseType_t i = 0; i < count; i++) {
-        const TaskStatus_t* t = &task_array[i];
+    for (int i = 0; i < count; i++) {
+        const task_stat_t* t = &stats[i];
 
         char state;
-        switch (t->eCurrentState) {
+        switch (t->state) {
             case eRunning:   state = 'X'; break;
             case eReady:     state = 'R'; break;
             case eBlocked:   state = 'B'; break;
@@ -891,19 +890,20 @@ void Shell::cmd_tasks(char* args)
             default:         state = '?'; break;
         }
 
-        uint32_t pct = (totalRunTime > 0)
-            ? static_cast<uint32_t>((uint64_t)t->ulRunTimeCounter * 100ULL / totalRunTime)
+        uint32_t pct = (total_us > 0)
+            ? static_cast<uint32_t>(t->runtime_us * 100ULL / total_us)
             : 0;
         char pct_str[8];
         if (pct == 0) snprintf(pct_str, sizeof(pct_str), "<1%%");
         else          snprintf(pct_str, sizeof(pct_str), "%lu%%", (unsigned long)pct);
 
-        const char* core = (t->uxCoreAffinityMask == 1) ? "0" : (t->uxCoreAffinityMask == 2) ? "1" : "any";
+        const char* core = (t->core_affinity == CORE0_AFFINITY_MASK) ? "0"
+                         : (t->core_affinity == CORE1_AFFINITY_MASK) ? "1" : "any";
 
-        SHELL_PRINTF("%-16s  %c   %5u  %10lu  %4s  %s\n",
-                     t->pcTaskName, state,
-                     (unsigned)t->usStackHighWaterMark,
-                     (unsigned long)t->ulRunTimeCounter,
+        SHELL_PRINTF("%-16s  %c   %5u  %10llu  %4s  %s\n",
+                     t->name, state,
+                     (unsigned)t->stack_hwm,
+                     (unsigned long long)(t->runtime_us / 1000),
                      pct_str, core);
     }
     SHELL_PRINTF("\n%u tasks  |  sort: %s  |  'tasks n' = by name, 'tasks c' = by cpu\n",

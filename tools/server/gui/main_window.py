@@ -1,7 +1,7 @@
 """Main window for umod4 server application."""
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                               QPushButton, QLabel, QFrame, QSplitter, QTabWidget,
+                               QPushButton, QLabel, QSplitter, QTabWidget,
                                QTableWidget, QTableWidgetItem, QHeaderView, QMenu,
                                QMessageBox, QFileDialog, QInputDialog, QProgressDialog,
                                QGroupBox, QGridLayout, QApplication)
@@ -11,6 +11,7 @@ from datetime import datetime
 import json
 import os
 import subprocess
+from checkin_listener import CHECKIN_PORT
 
 
 def _open_url(url):
@@ -52,26 +53,65 @@ def _open_url(url):
         print(f"_open_url: exception {type(e).__name__}: {e}")
 
 
-def format_wp_version(version_str: str) -> str:
-    """Format WP version string for display.
+def _open_folder(path):
+    """Open a filesystem folder in the native file manager.
 
-    Shows the raw JSON data in a readable format.
+    Handles WSL2 where xdg-open is not available: converts the Linux path to a
+    Windows path and opens it with explorer.exe via PowerShell.
     """
+    try:
+        with open('/proc/version', 'r') as version_file:
+            if 'microsoft' not in version_file.read().lower():
+                raise OSError("not WSL2")
+    except OSError:
+        subprocess.Popen(['xdg-open', path])
+        return
+
+    # WSL2 path — convert to Windows path and open in Explorer
+    if subprocess.run(['which', 'wslview'], capture_output=True).returncode == 0:
+        subprocess.Popen(['wslview', path])
+        return
+
+    result = subprocess.run(['wslpath', '-w', path], capture_output=True, text=True)
+    if result.returncode == 0:
+        win_path = result.stdout.strip()
+        subprocess.Popen(['explorer.exe', win_path])
+
+
+def _normalize_bt(v: str) -> str:
+    """Normalize a BT (build time) string to ISO format YYYY-MM-DD HH:MM:SS.
+
+    Handles both ISO format (from cmake) and compiler __DATE__ __TIME__ format
+    (e.g. "Jun  6 2026 12:14:56") so WP and EP display consistently.
+    """
+    from datetime import datetime
+    try:
+        return datetime.strptime(v.strip().replace('  ', ' '), "%b %d %Y %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, AttributeError):
+        return v
+
+
+def format_wp_version(version_str: str) -> str:
+    """Format WP/EP version string for display."""
     if not version_str:
         return "-"
 
     try:
         data = json.loads(version_str)
-        # Show key=value pairs joined by ", "
-        parts = [f"{k}={v}" for k, v in data.items()]
+        parts = [f"{k}={_normalize_bt(v) if k == 'BT' else v}" for k, v in data.items()]
         return ", ".join(parts)
     except (json.JSONDecodeError, TypeError):
-        # Not valid JSON, return as-is
         return version_str
 
 
 class DeviceListWidget(QWidget):
     """Widget showing connected and known devices."""
+
+    class _Col:
+        STATUS = 0
+        NAME = 1
+        IP = 2
+        LAST_SEEN = 3
 
     device_selected = Signal(str)  # Emits device MAC address
 
@@ -103,12 +143,11 @@ class DeviceListWidget(QWidget):
 
         # Device table
         self.device_table = QTableWidget()
-        self.device_table.setColumnCount(9)
+        self.device_table.setColumnCount(4)
         self.device_table.setHorizontalHeaderLabels([
-            "●", "Name", "IP Address", "MAC Address", "Status", "WP Version", "EP Version", "Last Seen", "Log Path"
+            "Status", "Name", "IP Address", "Last Seen"
         ])
-        # Make status indicator column narrow
-        self.device_table.setColumnWidth(0, 30)
+        self.device_table.setColumnWidth(0, 140)
         self.device_table.horizontalHeader().setStretchLastSection(True)
         self.device_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.device_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -130,57 +169,42 @@ class DeviceListWidget(QWidget):
             self.device_table.setRowCount(len(devices))
 
             for row, device in enumerate(devices):
-                # Status indicator column (checkmark or X)
+                # Status column — bold, colored: green=online, grey=offline, red=error
                 is_online = getattr(device, 'is_online', False)
-                status_item = QTableWidgetItem("✓" if is_online else "✗")
-                if is_online:
-                    status_item.setForeground(Qt.GlobalColor.darkGreen)
+                fs_status = getattr(device, 'filesystem_status', None)
+                has_fs_error = fs_status and fs_status != 'ok'
+
+                if has_fs_error:
+                    status_text = "⚠ No SD Card" if fs_status == 'no_card' else "⚠ FS Mount Failed"
+                elif is_online:
+                    status_text = "Online"
+                elif device.last_seen:
+                    seconds_ago = (datetime.utcnow() - device.last_seen).total_seconds()
+                    status_text = f"Offline ({self._format_ago(seconds_ago)})"
                 else:
-                    status_item.setForeground(Qt.GlobalColor.red)
-                status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                # Use larger, bold font for visibility
+                    status_text = "Never seen"
+
+                status_item = QTableWidgetItem(status_text)
                 status_font = QFont()
-                status_font.setPointSize(18)
                 status_font.setBold(True)
                 status_item.setFont(status_font)
-                self.device_table.setItem(row, 0, status_item)
+                if has_fs_error:
+                    status_item.setForeground(Qt.GlobalColor.red)
+                elif is_online:
+                    status_item.setForeground(Qt.GlobalColor.darkGreen)
+                else:
+                    status_item.setForeground(Qt.GlobalColor.gray)
+                self.device_table.setItem(row, self._Col.STATUS, status_item)
 
-                # Name column
+                # Name column — carries MAC as UserRole for selection tracking
                 name_item = QTableWidgetItem(device.display_name or "")
                 name_item.setData(Qt.ItemDataRole.UserRole, device.mac_address)
-                self.device_table.setItem(row, 1, name_item)
+                self.device_table.setItem(row, self._Col.NAME, name_item)
 
                 # IP Address column
-                self.device_table.setItem(row, 2, QTableWidgetItem(device.last_ip or "-"))
+                self.device_table.setItem(row, self._Col.IP, QTableWidgetItem(device.last_ip or "-"))
 
-                # MAC Address column
-                self.device_table.setItem(row, 3, QTableWidgetItem(device.mac_address))
-
-                # Determine status text (online if last_seen within 6 minutes = 360 seconds)
-                # This matches the TimeoutMonitor threshold
-                if device.last_seen:
-                    seconds_ago = (datetime.utcnow() - device.last_seen).total_seconds()
-                    status = "Online" if seconds_ago < 360 else f"Offline ({self._format_ago(seconds_ago)})"
-                else:
-                    status = "Never seen"
-
-                # Add filesystem warning to status if there's a problem
-                fs_status = getattr(device, 'filesystem_status', None)
-                if fs_status and fs_status != 'ok':
-                    if fs_status == 'no_card':
-                        status += " ⚠️ NO SD CARD"
-                    elif fs_status == 'mount_failed':
-                        status += " ⚠️ FS MOUNT FAILED"
-
-                status_item = QTableWidgetItem(status)
-                # Color the status red if there's a filesystem problem
-                if fs_status and fs_status != 'ok':
-                    status_item.setForeground(Qt.GlobalColor.red)
-                self.device_table.setItem(row, 4, status_item)
-                self.device_table.setItem(row, 5, QTableWidgetItem(format_wp_version(device.wp_version)))
-                self.device_table.setItem(row, 6, QTableWidgetItem(device.ep_version or "-"))
-
-                # Convert last_seen from UTC to local time
+                # Last Seen column
                 if device.last_seen:
                     from datetime import timezone
                     utc_time = device.last_seen.replace(tzinfo=timezone.utc)
@@ -188,10 +212,7 @@ class DeviceListWidget(QWidget):
                     last_seen = local_time.strftime("%Y-%m-%d %H:%M:%S")
                 else:
                     last_seen = "-"
-                self.device_table.setItem(row, 7, QTableWidgetItem(last_seen))
-
-                # Log path column
-                self.device_table.setItem(row, 8, QTableWidgetItem(device.log_storage_path or "-"))
+                self.device_table.setItem(row, self._Col.LAST_SEEN, QTableWidgetItem(last_seen))
 
         finally:
             session.close()
@@ -212,7 +233,7 @@ class DeviceListWidget(QWidget):
         selected_rows = self.device_table.selectedItems()
         if selected_rows:
             row = selected_rows[0].row()
-            mac_item = self.device_table.item(row, 1)  # Name column now at index 1
+            mac_item = self.device_table.item(row, self._Col.NAME)
             if mac_item:
                 self.selected_mac = mac_item.data(Qt.ItemDataRole.UserRole)
                 self.device_selected.emit(self.selected_mac)
@@ -228,6 +249,10 @@ class DeviceListWidget(QWidget):
         rename_action.triggered.connect(self._rename_device)
         menu.addAction(rename_action)
 
+        delete_action = QAction("Delete Device", self)
+        delete_action.triggered.connect(self._delete_device)
+        menu.addAction(delete_action)
+
         change_path_action = QAction("Change Log Storage Path", self)
         change_path_action.triggered.connect(self._change_log_path)
         menu.addAction(change_path_action)
@@ -237,34 +262,6 @@ class DeviceListWidget(QWidget):
         view_logs_action = QAction("Open Log Folder", self)
         view_logs_action.triggered.connect(self._open_log_folder)
         menu.addAction(view_logs_action)
-
-        # Add online-only options (only if device is online)
-        from models.database import Device
-        session = self.database.get_session()
-        try:
-            device = session.query(Device).filter_by(mac_address=self.selected_mac).first()
-            if device and device.is_online and device.last_ip:
-                device_ip = device.last_ip
-
-                open_web_action = QAction("Open Web Interface", self)
-                open_web_action.triggered.connect(lambda: _open_url(f"http://{device_ip}/"))
-                menu.addAction(open_web_action)
-
-                manage_files_action = QAction("Manage Files on Device", self)
-                manage_files_action.triggered.connect(self._manage_device_files)
-                menu.addAction(manage_files_action)
-
-                reboot_action = QAction("Reboot Device", self)
-                reboot_action.triggered.connect(lambda: self._reboot_device(device_ip))
-                menu.addAction(reboot_action)
-        finally:
-            session.close()
-
-        menu.addSeparator()
-
-        delete_action = QAction("Delete Device", self)
-        delete_action.triggered.connect(self._delete_device)
-        menu.addAction(delete_action)
 
         menu.exec(self.device_table.viewport().mapToGlobal(position))
 
@@ -353,11 +350,7 @@ class DeviceListWidget(QWidget):
         try:
             device = session.query(Device).filter_by(mac_address=self.selected_mac).first()
             if device and os.path.exists(device.log_storage_path):
-                # Platform-specific open command
-                if os.name == 'nt':  # Windows
-                    os.startfile(device.log_storage_path)
-                elif os.name == 'posix':  # Linux/macOS
-                    subprocess.Popen(['xdg-open', device.log_storage_path])
+                _open_folder(device.log_storage_path)
         finally:
             session.close()
 
@@ -498,7 +491,8 @@ class DeviceListWidget(QWidget):
                             else:
                                 device.wp_version = wp_ver
                         if 'ep_version' in info:
-                            device.ep_version = info.get('ep_version')
+                            ep_ver = info['ep_version']
+                            device.ep_version = json.dumps(ep_ver) if isinstance(ep_ver, dict) else ep_ver
 
                         print(f"Device {device.mac_address} is online at {device.last_ip} (fs_status: {device.filesystem_status})")
                     else:
@@ -528,6 +522,15 @@ class DeviceListWidget(QWidget):
 class TransferHistoryWidget(QWidget):
     """Widget showing transfer history."""
 
+    class _Col:
+        NAME = 0
+        FILENAME = 1
+        SIZE = 2
+        PROGRESS = 3
+        SPEED = 4
+        STATUS = 5
+        TIME = 6
+
     def __init__(self, database, device_manager=None):
         super().__init__()
         self.database = database
@@ -540,6 +543,23 @@ class TransferHistoryWidget(QWidget):
         self.refresh_timer.timeout.connect(self.refresh_transfers)
         self.refresh_timer.start(1000)  # Refresh every second
 
+    @staticmethod
+    def _resolve_transfer_path(log_storage_path, filename, start_time):
+        """Return the local filesystem path for a transfer.
+
+        Device manager saves files under a YYYY-MM-DD date subdirectory.
+        Falls back to the old flat layout for transfers downloaded before
+        that convention was introduced.
+        """
+        date_str = start_time.strftime("%Y-%m-%d")
+        dated = os.path.join(log_storage_path, date_str, filename)
+        if os.path.exists(dated):
+            return dated
+        flat = os.path.join(log_storage_path, filename)
+        if os.path.exists(flat):
+            return flat
+        return dated  # default for new downloads not yet on disk
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
@@ -550,9 +570,9 @@ class TransferHistoryWidget(QWidget):
 
         # Transfer table
         self.transfer_table = QTableWidget()
-        self.transfer_table.setColumnCount(8)
+        self.transfer_table.setColumnCount(7)
         self.transfer_table.setHorizontalHeaderLabels([
-            "Name", "MAC Address", "Filename", "Size", "Progress", "Speed", "Status", "Time"
+            "Name", "Filename", "Size", "Progress", "Speed", "Status", "Time"
         ])
         self.transfer_table.horizontalHeader().setStretchLastSection(True)
         self.transfer_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -592,20 +612,17 @@ class TransferHistoryWidget(QWidget):
 
                 name_item = QTableWidgetItem(device_name)
                 name_item.setData(Qt.ItemDataRole.UserRole, transfer.id)
-                self.transfer_table.setItem(row, 0, name_item)
-
-                # MAC Address column
-                self.transfer_table.setItem(row, 1, QTableWidgetItem(transfer.device_mac))
+                self.transfer_table.setItem(row, self._Col.NAME, name_item)
 
                 # Filename column
                 filename_item = QTableWidgetItem(transfer.filename)
                 # Store device MAC in filename column for delete operations
                 filename_item.setData(Qt.ItemDataRole.UserRole, transfer.device_mac)
-                self.transfer_table.setItem(row, 2, filename_item)
+                self.transfer_table.setItem(row, self._Col.FILENAME, filename_item)
 
                 # Format size
                 size_mb = transfer.size_bytes / (1024 * 1024)
-                self.transfer_table.setItem(row, 3, QTableWidgetItem(f"{size_mb:.2f} MB"))
+                self.transfer_table.setItem(row, self._Col.SIZE, QTableWidgetItem(f"{size_mb:.2f} MB"))
 
                 # Calculate progress and speed for in-progress transfers
                 progress_str = "-"
@@ -634,8 +651,8 @@ class TransferHistoryWidget(QWidget):
                             if transfer.device and transfer.device.log_storage_path:
                                 import os
                                 # Chunked downloads write to filename.partial during transfer
-                                partial_path = os.path.join(transfer.device.log_storage_path, transfer.filename + '.partial')
-                                final_path = os.path.join(transfer.device.log_storage_path, transfer.filename)
+                                partial_path = self._resolve_transfer_path(transfer.device.log_storage_path, transfer.filename + '.partial', transfer.start_time)
+                                final_path = self._resolve_transfer_path(transfer.device.log_storage_path, transfer.filename, transfer.start_time)
                                 check_path = partial_path if os.path.exists(partial_path) else final_path
                                 if os.path.exists(check_path):
                                     actual_size = os.path.getsize(check_path)
@@ -656,8 +673,8 @@ class TransferHistoryWidget(QWidget):
                 elif transfer.status == 'deduplicated':
                     progress_str = transfer.error_message or "Deduplicated"
 
-                self.transfer_table.setItem(row, 4, QTableWidgetItem(progress_str))
-                self.transfer_table.setItem(row, 5, QTableWidgetItem(speed_str))
+                self.transfer_table.setItem(row, self._Col.PROGRESS, QTableWidgetItem(progress_str))
+                self.transfer_table.setItem(row, self._Col.SPEED, QTableWidgetItem(speed_str))
 
                 # Status
                 status_item = QTableWidgetItem(transfer.status)
@@ -669,7 +686,7 @@ class TransferHistoryWidget(QWidget):
                     status_item.setForeground(Qt.GlobalColor.blue)
                 elif transfer.status == 'deduplicated':
                     status_item.setForeground(Qt.GlobalColor.darkGray)
-                self.transfer_table.setItem(row, 6, status_item)
+                self.transfer_table.setItem(row, self._Col.STATUS, status_item)
 
                 # Time (convert from UTC to local time)
                 if transfer.start_time:
@@ -680,7 +697,7 @@ class TransferHistoryWidget(QWidget):
                     time_str = local_time.strftime("%Y-%m-%d %H:%M:%S")
                 else:
                     time_str = "-"
-                self.transfer_table.setItem(row, 7, QTableWidgetItem(time_str))
+                self.transfer_table.setItem(row, self._Col.TIME, QTableWidgetItem(time_str))
 
             # Force table to update display
             self.transfer_table.viewport().update()
@@ -702,10 +719,10 @@ class TransferHistoryWidget(QWidget):
 
         # Single selection - allow open in viz/folder
         if len(selected_rows) == 1:
-            transfer_id = self.transfer_table.item(selected_rows[0].row(), 0).data(Qt.ItemDataRole.UserRole)
+            transfer_id = self.transfer_table.item(selected_rows[0].row(), self._Col.NAME).data(Qt.ItemDataRole.UserRole)
 
             # Check if transfer is in_progress (incomplete)
-            status_item = self.transfer_table.item(selected_rows[0].row(), 6)
+            status_item = self.transfer_table.item(selected_rows[0].row(), self._Col.STATUS)
             is_incomplete = status_item and status_item.text() == 'in_progress'
 
             if is_incomplete:
@@ -749,7 +766,7 @@ class TransferHistoryWidget(QWidget):
             if transfer:
                 device = session.query(Device).filter_by(mac_address=transfer.device_mac).first()
                 if device:
-                    log_path = os.path.join(device.log_storage_path, transfer.filename)
+                    log_path = self._resolve_transfer_path(device.log_storage_path, transfer.filename, transfer.start_time)
                     if os.path.exists(log_path):
                         self._launch_viz(log_path)
                     else:
@@ -758,9 +775,8 @@ class TransferHistoryWidget(QWidget):
             session.close()
 
     def _retry_transfer(self, transfer_id):
-        """Retry/resume an incomplete transfer."""
-        from models.database import Transfer, Device
-        import os
+        """Reset a stuck in-progress transfer so it will resume on the next sync."""
+        from models.database import Transfer
 
         session = self.database.get_session()
         try:
@@ -769,37 +785,26 @@ class TransferHistoryWidget(QWidget):
                 QMessageBox.warning(self, "Error", "Transfer not found")
                 return
 
-            device = session.query(Device).filter_by(mac_address=transfer.device_mac).first()
-            if not device:
-                QMessageBox.warning(self, "Error", "Device not found")
-                return
+            filename = transfer.filename
 
-            # Delete incomplete file if it exists
-            log_path = os.path.join(device.log_storage_path, transfer.filename)
-            if os.path.exists(log_path):
-                os.remove(log_path)
-                print(f"Deleted incomplete file: {log_path}")
-
-            # Delete the transfer record from database
+            # Remove only the DB record — leave the partial file on disk so the
+            # download resumes from where it left off rather than starting over.
             session.delete(transfer)
             session.commit()
-            print(f"Deleted transfer record for {transfer.filename}")
+            print(f"Reset transfer record for {filename}")
 
             QMessageBox.information(
                 self,
                 "Transfer Reset",
-                f"Transfer record deleted. The file will be re-downloaded on next device check-in.\n\n"
-                f"To retry now:\n"
-                f"1. Ensure WP is powered on and connected to WiFi\n"
-                f"2. Wait for automatic check-in, or\n"
-                f"3. Power cycle the WP device"
+                f"Transfer record for {filename} cleared.\n\n"
+                f"The partial file is kept on disk. Use 'Sync Logs' in the "
+                f"Manage Device pane to resume the download immediately."
             )
 
-            # Refresh display
             self.refresh_transfers()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to retry transfer: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to reset transfer: {e}")
             print(f"Error in _retry_transfer: {e}")
             import traceback
             traceback.print_exc()
@@ -816,13 +821,10 @@ class TransferHistoryWidget(QWidget):
             if transfer:
                 device = session.query(Device).filter_by(mac_address=transfer.device_mac).first()
                 if device:
-                    log_path = os.path.join(device.log_storage_path, transfer.filename)
+                    log_path = self._resolve_transfer_path(device.log_storage_path, transfer.filename, transfer.start_time)
                     folder = os.path.dirname(log_path)
                     if os.path.exists(folder):
-                        if os.name == 'nt':  # Windows
-                            os.startfile(folder)
-                        elif os.name == 'posix':  # Linux/macOS
-                            subprocess.Popen(['xdg-open', folder])
+                        _open_folder(folder)
         finally:
             session.close()
 
@@ -851,13 +853,13 @@ class TransferHistoryWidget(QWidget):
             deleted_count = 0
             for row_index in selected_rows:
                 row = row_index.row()
-                transfer_id = self.transfer_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+                transfer_id = self.transfer_table.item(row, self._Col.NAME).data(Qt.ItemDataRole.UserRole)
 
                 transfer = session.query(Transfer).get(transfer_id)
                 if transfer:
                     device = session.query(Device).filter_by(mac_address=transfer.device_mac).first()
                     if device:
-                        log_path = os.path.join(device.log_storage_path, transfer.filename)
+                        log_path = self._resolve_transfer_path(device.log_storage_path, transfer.filename, transfer.start_time)
                         if os.path.exists(log_path):
                             try:
                                 os.remove(log_path)
@@ -950,6 +952,8 @@ class TransferHistoryWidget(QWidget):
 class ManageDeviceWidget(QWidget):
     """Widget for managing the selected device."""
 
+    device_list_refresh_needed = Signal()
+
     def __init__(self, database, connectivity_checker=None, device_manager=None, app_settings=None):
         super().__init__()
         self.database = database
@@ -981,53 +985,27 @@ class ManageDeviceWidget(QWidget):
         self.mac_label = QLabel("-")
         info_layout.addWidget(self.mac_label, 0, 1)
 
-        info_layout.addWidget(QLabel("Status:"), 1, 0)
-        self.status_label = QLabel("-")
-        info_layout.addWidget(self.status_label, 1, 1)
-
-        info_layout.addWidget(QLabel("Log Path:"), 2, 0)
+        info_layout.addWidget(QLabel("Log Path:"), 1, 0)
         self.path_label = QLabel("-")
         self.path_label.setWordWrap(True)
-        info_layout.addWidget(self.path_label, 2, 1)
+        info_layout.addWidget(self.path_label, 1, 1)
 
-        info_layout.addWidget(QLabel("WP Version:"), 3, 0)
+        info_layout.addWidget(QLabel("WP Version:"), 2, 0)
         self.wp_version_label = QLabel("-")
         self.wp_version_label.setWordWrap(True)
-        info_layout.addWidget(self.wp_version_label, 3, 1)
+        info_layout.addWidget(self.wp_version_label, 2, 1)
 
-        info_layout.addWidget(QLabel("EP Version:"), 4, 0)
+        info_layout.addWidget(QLabel("EP Version:"), 3, 0)
         self.ep_version_label = QLabel("-")
-        info_layout.addWidget(self.ep_version_label, 4, 1)
+        info_layout.addWidget(self.ep_version_label, 3, 1)
 
         info_layout.setColumnStretch(1, 1)
         layout.addWidget(info_group)
 
-        # Basic operations (always available when device selected)
-        basic_group = QGroupBox("Basic Operations")
-        basic_layout = QHBoxLayout(basic_group)
-
-        self.rename_button = QPushButton("Rename Device")
-        self.rename_button.clicked.connect(self._rename_device)
-        basic_layout.addWidget(self.rename_button)
-
-        self.change_path_button = QPushButton("Change Log Path")
-        self.change_path_button.clicked.connect(self._change_log_path)
-        basic_layout.addWidget(self.change_path_button)
-
-        self.open_folder_button = QPushButton("Open Log Folder")
-        self.open_folder_button.clicked.connect(self._open_log_folder)
-        basic_layout.addWidget(self.open_folder_button)
-
-        self.delete_button = QPushButton("Delete Device")
-        self.delete_button.clicked.connect(self._delete_device)
-        basic_layout.addWidget(self.delete_button)
-
-        basic_layout.addStretch()
-        layout.addWidget(basic_group)
-
-        # Online operations (require device to be online)
-        online_group = QGroupBox("Online Operations (device must be online)")
-        online_layout = QHBoxLayout(online_group)
+        # Online operations (greyed out when device is offline)
+        online_group = QGroupBox("Operations")
+        online_outer = QHBoxLayout(online_group)
+        online_layout = QVBoxLayout()
 
         self.web_interface_button = QPushButton("Web Interface")
         self.web_interface_button.setToolTip("Open device home page in web browser")
@@ -1062,7 +1040,8 @@ class ManageDeviceWidget(QWidget):
         self.sync_logs_button.clicked.connect(self._sync_logs)
         online_layout.addWidget(self.sync_logs_button)
 
-        online_layout.addStretch()
+        online_outer.addLayout(online_layout)
+        online_outer.addStretch()
         layout.addWidget(online_group)
 
         layout.addStretch()
@@ -1082,7 +1061,6 @@ class ManageDeviceWidget(QWidget):
         if not self.selected_mac:
             self.header_label.setText("No device selected")
             self.mac_label.setText("-")
-            self.status_label.setText("-")
             self.path_label.setText("-")
             self.wp_version_label.setText("-")
             self.ep_version_label.setText("-")
@@ -1106,16 +1084,9 @@ class ManageDeviceWidget(QWidget):
             self.mac_label.setText(device.mac_address)
             self.path_label.setText(device.log_storage_path or "-")
             self.wp_version_label.setText(format_wp_version(device.wp_version))
-            self.ep_version_label.setText(device.ep_version or "-")
+            self.ep_version_label.setText(format_wp_version(device.ep_version))
 
-            # Determine online status
             self.device_is_online = getattr(device, 'is_online', False)
-            if self.device_is_online:
-                self.status_label.setText("Online")
-                self.status_label.setStyleSheet("color: green; font-weight: bold;")
-            else:
-                self.status_label.setText("Offline")
-                self.status_label.setStyleSheet("color: red;")
 
             self._update_button_states()
 
@@ -1125,12 +1096,6 @@ class ManageDeviceWidget(QWidget):
     def _update_button_states(self):
         """Update button enabled states based on selection and online status."""
         has_selection = self.selected_mac is not None
-
-        # Basic operations - require selection only
-        self.rename_button.setEnabled(has_selection)
-        self.change_path_button.setEnabled(has_selection)
-        self.open_folder_button.setEnabled(has_selection)
-        self.delete_button.setEnabled(has_selection)
 
         # Online operations - require selection AND online
         online_enabled = has_selection and self.device_is_online
@@ -1218,10 +1183,7 @@ class ManageDeviceWidget(QWidget):
 
         try:
             if device.log_storage_path and os.path.exists(device.log_storage_path):
-                if os.name == 'nt':
-                    os.startfile(device.log_storage_path)
-                elif os.name == 'posix':
-                    subprocess.Popen(['xdg-open', device.log_storage_path])
+                _open_folder(device.log_storage_path)
         finally:
             session.close()
 
@@ -1285,6 +1247,17 @@ class ManageDeviceWidget(QWidget):
         client = DeviceClient(device_ip)
         success, error = client.reboot()
         if success:
+            # Mark offline immediately — it will come back online when the UDP check-in arrives
+            from models.database import Device as DeviceModel
+            mark_session = self.database.get_session()
+            try:
+                d = mark_session.query(DeviceModel).filter_by(mac_address=self.selected_mac).first()
+                if d:
+                    d.is_online = False
+                    mark_session.commit()
+            finally:
+                mark_session.close()
+            self.device_list_refresh_needed.emit()
             QMessageBox.information(self, "Reboot", f"'{device_name}' is rebooting.")
         else:
             QMessageBox.warning(self, "Reboot Failed", f"Could not reboot device:\n{error}")
@@ -1769,17 +1742,16 @@ class ManageDeviceWidget(QWidget):
 class MainWindow(QMainWindow):
     """Main window for umod4 server application."""
 
-    def __init__(self, database, server, connectivity_checker=None, device_manager=None, app_settings=None):
+    def __init__(self, database, connectivity_checker=None, device_manager=None, app_settings=None):
         super().__init__()
         self.database = database
-        self.server = server
         self.connectivity_checker = connectivity_checker
         self.device_manager = device_manager
         self.app_settings = app_settings
         self.setWindowTitle("umod4 Server")
-        self.resize(1200, 700)
         self._setup_ui()
         self._setup_menu()
+        self._restore_geometry()
 
     def _setup_ui(self):
         """Set up the main UI."""
@@ -1788,27 +1760,9 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout(central_widget)
 
-        # Server status bar
-        status_frame = QFrame()
-        status_frame.setFrameStyle(QFrame.Shape.Panel | QFrame.Shadow.Sunken)
-        status_layout = QHBoxLayout(status_frame)
-
-        self.server_status_label = QLabel("Server: Stopped")
-        status_layout.addWidget(self.server_status_label)
-
-        self.server_url_label = QLabel("URL: -")
-        status_layout.addWidget(self.server_url_label)
-
-        status_layout.addStretch()
-
-        self.start_button = QPushButton("Start Server")
-        self.start_button.clicked.connect(self._toggle_server)
-        status_layout.addWidget(self.start_button)
-
-        layout.addWidget(status_frame)
-
         # Main splitter
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter = self.splitter
 
         # Top: Device list
         self.device_list = DeviceListWidget(self.database)
@@ -1822,6 +1776,7 @@ class MainWindow(QMainWindow):
         tab_widget.addTab(self.transfer_history, "Transfer History")
 
         self.manage_device = ManageDeviceWidget(self.database, self.connectivity_checker, self.device_manager, self.app_settings)
+        self.manage_device.device_list_refresh_needed.connect(self.device_list.refresh_devices)
         tab_widget.addTab(self.manage_device, "Manage Device")
 
         splitter.addWidget(tab_widget)
@@ -1842,32 +1797,12 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        # Settings menu
-        settings_menu = menu_bar.addMenu("Settings")
-
-        server_settings_action = QAction("Server Settings", self)
-        server_settings_action.triggered.connect(self._show_server_settings)
-        settings_menu.addAction(server_settings_action)
-
         # Help menu
         help_menu = menu_bar.addMenu("Help")
 
         about_action = QAction("About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
-
-    def _toggle_server(self):
-        """Start or stop the server."""
-        if self.server.running:
-            self.server.stop()
-            self.server_status_label.setText("Server: Stopped")
-            self.server_url_label.setText("URL: -")
-            self.start_button.setText("Start Server")
-        else:
-            self.server.start()
-            self.server_status_label.setText(f"Server: Running on port {self.server.port}")
-            self.server_url_label.setText(f"URL: {self.server.get_url()}")
-            self.start_button.setText("Stop Server")
 
     def _on_device_selected(self, device_mac):
         """Handle device selection."""
@@ -1914,15 +1849,36 @@ class MainWindow(QMainWindow):
         finally:
             session.close()
 
-    def _show_server_settings(self):
-        """Show server settings dialog."""
-        QMessageBox.information(self, "Settings", "Server settings dialog - TODO")
+    def _restore_geometry(self):
+        """Restore window geometry and splitter state from persistent settings."""
+        if not self.app_settings:
+            self.resize(1200, 700)
+            return
+
+        from PySide6.QtCore import QByteArray
+        geometry_b64 = self.app_settings.get('window_geometry')
+        if geometry_b64:
+            self.restoreGeometry(QByteArray.fromBase64(geometry_b64.encode()))
+        else:
+            self.resize(1200, 700)
+
+        splitter_b64 = self.app_settings.get('splitter_state')
+        if splitter_b64:
+            self.splitter.restoreState(QByteArray.fromBase64(splitter_b64.encode()))
+
+    def closeEvent(self, event):
+        """Save window geometry and splitter state on close."""
+        if self.app_settings:
+            self.app_settings.set('window_geometry',
+                                  self.saveGeometry().toBase64().data().decode())
+            self.app_settings.set('splitter_state',
+                                  self.splitter.saveState().toBase64().data().decode())
+        super().closeEvent(event)
 
     def _show_about(self):
         """Show about dialog."""
         QMessageBox.about(
             self, "About umod4 Server",
-            "umod4 Server\n\n"
-            "Log file receiver for umod4 motorcycle data logger.\n\n"
-            "Phase 0 - Development Version"
+            "Device management for umod4 data loggers.\n\n"
+            f"Listening on UDP port {CHECKIN_PORT}\n\n"
         )

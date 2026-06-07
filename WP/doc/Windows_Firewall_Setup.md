@@ -6,7 +6,7 @@ The umod4 server runs in WSL2 (Linux) but needs to receive UDP packets from devi
 
 ## Solution
 
-Add a Windows Firewall rule to allow incoming UDP traffic on port 8081.
+Add a Windows Firewall rule to allow incoming UDP traffic on port 54549.
 
 ---
 
@@ -25,7 +25,7 @@ Add a Windows Firewall rule to allow incoming UDP traffic on port 8081.
 Copy and paste this command into PowerShell:
 
 ```powershell
-New-NetFirewallRule -DisplayName "umod4 Server UDP Check-in" -Direction Inbound -Protocol UDP -LocalPort 8081 -Action Allow
+New-NetFirewallRule -DisplayName "umod4 Server UDP Check-in" -Direction Inbound -Protocol UDP -LocalPort 54549 -Action Allow
 ```
 
 ### Expected Output
@@ -77,7 +77,7 @@ You should see the rule listed.
 3. Select **"Port"** → Click **Next**
 4. Select **"UDP"**
 5. Select **"Specific local ports"**
-6. Type `8081`
+6. Type `54549`
 7. Click **Next**
 8. Select **"Allow the connection"**
 9. Click **Next**
@@ -96,12 +96,12 @@ You should see the rule listed.
 In WSL2, verify the server is listening:
 
 ```bash
-ss -ulnp | grep 8081
+ss -ulnp | grep 54549
 ```
 
 Expected output:
 ```
-UNCONN 0 0 0.0.0.0:8081 0.0.0.0:* users:(("python3",pid=12345,fd=5))
+UNCONN 0 0 0.0.0.0:54549 0.0.0.0:* users:(("python3",pid=12345,fd=5))
 ```
 
 ### Test 2: Power Cycle WP Device
@@ -116,7 +116,7 @@ UNCONN 0 0 0.0.0.0:8081 0.0.0.0:* users:(("python3",pid=12345,fd=5))
 3. Watch WP serial output - should show:
    ```
    WiFiMgr: Connected! IP: 192.168.1.252
-   WiFiMgr: Sending check-in to 192.168.1.198:8081
+   WiFiMgr: Sending check-in to 192.168.1.198:54549
    WiFiMgr: Check-in notification sent successfully
    ```
 
@@ -174,12 +174,12 @@ Remove-NetFirewallRule -DisplayName "umod4 Server UDP Check-in"
 
 ## Security Notes
 
-- This rule allows **any device** on your network to send UDP packets to port 8081
+- This rule allows **any device** on your network to send UDP packets to port 54549
 - The umod4 server only listens for check-in notifications (safe)
 - For production use, consider restricting by IP address:
   ```powershell
   New-NetFirewallRule -DisplayName "umod4 Server UDP Check-in" `
-    -Direction Inbound -Protocol UDP -LocalPort 8081 -Action Allow `
+    -Direction Inbound -Protocol UDP -LocalPort 54549 -Action Allow `
     -RemoteAddress 192.168.1.0/24
   ```
   This restricts to your local subnet only.

@@ -165,7 +165,7 @@ flash_safety_helper_t *get_flash_safety_helper(void)
             configMAX_PRIORITIES - 1,   // Highest priority
             flash_helper_stack,
             &flash_helper_tcb,
-            (1u << 1)                   // Pin to core 1
+            CORE1_AFFINITY_MASK         // Pin to core 1
         );
 
         helper_initialized = true;

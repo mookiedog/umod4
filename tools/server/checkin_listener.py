@@ -10,15 +10,17 @@ import json
 import threading
 from typing import Callable, Optional
 
+CHECKIN_PORT = 54549  # UDP port devices broadcast/unicast check-ins to
+
 
 class CheckInListener:
     """UDP listener for device check-in notifications."""
 
-    def __init__(self, port: int = 8081, host: str = '0.0.0.0'):
+    def __init__(self, port: int = CHECKIN_PORT, host: str = '0.0.0.0'):
         """Initialize check-in listener.
 
         Args:
-            port: UDP port to listen on (default: 8081)
+            port: UDP port to listen on (default: CHECKIN_PORT)
             host: Host address to bind to (default: 0.0.0.0 for all interfaces)
         """
         self.port = port

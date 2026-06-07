@@ -134,7 +134,8 @@ class DeviceManager:
                         else:
                             device.wp_version = wp_ver
                     if 'ep_version' in info:
-                        device.ep_version = info.get('ep_version')
+                        ep_ver = info['ep_version']
+                        device.ep_version = json.dumps(ep_ver) if isinstance(ep_ver, dict) else ep_ver
                     # Use the device's self-reported name as display_name when the
                     # user has not yet assigned a name via the server GUI.
                     reported_name = info.get('device_name', '')

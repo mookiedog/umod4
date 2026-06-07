@@ -458,7 +458,7 @@ void startFileSystem(void)
         &cfg,
         TASK_HIGH_PRIORITY,
         s_hotplug_stack, &s_hotplug_tcb,
-        (1<<0));
+        CORE0_AFFINITY_MASK);
 
     if (hotplug_handle == NULL) {
         panic("Unable to create hotPlugManager task");

@@ -6,11 +6,10 @@ Desktop application for receiving log files from umod4 motorcycle data loggers.
 Supports multiple devices with per-device configuration and storage.
 
 Usage:
-    python umod4_server.py [--port PORT] [--db PATH]
+    python umod4_server.py [--db PATH]
 
 Requirements:
     - PySide6
-    - Flask
     - SQLAlchemy
 """
 
@@ -19,6 +18,7 @@ import os
 import queue
 import threading
 import argparse
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional
 from PySide6.QtWidgets import QApplication
@@ -29,11 +29,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models.database import Database, Device
 from models.app_settings import AppSettings
-from http_server import Umod4Server
 from gui.main_window import MainWindow
-from checkin_listener import CheckInListener
+from checkin_listener import CheckInListener, CHECKIN_PORT
 from device_manager import DeviceManager
-from timeout_monitor import TimeoutMonitor
 from connectivity_checker import ConnectivityChecker
 
 
@@ -115,12 +113,8 @@ def _run_flash_ep(ip: str, uf2_path: str) -> int:
 def main():
     """Main entry point for umod4 server application."""
     parser = argparse.ArgumentParser(description='umod4 Server - Log file receiver')
-    parser.add_argument('--port', type=int, default=8080,
-                       help='HTTP server port (default: 8080)')
     parser.add_argument('--db', type=str, default=None,
                        help='Database path (default: platform-specific)')
-    parser.add_argument('--host', type=str, default='0.0.0.0',
-                       help='HTTP server host (default: 0.0.0.0)')
     parser.add_argument('--flash-ep', metavar='UF2_PATH',
                        help='CLI mode: upload UF2 and reflash EP (requires --ip)')
     parser.add_argument('--ip', metavar='ADDRESS',
@@ -146,22 +140,12 @@ def main():
     # Initialize persistent application settings
     app_settings = AppSettings()
 
-    # Initialize HTTP server (legacy push-based upload endpoint)
-    print(f"Initializing HTTP server on {args.host}:{args.port}")
-    server = Umod4Server(database, port=args.port, host=args.host)
-
     # Initialize device manager (for pull-based downloads)
     print(f"Initializing device manager...")
     device_manager = DeviceManager(database)
 
-    # Initialize check-in listener (UDP port 8081)
-    print(f"Initializing check-in listener on UDP port 8081...")
-    checkin_listener = CheckInListener(port=8081)
-
-    # Initialize timeout monitor (marks devices offline after 6 minutes without check-in)
-    # WP heartbeat is every 5 minutes, so 6 minutes = 1.2x heartbeat interval
-    print(f"Initializing timeout monitor...")
-    timeout_monitor = TimeoutMonitor(database, timeout_seconds=360, check_interval=30)
+    print(f"Initializing check-in listener on UDP port {CHECKIN_PORT}...")
+    checkin_listener = CheckInListener()
 
     # Initialize connectivity checker (actively pings devices every 60 seconds)
     print(f"Initializing connectivity checker...")
@@ -173,36 +157,9 @@ def main():
     app.setOrganizationName("umod4")
 
     # Create main window
-    window = MainWindow(database, server, connectivity_checker=connectivity_checker, device_manager=device_manager, app_settings=app_settings)
+    window = MainWindow(database, connectivity_checker=connectivity_checker, device_manager=device_manager, app_settings=app_settings)
 
     # --- Background thread callbacks (just put events on the queue) ---
-
-    # HTTP server callbacks (called from werkzeug server thread)
-    def on_server_device_registered(device):
-        event_queue.put(DeviceRegisteredEvent(
-            mac_address=device.mac_address,
-            display_name=device.display_name
-        ))
-
-    def on_server_transfer_started(transfer):
-        event_queue.put(TransferStartedEvent(
-            device_mac=transfer.device_mac,
-            filename=transfer.filename
-        ))
-
-    def on_server_transfer_completed(transfer_id):
-        event_queue.put(TransferCompletedEvent(transfer_id=transfer_id))
-
-    def on_server_connection_event(connection):
-        event_queue.put(ConnectionEvent(
-            device_mac=connection.device_mac,
-            ip_address=connection.ip_address
-        ))
-
-    server.on_device_registered = on_server_device_registered
-    server.on_transfer_started = on_server_transfer_started
-    server.on_transfer_completed = on_server_transfer_completed
-    server.on_connection_event = on_server_connection_event
 
     # Device manager callbacks (called from download threads)
     device_manager.on_download_started = lambda mac, fn: event_queue.put(
@@ -213,10 +170,6 @@ def main():
     # Check-in listener callback (called from UDP listener thread)
     checkin_listener.set_callback(lambda mac, ip: event_queue.put(
         DeviceCheckinEvent(device_mac=mac, device_ip=ip)))
-
-    # Timeout monitor callback (called from monitor thread)
-    timeout_monitor.on_status_changed = lambda mac, online: event_queue.put(
-        DeviceStatusChangedEvent(device_mac=mac, is_online=online))
 
     # Connectivity checker callback (called from checker thread)
     connectivity_checker.on_status_changed = lambda mac, online: event_queue.put(
@@ -249,6 +202,21 @@ def main():
 
             elif isinstance(event, DeviceCheckinEvent):
                 print(f"Device check-in: {event.device_mac} at {event.device_ip}")
+                # UDP receipt is proof of connectivity — mark online now, before HTTP GET
+                session = database.get_session()
+                try:
+                    device = session.query(Device).filter_by(mac_address=event.device_mac).first()
+                    if device:
+                        device.is_online = True
+                        device.last_ip = event.device_ip
+                        device.last_seen = datetime.utcnow()
+                        session.commit()
+                except Exception as e:
+                    print(f"CheckIn: Error marking device online: {e}")
+                finally:
+                    session.close()
+                # Refresh UI with the updated online state
+                window.device_list.refresh_devices()
                 # Run device manager in a background thread to avoid blocking UI
                 thread = threading.Thread(
                     target=device_manager.handle_device_checkin,
@@ -256,9 +224,32 @@ def main():
                     daemon=True
                 )
                 thread.start()
+                # Force ConnectivityChecker to re-check this device immediately
+                # so ep_version, fs_status etc. update right after a reboot
+                thread2 = threading.Thread(
+                    target=connectivity_checker.check_device_now,
+                    args=(event.device_mac,),
+                    daemon=True
+                )
+                thread2.start()
 
             elif isinstance(event, DeviceStatusChangedEvent):
                 window.device_list.refresh_devices()
+                if event.is_online:
+                    # Device came online — trigger a download check immediately
+                    session = database.get_session()
+                    try:
+                        device = session.query(Device).filter_by(mac_address=event.device_mac).first()
+                        device_ip = device.last_ip if device else None
+                    finally:
+                        session.close()
+                    if device_ip:
+                        thread = threading.Thread(
+                            target=device_manager.handle_device_checkin,
+                            args=(event.device_mac, device_ip),
+                            daemon=True
+                        )
+                        thread.start()
 
             elif isinstance(event, DownloadStartedEvent):
                 print(f"Download started: {event.filename} from {event.device_mac}")
@@ -275,25 +266,28 @@ def main():
     # Show window
     window.show()
 
-    # Auto-start server and check-in listener
-    print("Starting HTTP server...")
-    window._toggle_server()
+    # Queue a synthetic check-in for every known device so that any transfers
+    # interrupted by a server restart resume immediately rather than waiting
+    # up to 5 minutes for the next UDP heartbeat.
+    startup_session = database.get_session()
+    try:
+        startup_devices = startup_session.query(Device).filter(Device.last_ip.isnot(None)).all()
+        for d in startup_devices:
+            event_queue.put(DeviceCheckinEvent(device_mac=d.mac_address, device_ip=d.last_ip))
+            print(f"Queued startup check-in for {d.display_name} ({d.last_ip})")
+    finally:
+        startup_session.close()
 
     print("Starting check-in listener...")
     checkin_listener.start()
-
-    print("Starting timeout monitor...")
-    timeout_monitor.start()
 
     print("Starting connectivity checker...")
     connectivity_checker.start()
 
     # Run application
     print("umod4 Server ready!")
-    print("  - HTTP server (legacy push): http://{}:{}".format(args.host, args.port))
-    print("  - Check-in listener (pull): UDP port 8081")
-    print("  - Timeout monitor: devices offline after 360s without check-in")
-    print("  - Connectivity checker: actively pings devices every 60s")
+    print(f"  - Check-in listener: UDP port {CHECKIN_PORT}")
+    print(f"  - Connectivity checker: pings devices every {connectivity_checker.check_interval}s")
     print("Waiting for device check-ins...")
 
     try:
@@ -303,9 +297,7 @@ def main():
         print("Shutting down...")
         event_timer.stop()
         connectivity_checker.stop()
-        timeout_monitor.stop()
         checkin_listener.stop()
-        server.stop()
 
 
 if __name__ == '__main__':

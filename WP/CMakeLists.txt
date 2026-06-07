@@ -137,7 +137,7 @@ if(DEFINED ENV{UMOD4_SERVER_PORT})
     set(UMOD4_SERVER_PORT $ENV{UMOD4_SERVER_PORT})
     message("Using UMOD4_SERVER_PORT from environment ('${UMOD4_SERVER_PORT}')")
 elseif(NOT UMOD4_SERVER_PORT)
-    set(UMOD4_SERVER_PORT "8081")
+    set(UMOD4_SERVER_PORT "54549")
 endif()
 
 # Not happy with this...
@@ -256,6 +256,7 @@ add_executable(${PROJECT_NAME}
     src/upload_handler.cpp
     src/ota_flash_task.cpp
     src/flash_safe_helper.cpp
+    src/task_stats.cpp
     # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
     src/httpd_stubs.cpp
     src/ep_rtt_forwarder.cpp
@@ -289,6 +290,7 @@ set_source_files_properties(
     src/NetworkManager.cpp
     src/ota_flash_task.cpp
     src/SdCardSDIO.cpp
+    src/task_stats.cpp
     src/upload_handler.cpp
     src/WiFiManager.cpp
     src/Uart.cpp

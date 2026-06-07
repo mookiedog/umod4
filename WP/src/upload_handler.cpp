@@ -1035,15 +1035,6 @@ void upload_post_finished(void *connection, char *response_uri, u16_t response_u
             g_flash_config.wifi_password[sizeof(g_flash_config.wifi_password) - 1] = '\0';
             changed = true;
         }
-        if (json_get_str(body, "server_host", tmp_str, sizeof(tmp_str)) && tmp_str[0]) {
-            strncpy(g_flash_config.server_host, tmp_str, sizeof(g_flash_config.server_host) - 1);
-            g_flash_config.server_host[sizeof(g_flash_config.server_host) - 1] = '\0';
-            changed = true;
-        }
-        if (json_get_u16(body, "server_port", &tmp_u16) && tmp_u16 > 0) {
-            g_flash_config.server_port = tmp_u16;
-            changed = true;
-        }
         if (json_get_str(body, "ap_ssid", tmp_str, sizeof(tmp_str))) {
             // Allow clearing ap_ssid (empty = use auto-generated name)
             strncpy(g_flash_config.ap_ssid, tmp_str, sizeof(g_flash_config.ap_ssid) - 1);

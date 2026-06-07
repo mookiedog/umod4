@@ -149,9 +149,9 @@ public:
      * - Hostname: "myserver.local" or "umod4-server.local"
      *
      * @param server_hostname Server hostname or IP address
-     * @param server_port Server UDP port (default: 8081)
+     * @param server_port Server UDP port (default: DEFAULT_SERVER_PORT)
      */
-    void setServerAddress(const char* server_hostname, uint16_t server_port = 8081);
+    void setServerAddress(const char* server_hostname, uint16_t server_port = DEFAULT_SERVER_PORT);
 
     /**
      * Set WiFi station credentials (SSID and password).

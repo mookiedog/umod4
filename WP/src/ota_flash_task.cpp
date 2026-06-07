@@ -87,7 +87,7 @@ void ota_flash_task_init(void)
         NULL,
         TASK_NORMAL_PRIORITY,
         s_stack, &s_tcb,
-        (1<<0)
+        CORE0_AFFINITY_MASK
     );
     configASSERT(ota_task_handle != NULL);
 

@@ -1,4 +1,5 @@
 #include "api_handlers.h"
+#include "task_stats.h"
 #include "ep_flash_layout.h"
 #include "log_meta.h"
 #include "WiFiManager.h"
@@ -33,6 +34,10 @@ extern flash_config_t g_flash_config;
 extern const char* get_current_log_name(void);
 extern uint32_t get_last_ecu_data_us(void);
 extern uint32_t get_last_crank_event_us(void);
+extern const char* get_ecu_metadata_str(void);
+extern bool        get_ecu_metadata_complete(void);
+extern const char* get_ep_build_meta_str(void);
+extern bool        get_ep_build_meta_complete(void);
 
 // Access to SHA-256 cache from fs_custom.c
 typedef struct {
@@ -86,13 +91,17 @@ void generate_api_info_json(char* buffer, size_t size)
         fs_message = "Filesystem mounted and ready";
     }
 
+    // ep_version: JSON object from LOGID_EP_BUILD_META_TYPE_CS char stream, or null if not yet received
+    const char* ep_version_json = get_ep_build_meta_complete() ? get_ep_build_meta_str() : "null";
+
     // Build JSON response
-    // Note: wp_version is embedded as a JSON object, not a string
+    // Note: wp_version and ep_version are embedded as JSON objects, not strings
     snprintf(buffer, size,
              "{\n"
              "  \"device_name\": \"%s\",\n"
              "  \"device_mac\": \"%s\",\n"
              "  \"wp_version\": %s,\n"
+             "  \"ep_version\": %s,\n"
              "  \"uptime_seconds\": %lu,\n"
              "  \"wifi_connected\": %s,\n"
              "  \"wifi_mode\": \"%s\",\n"
@@ -112,6 +121,7 @@ void generate_api_info_json(char* buffer, size_t size)
              get_device_name(),
              mac_str,
              get_wp_version(),
+             ep_version_json,
              (unsigned long)uptime_seconds,
              is_connected ? "true" : "false",
              wifi_mode,
@@ -451,8 +461,6 @@ void generate_api_system_json(char* buffer, size_t size)
 // Getters defined in main.cpp
 extern const char* get_ep_imgsel_str(void);
 extern bool        get_ep_imgsel_complete(void);
-extern const char* get_ecu_metadata_str(void);
-extern bool        get_ecu_metadata_complete(void);
 extern void        reset_ep_capture(void);
 
 void generate_api_eprom_info_json(char* buffer, size_t size)
@@ -585,16 +593,12 @@ void generate_api_config_json(char* buffer, size_t size)
              "  \"device_name\": \"%s\",\n"
              "  \"wifi_ssid\": \"%s\",\n"
              "  \"wifi_password\": \"***\",\n"
-             "  \"server_host\": \"%s\",\n"
-             "  \"server_port\": %u,\n"
              "  \"ap_ssid\": \"%s\",\n"
              "  \"ap_password\": \"***\",\n"
              "  \"wifi_mode\": \"%s\"\n"
              "}",
              cfg->device_name,
              cfg->wifi_ssid,
-             cfg->server_host,
-             (unsigned)cfg->server_port,
              cfg->ap_ssid,
              is_ap ? "ap" : "sta");
 }
@@ -1295,31 +1299,21 @@ extern volatile uint32_t g_heap_remaining;
 extern volatile uint32_t g_heap_inuse;
 extern volatile uint32_t g_heap_free;
 
-static int tasks_cmp_cpu_desc(const void* a, const void* b)
-{
-    uint32_t ca = static_cast<const TaskStatus_t*>(a)->ulRunTimeCounter;
-    uint32_t cb = static_cast<const TaskStatus_t*>(b)->ulRunTimeCounter;
-    return (cb > ca) ? 1 : (cb < ca) ? -1 : 0;
-}
-
 void generate_api_tasks_json(char* buf, size_t size)
 {
-    static TaskStatus_t task_array[32];
-
-    uint32_t totalRunTime = 0;
-    UBaseType_t count = uxTaskGetSystemState(task_array, 32, &totalRunTime);
-
-    qsort(task_array, count, sizeof(TaskStatus_t), tasks_cmp_cpu_desc);
+    int count = task_stats_update();
+    const task_stat_t* stats = task_stats_get(nullptr);
+    uint64_t total_us = task_stats_get_total();
 
     size_t pos = 0;
-    pos += snprintf(buf + pos, size - pos, "{\"total_runtime\":%lu,\"tasks\":[",
-                    (unsigned long)totalRunTime);
+    pos += snprintf(buf + pos, size - pos, "{\"total_runtime\":%llu,\"tasks\":[",
+                    (unsigned long long)(total_us / 1000));
 
-    for (UBaseType_t i = 0; i < count && pos < size - 2; i++) {
-        const TaskStatus_t* t = &task_array[i];
+    for (int i = 0; i < count && pos < size - 2; i++) {
+        const task_stat_t* t = &stats[i];
 
         const char* state;
-        switch (t->eCurrentState) {
+        switch (t->state) {
             case eRunning:   state = "X"; break;
             case eReady:     state = "R"; break;
             case eBlocked:   state = "B"; break;
@@ -1328,20 +1322,20 @@ void generate_api_tasks_json(char* buf, size_t size)
             default:         state = "?"; break;
         }
 
-        uint32_t pct = (totalRunTime > 0)
-            ? static_cast<uint32_t>((uint64_t)t->ulRunTimeCounter * 100ULL / totalRunTime)
+        uint32_t pct = (total_us > 0)
+            ? static_cast<uint32_t>(t->runtime_us * 100ULL / total_us)
             : 0;
 
-        const char* core = (t->uxCoreAffinityMask == 1) ? "0"
-                         : (t->uxCoreAffinityMask == 2) ? "1" : "any";
+        const char* core = (t->core_affinity == CORE0_AFFINITY_MASK) ? "0"
+                         : (t->core_affinity == CORE1_AFFINITY_MASK) ? "1" : "any";
 
         pos += snprintf(buf + pos, size - pos,
             "%s{\"name\":\"%s\",\"state\":\"%s\",\"hwm\":%u,"
-            "\"cpu_time\":%lu,\"cpu_pct\":%lu,\"core\":\"%s\"}",
+            "\"cpu_time\":%llu,\"cpu_pct\":%lu,\"core\":\"%s\"}",
             (i > 0) ? "," : "",
-            t->pcTaskName, state,
-            (unsigned)t->usStackHighWaterMark,
-            (unsigned long)t->ulRunTimeCounter,
+            t->name, state,
+            (unsigned)t->stack_hwm,
+            (unsigned long long)(t->runtime_us / 1000),
             (unsigned long)pct,
             core);
     }

@@ -80,16 +80,24 @@
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
 
 /* Run time and task stats gathering related definitions. */
+// WiFiManager and NetworkManager tasks are pinned to Core 0 via xTaskCreateStaticAffinitySet
+// so that cyw43_arch_init() always runs on Core 0 (cyw43_irq_init asserts otherwise).
 #define configGENERATE_RUN_TIME_STATS           1
 #define configUSE_TRACE_FACILITY                1
 #define configUSE_STATS_FORMATTING_FUNCTIONS    1
+
+// 64-bit runtime counter: FreeRTOS accumulates per-task time natively into uint64_t.
+// time_us_64() wraps at 584,542 years — effectively never.
+#define configRUN_TIME_COUNTER_TYPE                 unsigned long long
 #ifdef __cplusplus
-extern "C" uint32_t freertos_get_runtime_counter(void);
-#else
-extern uint32_t freertos_get_runtime_counter(void);
+extern "C" {
 #endif
-#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()    // pico timer already running from boot
-#define portGET_RUN_TIME_COUNTER_VALUE()            (freertos_get_runtime_counter() / 1000)
+extern unsigned long long freertos_get_runtime_counter(void);
+#ifdef __cplusplus
+}
+#endif
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()    // nothing — hardware timer auto-runs
+#define portGET_RUN_TIME_COUNTER_VALUE()            freertos_get_runtime_counter()
 
 /* Co-routine related definitions. */
 #define configUSE_CO_ROUTINES                   0
@@ -168,6 +176,12 @@ to exclude the API function. */
 #define TASK_WIFI_PRIORITY      ((tskIDLE_PRIORITY)+4)
 #define TASK_ISR_PRIORITY       ((tskIDLE_PRIORITY)+5)
 #define TASK_MAX_PRIORITY       ((tskIDLE_PRIORITY)+6)
+
+// Core affinity masks for xTaskCreateStaticAffinitySet / vTaskCoreAffinitySet.
+// Use CORE0_AFFINITY_MASK for tasks that require Core 0 (e.g. CYW43/WiFi tasks).
+#define CORE0_AFFINITY_MASK     (1 << 0)
+#define CORE1_AFFINITY_MASK     (1 << 1)
+#define ANY_CORE_AFFINITY_MASK  (CORE0_AFFINITY_MASK | CORE1_AFFINITY_MASK)
 
 #endif /* FREERTOS_CONFIG_H */
 

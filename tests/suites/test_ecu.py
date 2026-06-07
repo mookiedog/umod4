@@ -27,10 +27,11 @@ ECU_BOOT_TIMEOUT  = 15   # seconds to wait for ECU reset sequence to complete
 ECU_BOOT_STABLE   = 3    # cpu_events must be unchanged for this many seconds
 
 # Expected L000C error register value for the reference bench setup:
-#   present:  VTA (throttle angle), AAP (ambient air pressure)
-#   absent:   air temp, water temp, MAP
+#   present:  AAP (ambient air pressure), THA (air temp), THW (water temp), VTA (throttle)
+#   absent:   AN2 (MAP average) — only flagged-bad sensor on this bench
+#   absent but not flagged: MAP (peak), CRANK, CAM — ECU does not detect these without engine
 # Override with --l000c on the command line if your bench differs.
-EXPECTED_L000C   = 0x16
+EXPECTED_L000C   = 0x10
 
 # T1 overflow period: HC11 free-running timer, prescaler 4, 2 MHz E-clock.
 # 65536 counts × 4 prescaler / 2,000,000 Hz = 131,072 µs per overflow.

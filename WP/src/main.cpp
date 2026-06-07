@@ -46,7 +46,7 @@
 
 
 // Wrapper for FreeRTOS run-time stats — avoids conflicting with the SDK's static inline time_us_32()
-extern "C" uint32_t freertos_get_runtime_counter(void) { return time_us_32(); }
+extern "C" unsigned long long freertos_get_runtime_counter(void) { return time_us_64(); }
 
 extern "C" {
     extern char __bss_end__;
@@ -235,15 +235,24 @@ static volatile bool    ecu_metadata_complete = false;
 const char* get_ecu_metadata_str(void)    { return ecu_metadata_str; }
 bool        get_ecu_metadata_complete(void) { return ecu_metadata_complete; }
 
-// Reset both capture buffers so fresh EP startup data is accepted after an EP reboot.
+// EP firmware build metadata — sent once at EP boot via LOGID_EP_BUILD_META_TYPE_CS.
+// Never reset: EP firmware version doesn't change unless EP is reflashed (which reboots WP).
+#define EP_BUILD_META_STR_LEN  48
+
+static char           ep_build_meta_str[EP_BUILD_META_STR_LEN] = "";
+static int            ep_build_meta_pos  = 0;
+static volatile bool  ep_build_meta_complete = false;
+
+const char* get_ep_build_meta_str(void)    { return ep_build_meta_str; }
+bool        get_ep_build_meta_complete(void) { return ep_build_meta_complete; }
+
+// Reset EP capture buffers so fresh data is accepted after EP reboots.
+// ep_build_meta is NOT reset: firmware version is stable until EP is reflashed.
 void reset_ep_capture(void)
 {
-    ep_imgsel_str[0]    = '\0';
-    ep_imgsel_str_pos   = 0;
-    ep_imgsel_complete  = false;
-    ecu_metadata_str[0] = '\0';
-    ecu_metadata_str_pos  = 0;
-    ecu_metadata_complete = false;
+    ep_imgsel_str[0]  = '\0';
+    ep_imgsel_str_pos = 0;
+    ep_imgsel_complete = false;
 }
 
 // WP-side dedup: suppress logging of consecutive identical sensor readings.
@@ -315,16 +324,35 @@ void __time_critical_func(isr_rx32)()
                 }
                 break;
             case LOGID_ECU_METADATA_TYPE_CS:
-                if (!ecu_metadata_complete) {
+                {
                     char c = (char)data8;
-                    if (c != '\0') {
-                        if (ecu_metadata_str_pos < ECU_METADATA_STR_LEN - 1) {
-                            ecu_metadata_str[ecu_metadata_str_pos++] = c;
-                        }
-                    }
-                    else {
+                    if (c == '\0') {
                         ecu_metadata_str[ecu_metadata_str_pos] = '\0';
                         ecu_metadata_complete = true;
+                    } else {
+                        if (ecu_metadata_complete) {
+                            ecu_metadata_str_pos = 0;
+                            ecu_metadata_complete = false;
+                        }
+                        if (ecu_metadata_str_pos < ECU_METADATA_STR_LEN - 1)
+                            ecu_metadata_str[ecu_metadata_str_pos++] = c;
+                    }
+                }
+                break;
+            case LOGID_EP_BUILD_META_TYPE_CS:
+                {
+                    char c = (char)data8;
+                    if (c == '\0') {
+                        ep_build_meta_str[ep_build_meta_pos] = '\0';
+                        ep_build_meta_complete = true;
+                    } else {
+                        // Non-null byte while complete means EP was reflashed — accept fresh string
+                        if (ep_build_meta_complete) {
+                            ep_build_meta_pos = 0;
+                            ep_build_meta_complete = false;
+                        }
+                        if (ep_build_meta_pos < EP_BUILD_META_STR_LEN - 1)
+                            ep_build_meta_str[ep_build_meta_pos++] = c;
                     }
                 }
                 break;
@@ -614,10 +642,6 @@ void boot_system(void* args)
     wifiMgr = new WiFiManager();
     wifiMgr->setCredentials(g_flash_config.wifi_ssid, g_flash_config.wifi_password);
     wifiMgr->setGps(gps);
-    if (g_flash_config.server_host[0] != '\0') {
-        wifiMgr->setServerAddress(g_flash_config.server_host, g_flash_config.server_port);
-    }
-
 
     printf("%s: Creating Network manager (MDL HTTP server)\n", __FUNCTION__);
     networkMgr = new NetworkManager(wifiMgr);
