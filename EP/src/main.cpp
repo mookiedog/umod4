@@ -594,21 +594,29 @@ void init_stdio()
 // --------------------------------------------------------------------------------------------
 // Measure E-clock frequency (in KHz) while HC11 is still in reset
 // We are free to configure the HC11_E_LSB because initPins() will reconfigure it afterwards.
-static uint16_t measure_e_clk()
+//
+// Returns E-clk frequency in kilohertz
+static uint16_t measure_e_clk_khz()
 {
     uint slice = pwm_gpio_to_slice_num(HC11_E_LSB);
     pwm_config eclk_cfg = pwm_get_default_config();
     pwm_config_set_clkdiv_mode(&eclk_cfg, PWM_DIV_B_RISING);
     pwm_config_set_wrap(&eclk_cfg, 0xFFFF);
     gpio_set_function(HC11_E_LSB, GPIO_FUNC_PWM);
-    pwm_init(slice, &eclk_cfg, true);
+    pwm_init(slice, &eclk_cfg, false);  // configure but don't start yet
+
+    // Zero the counter and start it simultaneously with the timer, so no
+    // edges slip in between pwm_init overhead and when we begin timing.
+    pwm_hw->slice[slice].ctr = 0;
+    pwm_set_enabled(slice, true);
+    uint32_t t0 = time_us_32();
 
     busy_wait_us(1000);
-
     uint16_t count = pwm_get_counter(slice);
+    uint32_t elapsed_us = time_us_32() - t0;
     pwm_set_enabled(slice, false);
 
-    return count;
+    return (uint32_t)count * 1000 / elapsed_us;
 }
 
 // --------------------------------------------------------------------------------------------
@@ -660,7 +668,7 @@ int main(void)
     hello(3);
 
     // Measure the HC11 E-clk freq while the HC11 is still in RESET.
-    uint16_t eclk_khz = measure_e_clk();
+    uint16_t eclk_khz = measure_e_clk_khz();
 
     initPins();
 
