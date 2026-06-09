@@ -80,8 +80,6 @@
 #define configUSE_DAEMON_TASK_STARTUP_HOOK      0
 
 /* Run time and task stats gathering related definitions. */
-// WiFiManager and NetworkManager tasks are pinned to Core 0 via xTaskCreateStaticAffinitySet
-// so that cyw43_arch_init() always runs on Core 0 (cyw43_irq_init asserts otherwise).
 #define configGENERATE_RUN_TIME_STATS           1
 #define configUSE_TRACE_FACILITY                1
 #define configUSE_STATS_FORMATTING_FUNCTIONS    1

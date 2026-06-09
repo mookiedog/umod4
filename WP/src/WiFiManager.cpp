@@ -63,15 +63,13 @@ WiFiManager::WiFiManager()
 
     static StackType_t  s_stack[1024];
     static StaticTask_t s_tcb;
-    // Must run on Core 0: cyw43_arch_init() calls cyw43_irq_init() which asserts core == 0.
-    taskHandle_ = xTaskCreateStaticAffinitySet(
+    taskHandle_ = xTaskCreateStatic(
         start_wifiMgr_task,
         "WiFiMgrTask",
         1024,
         this,
         TASK_NORMAL_PRIORITY,
-        s_stack, &s_tcb,
-        CORE0_AFFINITY_MASK
+        s_stack, &s_tcb
     );
 
     if (taskHandle_ == NULL) {

@@ -501,10 +501,14 @@ void Logger::logTask()
             // Immediately write and sync whatever boot header data is in the buffer
             // (log version + WP reset reason). This ensures that data survives even
             // if we crash again before accumulating a full block.
+            // Use the same boundary calculation as CALC_WR_SIZE so we never ask
+            // for more bytes than fit in write_buffer (one LFS block); any excess
+            // boot data is handled by subsequent CALC_WR_SIZE cycles.
             {
                 int32_t available = inUse();
                 if (available > 0) {
-                    bytesToWriteBeforeSyncing = available;
+                    int32_t to_sync = lfs_bytes_until_fsync(&lfs_cfg, &logf);
+                    bytesToWriteBeforeSyncing = (available < to_sync) ? available : to_sync;
                     state = WRITE_DATA;
                 }
                 else {

@@ -48,15 +48,13 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
 
     static StackType_t  s_stack[1024];
     static StaticTask_t s_tcb;
-    // Must run on Core 0: lwIP stack is owned by the CYW43 driver initialized on Core 0.
-    taskHandle_ = xTaskCreateStaticAffinitySet(
+    taskHandle_ = xTaskCreateStatic(
         start_networkMgr_task,
         "NetMgrTask",
         1024,
         this,
         TASK_NORMAL_PRIORITY,
-        s_stack, &s_tcb,
-        CORE0_AFFINITY_MASK
+        s_stack, &s_tcb
     );
 
     if (taskHandle_ == NULL) {
