@@ -84,11 +84,23 @@ if [ "$IS_WSL2" = true ]; then
     BUSID=$(echo "$USBIPD_LINE" | awk '{print $1}' | tr -d '\r')
     echo "Found RP2350 Boot device: BUSID=$BUSID"
     echo "Attaching BUSID $BUSID to WSL2..."
-    usbipd.exe attach --wsl --busid="$BUSID"
-    if [ $? -ne 0 ]; then
-        echo "Error: usbipd attach failed."
-        echo "If the device shows 'Not shared', run the following in an Administrator Powershell window:"
-        echo "  usbipd.exe bind --busid=$BUSID"
+    ATTACH_OUT=$(usbipd.exe attach --wsl --busid="$BUSID" 2>&1)
+    ATTACH_RC=$?
+    echo "$ATTACH_OUT"
+    if [ $ATTACH_RC -ne 0 ]; then
+        if echo "$ATTACH_OUT" | grep -q "appears to be used by Windows"; then
+            echo ""
+            echo "NOTE: Windows Search Indexer is holding the RP2350 Boot drive open and"
+            echo "      is blocking usbipd from attaching it to WSL."
+            echo "      Fix: open Windows Search Indexing Options and exclude removable drives"
+            echo "      from indexing, or disable indexing of the RP2350 Boot drive specifically."
+            echo "      (Settings -> Search -> Searching Windows -> Excluded Folders, or"
+            echo "       Control Panel -> Indexing Options -> Modify)"
+        else
+            echo "Error: usbipd attach failed."
+            echo "If the device shows 'Not shared', run the following in an Administrator Powershell window:"
+            echo "  usbipd.exe bind --busid=$BUSID"
+        fi
         exit 1
     fi
     echo "Waiting for device to enumerate in WSL2..."

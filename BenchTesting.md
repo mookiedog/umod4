@@ -1,5 +1,28 @@
 # Bench Testing
 
+## Immediate Goals
+
+It would be nice to mount coils/sparkplugs and a power supply to drive them, but I don't have the means of simulating a rotating engine. Previous experiments have shown that simulating crank and cam sensors is a real problem. Until I have a solution for that, it is a waste of time to even think about mounting coils and plugs.
+
+I like using a bench supply to power everything. They have both current reporting and current limiting!
+
+Physically mount:
+
+* ECU
+* GPS antenna
+
+Add sensors:
+* TPS
+  * Use a 3K Rtop over a 390R Rbtm with an additional 100R pot from Rbtm to GND.
+  This will allows adjusting the pot to calibrate the "TPS" output to register as full closed at 128..132 ADC counts. It will also allow for manual testing of the TPS calibration mechanisms if the ADC counts are outside of that range.
+* THA/THW (could be pot or resistor)
+  * resistor is better for automated tests because test harness can test for expected result of a fixed resistor
+    * 470R produces an output of approx 67?C
+    * 2K produces an output of approx 25.5C
+* VM (just a jumper wire)
+
+## Original Doc
+
 The way the power system is designed, the ignition key always does what a rider would expect:
 
 * If the ignition key is turned ON, both the ECU and the umod4 get powered
@@ -90,9 +113,15 @@ It might be worthwhile to expand the bench-test setup for more realistic ECU fir
 The key to that would be the ability to drive fake cam and crank position signals.
 
 Sensors could be added:
-* Air temp (potentiometer)
-* Water temp (potentiometer)
-* throttle (potentiometer)
+* Air temp
+  * potentiometer
+  * fixed 2.0K resistor results in a nominal 25C
+* Water temp
+  * potentiometer
+  * fixed 470R resistor results in a nominal ~67C
+* throttle
+  * potentiometer
+  * +5V to 630R to VTA to 470R to GND
 
 Sensors that would be difficult
 * intake pressure, especially if accuracy was important
@@ -100,7 +129,7 @@ Sensors that would be difficult
 * cam
 
 Less useful sensors:
-* fall sensor (switch)
+* DON fall sensor (switch)
 * clutch (switch)
 
 Additional outputs:
@@ -190,3 +219,15 @@ Wiring:
   * sparkplug body GND
 
 The ECU will ground the '-' terminal to charge the coil and let it float again to fire the coil.
+
+## Mechanical
+
+The screws used to mount the PCB on the bottom place are M3 x 0.5mm pitch.
+That's the same as the screws that hold the cover to the bottom plate.
+
+## Goals
+
+* Big power supply for coils
+* Power options for ECU:
+  * From big supply
+  * from bench supply

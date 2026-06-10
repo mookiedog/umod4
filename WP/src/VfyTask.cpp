@@ -185,7 +185,9 @@ static void emit_ecu(void)
                "\"cpu_events\":%u,\"cpu_last\":%u,"
                "\"t1_oflo\":%u,\"t1_period_us\":%lu,"
                "\"vta_count\":%u,\"vm_count\":%u,"
-               "\"tha_count\":%u,\"aap_count\":%u,\"thw_count\":%u,"
+               "\"tha_count\":%u,\"tha_last\":%u,"
+               "\"aap_count\":%u,"
+               "\"thw_count\":%u,\"thw_last\":%u,"
                "\"tp1_count\":%u,\"tp2_count\":%u,"
                "\"l000c_count\":%u,\"l000c_last\":%u}",
                (unsigned)ecuLiveLog[LOGID_EP_ECLK_KHZ_TYPE_U16],
@@ -197,8 +199,10 @@ static void emit_ecu(void)
                (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_VTA_TYPE_U16],
                (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_VM_TYPE_U8],
                (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_THA_TYPE_U8],
+               (unsigned)ecuLiveLog[LOGID_ECU_RAW_THA_TYPE_U8],
                (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_AAP_TYPE_U8],
                (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_THW_TYPE_U8],
+               (unsigned)ecuLiveLog[LOGID_ECU_RAW_THW_TYPE_U8],
                (unsigned)ecuLogidRxCount[LOGID_ECU_TP_CO1_RAW_TYPE_U8],
                (unsigned)ecuLogidRxCount[LOGID_ECU_TP_CO2_RAW_TYPE_U8],
                (unsigned)ecuLogidRxCount[LOGID_ECU_ECU_ERROR_L000C_TYPE_U8],

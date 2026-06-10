@@ -7,6 +7,26 @@ Contains functions to convert raw ADC values to engineering units.
 import math
 
 
+def ntc_resistance_to_degc(r_ohms):
+    """
+    Convert NTC resistance in ohms to degrees Celsius using Steinhart-Hart equation.
+
+    Coefficients are calibrated for the Aprilia temperature sensor NTC element,
+    derived from measurements at 0°C (5880Ω), 25°C (1992Ω), and 90°C (249Ω).
+
+    Args:
+        r_ohms: NTC resistance in ohms
+
+    Returns:
+        Temperature in degrees Celsius (float)
+    """
+    A = 1.142579776e-3
+    B = 2.941596847e-4
+    C = -0.5305974726e-7
+    logR = math.log(r_ohms)
+    return (1.0 / (A + (B * logR) + (C * (logR ** 3)))) - 273.15
+
+
 def convertApriliaTempSensorAdcToDegC(adc):
     """
     Convert Aprilia temperature sensor ADC value to degrees Celsius.
@@ -32,27 +52,7 @@ def convertApriliaTempSensorAdcToDegC(adc):
     # Work out what the resistance of the thermistor must have been to generate the Voltage we measured
     Rntc = (Vmeas * Rtop) / (Vref - Vmeas)
 
-    # Convert an NTC resistor to a temperature using the Beta method
-    #
-    # The Beta constant was calculated from the ntccalculator website
-    # The resistances for the Beta calculation came from measurements of sensor resistances at 0C, 25C, and 90C.
-    # Assumption: the NTC resistor in the Aprilia sensor is rated 2K Ohms at 25C.
-    # Measured at 1992 Ohms at 25C. 2K is a standard NTC value, so this seems reasonable.
-    R25 = 1992
-    Beta = 3526
-    degC_Beta = (1/((1/Beta)*math.log(Rntc/R25)+(1/(25+273.15))))-273.15
-
-    # The Steinhart-Hart coefficients come from the same calculator website
-    # Resistance/temperature Measurements come from experiment:
-    A = 1.142579776e-3          # 5880 Ohms at 0C
-    B = 2.941596847e-4          # 1992 Ohms at 25C
-    C = -0.5305974726e-7        #  249 Ohms at 90C
-    logR = math.log(Rntc)
-    degC_SH = (1/(A + (B * logR) + (C * (logR**3)))) - 273.15
-
-    # Experiments show that S-H and Beta differ by about 1 degree at most.
-    # The S-H method is known to be more accurate so we use it.
-    return degC_SH
+    return ntc_resistance_to_degc(Rntc)
 
 
 def convertPressureSensorAdcToKpa(adc_counts):

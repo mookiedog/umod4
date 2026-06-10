@@ -46,8 +46,10 @@ void flash_config_defaults(flash_config_t *out)
     out->magic   = FLASH_CONFIG_MAGIC;
     out->version = FLASH_CONFIG_VERSION;
 
-    // device_name, ap_ssid, ap_password left empty: WiFiManager fills them in
-    // from the CYW43 MAC address after hardware init and saves to flash.
+    // device_name, ap_ssid, ap_password are left empty intentionally.
+    // This function is called before FreeRTOS and before cyw43_arch_init(), so
+    // the CYW43 MAC address is not yet available.  WiFiManager's UNINITIALIZED
+    // state fills these in from the MAC once hardware is up and saves to flash.
     out->crc32 = crc32_compute(out, CRC_DATA_LEN);
 }
 

@@ -14,7 +14,15 @@ accumulated before the EP reflash.
 """
 
 import json
+import os
+import sys
 import time
+
+# Pull in the shared sensor conversion library from the tools directory.
+sys.path.insert(0, os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 '../../tools/logtools/decoder')))
+from conversions import convertApriliaTempSensorAdcToDegC, ntc_resistance_to_degc
 
 from harness.rtt import RttChannel, RttError
 
@@ -25,6 +33,25 @@ ECU_RESET_VAL    = 7     # LOGID_ECU_CPU_EVENT_RESET_VAL
 ECLK_MIN_KHZ     = 1800  # below this → ECU not powered (2 MHz E-clock → ~2000 kHz)
 ECU_BOOT_TIMEOUT  = 15   # seconds to wait for ECU reset sequence to complete
 ECU_BOOT_STABLE   = 3    # cpu_events must be unchanged for this many seconds
+
+# Bench testbench resistors installed in place of NTC sensors.
+# Change these if the bench hardware changes; everything else is calculated.
+BENCH_THW_OHMS     = 470    # 470R resistor installed for THW (coolant temp)
+BENCH_THA_OHMS     = 2000   # 2K  resistor installed for THA (air temp)
+RESISTOR_TOLERANCE = 0.05   # standard 5% resistor tolerance band
+
+
+def _resistor_temp_range(nominal_ohms):
+    """Return (t_lo, t_hi) in °C for an NTC circuit with a fixed resistor of
+    nominal_ohms ± RESISTOR_TOLERANCE.  NTC physics: lower R → higher temp."""
+    r_lo = nominal_ohms * (1.0 - RESISTOR_TOLERANCE)
+    r_hi = nominal_ohms * (1.0 + RESISTOR_TOLERANCE)
+    return ntc_resistance_to_degc(r_hi), ntc_resistance_to_degc(r_lo)
+
+
+# Pre-calculate expected temperature ranges once at module load time.
+THW_T_LO, THW_T_HI = _resistor_temp_range(BENCH_THW_OHMS)
+THA_T_LO, THA_T_HI = _resistor_temp_range(BENCH_THA_OHMS)
 
 # Expected L000C error register value for the reference bench setup:
 #   present:  AAP (ambient air pressure), THA (air temp), THW (water temp), VTA (throttle)
@@ -43,14 +70,27 @@ T1_PERIOD_US     = 65536 * 4 * 1_000_000 // 2_000_000   # 131072 µs
 T1_TOLERANCE     = 0.005                                 # ±0.5%
 
 
-def _get_ecu(vfy):
-    """Send 'ecu' and return the inner dict, or raise RttError / ValueError."""
-    reply = vfy.command("ecu", timeout=5.0)
-    data  = json.loads(reply)
-    inner = data.get("ecu")
-    if inner is None:
-        raise ValueError(f"no 'ecu' key in reply: {reply}")
-    return inner
+def _get_ecu(vfy, retries=2):
+    """Send 'ecu' and return the inner dict, or raise RttError / ValueError.
+    Retries on timeout because OpenOCD RTT polling occasionally drops the DOWN
+    buffer write silently — re-sending is safe since 'ecu' is read-only."""
+    for attempt in range(retries + 1):
+        try:
+            reply = vfy.command("ecu", timeout=5.0)
+        except RttError:
+            if attempt < retries:
+                print(f"  [ecu] attempt {attempt + 1} timed out, retrying...",
+                      flush=True)
+                continue
+            raise
+        try:
+            data = json.loads(reply)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"non-JSON reply to 'ecu' ({e}): {reply!r}") from e
+        inner = data.get("ecu")
+        if inner is None:
+            raise ValueError(f"no 'ecu' key in reply: {reply}")
+        return inner
 
 
 def _delta(ecu0, ecu1, key):
@@ -102,7 +142,8 @@ def run(ocd, results, context):
                 elif stable_at is not None:
                     if time.monotonic() - stable_at >= ECU_BOOT_STABLE:
                         ecu0 = snap
-            except (RttError, ValueError, json.JSONDecodeError):
+            except (RttError, ValueError) as e:
+                print(f"  [ecu settle] comm error: {e}", flush=True)
                 stable_at = None   # treat a comm error as instability
             if ecu0 is None:
                 if time.monotonic() >= deadline:
@@ -248,3 +289,32 @@ def run(ocd, results, context):
         else:
             results.failed("error_l000c",
                            f"l000c=0x{l000c_last:02x}, expected 0x{expected_l000c:02x}, count={l000c_count}")
+
+        # ----------------------------------------------------------------
+        # Bench sensor temperature checks.
+        # The testbench installs fixed resistors in place of the NTC sensors.
+        # Expected temperature ranges are derived from the nominal resistor
+        # values and their 5% tolerance band (see BENCH_THW_OHMS / BENCH_THA_OHMS).
+        for sensor, count, adc_key, t_lo, t_hi, bench_ohms in (
+            ("thw_temp", thw_count, "thw_last", THW_T_LO, THW_T_HI, BENCH_THW_OHMS),
+            ("tha_temp", tha_count, "tha_last", THA_T_LO, THA_T_HI, BENCH_THA_OHMS),
+        ):
+            if count == 0:
+                results.failed(sensor,
+                               f"no {adc_key.split('_')[0].upper()} events received — sensor absent or ECU not running")
+                continue
+            adc = ecu1.get(adc_key)
+            if adc is None:
+                results.failed(sensor, f"{adc_key} missing from ecu report")
+                continue
+            measured_degc = convertApriliaTempSensorAdcToDegC(adc)
+            if t_lo <= measured_degc <= t_hi:
+                results.passed(sensor,
+                               f"adc={adc} → {measured_degc:.1f}°C "
+                               f"(bench={bench_ohms}Ω ±{int(RESISTOR_TOLERANCE*100)}% "
+                               f"→ {t_lo:.1f}–{t_hi:.1f}°C)")
+            else:
+                results.failed(sensor,
+                               f"adc={adc} → {measured_degc:.1f}°C outside expected "
+                               f"{t_lo:.1f}–{t_hi:.1f}°C "
+                               f"(bench={bench_ohms}Ω ±{int(RESISTOR_TOLERANCE*100)}%)")

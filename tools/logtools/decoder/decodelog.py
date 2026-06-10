@@ -360,8 +360,9 @@ class HDF5Writer:
         self.current_eprom_name = ""
         self.current_eprom_addr = None
         self.current_eprom_len = None
-        self.imgsel_string = None  # LOGID_EP_IMGSEL_TYPE_CS: compact JSON array of per-image load results
-        self.mapblob_bytes = None  # LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16: raw RP58 map blob bytes
+        self.imgsel_string = None   # LOGID_EP_IMGSEL_TYPE_CS: compact JSON array of per-image load results
+        self.ep_build_meta = None   # LOGID_EP_BUILD_META_TYPE_CS: EP firmware build metadata JSON
+        self.mapblob_bytes = None   # LOGID_EP_LOAD_RP58MAPBLOB_TYPE_U16: raw RP58 map blob bytes
 
         # GPS back-calculation
         self.gps_sync_time_ns = None
@@ -661,6 +662,10 @@ class HDF5Writer:
             log_start_unix = gps_unix - (self.gps_sync_time_ns / 1e9)
             self.h5file.attrs['log_start_timestamp_utc'] = log_start_unix
             self.h5file.attrs['log_start_timestamp_iso'] = datetime.fromtimestamp(log_start_unix, tz=timezone.utc).isoformat()
+
+        # EP firmware build metadata JSON (e.g. {"BT":"YYYY-MM-DD HH:MM:SS"})
+        if self.ep_build_meta is not None:
+            self.h5file.attrs['ep_build_meta'] = self.ep_build_meta
 
         # Image selector result string (compact JSON array of per-image load results)
         if self.imgsel_string is not None:
@@ -2361,6 +2366,18 @@ def _process_single_file(logfile_path, output_path, args, L):
                     if h5_writer and len(mapblobBytes) == L.LOGID_EP_LOAD_RP58MAPBLOB_DLEN * (0x1C00 // 2):
                         h5_writer.mapblob_bytes = bytes(mapblobBytes)
                         print(f"{fmt_record(recordCnt, timekeeper)} MAPBLOB:   complete ({len(mapblobBytes)} bytes)")
+
+                elif byte == L.LOGID_EP_BUILD_META_TYPE_CS:
+                    c = read(f, L.LOGID_EP_BUILD_META_DLEN)[0]
+                    if (c != 0):
+                        if showBinData and epromIdString == "":
+                            print(f"{address-2:08X}: {byte:02X} {c:02X} ")
+                        epromIdString = "".join([epromIdString, chr(c)])
+                    else:
+                        print(f"{fmt_record(recordCnt, timekeeper)} EP_META:   \"{epromIdString}\"")
+                        if h5_writer:
+                            h5_writer.ep_build_meta = epromIdString
+                        epromIdString = ""
 
                 elif byte == L.LOGID_EP_ECLK_KHZ_TYPE_U16:
                     eclk = int.from_bytes(read(f, L.LOGID_EP_ECLK_KHZ_DLEN), byteorder='little', signed=False)
