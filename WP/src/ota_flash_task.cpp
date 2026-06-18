@@ -222,6 +222,8 @@ static void ota_flash_task(void* params)
                 }
 
                 printf("OTA: Rebooting via watchdog\n");
+                vfy_printf("{\"wp_ota\":\"CONFIG_REBOOT\",\"config_saved\":%s}\n",
+                           request.save_flash_config ? "true" : "false");
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 prepare_for_reboot(0, false);
             }

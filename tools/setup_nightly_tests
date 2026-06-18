@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# setup_nightly_tests — manage the umod4 nightly test Task Scheduler job
+#
+# Registers, reschedules, enables, disables, or reports on the per-user
+# Windows Scheduled Task that runs tests/nightly_run.sh nightly. No
+# Administrator privileges or UAC prompt required.
+
+set -e
+
+usage() {
+    cat <<'EOF'
+Usage:
+  tools/setup_nightly_tests                  Register/update, daily at 02:00 (Ubuntu)
+  tools/setup_nightly_tests -Time "03:00"    Register/update with a different time
+  tools/setup_nightly_tests -Distro "Ubuntu" Register/update for a different WSL distro
+  tools/setup_nightly_tests --status         Show registration state, schedule, last/next run
+  tools/setup_nightly_tests --disable        Pause the task (stays registered)
+  tools/setup_nightly_tests --enable         Resume a disabled task
+  tools/setup_nightly_tests --help           Show this help
+
+Re-running with new -Time/-Distro values updates the existing task in
+place -- no need to disable/re-register first.
+EOF
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+esac
+
+if ! grep -qi "WSL2\|microsoft" /proc/version 2>/dev/null; then
+    echo "Error: this script must be run inside WSL2."
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PS1_SRC="$SCRIPT_DIR/setup_nightly_tests.ps1"
+
+if [ ! -f "$PS1_SRC" ]; then
+    echo "Error: $PS1_SRC not found."
+    exit 1
+fi
+
+WINPATH=$(wslpath -w "$PS1_SRC")
+
+case "${1:-}" in
+    --status)  set -- -Status ;;
+    --disable) set -- -Disable ;;
+    --enable)  set -- -Enable ;;
+esac
+
+powershell.exe -ExecutionPolicy Bypass -File "$WINPATH" "$@"

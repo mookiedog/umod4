@@ -37,13 +37,6 @@ WP_ENTER_BOOTSEL   = os.path.join(_PROJ_ROOT, "tools", "wp_enter_bootsel")
 WP_USB_BOOT_BINARY = os.path.join(_PROJ_ROOT, "build", "WpUsbBoot", "WpUsbBoot")
 FLASH_WP           = os.path.join(_PROJ_ROOT, "tools", "flash_WP")
 WP_BUILD_DIR       = os.path.join(_PROJ_ROOT, "build", "WP")
-# After fresh flash, WP does a TBYB warm-boot then cold-boot (~5s each).
-# This also covers the time needed to start AP mode.
-POST_FLASH_SETTLE = 10.0
-
-# After POSTing /api/config, WP saves to flash and reboots (~3s shutdown +
-# ~3s cold-boot).  Reconnect OCD after this grace period.
-POST_CONFIG_SETTLE = 8.0
 
 # How long to poll wifi after config reboot before giving up.
 WIFI_CONNECT_WAIT = 60.0
@@ -112,9 +105,10 @@ def _run(ocd, results, context):
     results.passed("prov_flash_wp")
 
     # ----------------------------------------------------------------
-    # prov_ocd_restart — restart OpenOCD and wait for RTT
-    # flash_WP ends with 'picotool load -p 1' which boots in TBYB mode;
-    # POST_FLASH_SETTLE lets both warm-boot and cold-boot complete.
+    # prov_ocd_restart — restart OpenOCD and wait for RTT.
+    # flash_WP ends with a plain 'picotool reboot' — no TBYB pending state,
+    # so this is a single cold boot.  ocd.wait_ready() fires ~200ms into
+    # boot; prov_ap_boot's wifi command waits for VfyTask + AP mode (~5.5s).
     # ----------------------------------------------------------------
 
     results.start("prov_ocd_restart")
@@ -125,24 +119,34 @@ def _run(ocd, results, context):
     except (OpenOCDError, OSError) as e:
         results.fatal("prov_ocd_restart", f"OpenOCD failed: {e}")
 
-    print(f"  Waiting {POST_FLASH_SETTLE:.0f}s for WP boot...")
-    time.sleep(POST_FLASH_SETTLE)
     results.passed("prov_ocd_restart", "RTT live")
 
     # ----------------------------------------------------------------
-    # prov_ap_boot — verify WP reports AP mode via VFY RTT
+    # prov_ap_boot — poll RTT wifi until WP enters AP mode.
+    # not_connected is acceptable while WiFiManager is still initializing;
+    # any other state is unexpected.
     # ----------------------------------------------------------------
 
+    AP_BOOT_WAIT = 15.0
     results.start("prov_ap_boot")
+    deadline = time.monotonic() + AP_BOOT_WAIT
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
-        try:
-            reply = vfy.command("wifi", timeout=10.0)
-            state = json.loads(reply).get("wifi", {}).get("state", "")
-            if state != "ap_mode":
-                results.fatal("prov_ap_boot", f"WP not in AP mode: {reply}")
-            results.passed("prov_ap_boot", reply)
-        except RttError as e:
-            results.fatal("prov_ap_boot", str(e))
+        while True:
+            try:
+                reply = vfy.command("wifi", timeout=5.0)
+            except RttError as e:
+                results.fatal("prov_ap_boot", str(e))
+            try:
+                state = json.loads(reply).get("wifi", {}).get("state", "")
+            except (json.JSONDecodeError, AttributeError):
+                state = ""
+            if state == "ap_mode":
+                break
+            if state != "not_connected" or time.monotonic() >= deadline:
+                results.fatal("prov_ap_boot",
+                    f"WP not in AP mode after {AP_BOOT_WAIT:.0f}s: {reply}")
+            time.sleep(1.0)
+        results.passed("prov_ap_boot", reply)
 
     # ----------------------------------------------------------------
     # prov_ap_connect — ap_proxy scans for umod4_XXXX and connects
@@ -197,14 +201,25 @@ def _run(ocd, results, context):
 
     # ----------------------------------------------------------------
     # prov_wait_reboot — wait for WP to save config and reboot
-    # After the POST, WP shuts down WiFi (~3s), saves to flash, reboots.
+    # WP emits {"wp_ota":"CONFIG_REBOOT"} after WiFi shutdown and config
+    # save, just before the 1s drain delay and watchdog reboot.
     # ----------------------------------------------------------------
 
     results.start("prov_wait_reboot")
-    print(f"  Waiting {POST_CONFIG_SETTLE:.0f}s for WP config-save reboot...")
-    time.sleep(POST_CONFIG_SETTLE)
+    print("  Waiting for config-save reboot signal...")
     try:
-        ocd.reconnect()
+        with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
+            vfy.wait_for('{"wp_ota":"CONFIG_REBOOT"', timeout=15.0)
+    except RttError as e:
+        results.fatal("prov_wait_reboot", f"CONFIG_REBOOT signal not received: {e}")
+
+    # The signal fires 1s before the watchdog reboot (vTaskDelay in firmware).
+    # Wait past that before reconnecting so OpenOCD attaches to the cold boot,
+    # not the old firmware still in its drain delay.
+    time.sleep(1.5)
+    print("  Reconnecting for cold boot...")
+    try:
+        ocd.reconnect(timeout=10.0)
     except (OpenOCDError, OSError) as e:
         results.fatal("prov_wait_reboot", f"OpenOCD reconnect failed: {e}")
     results.passed("prov_wait_reboot", "RTT live after reboot")
@@ -218,7 +233,7 @@ def _run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
         while True:
             try:
-                reply = vfy.command("wifi", timeout=10.0)
+                reply = vfy.command("wifi", timeout=5.0)
             except RttError as e:
                 results.fatal("prov_wifi_connect", str(e))
             try:

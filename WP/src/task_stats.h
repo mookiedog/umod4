@@ -14,8 +14,7 @@ typedef struct {
     uint64_t     runtime_us;    // 64-bit accumulated microseconds
 } task_stat_t;
 
-// Snapshot FreeRTOS uint32_t runtime counters into 64-bit accumulators.
-// Unsigned delta arithmetic handles the ~71-minute wrap without special-casing.
+// Snapshot FreeRTOS runtime counters (64-bit, via configRUN_TIME_COUNTER_TYPE).
 // Thread-safe. Returns task count.
 int task_stats_update(void);
 

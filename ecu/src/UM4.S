@@ -8208,11 +8208,18 @@ IC2F_ISR_3:
 ;This CR interrupt must have been triggered by a falling edge event
 ;(the leading edge of a timing protrusion).
 
+;Start off by generating the TAC signal that drives the dashboard tachometer.
+;TAC will toggle 6 times per crank revolution, so its frequency is 3 times the crank's rotation frequency:
+;       TAC frequency = 3 x (RPM / 60) Hz
+;
+;The dashboard can easily convert the TAC signal to RPM by measuring its period in microseconds:
+;       RPM = 20,000,000 / TAC_period_usec
+
 IC2F_ISR_4:
         ldaB    PORTJ
         ldaA    *L0055
-        bitA    #0b00000001             ;this bit changes 3 times per revolution.  This means that we are
-                                        ;driving TAC at current RPM period / 3
+        bitA    #0b00000001             ;bit 0 of CRID toggles on every crank event: 6 times per revolution.
+                                        ;3 complete TAC square wave cycles per revolution (TAC period = crank period / 3)
         beq     IC2F_ISR_5
         andB    #0b11111110             ;set Tach drive (TAC) to 0
         bra     IC2F_ISR_6

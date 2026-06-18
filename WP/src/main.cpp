@@ -870,6 +870,10 @@ void check_tbyb()
             printf("%s: Commit failed: %d\n", __FUNCTION__, commit_result);
             rgb_led->neoPixelSetValue(0, 30,0,0, true);
         }
+        // Signal the test harness before the final LED delay so it can reconnect
+        // OpenOCD for the cold boot without sleeping a fixed time.
+        vfy_printf("{\"wp_ota\":\"TBYB_COMMIT_REBOOT\",\"ok\":%s}\n",
+                   commit_result == 0 ? "true" : "false");
         busy_wait_ms(1000);
 
         // We have an issue here. Because a TBYB boot event represents a 'warm' restart

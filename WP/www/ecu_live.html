@@ -416,7 +416,7 @@
                             valEl.style.fontSize = '1.0em';
                             valEl.style.color = (converted === 'OK') ? '#38a169' : '#e53e3e';
                         } else {
-                            displayVal = isNaN(converted) ? '--' : converted.toFixed(1);
+                            displayVal = isNaN(converted) ? '--' : (Number.isInteger(converted) ? String(converted) : converted.toFixed(1));
                             valEl.style.fontSize = '';
                             valEl.style.color = '';
                         }

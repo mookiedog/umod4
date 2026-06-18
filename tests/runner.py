@@ -194,6 +194,20 @@ class Results:
         latest = os.path.join(os.path.dirname(path), "latest.md")
         shutil.copy2(path, latest)
 
+        # Plain-text failure summary for notification scripts (e.g. nightly_run.sh).
+        failures = [(suite, name, detail) for status, suite, name, detail in self._entries
+                    if status in ("FAIL", "ABORT", "FATAL")]
+        failures_path = os.path.join(os.path.dirname(path), "latest_failures.txt")
+        if failures:
+            with open(failures_path, "w") as f:
+                for suite, name, detail in failures:
+                    line = f"{suite}/{name}"
+                    if detail:
+                        line += f": {detail}"
+                    f.write(line + "\n")
+        elif os.path.exists(failures_path):
+            os.remove(failures_path)
+
 
 # -------------------------------------------------------------------------
 # Suite ordering is load-bearing — do not rearrange without understanding the
@@ -206,6 +220,9 @@ class Results:
 #                     (the OTA path uses SWD to program EP).
 #  test_wifi          Connects to WiFi and stores wp_ip in context; must
 #                     precede test_ota_ep (upload uses the HTTP server).
+#  test_cleanup       Deletes transient files (.um4, .uf2) from SD card to
+#                     prevent LFS block-allocator degradation across runs.
+#                     Needs wp_ip; must precede OTA suites.
 #  test_ota_ep        Reflashes EP via HTTP+SWD.  EP carries the ECU firmware
 #                     image, so the ECU is only on latest firmware AFTER this
 #                     suite completes.  test_ecu must not run before this.
@@ -219,6 +236,7 @@ SUITES = [
     "suites.test_basic",
     "suites.test_ep_swd",
     "suites.test_wifi",
+    "suites.test_cleanup",
     "suites.test_ota_ep",
     "suites.test_ecu",
     "suites.test_ota_wp",
