@@ -159,11 +159,19 @@ def run(ocd, results, context):
     # ----------------------------------------------------------------
 
     results.start("wp_ota_tbyb_reboot")
-    print(f"  Reconnecting OpenOCD (no reset, timeout={RECONNECT_TIMEOUT:.0f}s) ...")
-    try:
-        ocd.reconnect(timeout=RECONNECT_TIMEOUT)
-    except Exception as e:
-        results.abort("wp_ota_tbyb_reboot", f"OpenOCD reconnect failed: {e}")
+    last_err = None
+    for attempt in range(3):
+        print(f"  Reconnecting OpenOCD (attempt {attempt+1}/3, timeout={RECONNECT_TIMEOUT:.0f}s) ...")
+        try:
+            ocd.reconnect(timeout=RECONNECT_TIMEOUT)
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            print(f"  Attempt {attempt+1} failed: {e}")
+            time.sleep(2.0)
+    if last_err:
+        results.abort("wp_ota_tbyb_reboot", f"OpenOCD reconnect failed: {last_err}")
 
     results.passed("wp_ota_tbyb_reboot", "rebooted and RTT live")
 
