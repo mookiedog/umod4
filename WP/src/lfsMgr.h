@@ -15,13 +15,11 @@
 #include "lfs.h"
 #include "SdCardBase.h"
 
-// LittleFS geometry — shared constants used by lfsMgr, Logger, and others.
-// LFS_CACHE_SIZE must divide LFS_BLOCK_SIZE. Kept smaller than the block size
-// to limit per-file heap allocation (each lfs_file_open malloc's one cache buffer).
+// LittleFS geometry. LFS is restricted to chunk 0 of the SD card (~60 MiB on
+// a 64 GB card). Only config files and log metadata live here — bulk log data
+// goes to raw LogStore chunks. With under 100 KB of actual data in LFS,
+// allocator scans are sub-second regardless of these settings.
 #define LFS_BLOCK_SIZE  16384
-
-// Experiments show that increasing LFS_CACHE_SIZE to 16384 improved large file downloads
-// by a mere 2%.
 #define LFS_CACHE_SIZE  4096
 
 // Filesystem state
@@ -56,10 +54,10 @@ extern sd_perf_stats_t sd_perf_stats;
 void startFileSystem();
 void sd_shutdown_for_reboot(void);
 
-// Acquire the LittleFS mutex without releasing it.
-// Call before raw SD sector operations that must not race with active LittleFS I/O.
-// No unlock is needed if the caller is about to reboot.
-void lfs_lock(void);
+// Acquire/release the SD card mutex. All SD card access (both LFS and raw
+// sector I/O) must go through this lock to prevent bus collisions.
+void sd_lock(void);
+void sd_unlock(void);
 
 // Mount/unmount callbacks for decoupled Logger integration
 typedef bool (*lfs_mount_cb_t)(lfs_t* lfs);

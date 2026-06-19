@@ -228,6 +228,7 @@ add_executable(${PROJECT_NAME}
     src/Gps.cpp
     src/malloc_lock.cpp
     src/lfsMgr.cpp
+    src/LogStore.cpp
     src/Logger.cpp
     src/main.cpp
     src/NeoPixelConnect.cpp
@@ -285,6 +286,7 @@ set_source_files_properties(
     src/fs_custom.cpp
     src/Gps.cpp
     src/lfsMgr.cpp
+    src/LogStore.cpp
     src/Logger.cpp
     src/main.cpp
     src/NetworkManager.cpp

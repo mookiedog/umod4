@@ -19,6 +19,7 @@
 #include "FlashWp.h"
 #include "Gps.h"
 #include "lfsMgr.h"
+#include "LogStore.h"
 #include "log_ids.h"
 #include "Logger.h"
 #include "NeoPixelConnect.h"
@@ -601,9 +602,19 @@ void boot_system(void* args)
     // Log the reset reason captured at the top of main() before anything cleared it.
     logger->logData(LOGID_WP_RESET_REASON_TYPE_U16, LOGID_WP_RESET_REASON_DLEN, (uint8_t*)&wp_reset_reason);
 
+    // Create LogStore (manages raw log partitions outside LFS)
+    static LogStore s_logStore;
+    logStore = &s_logStore;
+
     // Register Logger as the filesystem mount/unmount listener
     lfs_register_mount_callbacks(
         [](lfs_t* lfs) -> bool {
+            // Init LogStore first — it scans .meta files and builds the
+            // free-chunk bitmap.  Logger needs it to create new logs.
+            if (!logStore->init(lfs, sdCard)) {
+                printf("LogStore init failed\n");
+                return false;
+            }
             if (!logger->init(lfs)) {
                 logger->deinit();
                 return false;

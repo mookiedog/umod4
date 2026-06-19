@@ -2,6 +2,7 @@
 
 #include "umod4_WP.h"
 #include "lfsMgr.h"
+#include "LogStore.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "SdCardSDIO.h"
@@ -38,12 +39,10 @@ struct lfs_config lfs_cfg;
 
 sd_perf_stats_t sd_perf_stats = {};
 
-// LittleFS has a serious problem where worst case write times can be extremely long (minutes!)
-// apparently due to having to scan the entire disk when it needs to find free blocks.
-// See: https://github.com/littlefs-project/littlefs/issues/75#issuecomment-410065792
+// LFS is restricted to chunk 0 of the SD card. Bulk log data bypasses LFS
+// entirely via LogStore. See doc/chunked-log-storage-design.md.
 
-// littlefs needs these 4 "C" routines to be defined so that it can work with a block-based
-// flash-based device:
+// LFS callbacks for SD card sector I/O:
 int lfs_read(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, void *buffer, lfs_size_t size_bytes);
 int lfs_prog(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, const void *buffer, lfs_size_t size_bytes);
 int lfs_erase(const struct lfs_config *c, lfs_block_t block_num);
@@ -51,8 +50,8 @@ int lfs_sync(const struct lfs_config *c);
 
 // This struct contains everything that littlefs needs to work with a mounted filesystem.
 lfs_t lfs;
-// FreeRTOS semaphore for LittleFS locking (instead of pico_sync mutex which uses event groups)
-SemaphoreHandle_t lfs_semaphore;
+// FreeRTOS mutex serializing all SD card access (LFS and raw LogStore I/O)
+SemaphoreHandle_t sd_mutex;
 bool lfs_mounted = false;  // Track whether filesystem is successfully mounted
 
 // --------------------------------------------------------------------------------------------
@@ -165,28 +164,30 @@ int lfs_sync(const struct lfs_config *c)
 }
 
 // --------------------------------------------------------------------------------------------
-int lfs_mutex_take(const struct lfs_config *c)
+int sd_mutex_take(const struct lfs_config *c)
 {
-    // Use FreeRTOS semaphore instead of pico_sync mutex
-    // (pico_sync mutex uses event groups which fail in ISR context)
-    if (xSemaphoreTake(lfs_semaphore, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(sd_mutex, portMAX_DELAY) == pdTRUE) {
         return 0;
     }
     return -1;
 }
 
 // --------------------------------------------------------------------------------------------
-int lfs_mutex_give(const struct lfs_config *c)
+int sd_mutex_give(const struct lfs_config *c)
 {
-    // Use FreeRTOS semaphore
-    xSemaphoreGive(lfs_semaphore);
+    xSemaphoreGive(sd_mutex);
     return 0;
 }
 
 // --------------------------------------------------------------------------------------------
-void lfs_lock(void)
+void sd_lock(void)
 {
-    xSemaphoreTake(lfs_semaphore, portMAX_DELAY);
+    xSemaphoreTake(sd_mutex, portMAX_DELAY);
+}
+
+void sd_unlock(void)
+{
+    xSemaphoreGive(sd_mutex);
 }
 
 // ----------------------------------------------------------------------------------
@@ -234,19 +235,12 @@ bool comingOnline(SdCardBase* sdCard)
         return false;
     }
 
-    // Configure LittleFS
-    // LittleFS has well-known problems when used with large flash devices like SD Cards.
-    // The issue is that write operations can take literally minutes if the system
-    // has poor configuration settings. Optimal configuration settings can make this
-    // better, but not fix it totally.
-
-    // Large blocks are the first line of defence in keeping LittleFS from disappearing during write operations.
-    // LFS_CACHE_SIZE comes from lfsMgr.h (shared with Logger and others)
+    // Configure LittleFS for chunk 0 only. Bulk log data bypasses LFS
+    // entirely (see LogStore). LFS handles only config files and log
+    // metadata — under 100 KB of data in a ~60 MiB partition.
     const uint32_t LFS_LOOKAHEAD_SIZE_BITS  = 8192;
 
-    // Statically allocate the main read/prog/lookahead buffers.
-    // Avoids repeated heap malloc/free at mount time which fragments the heap.
-    // Sizes: read_buf=4KB, prog_buf=4KB, lookahead_buf=1KB → 9KB BSS, zero heap.
+    // Statically allocated buffers (BSS, no heap).
     static uint8_t global_read_buf[LFS_CACHE_SIZE];
     static uint8_t global_prog_buf[LFS_CACHE_SIZE];
     static uint8_t lookahead_buf[LFS_LOOKAHEAD_SIZE_BITS/8];
@@ -254,17 +248,20 @@ bool comingOnline(SdCardBase* sdCard)
     lfs_cfg.prog_buffer = global_prog_buf;
     lfs_cfg.lookahead_buffer = lookahead_buf;
 
-    lfs_cfg.lookahead_size = LFS_LOOKAHEAD_SIZE_BITS;   // This is the number of bits in the lookahead table.
-    lfs_cfg.metadata_max  = 2048;                       // keep this much smaller than block size (default)
-
-    // These settings do not really affect write performance:
-    lfs_cfg.read_size = 512;                            // SD sector size
-    lfs_cfg.prog_size = 512;                            // SD sector size
+    lfs_cfg.lookahead_size = LFS_LOOKAHEAD_SIZE_BITS;
+    lfs_cfg.metadata_max  = 2048;
+    lfs_cfg.read_size = 512;
+    lfs_cfg.prog_size = 512;
     lfs_cfg.block_size = LFS_BLOCK_SIZE;
     lfs_cfg.cache_size = LFS_CACHE_SIZE;
 
-    // Calculate block count (use 64-bit to avoid overflow)
-    lfs_cfg.block_count = ((uint64_t)sectorCount * sectorSize) / LFS_BLOCK_SIZE;
+    // Restrict LFS to chunk 0 only. The rest of the card is managed by
+    // LogStore as raw log partitions. See doc/chunked-log-storage-design.md.
+    // LFS gets chunk 0 only. Chunk size is card-dependent (runtime), but
+    // we need block_count at mount time before LogStore is initialized.
+    // Use the same arithmetic: total_sectors / NUM_CHUNKS = sectors per chunk.
+    uint32_t chunk0_sectors = sectorCount / LOGSTORE_NUM_CHUNKS;
+    lfs_cfg.block_count = (chunk0_sectors * 512) / LFS_BLOCK_SIZE;
 
     printf("Filesystem Configuration\n");
     printf("  SD Card: %u sectors x 512 bytes = %.1f GB\n",
@@ -281,16 +278,16 @@ bool comingOnline(SdCardBase* sdCard)
     // See https://github.com/joltwallet/esp_littlefs/issues/211#issuecomment-2585285239
     lfs_cfg.block_cycles = -1;
 
-    // Create FreeRTOS semaphore for LittleFS locking (once only)
-    // (don't use pico_sync mutex - it uses event groups which fail in ISR context)
-    if (lfs_semaphore == NULL) {
+    // Create SD card mutex (once only). Serializes all SD card access:
+    // both LFS internal I/O and LogStore raw sector operations.
+    if (sd_mutex == NULL) {
         static StaticSemaphore_t s_mutex_buf;
-        lfs_semaphore = xSemaphoreCreateMutexStatic(&s_mutex_buf);
-        configASSERT(lfs_semaphore != NULL);
+        sd_mutex = xSemaphoreCreateMutexStatic(&s_mutex_buf);
+        configASSERT(sd_mutex != NULL);
     }
 
-    lfs_cfg.lock = lfs_mutex_take;
-    lfs_cfg.unlock = lfs_mutex_give;
+    lfs_cfg.lock = sd_mutex_take;
+    lfs_cfg.unlock = sd_mutex_give;
 
     // Attempt to mount an existing filesystem
     int32_t mountAttempts = 1;

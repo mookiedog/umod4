@@ -1,6 +1,7 @@
 #include "pico/stdlib.h"
 #include "pico/sync.h"
 #include "Logger.h"
+#include "LogStore.h"
 #include "lfsMgr.h"
 #include "umod4_WP.h"
 #include "log_ids.h"
@@ -53,9 +54,11 @@ Logger::Logger(uint8_t* _buffer, int32_t _size, uint8_t* _write_buffer)
 // ----------------------------------------------------------------------------------
 void Logger::deinit()
 {
+    if (logStore && logStore->getActiveLogNumber() >= 0) {
+        logStore->closeActiveLog();
+    }
     lfs = nullptr;
     memset(logName, 0, sizeof(logName));
-    memset(&logf, 0, sizeof(logf));
 
     if (dbg) printf("%s: Logging is disabled\n", __FUNCTION__);
 }
@@ -63,128 +66,35 @@ void Logger::deinit()
 // ----------------------------------------------------------------------------------
 bool Logger::init(lfs_t* _lfs)
 {
-    if (!_lfs) {
+    if (!_lfs || !logStore) {
         return false;
     }
 
-    int32_t err = getDiskInfo(_lfs);
-    bool ok = (err == 0);
-    if (ok) {
-        lfs = _lfs;
-    }
-
-    return ok;
-}
-
-// ----------------------------------------------------------------------------------
-int32_t Logger::getDiskInfo(lfs_t* _lfs)
-{
-    int32_t err = lfs_fs_stat(_lfs, &fsinfo);
-    if (err) {
-        printf("%s: Unable to stat the filesystem: err=%d\n", __FUNCTION__, err);
-    }
-    else {
-        printf("Filesystem information:\n");
-        printf("  Disk Version: %d\n", fsinfo.disk_version);
-        float size = ((float)fsinfo.block_count * (float)fsinfo.block_size) / 1000000000.0;
-        printf("  Disk Size: %.1f gigabytes (%d blocks of %d bytes per block)\n",
-            size,
-            fsinfo.block_count,
-            fsinfo.block_size
-        );
-        printf("  Max file name length: %d bytes\n", fsinfo.name_max);
-        printf("  Max file length: %d bytes\n", fsinfo.file_max);
-    }
-
-    return err;
+    lfs = _lfs;
+    printf("Logger: LogStore has %lu free chunks\n",
+           (unsigned long)logStore->getFreeChunks());
+    return true;
 }
 
 
 // ----------------------------------------------------------------------------------
-// The log files we create will have the form:
-//   "run_xx.um4"
-// where xx is up to a 5 digit decimal integer in the range 0 to 99999 (no leading zeroes)
 bool Logger::openNewLog()
 {
-    uint16_t id;
-    lfs_file_t fp;
-    lfs_dir_t dir;
-    struct lfs_info info;
-    int32_t lfs_err;
-    int32_t len;
-    const char* path="/";
-    const char* prefix = "log_";
-    uint32_t prefixLen = strlen(prefix);
-    const char* suffix = ".um4";
-    uint32_t suffixLen = strlen(suffix);
-
-    lfs_err = lfs_dir_open(lfs, &dir, path);
-    if (lfs_err < 0) {
-        printf("unable to open directory %s\n", path);
-    }
-    else {
-        // Scan through every file in the directory
-        bool found = false;
-        uint32_t maxValue = 0;
-        do {
-            uint32_t size;
-            lfs_err = lfs_dir_read(lfs, &dir, &info);
-            if (lfs_err > 0) {
-                if (info.type == LFS_TYPE_REG) {
-                    uint32_t value;
-
-                    // Check if this name starts with the right prefix
-                    if (strncmp(prefix, info.name, prefixLen) == 0) {
-                        // Yes! Now make sure that we only see decimal digits up to a '.' character
-                        char* p = &info.name[prefixLen];
-                        uint32_t digitCount = 0;
-                        uint32_t value = 0;
-                        while ((*p>='0') && (*p<='9')) {
-                            digitCount++;
-                            value = (value*10) + (*p-'0');
-                            p++;
-                        }
-
-                        // Pointer p is now pointing at the first non-digit char of the file name
-                        // We are expecting that it should point at the suffix
-                        if ((digitCount >= 1) && (digitCount<=5) && (strncmp(p, suffix, suffixLen)==0)) {
-                            // We found a valid logfile:
-                            //      - the expected prefix,
-                            //      - followed by a numeric specifier between 1 and 5 digits long,
-                            //      - followed by the proper suffix
-                            found = true;
-                            if (value > maxValue) {
-                                maxValue = value;
-                            }
-                        }
-                    }
-                }
-            }
-        } while (lfs_err > 0);
-        lfs_dir_close(lfs, &dir);
-
-        if (!found) {
-            maxValue = 0;
-        }
-
-        snprintf(logName, sizeof(logName), "%s%d%s", prefix, maxValue+1, suffix);
-        printf("%s: Creating logfile with temporary name \"%s\"\n", __FUNCTION__, logName);
-        logf_cfg = {};
-        logf_cfg.buffer = logf_cache;
-        lfs_err = lfs_file_opencfg(lfs, &logf, logName, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_RDWR, &logf_cfg);
-        if (lfs_err != LFS_ERR_OK) {
-            printf("%sw: Unable to open new logfile\"%s\": err=%d\n", __FUNCTION__, logName, lfs_err);
-        } else {
-            // Notify server that new log file is ready for download
-            // (Previous file is now closed and complete, ready for transfer)
-            if (wifiMgr != nullptr) {
-                printf("%s: Triggering server check-in for new log file\n", __FUNCTION__);
-                wifiMgr->triggerCheckIn();
-            }
-        }
+    int32_t log_num = logStore->createLog();
+    if (log_num < 0) {
+        printf("%s: LogStore createLog failed\n", __FUNCTION__);
+        return false;
     }
 
-    return (lfs_err == LFS_ERR_OK);
+    snprintf(logName, sizeof(logName), "log_%ld.um4", (long)log_num);
+    printf("%s: Created %s (LogStore log %ld)\n", __FUNCTION__, logName, (long)log_num);
+
+    if (wifiMgr != nullptr) {
+        printf("%s: Triggering server check-in for new log file\n", __FUNCTION__);
+        wifiMgr->triggerCheckIn();
+    }
+
+    return true;
 }
 
 
@@ -317,38 +227,19 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* 
 int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
 {
     absolute_time_t t0 = get_absolute_time();
-    int32_t bytesWritten = lfs_file_write(lfs, &logf, buf, len);
+    int32_t bytesWritten = logStore->write(buf, len);
     absolute_time_t elapsed = get_absolute_time() - t0;
     static uint32_t writeCount;
 
     writeCount++;
-    #if 1
-    printf("%s: %d: lfs_file_write() time: %lld uSec, bytes written: %d (%.1f KB/sec)\n",
-           __FUNCTION__, writeCount, elapsed, bytesWritten, ((1000000.0f / elapsed) * bytesWritten) / 1024.0f);
-    #endif
+    printf("%s: %d: logStore->write() time: %lld uSec, bytes written: %d (%.1f KB/sec)\n",
+           __FUNCTION__, writeCount, elapsed, bytesWritten,
+           elapsed > 0 ? ((1000000.0f / elapsed) * bytesWritten) / 1024.0f : 0.0f);
 
     totalWriteEvents += 1;
     totalTimeWriting += elapsed;
-    if (elapsed < minTimeWriting) {
-        minTimeWriting = elapsed;
-    }
-    if (elapsed > maxTimeWriting) {
-        maxTimeWriting = elapsed;
-        if (maxTimeWriting > 0) {
-            #if 0
-            printf("%s: New max write time: %lld uSec\n", __FUNCTION__, maxTimeWriting);
-            #endif
-            uint16_t mSecs;
-            if (elapsed > 65535000) {
-                mSecs = 65535;
-            }
-            else {
-                mSecs = (uint32_t)elapsed / 1000;
-            }
-            // Nuke this for now: it makes the log decoding more complicated
-            //logData(LOG_WR_TIME, mSecs);
-        }
-    }
+    if (elapsed < minTimeWriting) minTimeWriting = elapsed;
+    if (elapsed > maxTimeWriting) maxTimeWriting = elapsed;
 
     return bytesWritten;
 }
@@ -357,95 +248,37 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
 int32_t Logger::syncLog()
 {
     absolute_time_t t0 = get_absolute_time();
-    int32_t err = lfs_file_sync(lfs, &logf);
+    bool ok = logStore->syncMetadata();
     absolute_time_t elapsed = get_absolute_time() - t0;
-    printf("%s: lfs_file_sync() time: %lld uSec\n", __FUNCTION__, elapsed);
+    if (elapsed < minTimeSyncing) minTimeSyncing = elapsed;
+    if (elapsed > maxTimeSyncing) maxTimeSyncing = elapsed;
+
+    printf("%s: syncMetadata(): %lld uSec (%lld/%lld)\n", __FUNCTION__, elapsed, minTimeSyncing, maxTimeSyncing);
 
     totalSyncEvents += 1;
     totalTimeSyncing += elapsed;
-    if (elapsed < minTimeSyncing) {
-        minTimeSyncing = elapsed;
-    }
-    if (elapsed > maxTimeSyncing) {
-        maxTimeSyncing = elapsed;
-        if (maxTimeSyncing > 0) {
-            #if 0
-            printf("%s: New max sync time: %lld uSec\n", __FUNCTION__, maxTimeSyncing);
-            #endif
-            uint16_t mSecs;
-            if (elapsed > 65535000) {
-                mSecs = 65535;
-            }
-            else {
-                mSecs = (uint32_t)elapsed / 1000;
-            }
-            // Nuke this for now: it makes the log decoding more complicated
-            //logData(LOG_SYNC_TIME, mSecs);
-        }
-    }
+    if (elapsed < minTimeSyncing) minTimeSyncing = elapsed;
+    if (elapsed > maxTimeSyncing) maxTimeSyncing = elapsed;
 
-    return err;
-}
-
-
-
-// Return number of bytes that should be written before fsync for optimal
-// streaming performance/robustness. LittleFS needs to copy block contents
-// to a new one if fsync is called mid-block, and doesn't persist file
-// contents until fsync is called.
-static uint32_t lfs_bytes_until_fsync(const struct lfs_config *lfs_cfg, lfs_file_t* fp)
-{
-    if (fp == nullptr) {
-        return 0;
-    }
-
-    uint32_t file_pos = fp->pos;
-    uint32_t block_size = lfs_cfg->block_size;
-
-    // first block exclusively stores data:
-    // https://github.com/littlefs-project/littlefs/issues/564#issuecomment-2555733922
-    if (file_pos < block_size) {
-        return block_size - file_pos;
-    }
-
-    // see https://github.com/littlefs-project/littlefs/issues/564#issuecomment-2363032827
-    // n = (N - w/8 ( popcount( N/(B - 2w/8) - 1) + 2))/(B - 2w/8))
-    // off = N - ( B - 2w/8 ) n - w/8popcount( n )
-    #define BLOCK_INDEX(N, B) \
-    (N - sizeof(uint32_t) * (__builtin_popcount(N/(B - 2 * sizeof(uint32_t)) -1) + 2))/(B - 2 * sizeof(uint32_t))
-
-    #define BLOCK_OFFSET(N, B, n) \
-    (N - (B - 2*sizeof(uint32_t)) * n - sizeof(uint32_t) * __builtin_popcount(n))
-
-    uint32_t block_index = BLOCK_INDEX(file_pos, block_size);
-    uint32_t block_offset = BLOCK_OFFSET(file_pos, block_size, block_index);
-
-    #undef BLOCK_INDEX
-    #undef BLOCK_OFFSET
-
-    return block_size - block_offset;
+    return ok ? 0 : -1;
 }
 
 
 // ----------------------------------------------------------------------------------
+// Minimum bytes before flushing to SD (must be multiple of 512)
+#define FLUSH_THRESHOLD 4096
+
 void Logger::logTask()
 {
     static uint32_t totalByteCount;
 
-    enum {UNUSED, UNMOUNTED, OPEN_LOG, BOOT_SYNC, RENAME_TMPLOG, CALC_WR_SIZE, WAIT_FOR_DATA, WRITE_DATA, WRITE_FAILURE} state, state_prev;
-    const char* decodeState[]={
-        "UNUSED", "UNMOUNTED", "OPEN_LOG", "BOOT_SYNC", "RENAME_TMPLOG", "CALC_WR_SIZE", "WAIT_FOR_DATA", "WRITE_DATA", "WRITE_FAILURE"
-    };
+    enum {UNMOUNTED, OPEN_LOG, BOOT_SYNC, WAIT_FOR_DATA, WRITE_DATA, WRITE_FAILURE} state, state_prev;
 
-    uint32_t bytesToWriteBeforeSyncing;
-    int32_t logLength = 0;
-
-    state_prev = UNUSED;
+    state_prev = UNMOUNTED;
     state = UNMOUNTED;
 
     deinit();
 
-    // Clear our stats
     totalTimeWriting = maxTimeWriting = 0;
     minTimeWriting = ~0;
     totalWriteEvents = 0;
@@ -455,7 +288,6 @@ void Logger::logTask()
 
     while (1) {
         if (!lfs) {
-            // There are no files to close or anything like that because the filesystem disappeared on us and is already gone
             state = UNMOUNTED;
         }
 
@@ -465,146 +297,110 @@ void Logger::logTask()
 
         switch (state) {
         case UNMOUNTED:
-            // Our lfs pointer will become non-NULL if an SD card is detected, and a filesystem gets mounted
             if (lfs) {
-                // The filesystem just got mounted.
-                // The first LFS write will trigger a garbage collection, which can be incredibly expensive.
-                // We hide some or all of that cost by immediately asking for a GC before
-                // before the initial LFS write operation would trigger it.
-                printf("%s: Garbage-collecting LFS\n", __FUNCTION__);
-                uint32_t t0 = time_us_32();
-                int err = lfs_fs_gc(lfs);
-                printf("%s: Garbage collection took %d mSec\n", __FUNCTION__, (time_us_32()-t0)/1000);
                 state = OPEN_LOG;
-            }
-            else {
+            } else {
                 vTaskDelay(pdMS_TO_TICKS(1000));
             }
             break;
 
         case OPEN_LOG:
-            // Create a new logfile, either with a tmp-name or a timestamp-name
-            {
-                bool success = openNewLog();
-                if (success) {
-                    state = BOOT_SYNC;
-                }
-                else {
-                    // fixme: not sure this is right
-                    state = UNMOUNTED;
-                }
+            if (openNewLog()) {
+                state = BOOT_SYNC;
+            } else {
+                state = UNMOUNTED;
             }
-
             break;
 
         case BOOT_SYNC:
-            // Immediately write and sync whatever boot header data is in the buffer
-            // (log version + WP reset reason). This ensures that data survives even
-            // if we crash again before accumulating a full block.
-            // Use the same boundary calculation as CALC_WR_SIZE so we never ask
-            // for more bytes than fit in write_buffer (one LFS block); any excess
-            // boot data is handled by subsequent CALC_WR_SIZE cycles.
+            // Flush boot header data (log version + reset reason) immediately.
+            // Wait until we have at least one sector of data.
             {
                 int32_t available = inUse();
-                if (available > 0) {
-                    int32_t to_sync = lfs_bytes_until_fsync(&lfs_cfg, &logf);
-                    bytesToWriteBeforeSyncing = (available < to_sync) ? available : to_sync;
+                if (available >= 512) {
+                    int32_t toWrite = available & ~511;     // round down to sector boundary
+                    if (toWrite > (int32_t)LFS_BLOCK_SIZE)
+                        toWrite = LFS_BLOCK_SIZE;
                     state = WRITE_DATA;
-                }
-                else {
-                    state = CALC_WR_SIZE;
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(100));
                 }
             }
-            break;
-
-        case CALC_WR_SIZE:
-            // Do the calculation that tells us how many bytes we should write before sync'ing
-            bytesToWriteBeforeSyncing = lfs_bytes_until_fsync(&lfs_cfg, &logf);
-            //printf("%s: bytes to write before next sync: %d\n", __FUNCTION__, bytesToWriteBeforeSyncing);
-            state = WAIT_FOR_DATA;
             break;
 
         case WAIT_FOR_DATA:
-            logLength = inUse();
-            if (logLength >= bytesToWriteBeforeSyncing) {
-                state = WRITE_DATA;
-            }
-            else {
-                vTaskDelay(pdMS_TO_TICKS(250));
+            {
+                int32_t available = inUse();
+                if (available >= FLUSH_THRESHOLD) {
+                    state = WRITE_DATA;
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(250));
+                }
             }
             break;
 
         case WRITE_DATA:
             {
-                // We copy the block to be written to our internal write buffer just in case it is split
-                // across the end of the circular buffer. This allows us to always be able to write it
-                // in a single LFS write call. It is way faster to copy RAM than to call lfs write twice.
-                int32_t totalToWrite = bytesToWriteBeforeSyncing;
-                char c='A';
+                int32_t available = inUse();
+                int32_t totalToWrite = available & ~511;    // round down to sector boundary
+                if (totalToWrite > (int32_t)LFS_BLOCK_SIZE)
+                    totalToWrite = LFS_BLOCK_SIZE;
+                if (totalToWrite < 512) {
+                    state = WAIT_FOR_DATA;
+                    break;
+                }
+
                 bool err = false;
 
+                // Copy from circular buffer to write_buff (may span the wrap point)
                 uint8_t* tP = tailP;
                 int32_t bytesToEndOfBuffer = (lastBufferP - tP + 1);
                 int32_t len = (bytesToEndOfBuffer < totalToWrite) ? bytesToEndOfBuffer : totalToWrite;
-                int32_t len_remaining = totalToWrite-len;
-                printf("%s: memcpy(1) %d bytes from 0x%08X..0x%08X\n", __FUNCTION__, len, tP, tP+len-1);
+                int32_t len_remaining = totalToWrite - len;
                 memcpy(write_buff, tP, len);
                 if (len_remaining == 0) {
-                    tP = tP+len;
-                }
-                else {
-                    // Copy the second half here:
-                    printf("%s: memcpy(2) %d bytes from 0x%08X..0x%08X\n", __FUNCTION__, len_remaining, buffer, buffer+len_remaining-1);
-                    memcpy(write_buff+len, buffer, len_remaining);
-                    tP = buffer+len_remaining;
+                    tP = tP + len;
+                } else {
+                    memcpy(write_buff + len, buffer, len_remaining);
+                    tP = buffer + len_remaining;
                 }
 
-                // Now that all the data is in the write_buff, we can free it from the circular buffer
+                // Release data from circular buffer
                 tailP = tP;
 
-                // Write write_buff in one single write operation
+                // Write to raw SD sectors via LogStore
                 int32_t bytesWritten = writeChunk(write_buff, totalToWrite);
-                if (bytesWritten < len) {
-                    printf("%s: Write %d bytes failed: %d bytes written\n", __FUNCTION__, len, bytesWritten);
+                if (bytesWritten < 0) {
+                    printf("%s: Write %d bytes failed\n", __FUNCTION__, totalToWrite);
                     state = WRITE_FAILURE;
                     err = true;
                 }
 
                 if (!err) {
-                    // The write[s] succeeded, but the way LittleFS works, the data that got written
-                    // is not actually committed to flash until a sync succeeds (or the file gets closed):
-                    int32_t lfs_err = syncLog();
-
-                    if (lfs_err == LFS_ERR_OK) {
-                        // Print some stats every megabyte written
-                        totalByteCount += bytesToWriteBeforeSyncing;
-                        if (totalByteCount > (1024*1024)) {
-                            totalByteCount -= (1024*1024);
-                            printf("%s: Writes: min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeWriting, maxTimeWriting, totalTimeWriting/totalWriteEvents);
-                            printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n", __FUNCTION__, minTimeSyncing, maxTimeSyncing, totalTimeSyncing/totalSyncEvents);
+                    // Sync metadata to LFS (commits write offset)
+                    int32_t sync_err = syncLog();
+                    if (sync_err == 0) {
+                        totalByteCount += totalToWrite;
+                        if (totalByteCount > (1024 * 1024)) {
+                            totalByteCount -= (1024 * 1024);
+                            printf("%s: Writes: min: %llu uSec, max: %llu, avg: %llu\n",
+                                   __FUNCTION__, minTimeWriting, maxTimeWriting,
+                                   totalTimeWriting / totalWriteEvents);
+                            printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n",
+                                   __FUNCTION__, minTimeSyncing, maxTimeSyncing,
+                                   totalTimeSyncing / totalSyncEvents);
                         }
-                        // Proactively populate the lookahead buffer while idle, so the
-                        // next write finds free blocks without triggering an internal scan.
-                        absolute_time_t gc_t0 = get_absolute_time();
-                        lfs_fs_gc(lfs);
-                        printf("%s: lfs_fs_gc() time: %lld uSec\n", __FUNCTION__, (int64_t)(get_absolute_time() - gc_t0));
-                        // Calculate when to do the next sync:
-                        state = CALC_WR_SIZE;
-                    }
-                    else {
-                        printf("%s: syncLog() failed with error %d\n", __FUNCTION__, lfs_err);
+                        state = WAIT_FOR_DATA;
+                    } else {
+                        printf("%s: syncLog() failed\n", __FUNCTION__);
                         state = WRITE_FAILURE;
                     }
                 }
-
                 break;
             }
 
         case WRITE_FAILURE:
-            // ignore all errors
-            lfs_file_close(lfs, &logf);
-            // Delay before retrying: prevents hammering SDIO thousands of times/second
-            // if the SD card or SDIO bus is in a bad state (e.g. after a false CMD13 timeout).
+            logStore->closeActiveLog();
             vTaskDelay(pdMS_TO_TICKS(1000));
             state = OPEN_LOG;
             break;

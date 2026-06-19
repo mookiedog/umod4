@@ -12,6 +12,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "lfsMgr.h"
+#include "LogStore.h"
 #include "file_io_task.h"
 #include "ota_flash_task.h"
 #include "FlashWp.h"
@@ -143,125 +144,133 @@ void generate_api_info_json(char* buffer, size_t size)
  * Build JSON response for /api/list
  * Called from fs_open_custom()
  */
+// Context for LogStore enumerate callback used by generate_api_list_json
+struct api_list_ctx {
+    char*   ptr;
+    size_t  remaining;
+    bool    first;
+    int     count;
+};
+
+static void api_list_log_cb(uint32_t log_number, uint32_t total_bytes, bool active, void* ctx)
+{
+    auto* c = static_cast<api_list_ctx*>(ctx);
+    if (c->remaining < 100) return;
+
+    if (!c->first) { *c->ptr++ = ','; c->remaining--; }
+    c->first = false;
+    c->count++;
+
+    int len = snprintf(c->ptr, c->remaining,
+                       "\n  {\"filename\": \"log_%lu.um4\", \"size\": %lu}",
+                       (unsigned long)log_number, (unsigned long)total_bytes);
+    if (len > 0 && len < (int)c->remaining) {
+        c->ptr += len;
+        c->remaining -= len;
+    }
+}
+
 void generate_api_list_json(char* buffer, size_t size)
 {
-    // Check if filesystem is mounted
     if (!lfs_mounted) {
         snprintf(buffer, size,
                  "{\"error\": \"Filesystem not mounted\", \"files\": []}");
         return;
     }
 
-    uint32_t remaining_words = uxTaskGetStackHighWaterMark(NULL);
-    if (remaining_words < 256) {
-        printf("*** WARNING: tcpip stack only has %lu words remaining\n", remaining_words);
-    }
-
-    // Start JSON array
     char* ptr = buffer;
     size_t remaining = size;
     int len = snprintf(ptr, remaining, "{\"files\": [");
     ptr += len;
     remaining -= len;
 
-    // Scan SD card root directory for all files
+    bool first = true;
+
+    // List LFS files (config, assets) — skip .meta files (LogStore internal)
     lfs_dir_t dir;
     int err = lfs_dir_open(&lfs, &dir, "/");
     if (err == 0) {
         struct lfs_info info;
-        bool first = true;
-        int file_count = 0;
-
         while (lfs_dir_read(&lfs, &dir, &info) > 0) {
-            // Skip directories and non-regular files
-            if (info.type != LFS_TYPE_REG) {
+            if (info.type != LFS_TYPE_REG)
                 continue;
-            }
+            const char* dot = strrchr(info.name, '.');
+            if (dot && strcmp(dot, ".meta") == 0)
+                continue;
 
-            // Add comma separator (except for first entry)
-            if (!first) {
-                if (remaining < 2) break;  // Not enough space
-                *ptr++ = ',';
-                remaining--;
-            }
+            if (!first) { if (remaining < 2) break; *ptr++ = ','; remaining--; }
             first = false;
-            file_count++;
 
-            // Add file entry: {"filename": "...", "size": ...}
-            // Reserve 5 bytes for closing "\n]}" to ensure valid JSON
-            if (remaining < 100) {
-                // Not enough space for another entry + closing, stop here
-                printf("api_list: Buffer nearly full after %d files, stopping\n", file_count);
-                break;
-            }
-
+            if (remaining < 100) break;
             len = snprintf(ptr, remaining,
                           "\n  {\"filename\": \"%s\", \"size\": %lu}",
                           info.name, (unsigned long)info.size);
-
-            if (len >= (int)remaining) {
-                // snprintf truncated - should not happen due to check above
-                printf("api_list: Entry truncated after %d files\n", file_count);
-                break;
-            }
-
-            ptr += len;
-            remaining -= len;
+            if (len > 0 && len < (int)remaining) { ptr += len; remaining -= len; }
         }
-
         lfs_dir_close(&lfs, &dir);
-    } else {
-        printf("api_list: Failed to open root directory: %d\n", err);
     }
 
-    // Close JSON array - we reserved space for this above
-    len = snprintf(ptr, remaining, "\n]}");
-    if (len >= (int)remaining) {
-        // Should never happen due to our reservation, but handle it anyway
-        printf("api_list: WARNING - Not enough space for closing bracket\n");
-        // Ensure valid JSON by overwriting end of buffer
-        if (size >= 4) {
-            strcpy(buffer + size - 4, "\n]}");
-        }
+    // List LogStore logs — presented as log_N.um4
+    if (logStore) {
+        api_list_ctx ctx = { ptr, remaining, first, 0 };
+        logStore->enumerate(api_list_log_cb, &ctx);
+        ptr = ctx.ptr;
+        remaining = ctx.remaining;
     }
+
+    snprintf(ptr, remaining, "\n]}");
 }
 
 /**
  * Build JSON response for /api/delete/<filename>
  * Called from fs_open_custom()
  */
+// Parse "log_42.um4" → 42, or return -1 if not a log filename
+static int32_t parse_log_number(const char* filename)
+{
+    if (strncmp(filename, "log_", 4) != 0) return -1;
+    const char* p = filename + 4;
+    char* end;
+    unsigned long n = strtoul(p, &end, 10);
+    if (end == p || strcmp(end, ".um4") != 0) return -1;
+    return (int32_t)n;
+}
+
 void generate_api_delete_json(char* buffer, size_t size, const char* filename)
 {
-    // Check if filesystem is mounted
     if (!lfs_mounted) {
         snprintf(buffer, size,
                  "{\"success\": false, \"error\": \"Filesystem not mounted\"}");
-        printf("api_delete: Filesystem not mounted\n");
         return;
     }
 
-    // Validate filename (prevent path traversal attacks)
     if (strchr(filename, '/') || strchr(filename, '\\') ||
         strcmp(filename, ".") == 0 || strcmp(filename, "..") == 0) {
         snprintf(buffer, size,
                  "{\"success\": false, \"error\": \"Invalid filename\"}");
-        printf("api_delete: Invalid filename '%s'\n", filename);
         return;
     }
 
-    // Request deletion via async task (with 5 second timeout)
-    // This ensures deletion happens in task context, not HTTP callback context
+    // LogStore logs are presented as log_N.um4 but stored as raw chunks
+    int32_t log_num = parse_log_number(filename);
+    if (log_num >= 0 && logStore) {
+        bool ok = logStore->deleteLog((uint32_t)log_num);
+        snprintf(buffer, size,
+                 "{\"success\": %s, \"filename\": \"%s\"}",
+                 ok ? "true" : "false", filename);
+        return;
+    }
+
+    // LFS file (config, assets, uploaded .uf2, etc.)
     file_delete_result_t result;
     bool success = file_delete_request_async(filename, 5000, &result);
 
     if (!success) {
         snprintf(buffer, size,
                  "{\"success\": false, \"error\": \"Delete request timed out\"}");
-        printf("api_delete: Delete request timed out for '%s'\n", filename);
         return;
     }
 
-    // Return result from async task
     if (result.success) {
         snprintf(buffer, size,
                  "{\"success\": true, \"filename\": \"%s\"}",
@@ -551,9 +560,9 @@ void generate_api_reformat_filesystem_json(char* buffer, size_t size)
         return;
     }
 
-    // Take the LFS mutex so no LittleFS operation can be in progress while we
+    // Take the SD mutex so no I/O can be in progress while we
     // destroy the superblock. Never released - we're rebooting.
-    lfs_lock();
+    sd_lock();
 
     // Destroy LittleFS superblock by zeroing the first 64 raw sectors.
     // LFS block size = 16 KB = 32 sectors; blocks 0 and 1 hold both superblock copies.
@@ -655,6 +664,38 @@ void generate_api_ping_json(char* buffer, size_t size)
  */
 extern char g_device_name[64];
 
+// Context for sd-info LogStore enumeration
+struct sd_info_ctx {
+    char*       ptr;
+    size_t      remaining;
+    bool        first;
+    const char* open_name;
+    uint64_t    used_bytes;
+};
+
+static void sd_info_log_cb(uint32_t log_number, uint32_t total_bytes, bool active, void* ctx)
+{
+    auto* c = static_cast<sd_info_ctx*>(ctx);
+    if (c->remaining < 120) return;
+
+    if (!c->first) { *c->ptr++ = ','; c->remaining--; }
+    c->first = false;
+    c->used_bytes += total_bytes;
+
+    char name[20];
+    snprintf(name, sizeof(name), "log_%lu.um4", (unsigned long)log_number);
+    bool is_open = (c->open_name[0] != '\0' && strcmp(name, c->open_name) == 0);
+
+    int len = snprintf(c->ptr, c->remaining,
+                       "\n    {\"name\": \"%s\", \"size\": %lu, \"open\": %s}",
+                       name, (unsigned long)total_bytes,
+                       is_open ? "true" : "false");
+    if (len > 0 && len < (int)c->remaining) {
+        c->ptr += len;
+        c->remaining -= len;
+    }
+}
+
 void generate_api_sd_info_json(char* buffer, size_t size)
 {
     if (!lfs_mounted) {
@@ -664,15 +705,10 @@ void generate_api_sd_info_json(char* buffer, size_t size)
         return;
     }
 
-    // Get filesystem geometry via lfs_fs_stat (fast, cached by LittleFS)
-    struct lfs_fsinfo fsinfo;
-    uint32_t total_mb = 0;
-    if (lfs_fs_stat(&lfs, &fsinfo) == 0) {
-        uint64_t total_bytes = (uint64_t)fsinfo.block_count * fsinfo.block_size;
-        total_mb = (uint32_t)(total_bytes / (1024 * 1024));
-    }
+    // Total card capacity from SD card
+    uint32_t total_mb = sdCard ? sdCard->getCapacityMB() : 0;
 
-    // Pass 1: sum file sizes to compute used space
+    // Sum LFS file sizes
     uint64_t used_bytes = 0;
     lfs_dir_t dir;
     if (lfs_dir_open(&lfs, &dir, "/") == 0) {
@@ -682,57 +718,55 @@ void generate_api_sd_info_json(char* buffer, size_t size)
         }
         lfs_dir_close(&lfs, &dir);
     }
-    uint32_t used_mb = (uint32_t)(used_bytes / (1024 * 1024));
 
-    // Get name of the currently-open log file (empty string if none)
     const char* open_name = get_current_log_name();
 
-    // Build JSON header
     char* ptr = buffer;
     size_t remaining = size;
     int len = snprintf(ptr, remaining,
                        "{\n"
                        "  \"device_name\": \"%s\",\n"
                        "  \"total_mb\": %lu,\n"
-                       "  \"used_mb\": %lu,\n"
                        "  \"open_file\": \"%s\",\n"
                        "  \"files\": [",
                        g_device_name,
                        (unsigned long)total_mb,
-                       (unsigned long)used_mb,
                        open_name);
     ptr += len;
     remaining -= len;
 
-    // Pass 2: scan directory to build file entries
+    // LFS files (skip .meta — those are LogStore internal)
+    bool first = true;
     if (lfs_dir_open(&lfs, &dir, "/") == 0) {
         struct lfs_info info;
-        bool first = true;
         while (lfs_dir_read(&lfs, &dir, &info) > 0) {
             if (info.type != LFS_TYPE_REG) continue;
-            if (remaining < 120) {
-                printf("api_sd_info: Buffer nearly full, truncating file list\n");
-                break;
-            }
-            if (!first) {
-                *ptr++ = ',';
-                remaining--;
-            }
+            const char* dot = strrchr(info.name, '.');
+            if (dot && strcmp(dot, ".meta") == 0) continue;
+            if (remaining < 120) break;
+            if (!first) { *ptr++ = ','; remaining--; }
             first = false;
-            bool is_open = (open_name[0] != '\0' &&
-                            strcmp(info.name, open_name) == 0);
             len = snprintf(ptr, remaining,
-                           "\n    {\"name\": \"%s\", \"size\": %lu, \"open\": %s}",
-                           info.name,
-                           (unsigned long)info.size,
-                           is_open ? "true" : "false");
-            ptr += len;
-            remaining -= len;
+                           "\n    {\"name\": \"%s\", \"size\": %lu, \"open\": false}",
+                           info.name, (unsigned long)info.size);
+            if (len > 0 && len < (int)remaining) { ptr += len; remaining -= len; }
         }
         lfs_dir_close(&lfs, &dir);
     }
 
-    snprintf(ptr, remaining, "\n  ]\n}");
+    // LogStore logs
+    if (logStore) {
+        sd_info_ctx ctx = { ptr, remaining, first, open_name, used_bytes };
+        logStore->enumerate(sd_info_log_cb, &ctx);
+        ptr = ctx.ptr;
+        remaining = ctx.remaining;
+        used_bytes = ctx.used_bytes;
+    }
+
+    // Insert used_mb — we now know the total including LogStore logs
+    // (Already emitted the header without used_mb; add it to the closing)
+    uint32_t used_mb = (uint32_t)(used_bytes / (1024 * 1024));
+    snprintf(ptr, remaining, "\n  ],\n  \"used_mb\": %lu\n}", (unsigned long)used_mb);
 }
 
 // No CGI handlers needed - APIs are served as virtual files via fs_open_custom()

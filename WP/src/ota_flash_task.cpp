@@ -252,6 +252,12 @@ static void ota_flash_task(void* params)
             if (flash_success) {
                 printf("OTA: Flash programming successful, target=0x%08lX\n",
                        (unsigned long)target_addr);
+
+                // Delete the .uf2 file now that it's been flashed
+                int del_err = lfs_remove(&lfs, request.uf2_path);
+                printf("OTA: Delete %s: %s\n", request.uf2_path,
+                       del_err == 0 ? "ok" : "failed");
+
                 vfy_printf("{\"wp_ota\":\"FLASH_DONE\",\"target\":\"0x%08lX\"}\n", (unsigned long)target_addr);
                 // Small delay: let VFY messages drain from the RTT buffer before
                 // prepare_for_reboot() suspends the scheduler and disables interrupts.

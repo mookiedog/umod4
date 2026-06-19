@@ -2,7 +2,6 @@
 #define LOGGER_H
 
 #include "FreeRTOS.h"
-//#include "queue.h"
 #include "task.h"
 
 #include "lfs.h"
@@ -10,13 +9,9 @@
 #include "lfsMgr.h"
 
 
-// The log buffer needs to be able to absorb incoming data while data in the
-// buffer is being written to the file system. The LittleFS file system can
-// be extremely slow under certain circumstances.
-// For the purposes of calculating how many bytes can be buffered before we
-// overflow, remember that there is a dedicated LFS_BLOCK_SIZE write buffer
-// *after* this buffer where data is extracted before writing to filesystem.
-// This buffer does not need to be a power of two.
+// Ring buffer for incoming log data. With LogStore, raw sector writes complete
+// in under 1ms, so this no longer needs to absorb multi-second LFS stalls.
+// Keeping it large for now; can be reduced once LogStore is proven.
 #define LOG_BUFFER_SIZE ((96*1024)-LFS_BLOCK_SIZE)
 
 class Logger {
@@ -43,22 +38,10 @@ class Logger {
     private:
         lfs_t* lfs;
         char logName[16];
-        bool tempName;
-        lfs_file_t logf;
-        lfs_file_config logf_cfg;           // config passed to lfs_file_opencfg
-        uint8_t logf_cache[LFS_CACHE_SIZE]; // static file cache: eliminates per-open malloc
-
-        struct lfs_fsinfo fsinfo;
 
         TaskHandle_t log_taskHandle;
 
-        int32_t getDiskInfo(lfs_t* _lfs);
-
         bool openNewLog();
-
-        // Once we know the date and time, the log file can be renamed from the temp name
-        // it was created with to a new name that contains a timestamp.
-        bool renameLog(const char* newName);
 
         uint8_t* buffer;
         int32_t bufferLen;
@@ -66,12 +49,9 @@ class Logger {
         volatile uint8_t* headP;        // needs to be volatile since RX32 ISR updates it
         uint8_t* tailP;
 
-        // This buffer is used to hold data from the circular buffer before calling lfs_write.
-        // The issue is if the data to be written as a chunk spans the end of the circular buffer.
-        // It is way cheaper to call memcpy twice than to call lfs_write twice
-        // so all writes get copied into a buffer where it is guaranteed we can write it with one call.
-        // Size is LFS_BLOCK_SIZE — matches the LittleFS block size for one-write-per-block efficiency.
-        uint8_t* write_buff;   // points to caller-allocated LFS_BLOCK_SIZE buffer
+        // Staging buffer for linearizing data from the circular buffer before
+        // writing to SD. Must be at least 512 bytes (one sector).
+        uint8_t* write_buff;
 
         // Hardware spinlock for protecting buffer access from both cores and ISR context
         spin_lock_t* bufferLock;

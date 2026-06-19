@@ -216,6 +216,7 @@ class Results:
 #  test_provisioning  Erases and reflashes WP; must run first so every
 #                     subsequent suite runs against known-good WP firmware.
 #  test_basic         WP/SD health checks; no external dependencies.
+#  test_logstore      LogStore FSCK error injection + verification.
 #  test_ep_swd        Verifies EP SWD connectivity; must precede test_ota_ep
 #                     (the OTA path uses SWD to program EP).
 #  test_wifi          Connects to WiFi and stores wp_ip in context; must
@@ -234,6 +235,7 @@ SUITES = [
     "suites.test_provisioning",
     "suites.test_config_migration",
     "suites.test_basic",
+    "suites.test_logstore",
     "suites.test_ep_swd",
     "suites.test_wifi",
     "suites.test_cleanup",

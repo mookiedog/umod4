@@ -1,6 +1,8 @@
 #include "VfyTask.h"
 #include "wp_rtt.h"
 #include "lfsMgr.h"
+#include "LogStore.h"
+#include "Logger.h"
 #include "umod4_WP.h"
 #include "swd_lock.h"
 #include "Swd.h"
@@ -330,6 +332,21 @@ static void cmd_filesystem_test_delete(const char* arg)
         vfy_printf("{\"filesystem_test_delete\":{\"state\":\"invalid_filename\"}}\n");
         return;
     }
+
+    // Route log_N.um4 to LogStore
+    if (logStore && strncmp(arg, "log_", 4) == 0) {
+        const char* p = arg + 4;
+        char* end;
+        unsigned long n = strtoul(p, &end, 10);
+        if (end != p && strcmp(end, ".um4") == 0) {
+            bool ok = logStore->deleteLog((uint32_t)n);
+            vfy_printf("{\"filesystem_test_delete\":{\"state\":\"%s\",\"file\":\"%s\"}}\n",
+                       ok ? "ok" : "error", arg);
+            return;
+        }
+    }
+
+    // LFS file
     char path[64];
     snprintf(path, sizeof(path), "/%s", arg);
     int err = lfs_remove(&lfs, path);
@@ -338,6 +355,104 @@ static void cmd_filesystem_test_delete(const char* arg)
         return;
     }
     vfy_printf("{\"filesystem_test_delete\":{\"state\":\"ok\",\"file\":\"%s\"}}\n", arg);
+}
+
+static void cmd_logger_stop(void)
+{
+    if (!logger) {
+        vfy_printf("{\"logger_stop\":{\"state\":\"not_initialized\"}}\n");
+        return;
+    }
+    if (logStore && logStore->getActiveLogNumber() >= 0)
+        logStore->closeActiveLog();
+    logger->deinit();
+    vfy_printf("{\"logger_stop\":{\"state\":\"ok\"}}\n");
+}
+
+static void cmd_logger_start(void)
+{
+    if (!logger || !logStore) {
+        vfy_printf("{\"logger_start\":{\"state\":\"not_initialized\"}}\n");
+        return;
+    }
+    if (!lfs_mounted) {
+        vfy_printf("{\"logger_start\":{\"state\":\"not_mounted\"}}\n");
+        return;
+    }
+    logStore->init(&lfs, sdCard);
+    logger->init(&lfs);
+    vfy_printf("{\"logger_start\":{\"state\":\"ok\",\"next_log\":%ld}}\n",
+               (long)(logStore->getActiveLogNumber() + 1));
+}
+
+static void cmd_logstore_fsck(void)
+{
+    if (!logStore) {
+        vfy_printf("{\"logstore_fsck\":{\"state\":\"not_initialized\"}}\n");
+        return;
+    }
+    uint32_t errors = logStore->verify();
+    vfy_printf("{\"logstore_fsck\":{\"state\":\"%s\",\"errors\":%lu}}\n",
+               errors == 0 ? "pass" : "fail",
+               (unsigned long)errors);
+}
+
+// Write a crafted .meta file to LFS for FSCK testing.
+// Arg format: "log_num chunk1[,chunk2,...] offset total [active]"
+// Example: "900 0 1000 1000" — log 900, chunk 0, triggers chunk-0 error
+// Example: "902 5 1000 1000 active" — log 902, chunk 5, marked active
+static void cmd_logstore_write_test_meta(const char* arg)
+{
+    if (!arg || *arg == '\0' || !lfs_mounted) {
+        vfy_printf("{\"logstore_write_test_meta\":{\"state\":\"%s\"}}\n",
+                   !lfs_mounted ? "not_mounted" : "no_arg");
+        return;
+    }
+
+    uint32_t log_num = 0;
+    char chunks_str[64] = {};
+    uint32_t offset = 0;
+    uint32_t total = 0;
+    char active_str[8] = {};
+
+    int n = sscanf(arg, "%lu %63s %lu %lu %7s",
+                   (unsigned long*)&log_num,
+                   chunks_str,
+                   (unsigned long*)&offset,
+                   (unsigned long*)&total,
+                   active_str);
+    if (n < 4) {
+        vfy_printf("{\"logstore_write_test_meta\":{\"state\":\"bad_args\"}}\n");
+        return;
+    }
+
+    bool active = (n >= 5 && strcmp(active_str, "active") == 0);
+
+    // Build JSON
+    char json[256];
+    int pos = snprintf(json, sizeof(json),
+        "{\"log\":%lu,\"active\":%s,\"chunks\":[%s],\"offset\":%lu,\"total\":%lu}",
+        (unsigned long)log_num,
+        active ? "true" : "false",
+        chunks_str,
+        (unsigned long)offset,
+        (unsigned long)total);
+
+    // Write to LFS
+    char path[32];
+    snprintf(path, sizeof(path), "/log_t%lu.meta", (unsigned long)log_num);
+
+    lfs_file_t f;
+    int err = lfs_file_open(&lfs, &f, path, LFS_O_CREAT | LFS_O_TRUNC | LFS_O_WRONLY);
+    if (err < 0) {
+        vfy_printf("{\"logstore_write_test_meta\":{\"state\":\"open_error\",\"err\":%d}}\n", err);
+        return;
+    }
+    lfs_file_write(&lfs, &f, json, pos);
+    lfs_file_close(&lfs, &f);
+
+    vfy_printf("{\"logstore_write_test_meta\":{\"state\":\"ok\",\"file\":\"%s\",\"json\":%s}}\n",
+               path, json);
 }
 
 // -------------------------------------------------------------------------
@@ -617,6 +732,10 @@ static void vfy_task(void*)
                     else if (strcmp(buf, "swd_test_flash")          == 0) cmd_swd_test_flash(arg);
                     else if (strcmp(buf, "filesystem_test_rw")      == 0) cmd_filesystem_test_rw();
                     else if (strcmp(buf, "filesystem_test_delete")  == 0) cmd_filesystem_test_delete(arg);
+                    else if (strcmp(buf, "logger_stop")               == 0) cmd_logger_stop();
+                    else if (strcmp(buf, "logger_start")             == 0) cmd_logger_start();
+                    else if (strcmp(buf, "logstore_fsck")             == 0) cmd_logstore_fsck();
+                    else if (strcmp(buf, "logstore_write_test_meta") == 0) cmd_logstore_write_test_meta(arg);
                     else                                                   cmd_unknown(buf);
 
                     pos = 0;

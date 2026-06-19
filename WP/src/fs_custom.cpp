@@ -1,6 +1,7 @@
 #include "fs_custom.h"
 #include "lwip/apps/fs.h"
 #include "lfs.h"
+#include "LogStore.h"
 #include "pico/stdlib.h"
 #include "pico/sha256.h"
 #include <stdlib.h>
@@ -191,60 +192,92 @@ int fs_open_custom(struct fs_file *file, const char *name)
         uint32_t t0 = time_us_32();
         s_chunk_gap_us = s_chunk_has_prev ? (t0 - s_chunk_t_prev_close) : 0;
 
-        // Open or seek only when necessary. For sequential downloads the handle
-        // stays open and lfs_file_read advances the position automatically.
-        bool need_open = (strcmp(filename, s_lfs_open_filename) != 0);
-        bool need_seek = !need_open && ((lfs_soff_t)offset != s_lfs_next_offset);
+        uint8_t* const data_start = s_chunk_buf + CHUNK_HEADER_RESERVE;
+        int32_t bytes_read = -1;
+        int32_t file_size = -1;
 
-        if (need_open) {
-            if (s_lfs_open_filename[0] != '\0') {
-                lfs_file_close(g_lfs, &s_lfs_file);
-                s_lfs_open_filename[0] = '\0';
-            }
-            int err = lfs_file_open(g_lfs, &s_lfs_file, filename, LFS_O_RDONLY);
-            if (err < 0) {
-                printf("fs_custom: chunks: open '%s': %d\n", filename, err);
+        // Check if this is a LogStore log (log_N.um4)
+        int32_t log_num = -1;
+        if (logStore && strncmp(filename, "log_", 4) == 0) {
+            const char* p = filename + 4;
+            char* end;
+            unsigned long n = strtoul(p, &end, 10);
+            if (end != p && strcmp(end, ".um4") == 0)
+                log_num = (int32_t)n;
+        }
+
+        if (log_num >= 0) {
+            // LogStore path: read directly from raw chunks by offset
+            LogStoreLogInfo info;
+            if (!logStore->getLogInfo((uint32_t)log_num, &info)) {
+                printf("fs_custom: chunks: log %ld not found\n", (long)log_num);
                 return 0;
             }
-            strncpy(s_lfs_open_filename, filename, sizeof(s_lfs_open_filename) - 1);
-            s_lfs_open_filename[sizeof(s_lfs_open_filename) - 1] = '\0';
-            s_lfs_next_offset = 0;
-        }
-        if (need_open || need_seek) {
-            if ((lfs_soff_t)offset != s_lfs_next_offset) {
-                if (lfs_file_seek(g_lfs, &s_lfs_file,
-                                  (lfs_soff_t)offset, LFS_SEEK_SET) < 0) {
+            file_size = (int32_t)info.total_bytes;
+
+            uint32_t t_read = time_us_32();
+            bytes_read = logStore->readLog((uint32_t)log_num, offset,
+                                           data_start, CHUNK_DOWNLOAD_MAX_SIZE);
+            s_chunk_lfs_us = time_us_32() - t_read;
+
+            if (bytes_read < 0) {
+                printf("fs_custom: chunks: LogStore read log %ld @%lu failed\n",
+                       (long)log_num, (unsigned long)offset);
+                return 0;
+            }
+        } else {
+            // LFS path: open/seek/read for config files, .uf2, etc.
+            bool need_open = (strcmp(filename, s_lfs_open_filename) != 0);
+            bool need_seek = !need_open && ((lfs_soff_t)offset != s_lfs_next_offset);
+
+            if (need_open) {
+                if (s_lfs_open_filename[0] != '\0') {
                     lfs_file_close(g_lfs, &s_lfs_file);
                     s_lfs_open_filename[0] = '\0';
-                    printf("fs_custom: chunks: seek '%s' @%lu failed\n",
-                           filename, (unsigned long)offset);
+                }
+                int err = lfs_file_open(g_lfs, &s_lfs_file, filename, LFS_O_RDONLY);
+                if (err < 0) {
+                    printf("fs_custom: chunks: open '%s': %d\n", filename, err);
                     return 0;
                 }
-                s_lfs_next_offset = (lfs_soff_t)offset;
+                strncpy(s_lfs_open_filename, filename, sizeof(s_lfs_open_filename) - 1);
+                s_lfs_open_filename[sizeof(s_lfs_open_filename) - 1] = '\0';
+                s_lfs_next_offset = 0;
             }
-        }
+            if (need_open || need_seek) {
+                if ((lfs_soff_t)offset != s_lfs_next_offset) {
+                    if (lfs_file_seek(g_lfs, &s_lfs_file,
+                                      (lfs_soff_t)offset, LFS_SEEK_SET) < 0) {
+                        lfs_file_close(g_lfs, &s_lfs_file);
+                        s_lfs_open_filename[0] = '\0';
+                        printf("fs_custom: chunks: seek '%s' @%lu failed\n",
+                               filename, (unsigned long)offset);
+                        return 0;
+                    }
+                    s_lfs_next_offset = (lfs_soff_t)offset;
+                }
+            }
 
-        lfs_soff_t file_size = lfs_file_size(g_lfs, &s_lfs_file);
-        if (file_size < 0) {
-            lfs_file_close(g_lfs, &s_lfs_file);
-            s_lfs_open_filename[0] = '\0';
-            return 0;
-        }
+            file_size = (int32_t)lfs_file_size(g_lfs, &s_lfs_file);
+            if (file_size < 0) {
+                lfs_file_close(g_lfs, &s_lfs_file);
+                s_lfs_open_filename[0] = '\0';
+                return 0;
+            }
 
-        // Read data at the header-reservation offset, then memmove to close the gap.
-        uint8_t* const data_start = s_chunk_buf + CHUNK_HEADER_RESERVE;
-        uint32_t t_read = time_us_32();
-        lfs_ssize_t bytes_read = lfs_file_read(
-            g_lfs, &s_lfs_file, data_start, CHUNK_DOWNLOAD_MAX_SIZE);
-        s_chunk_lfs_us = time_us_32() - t_read;
+            uint32_t t_read = time_us_32();
+            bytes_read = (int32_t)lfs_file_read(
+                g_lfs, &s_lfs_file, data_start, CHUNK_DOWNLOAD_MAX_SIZE);
+            s_chunk_lfs_us = time_us_32() - t_read;
 
-        if (bytes_read < 0) {
-            lfs_file_close(g_lfs, &s_lfs_file);
-            s_lfs_open_filename[0] = '\0';
-            printf("fs_custom: chunks: read '%s': %ld\n", filename, (long)bytes_read);
-            return 0;
+            if (bytes_read < 0) {
+                lfs_file_close(g_lfs, &s_lfs_file);
+                s_lfs_open_filename[0] = '\0';
+                printf("fs_custom: chunks: read '%s': %ld\n", filename, (long)bytes_read);
+                return 0;
+            }
+            s_lfs_next_offset += bytes_read;
         }
-        s_lfs_next_offset += bytes_read;
 
         char sha[65] = "none";
         if (bytes_read > 0) {

@@ -6,6 +6,7 @@
 #define SHELL_PRINTF(fmt, ...) shell_printf(fmt, ##__VA_ARGS__)
 
 #include "lfsMgr.h"
+#include "LogStore.h"
 #include "umod4_EP.h"
 
 #include "FlashEp.h"
@@ -301,7 +302,22 @@ void Shell::cmd_rm(char* argList)
 
         if (dbg) SHELL_PRINTF("%s: pathname=%s\n", __FUNCTION__, path);
 
-        // Remove the file at the specified path
+        // Route log_N.um4 to LogStore
+        if (logStore && strncmp(path, "log_", 4) == 0) {
+            const char* p = path + 4;
+            char* end;
+            unsigned long n = strtoul(p, &end, 10);
+            if (end != p && strcmp(end, ".um4") == 0) {
+                if (!logStore->deleteLog((uint32_t)n)) {
+                    SHELL_PRINTF("Unable to remove %s\n", path);
+                    return;
+                }
+                argList = skipWhite(argList);
+                arg = strsep(&argList, " ");
+                continue;
+            }
+        }
+
         err = lfs_remove(lfs, path);
         if (err != LFS_ERR_OK) {
             SHELL_PRINTF("Unable to remove %s: %s\n", path, lfs_err_decode(err));
@@ -590,6 +606,17 @@ void Shell::cmd_ls(char* args)
             }
         } while (lfs_err > 0);
         lfs_dir_close(lfs, &dir);
+    }
+
+    // LogStore logs — presented as log_N.um4
+    if (logStore) {
+        logStore->enumerate([](uint32_t log_number, uint32_t total_bytes, bool active, void* ctx) {
+            char name[20];
+            snprintf(name, sizeof(name), "log_%lu.um4", (unsigned long)log_number);
+            printf("- %8lu %s%s\n",
+                   (unsigned long)total_bytes, name,
+                   active ? " [active]" : "");
+        }, nullptr);
     }
 }
 #endif

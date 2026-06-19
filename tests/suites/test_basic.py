@@ -70,3 +70,17 @@ def run(ocd, results, context):
                 results.fatal("filesystem_test_rw", f"state={state}")
         except (RttError, ValueError) as e:
             results.fatal("filesystem_test_rw", str(e))
+
+        # ----------------------------------------------------------------
+        results.start("logstore_fsck")
+        try:
+            data = _cmd(vfy, "logstore_fsck", timeout=30.0)
+            fsck = data.get("logstore_fsck", {})
+            state = fsck.get("state", "")
+            errors = fsck.get("errors", -1)
+            if state == "pass" and errors == 0:
+                results.passed("logstore_fsck")
+            else:
+                results.fatal("logstore_fsck", f"state={state} errors={errors}")
+        except (RttError, ValueError) as e:
+            results.fatal("logstore_fsck", str(e))
