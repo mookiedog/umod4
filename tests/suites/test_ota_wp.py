@@ -208,12 +208,19 @@ def run(ocd, results, context):
         # wp_ota_cleanup — delete WP.uf2 from LFS
         # ----------------------------------------------------------------
 
+        # wp_ota_cleanup — verify OTA task deleted the .uf2 after flashing.
+        # The firmware deletes the file post-flash, so we expect "not found" (-2).
+        # If the file still exists (state=="ok"), the OTA cleanup failed.
         results.start("wp_ota_cleanup")
         try:
             reply = vfy.command(f"filesystem_test_delete {WP_UF2_FILENAME}", timeout=5.0)
-            state = json.loads(reply).get("filesystem_test_delete", {}).get("state")
-            if state == "ok":
-                results.passed("wp_ota_cleanup", reply)
+            data = json.loads(reply).get("filesystem_test_delete", {})
+            state = data.get("state")
+            err = data.get("err", 0)
+            if state == "error" and err == -2:
+                results.passed("wp_ota_cleanup", "OTA task deleted .uf2 (confirmed)")
+            elif state == "ok":
+                results.failed("wp_ota_cleanup", "OTA task did not delete .uf2")
             else:
                 results.failed("wp_ota_cleanup", reply)
         except (RttError, json.JSONDecodeError) as e:
