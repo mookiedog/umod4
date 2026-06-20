@@ -369,6 +369,117 @@ static void cmd_logger_stop(void)
     vfy_printf("{\"logger_stop\":{\"state\":\"ok\"}}\n");
 }
 
+static void cmd_logstore_test_chunk_crossing(void)
+{
+    if (!logStore || !logger) {
+        vfy_printf("{\"logstore_test_chunk_crossing\":{\"state\":\"not_initialized\"}}\n");
+        return;
+    }
+
+    const char* fail_reason = nullptr;
+    uint32_t chunk_bytes = logStore->getChunkBytes();
+
+    // Stop the Logger
+    if (logStore->getActiveLogNumber() >= 0)
+        logStore->closeActiveLog();
+    logger->deinit();
+
+    uint32_t baseline_free = logStore->getFreeChunks();
+
+    int32_t log_num = logStore->createLog();
+    if (log_num < 0) { fail_reason = "createLog failed"; goto done; }
+
+    {
+        uint8_t buf[512];
+
+        // Write 0xAA at start of chunk A (offset 0)
+        memset(buf, 0xAA, 512);
+        if (logStore->write(buf, 512) != 512) {
+            fail_reason = "write start of A failed"; goto cleanup;
+        }
+
+        // Seek near end of chunk A, write 0xBB to fill it, 0xCC crosses into B
+        if (!logStore->seek(chunk_bytes - 512)) {
+            fail_reason = "seek end of A failed"; goto cleanup;
+        }
+        memset(buf, 0xBB, 512);
+        if (logStore->write(buf, 512) != 512) {
+            fail_reason = "write end of A failed"; goto cleanup;
+        }
+        memset(buf, 0xCC, 512);
+        if (logStore->write(buf, 512) != 512) {
+            fail_reason = "write start of B failed"; goto cleanup;
+        }
+
+        // Seek near end of chunk B — seek() allocates chunk B if needed
+        if (!logStore->seek(2 * chunk_bytes - 512)) {
+            fail_reason = "seek end of B failed"; goto cleanup;
+        }
+        memset(buf, 0xDD, 512);
+        if (logStore->write(buf, 512) != 512) {
+            fail_reason = "write end of B failed"; goto cleanup;
+        }
+        memset(buf, 0xEE, 512);
+        if (logStore->write(buf, 512) != 512) {
+            fail_reason = "write start of C failed"; goto cleanup;
+        }
+        logStore->syncMetadata();
+
+        // Verify 3 chunks allocated
+        LogStoreLogInfo info;
+        if (!logStore->getLogInfo((uint32_t)log_num, &info)) {
+            fail_reason = "getLogInfo failed"; goto cleanup;
+        }
+        if (info.num_chunks != 3) {
+            fail_reason = "expected 3 chunks"; goto cleanup;
+        }
+        if (logStore->getFreeChunks() != baseline_free - 3) {
+            fail_reason = "free count wrong after extends"; goto cleanup;
+        }
+
+        // Read back and verify all 5 written sectors
+        struct { uint32_t offset; uint8_t expected; const char* label; } checks[] = {
+            { 0,                      0xAA, "start of A" },
+            { chunk_bytes - 512,      0xBB, "end of A" },
+            { chunk_bytes,            0xCC, "start of B" },
+            { 2 * chunk_bytes - 512,  0xDD, "end of B" },
+            { 2 * chunk_bytes,        0xEE, "start of C" },
+        };
+        for (auto& c : checks) {
+            memset(buf, 0, 512);
+            if (logStore->readLog((uint32_t)log_num, c.offset, buf, 512) != 512) {
+                fail_reason = c.label; goto cleanup;
+            }
+            for (int i = 0; i < 512; i++) {
+                if (buf[i] != c.expected) {
+                    fail_reason = c.label; goto cleanup;
+                }
+            }
+        }
+    }
+
+cleanup:
+    if (logStore->getActiveLogNumber() >= 0)
+        logStore->closeActiveLog();
+    if (log_num >= 0)
+        logStore->deleteLog((uint32_t)log_num);
+    if (!fail_reason && logStore->getFreeChunks() != baseline_free)
+        fail_reason = "free count not restored after delete";
+
+done:
+    logStore->init(&lfs, sdCard);
+    logger->init(&lfs);
+
+    if (fail_reason) {
+        printf("LogStore: chunk crossing test FAILED: %s\n", fail_reason);
+        vfy_printf("{\"logstore_test_chunk_crossing\":{\"state\":\"fail\",\"reason\":\"%s\"}}\n",
+                   fail_reason);
+    } else {
+        printf("LogStore: chunk crossing test PASSED\n");
+        vfy_printf("{\"logstore_test_chunk_crossing\":{\"state\":\"pass\"}}\n");
+    }
+}
+
 static void cmd_logger_start(void)
 {
     if (!logger || !logStore) {
@@ -735,6 +846,7 @@ static void vfy_task(void*)
                     else if (strcmp(buf, "logger_stop")               == 0) cmd_logger_stop();
                     else if (strcmp(buf, "logger_start")             == 0) cmd_logger_start();
                     else if (strcmp(buf, "logstore_fsck")             == 0) cmd_logstore_fsck();
+                    else if (strcmp(buf, "logstore_test_chunk_crossing") == 0) cmd_logstore_test_chunk_crossing();
                     else if (strcmp(buf, "logstore_write_test_meta") == 0) cmd_logstore_write_test_meta(arg);
                     else                                                   cmd_unknown(buf);
 

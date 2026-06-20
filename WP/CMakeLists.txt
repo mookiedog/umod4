@@ -183,6 +183,8 @@ add_custom_command(
     DEPENDS ${MAKEFSDATA_SCRIPT}
             ${WWW_DIR}/index.html
             ${WWW_DIR}/status.html
+            ${WWW_DIR}/system.html
+            ${WWW_DIR}/internals.html
             ${WWW_DIR}/eprom_info.html
             ${WWW_DIR}/ecu_live.html
             ${WWW_DIR}/wifi_config.html

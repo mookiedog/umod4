@@ -422,39 +422,78 @@ int32_t LogStore::write(const uint8_t* data, uint32_t len)
     if (active_log_number < 0 || !sd)
         return -1;
 
-    // Writes must be sector-aligned (512 bytes)
     if (len == 0 || (len % 512) != 0)
         return -1;
 
-    uint32_t sectors = len / 512;
+    uint32_t total_written = 0;
 
-    // Check if we'd overflow the current chunk
-    uint32_t chunk_end = chunkStartSector(active_log.chunks[active_log.num_chunks - 1])
-                         + chunk_sectors;
-    if (active_sector + sectors > chunk_end) {
-        if (!extendActiveLog()) {
-            printf("LogStore: cannot extend log %ld\n", (long)active_log_number);
-            return -1;
+    while (len > 0) {
+        uint32_t chunk_end = chunkStartSector(active_log.chunks[active_log.num_chunks - 1])
+                             + chunk_sectors;
+        uint32_t remaining_bytes = (chunk_end - active_sector) * 512;
+
+        // Write as much as fits in the current chunk
+        uint32_t to_write = (len < remaining_bytes) ? len : remaining_bytes;
+
+        if (to_write > 0) {
+            sd_lock();
+            SdErr_t err = sd->writeSectors(active_sector, to_write / 512, data);
+            sd_unlock();
+
+            if (err != SD_ERR_NOERR) {
+                printf("LogStore: writeSectors failed at sector %lu: %d\n",
+                       (unsigned long)active_sector, err);
+                return total_written > 0 ? (int32_t)total_written : -1;
+            }
+
+            active_sector += to_write / 512;
+            active_log.write_offset += to_write;
+            active_log.total_bytes += to_write;
+            data += to_write;
+            len -= to_write;
+            total_written += to_write;
         }
-        chunk_end = chunkStartSector(active_log.chunks[active_log.num_chunks - 1])
-                    + chunk_sectors;
+
+        // If there's more data, extend into a new chunk
+        if (len > 0) {
+            if (!extendActiveLog()) {
+                printf("LogStore: cannot extend log %ld\n", (long)active_log_number);
+                return total_written > 0 ? (int32_t)total_written : -1;
+            }
+        }
     }
 
-    sd_lock();
-    SdErr_t err = sd->writeSectors(active_sector, sectors, data);
-    sd_unlock();
+    return (int32_t)total_written;
+}
 
-    if (err != SD_ERR_NOERR) {
-        printf("LogStore: writeSectors failed at sector %lu: %d\n",
-               (unsigned long)active_sector, err);
-        return -1;
+// -------------------------------------------------------------------------
+// Seek the active log's write position to an absolute byte offset.
+
+bool LogStore::seek(uint32_t offset)
+{
+    if (active_log_number < 0)
+        return false;
+
+    if (offset % 512 != 0) {
+        printf("LogStore: seek offset %lu not sector-aligned\n",
+               (unsigned long)offset);
+        return false;
     }
 
-    active_sector += sectors;
-    active_log.write_offset += len;
-    active_log.total_bytes += len;
+    uint32_t chunk_idx = offset / chunk_bytes;
 
-    return (int32_t)len;
+    // Allocate chunks as needed to reach the target
+    while (chunk_idx >= active_log.num_chunks) {
+        if (!extendActiveLog())
+            return false;
+    }
+
+    uint32_t chunk_offset = offset % chunk_bytes;
+    active_sector = chunkStartSector(active_log.chunks[chunk_idx]) + (chunk_offset / 512);
+    active_log.write_offset = chunk_offset;
+    active_log.total_bytes = offset;
+
+    return writeMetadata(&active_log);
 }
 
 // -------------------------------------------------------------------------
@@ -500,25 +539,31 @@ bool LogStore::deleteLog(uint32_t log_number)
     char path[32];
     metadataFilename(log_number, path, sizeof(path));
 
-    // Read the metadata first to find which chunks to free
+    // Read the metadata to find which chunks to free
     LogStoreLogInfo info;
-    // readMetadata expects just the filename, not the full path
     char filename[32];
     snprintf(filename, sizeof(filename), "%s%lu%s",
              LOGSTORE_META_PREFIX,
              (unsigned long)log_number,
              LOGSTORE_META_SUFFIX);
 
-    if (readMetadata(filename, &info)) {
-        for (uint32_t i = 0; i < info.num_chunks; i++)
-            markChunk(info.chunks[i], false);
+    if (!readMetadata(filename, &info)) {
+        printf("LogStore: cannot read metadata for log %lu\n",
+               (unsigned long)log_number);
+        return false;
     }
 
+    // Delete the .meta file first. LFS COW makes this atomic.
+    // Only free the bitmap AFTER the delete succeeds — if lfs_remove
+    // fails, the chunks must remain allocated to prevent double-use.
     int err = lfs_remove(lfs, path);
     if (err < 0) {
         printf("LogStore: failed to delete %s: %d\n", path, err);
         return false;
     }
+
+    for (uint32_t i = 0; i < info.num_chunks; i++)
+        markChunk(info.chunks[i], false);
 
     printf("LogStore: deleted log %lu (%lu chunks freed)\n",
            (unsigned long)log_number,

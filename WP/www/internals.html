@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>umod4 - Tasks &amp; Heap</title>
+    <title>umod4 - Internals</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/style.css">
     <style>
@@ -62,7 +62,7 @@
     <div class="container">
         <div class="hero">
             <div class="ribbon">
-                <span class="ribbon-title">Tasks &amp; Heap</span>
+                <span class="ribbon-title">Internals</span>
                 <div class="ribbon-status">
                     <a href="/system.html" class="ribbon-icon-link" title="System">
                         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -96,6 +96,12 @@
                 <div class="section-title">Heap</div>
                 <div id="heap-error" class="error-msg" style="display:none">Unable to fetch heap data</div>
                 <div id="heap-body"></div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">LogStore I/O</div>
+                <div id="logstore-error" class="error-msg" style="display:none">Unable to fetch LogStore data</div>
+                <div id="logstore-body"></div>
             </div>
 
         </div>
@@ -180,6 +186,53 @@
             document.getElementById('heap-body').innerHTML = html;
         }
 
+        function fmtUs(us) {
+            if (us >= 1000000) return (us / 1000000).toFixed(2) + ' s';
+            if (us >= 1000) return (us / 1000).toFixed(1) + ' ms';
+            return us + ' us';
+        }
+
+        function renderLogStore(d) {
+            var c = d.chunks || {};
+            var w = d.write || {};
+            var s = d.sync || {};
+            var b = d.buffer || {};
+
+            var chunkMB = c.total > 0 ? (c.chunk_bytes / (1024 * 1024)).toFixed(1) : '?';
+            var freeGB = c.total > 0 ? (c.free * c.chunk_bytes / (1024 * 1024 * 1024)).toFixed(1) : '?';
+
+            var rows = [
+                ['Chunk Size',      chunkMB + ' MB'],
+                ['Chunks Free',     c.free + ' / ' + c.total + ' (' + freeGB + ' GB)'],
+                ['Active Log',      c.active_log >= 0 ? 'log_' + c.active_log : 'none'],
+                ['Buffer Size',     (b.size / 1024).toFixed(1) + ' KB'],
+                ['Buffer Max Used', (b.max_used / 1024).toFixed(1) + ' KB'],
+            ];
+            var html = '';
+            rows.forEach(function(r) {
+                html += '<div class="heap-row"><span class="heap-label">' + r[0] +
+                        '</span><span class="heap-value">' + r[1] + '</span></div>';
+            });
+
+            html += '<table style="margin-top:12px"><thead><tr>' +
+                '<th></th><th class="num">Count</th><th class="num">Min</th>' +
+                '<th class="num">Max</th><th class="num">Avg</th>' +
+                '</tr></thead><tbody>';
+            html += '<tr><td>Write</td>' +
+                '<td class="num">' + fmtNum(w.count || 0) + '</td>' +
+                '<td class="num">' + (w.count > 0 ? fmtUs(w.min_us) : '--') + '</td>' +
+                '<td class="num">' + (w.count > 0 ? fmtUs(w.max_us) : '--') + '</td>' +
+                '<td class="num">' + (w.count > 0 ? fmtUs(w.avg_us) : '--') + '</td></tr>';
+            html += '<tr><td>Sync</td>' +
+                '<td class="num">' + fmtNum(s.count || 0) + '</td>' +
+                '<td class="num">' + (s.count > 0 ? fmtUs(s.min_us) : '--') + '</td>' +
+                '<td class="num">' + (s.count > 0 ? fmtUs(s.max_us) : '--') + '</td>' +
+                '<td class="num">' + (s.count > 0 ? fmtUs(s.avg_us) : '--') + '</td></tr>';
+            html += '</tbody></table>';
+
+            document.getElementById('logstore-body').innerHTML = html;
+        }
+
         function refresh() {
             fetch('/api/tasks')
                 .then(function(r) { return r.json(); })
@@ -199,6 +252,16 @@
                 })
                 .catch(function() {
                     document.getElementById('heap-error').style.display = '';
+                });
+
+            fetch('/api/logstore')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    document.getElementById('logstore-error').style.display = 'none';
+                    renderLogStore(d);
+                })
+                .catch(function() {
+                    document.getElementById('logstore-error').style.display = '';
                 });
         }
 

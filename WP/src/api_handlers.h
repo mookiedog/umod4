@@ -147,6 +147,12 @@ void generate_api_ecu_live_data_json(char* buffer, size_t size);
 void generate_api_ecu_live_meta_json(char* buffer, size_t size);
 
 /**
+ * Generate JSON for GET /api/logstore endpoint.
+ * Returns LogStore chunk stats and Logger I/O timing (write/sync min/max/avg).
+ */
+void generate_api_logstore_json(char* buffer, size_t size);
+
+/**
  * Generate JSON for GET /api/reformat-filesystem endpoint.
  * Takes the LFS mutex, zeroes the first 64 raw SD sectors (LFS blocks 0 and 1,
  * both superblock copies), syncs, then schedules a reboot via the OTA task.

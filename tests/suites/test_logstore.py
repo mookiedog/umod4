@@ -119,3 +119,21 @@ def run(ocd, results, context):
                 results.failed("logstore_fsck_clean", f"state={state} errors={errors}")
         except (RttError, json.JSONDecodeError) as e:
             results.failed("logstore_fsck_clean", str(e))
+
+        # ----------------------------------------------------------------
+        # logstore_chunk_crossing — write/read across chunk boundary
+        # ----------------------------------------------------------------
+
+        results.start("logstore_chunk_crossing")
+        try:
+            reply = vfy.command("logstore_test_chunk_crossing", timeout=30.0)
+            data = json.loads(reply)
+            test = data.get("logstore_test_chunk_crossing", {})
+            state = test.get("state", "")
+            if state == "pass":
+                results.passed("logstore_chunk_crossing")
+            else:
+                results.failed("logstore_chunk_crossing",
+                    test.get("reason", f"state={state}"))
+        except (RttError, json.JSONDecodeError) as e:
+            results.failed("logstore_chunk_crossing", str(e))

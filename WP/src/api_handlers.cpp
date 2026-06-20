@@ -13,6 +13,7 @@
 #include "task.h"
 #include "lfsMgr.h"
 #include "LogStore.h"
+#include "Logger.h"
 #include "file_io_task.h"
 #include "ota_flash_task.h"
 #include "FlashWp.h"
@@ -545,6 +546,46 @@ void generate_api_reboot_json(char* buffer, size_t size)
                  "{\"success\": false, \"error\": \"Failed to queue reboot\"}");
         printf("api_reboot: Failed to queue reboot\n");
     }
+}
+
+/**
+ * Build JSON response for GET /api/logstore
+ */
+void generate_api_logstore_json(char* buffer, size_t size)
+{
+    uint32_t total_chunks = 0, free_chunks = 0, chunk_bytes_val = 0;
+    int32_t active_log = -1;
+    if (logStore) {
+        total_chunks = logStore->getTotalChunks();
+        free_chunks = logStore->getFreeChunks();
+        active_log = logStore->getActiveLogNumber();
+        chunk_bytes_val = logStore->getChunkBytes();
+    }
+
+    uint32_t wr_min = 0, wr_max = 0, wr_avg = 0, wr_count = 0;
+    uint32_t sy_min = 0, sy_max = 0, sy_avg = 0, sy_count = 0;
+    uint32_t buf_max = 0;
+    if (logger) {
+        wr_min   = logger->getWriteMin();
+        wr_max   = logger->getWriteMax();
+        wr_avg   = logger->getWriteAvg();
+        wr_count = logger->getWriteCount();
+        sy_min   = logger->getSyncMin();
+        sy_max   = logger->getSyncMax();
+        sy_avg   = logger->getSyncAvg();
+        sy_count = logger->getSyncCount();
+        buf_max  = (uint32_t)logger->get_inUse_max();
+    }
+
+    snprintf(buffer, size,
+        "{\"chunks\":{\"total\":%lu,\"free\":%lu,\"chunk_bytes\":%lu,\"active_log\":%ld},"
+        "\"write\":{\"min_us\":%lu,\"max_us\":%lu,\"avg_us\":%lu,\"count\":%lu},"
+        "\"sync\":{\"min_us\":%lu,\"max_us\":%lu,\"avg_us\":%lu,\"count\":%lu},"
+        "\"buffer\":{\"size\":%d,\"max_used\":%lu}}",
+        (unsigned long)total_chunks, (unsigned long)free_chunks, (unsigned long)chunk_bytes_val, (long)active_log,
+        (unsigned long)wr_min, (unsigned long)wr_max, (unsigned long)wr_avg, (unsigned long)wr_count,
+        (unsigned long)sy_min, (unsigned long)sy_max, (unsigned long)sy_avg, (unsigned long)sy_count,
+        LOG_BUFFER_SIZE, (unsigned long)buf_max);
 }
 
 /**

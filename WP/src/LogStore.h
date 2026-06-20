@@ -48,6 +48,10 @@ public:
     // Returns bytes written, or -1 on error.
     int32_t write(const uint8_t* data, uint32_t len);
 
+    // Seek the active log's write position to an absolute byte offset.
+    // Must be sector-aligned (multiple of 512). Updates metadata.
+    bool seek(uint32_t offset);
+
     // Sync the metadata file to LFS (commits the current write offset).
     // Called periodically by the Logger after each flush.
     bool syncMetadata();
@@ -80,6 +84,7 @@ public:
 
     // Get total chunk count and free chunk count for status reporting.
     uint32_t getTotalChunks() const { return LOGSTORE_NUM_CHUNKS; }
+    uint32_t getChunkBytes() const { return chunk_bytes; }
     uint32_t getFreeChunks() const;
 
 private:

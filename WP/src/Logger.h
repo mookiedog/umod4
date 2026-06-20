@@ -35,6 +35,16 @@ class Logger {
         int32_t get_log_size() {return bufferLen;}
         int32_t get_inUse_max() {return inUse_max;}
 
+        // I/O timing stats (microseconds)
+        uint32_t getWriteMin()   const { return (uint32_t)minTimeWriting; }
+        uint32_t getWriteMax()   const { return (uint32_t)maxTimeWriting; }
+        uint32_t getWriteCount() const { return totalWriteEvents; }
+        uint32_t getWriteAvg()   const { return totalWriteEvents ? (uint32_t)(totalTimeWriting / totalWriteEvents) : 0; }
+        uint32_t getSyncMin()    const { return (uint32_t)minTimeSyncing; }
+        uint32_t getSyncMax()    const { return (uint32_t)maxTimeSyncing; }
+        uint32_t getSyncCount()  const { return totalSyncEvents; }
+        uint32_t getSyncAvg()    const { return totalSyncEvents ? (uint32_t)(totalTimeSyncing / totalSyncEvents) : 0; }
+
     private:
         lfs_t* lfs;
         char logName[16];
