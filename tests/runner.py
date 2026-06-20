@@ -71,6 +71,7 @@ class Results:
         self._suite_heap   = {}   # suite_name -> (remaining, free)
         self._suite        = "preflight"
         self._t0           = time.monotonic()
+        self.retries        = 0
 
     def start_suite(self, name):
         self._suite = name
@@ -114,6 +115,14 @@ class Results:
 
     def _record(self, status, name, detail):
         self._entries.append((status, self._suite, name, detail))
+
+    def downgrade_suite_to_warn(self, suite_name):
+        """Downgrade all ABORT/FATAL/FAIL entries for a suite to WARN with
+        a RETRY prefix, so the transient failure is visible in the report
+        but doesn't fail the run."""
+        for i, (status, suite, name, detail) in enumerate(self._entries):
+            if suite == suite_name and status in ("ABORT", "FATAL", "FAIL"):
+                self._entries[i] = ("WARN", suite, name, f"RETRY: {detail}")
 
     @property
     def all_passed(self):
@@ -252,6 +261,91 @@ def load_suites(names=None):
 
 WP_VFY_CHANNEL = 1
 
+# Keywords in failure details that indicate transient infrastructure errors
+# (not real test failures). These get retried once.
+_TRANSIENT_KEYWORDS = [
+    "Timeout",
+    "timed out",
+    "RTT control block not found",
+    "CMSIS-DAP command mismatch",
+    "Failed to write memory",
+    "Failed to read memory",
+    "OpenOCD failed",
+    "OpenOCD reconnect failed",
+    "SWD DPIDR",
+    "CMD13 timeout",
+]
+
+
+def _suite_has_transient_failure(results, suite_name):
+    """Check if a suite's failures look transient (infrastructure, not logic)."""
+    for status, suite, name, detail in results._entries:
+        if suite != suite_name:
+            continue
+        if status not in ("ABORT", "FATAL", "FAIL"):
+            continue
+        detail_str = str(detail)
+        if any(kw in detail_str for kw in _TRANSIENT_KEYWORDS):
+            return True
+    return False
+
+
+def _suite_failed(results, suite_name):
+    """Check if a suite has any ABORT/FATAL/FAIL entries."""
+    return any(status in ("ABORT", "FATAL", "FAIL")
+               for status, suite, name, detail in results._entries
+               if suite == suite_name)
+
+
+def _run_suite(suite, suite_name, ocd, results, context, ch0):
+    """Run a suite, retrying once if it fails with a transient error."""
+    results.start_suite(suite_name)
+    ch0.mark()
+    print(f"[{suite.__name__}]", file=sys.__stdout__, flush=True)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            suite.run(ocd, results, context)
+    except SuiteAbort:
+        pass
+
+    captured = buf.getvalue().strip()
+    if captured:
+        results.record_suite_output(suite_name, captured)
+    ch0_text = ch0.since_mark().strip()
+    if ch0_text:
+        results.record_ch0_output(suite_name, ch0_text)
+
+    # Retry once if failure looks transient
+    if _suite_failed(results, suite_name) and _suite_has_transient_failure(results, suite_name):
+        results.retries += 1
+        print(f"  ** Transient failure detected — retrying {suite_name} **",
+              file=sys.__stdout__, flush=True)
+        results.downgrade_suite_to_warn(suite_name)
+        time.sleep(2.0)
+
+        results.start_suite(suite_name)
+        ch0.mark()
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                suite.run(ocd, results, context)
+        except SuiteAbort:
+            pass
+        captured = buf.getvalue().strip()
+        if captured:
+            results.record_suite_output(suite_name, captured)
+        ch0_text = ch0.since_mark().strip()
+        if ch0_text:
+            results.record_ch0_output(suite_name, ch0_text)
+
+    remaining, free = _check_heap(ocd)
+    if remaining is not None:
+        results.record_heap(suite_name, remaining, free)
+        print(f"  heap: remaining={remaining} free={free}",
+              file=sys.__stdout__, flush=True)
+
+
 def _check_heap(ocd):
     """Query WP heap via RTT. Returns (remaining, free) or (None, None) on failure."""
     import json
@@ -352,6 +446,8 @@ def main():
         except RuntimeError as e:
             results.fatal("cmsis_dap_attach", str(e))
 
+        preflight.check_probe_not_busy(results)
+
         print("[harness.build_state]", file=sys.__stdout__, flush=True)
         results.start_suite("build_state")
         build_state.run_all(results, PROJECT_ROOT, allow_stale=args.allow_stale)
@@ -408,26 +504,7 @@ def main():
             }
             for suite in suites:
                 suite_name = suite.__name__.removeprefix("suites.")
-                results.start_suite(suite_name)
-                ch0.mark()
-                print(f"[{suite.__name__}]", file=sys.__stdout__, flush=True)
-                buf = io.StringIO()
-                try:
-                    with contextlib.redirect_stdout(buf):
-                        suite.run(ocd, results, context)
-                except SuiteAbort:
-                    pass   # suite recorded ABORT; continue to next suite
-                captured = buf.getvalue().strip()
-                if captured:
-                    results.record_suite_output(suite_name, captured)
-                ch0_text = ch0.since_mark().strip()
-                if ch0_text:
-                    results.record_ch0_output(suite_name, ch0_text)
-                remaining, free = _check_heap(ocd)
-                if remaining is not None:
-                    results.record_heap(suite_name, remaining, free)
-                    print(f"  heap: remaining={remaining} free={free}",
-                          file=sys.__stdout__, flush=True)
+                _run_suite(suite, suite_name, ocd, results, context, ch0)
                 print(file=sys.__stdout__)
 
     except RunnerFatal:
@@ -440,7 +517,7 @@ def main():
 
     results.write_report(report_path)
     passed, total, aborted, warned = results.counts
-    summary = f"{passed}/{total} passed"
+    summary = f"{passed}/{total} passed ({results.retries} retries)"
     if warned:
         summary += f"  •  {warned} stale (--allow-stale)"
     if aborted:

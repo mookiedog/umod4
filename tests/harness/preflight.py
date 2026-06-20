@@ -109,6 +109,32 @@ def check_build_artifact(results, name, path, label):
         results.fatal(name, f"{label} not found: {path}")
 
 
+def check_probe_not_busy(results):
+    """Try to open the CMSIS-DAP probe briefly. If a debug session holds it,
+    OpenOCD fails fast with a recognizable error."""
+    r = subprocess.run(
+        ["openocd",
+         "-f", "interface/cmsis-dap.cfg",
+         "-f", "target/rp2350.cfg",
+         "-c", "adapter speed 20000",
+         "-c", "init",
+         "-c", "shutdown"],
+        capture_output=True, text=True, timeout=10)
+    output = r.stdout + r.stderr
+    if r.returncode != 0:
+        if "CMSIS-DAP" in output and ("mismatch" in output or "cannot" in output.lower()
+                                       or "failed" in output.lower() or "error" in output.lower()):
+            results.fatal("probe_not_busy",
+                "CMSIS-DAP probe appears busy — is a VS Code debug session active? "
+                "Close it before running tests.")
+        else:
+            results.fatal("probe_not_busy",
+                f"OpenOCD probe test failed (exit {r.returncode}): "
+                + output.strip().splitlines()[-1] if output.strip() else "unknown error")
+    else:
+        results.passed("probe_not_busy")
+
+
 def check_python_venv(results, venv_python):
     if not os.path.isfile(venv_python):
         results.fatal("python_venv", f"venv not found: {venv_python}")
