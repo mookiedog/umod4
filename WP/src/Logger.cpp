@@ -25,11 +25,10 @@ void start_logger_task(void *pvParameters)
 
 
 // ----------------------------------------------------------------------------------
-Logger::Logger(uint8_t* _buffer, int32_t _size, uint8_t* _write_buffer)
+Logger::Logger(uint8_t* _buffer, int32_t _size)
 {
     buffer = _buffer;
     bufferLen = _size;
-    write_buff = _write_buffer;
 
     lastBufferP = buffer + _size - 1;
     headP = tailP = buffer;
@@ -265,9 +264,6 @@ int32_t Logger::syncLog()
 
 
 // ----------------------------------------------------------------------------------
-// Minimum bytes before flushing to SD (must be multiple of 512)
-#define FLUSH_THRESHOLD 4096
-
 void Logger::logTask()
 {
     static uint32_t totalByteCount;
@@ -343,8 +339,8 @@ void Logger::logTask()
             {
                 int32_t available = inUse();
                 int32_t totalToWrite = available & ~511;    // round down to sector boundary
-                if (totalToWrite > (int32_t)LFS_BLOCK_SIZE)
-                    totalToWrite = LFS_BLOCK_SIZE;
+                if (totalToWrite > FLUSH_THRESHOLD)
+                    totalToWrite = FLUSH_THRESHOLD;
                 if (totalToWrite < 512) {
                     state = WAIT_FOR_DATA;
                     break;
@@ -352,24 +348,13 @@ void Logger::logTask()
 
                 bool err = false;
 
-                // Copy from circular buffer to write_buff (may span the wrap point)
+                // Write directly from ring buffer — no copy needed.
+                // Ring buffer size is a multiple of FLUSH_THRESHOLD, and
+                // tail only advances by multiples of FLUSH_THRESHOLD, so
+                // the write never wraps past the end of the buffer.
                 uint8_t* tP = tailP;
-                int32_t bytesToEndOfBuffer = (lastBufferP - tP + 1);
-                int32_t len = (bytesToEndOfBuffer < totalToWrite) ? bytesToEndOfBuffer : totalToWrite;
-                int32_t len_remaining = totalToWrite - len;
-                memcpy(write_buff, tP, len);
-                if (len_remaining == 0) {
-                    tP = tP + len;
-                } else {
-                    memcpy(write_buff + len, buffer, len_remaining);
-                    tP = buffer + len_remaining;
-                }
 
-                // Release data from circular buffer
-                tailP = tP;
-
-                // Write to raw SD sectors via LogStore
-                int32_t bytesWritten = writeChunk(write_buff, totalToWrite);
+                int32_t bytesWritten = writeChunk(tP, totalToWrite);
                 if (bytesWritten < 0) {
                     printf("%s: Write %d bytes failed\n", __FUNCTION__, totalToWrite);
                     state = WRITE_FAILURE;
@@ -377,6 +362,11 @@ void Logger::logTask()
                 }
 
                 if (!err) {
+                    // Advance tail — wraps to start when it reaches the end
+                    tP += totalToWrite;
+                    if (tP > lastBufferP)
+                        tP = buffer;
+                    tailP = tP;
                     // Sync metadata to LFS (commits write offset)
                     int32_t sync_err = syncLog();
                     if (sync_err == 0) {

@@ -171,12 +171,12 @@
         function renderHeap(h) {
             var kb = function(n) { return (n / 1024).toFixed(1) + ' KB'; };
             var pct = function(n, total) { return total > 0 ? ' (' + Math.round(n * 100 / total) + '%)' : ''; };
+            var avail = h.remaining + h.free;
             var rows = [
                 ['Total',     kb(h.max)],
-                ['Committed', kb(h.committed) + pct(h.committed, h.max)],
-                ['Remaining', kb(h.remaining) + pct(h.remaining, h.max)],
-                ['In Use',    kb(h.inuse)     + pct(h.inuse,     h.committed)],
-                ['Free',      kb(h.free)      + pct(h.free,      h.committed)],
+                ['In Use',    kb(h.inuse)     + pct(h.inuse,     h.max)],
+                ['Freed',     kb(h.free)      + pct(h.free,      h.max)],
+                ['Available', kb(avail)       + pct(avail,       h.max)],
             ];
             var html = '';
             rows.forEach(function(r) {

@@ -9,14 +9,22 @@
 #include "lfsMgr.h"
 
 
-// Ring buffer for incoming log data. With LogStore, raw sector writes complete
-// in under 1ms, so this no longer needs to absorb multi-second LFS stalls.
-// Keeping it large for now; can be reduced once LogStore is proven.
-#define LOG_BUFFER_SIZE ((96*1024)-LFS_BLOCK_SIZE)
+// Flush threshold: how many bytes to accumulate before writing to SD.
+// Must be a multiple of 512 (sector size).
+#define FLUSH_THRESHOLD 4096
+
+// Ring buffer for incoming log data. Must be a multiple of FLUSH_THRESHOLD
+// so that reads from the tail pointer never wrap past the end of the buffer.
+#define LOG_BUFFER_SIZE (80*1024)
+
+static_assert(LOG_BUFFER_SIZE % FLUSH_THRESHOLD == 0,
+    "LOG_BUFFER_SIZE must be a multiple of FLUSH_THRESHOLD");
+static_assert(FLUSH_THRESHOLD % 512 == 0,
+    "FLUSH_THRESHOLD must be a multiple of 512 (sector size)");
 
 class Logger {
     public:
-        Logger(uint8_t* buffer, int32_t size, uint8_t* write_buffer);
+        Logger(uint8_t* buffer, int32_t size);
 
         bool init(lfs_t* lfs);
         void deinit();
@@ -58,10 +66,6 @@ class Logger {
         uint8_t* lastBufferP;           // always points to the last byte in the circular buffer
         volatile uint8_t* headP;        // needs to be volatile since RX32 ISR updates it
         uint8_t* tailP;
-
-        // Staging buffer for linearizing data from the circular buffer before
-        // writing to SD. Must be at least 512 bytes (one sector).
-        uint8_t* write_buff;
 
         // Hardware spinlock for protecting buffer access from both cores and ISR context
         spin_lock_t* bufferLock;

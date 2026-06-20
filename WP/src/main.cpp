@@ -588,11 +588,9 @@ void boot_system(void* args)
 
     initEpUart();
 
-    // The logger may be started early since it has a big buffer to handle extremely long LittleFS write times.
     printf("%s: Creating the logger\n", __FUNCTION__);
     static uint8_t mergeBuf[LOG_BUFFER_SIZE];
-    static uint8_t writeBuf[LFS_BLOCK_SIZE];
-    static Logger  s_logger(mergeBuf, LOG_BUFFER_SIZE, writeBuf);
+    static Logger  s_logger(mergeBuf, LOG_BUFFER_SIZE);
     logger = &s_logger;
 
     // First thing we log is what version of the log we are generating:
