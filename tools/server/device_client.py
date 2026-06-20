@@ -65,6 +65,19 @@ class DeviceClient:
             print(f"Error getting system info from {self.device_ip}: {e}")
             return None
 
+    def get_sd_info(self) -> Optional[Dict]:
+        """Get SD card info including file list and active log name."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/sd-info",
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Error getting sd-info from {self.device_ip}: {e}")
+            return None
+
     def list_log_files(self) -> Optional[List[Dict]]:
         """List available log files on device via /api/list endpoint.
 

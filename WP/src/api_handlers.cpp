@@ -589,6 +589,33 @@ void generate_api_logstore_json(char* buffer, size_t size)
 }
 
 /**
+ * Build JSON response for GET /api/logstore/reset
+ * Stops Logger, deletes all logs, resets numbering, restarts Logger.
+ */
+void generate_api_logstore_reset_json(char* buffer, size_t size)
+{
+    if (!logStore || !logger) {
+        snprintf(buffer, size,
+                 "{\"success\": false, \"error\": \"LogStore not initialized\"}");
+        return;
+    }
+
+    logger->requestReset();
+    logger->deinit();
+
+    while (!logger->isResetDone()) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    int32_t deleted = logger->getResetResult();
+    logger->init(&lfs);
+
+    snprintf(buffer, size,
+             "{\"success\": true, \"deleted\": %ld}",
+             (long)deleted);
+}
+
+/**
  * Build JSON response for GET /api/reformat-filesystem
  * Takes the LFS mutex, zeroes the first 64 raw SD sectors (LFS blocks 0 and 1,
  * both superblock copies), syncs, then schedules a reboot. On next boot,

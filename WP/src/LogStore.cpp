@@ -572,6 +572,51 @@ bool LogStore::deleteLog(uint32_t log_number)
 }
 
 // -------------------------------------------------------------------------
+// Delete ALL logs and reset numbering. Caller must stop the Logger first.
+
+int32_t LogStore::deleteAllLogs()
+{
+    if (active_log_number >= 0) {
+        printf("LogStore: deleteAllLogs: closing active log %ld\n",
+               (long)active_log_number);
+        closeActiveLog();
+    }
+
+    lfs_dir_t dir;
+    struct lfs_info entry;
+    int err = lfs_dir_open(lfs, &dir, "/");
+    if (err < 0) return -1;
+
+    // Collect log numbers first (can't delete while iterating directory)
+    uint32_t log_numbers[256];
+    int32_t count = 0;
+
+    while (lfs_dir_read(lfs, &dir, &entry) > 0 && count < 256) {
+        if (entry.type != LFS_TYPE_REG)
+            continue;
+        if (strncmp(entry.name, "log_", 4) != 0) continue;
+        const char* p = entry.name + 4;
+        if (*p < '0' || *p > '9') continue;
+        char* end;
+        unsigned long n = strtoul(p, &end, 10);
+        if (strcmp(end, ".meta") == 0)
+            log_numbers[count++] = (uint32_t)n;
+    }
+    lfs_dir_close(lfs, &dir);
+
+    int32_t deleted = 0;
+    for (int32_t i = 0; i < count; i++) {
+        if (deleteLog(log_numbers[i]))
+            deleted++;
+    }
+
+    next_log_number = 1;
+    printf("LogStore: deleteAllLogs: %ld logs deleted, numbering reset\n",
+           (long)deleted);
+    return deleted;
+}
+
+// -------------------------------------------------------------------------
 // Get info about a specific log.
 
 bool LogStore::getLogInfo(uint32_t log_number, LogStoreLogInfo* info)

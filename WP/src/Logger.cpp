@@ -33,6 +33,10 @@ Logger::Logger(uint8_t* _buffer, int32_t _size)
     lastBufferP = buffer + _size - 1;
     headP = tailP = buffer;
     inUse_max = 0;
+    idle = true;
+    reset_requested = false;
+    reset_done = false;
+    reset_result = 0;
 
     // Claim a hardware spinlock for protecting buffer access
     // This works from both ISR and task context, and across cores
@@ -53,9 +57,6 @@ Logger::Logger(uint8_t* _buffer, int32_t _size)
 // ----------------------------------------------------------------------------------
 void Logger::deinit()
 {
-    if (logStore && logStore->getActiveLogNumber() >= 0) {
-        logStore->closeActiveLog();
-    }
     lfs = nullptr;
     memset(logName, 0, sizeof(logName));
 
@@ -287,12 +288,22 @@ void Logger::logTask()
             state = UNMOUNTED;
         }
 
+        idle = (state == UNMOUNTED);
+
         if (state != state_prev) {
             state_prev = state;
         }
 
         switch (state) {
         case UNMOUNTED:
+            if (reset_requested) {
+                printf("%s: performing reset\n", __FUNCTION__);
+                extern lfs_t lfs;
+                reset_result = logStore->deleteAllLogs();
+                logStore->init(&lfs, sdCard);
+                reset_requested = false;
+                reset_done = true;
+            }
             if (lfs) {
                 state = OPEN_LOG;
             } else {

@@ -62,6 +62,11 @@ public:
     // Delete a log by number. Removes metadata file, frees chunks.
     bool deleteLog(uint32_t log_number);
 
+    // Delete ALL logs and reset numbering to 1. Caller must stop the
+    // Logger first and reinitialize LogStore + Logger after.
+    // Returns number of logs deleted, or -1 on error.
+    int32_t deleteAllLogs();
+
     // Get info about a specific log by number.
     bool getLogInfo(uint32_t log_number, LogStoreLogInfo* info);
 

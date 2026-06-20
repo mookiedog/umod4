@@ -95,6 +95,11 @@ class DeviceFilesDialog(QDialog):
         self.delete_button.setStyleSheet("QPushButton { background-color: #d32f2f; color: white; }")
         button_layout.addWidget(self.delete_button)
 
+        self.delete_all_button = QPushButton("Delete All Logs")
+        self.delete_all_button.clicked.connect(self._delete_all_logs)
+        self.delete_all_button.setStyleSheet("QPushButton { background-color: #c62828; color: white; }")
+        button_layout.addWidget(self.delete_all_button)
+
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self._refresh_files)
         button_layout.addWidget(self.refresh_button)
@@ -108,7 +113,7 @@ class DeviceFilesDialog(QDialog):
     def _refresh_files(self):
         """Refresh file list from device."""
         try:
-            # Get files from device
+            # Get files and active log name from device
             client = DeviceClient(self.device_ip, timeout=10)
             device_files = client.list_log_files()
 
@@ -116,6 +121,10 @@ class DeviceFilesDialog(QDialog):
                 QMessageBox.warning(self, "Connection Error",
                                   f"Failed to connect to device at {self.device_ip}")
                 return
+
+            # Get the active log filename so we can prevent deleting it
+            sd_info = client.get_sd_info()
+            active_log = sd_info.get("open_file", "") if sd_info else ""
 
             # Get list of successfully downloaded files from database
             from models.database import Transfer
@@ -141,10 +150,12 @@ class DeviceFilesDialog(QDialog):
                 is_downloaded = filename in downloaded_files
 
                 # Determine if file can be deleted:
+                # - The active log file cannot be deleted (LogStore rejects it)
                 # - Log files (.um4, .log) require download first, UNLESS they are
                 #   zero-length (nothing to preserve — likely a failed-write artifact)
                 # - Other files (uploaded files like .uf2) can always be deleted
-                can_delete = is_downloaded or not is_log_file or file_size == 0
+                is_active = (active_log and filename == active_log)
+                can_delete = not is_active and (is_downloaded or not is_log_file or file_size == 0)
 
                 # Checkbox column: use QTableWidgetItem with check state rather than
                 # setCellWidget(QCheckBox) to avoid PySide6/shiboken C++ ownership bugs
@@ -194,7 +205,9 @@ class DeviceFilesDialog(QDialog):
                 self.file_table.setItem(row, 3, downloaded_item)
 
                 # Status
-                if is_config_file:
+                if is_active:
+                    status = "Active log"
+                elif is_config_file:
                     status = "Config file"
                 elif file_size == 0 and is_log_file:
                     status = "Empty file"
@@ -307,4 +320,80 @@ class DeviceFilesDialog(QDialog):
             )
 
         # Refresh file list
+        self._refresh_files()
+
+    def _delete_all_logs(self):
+        """Delete all logs including the active log, reset log numbering."""
+        # Check that all log files have been downloaded
+        client = DeviceClient(self.device_ip, timeout=10)
+        device_files = client.list_log_files()
+        if device_files is None:
+            QMessageBox.warning(self, "Connection Error",
+                              f"Failed to connect to device at {self.device_ip}")
+            return
+
+        log_files = [f for f in device_files
+                     if f['filename'].endswith('.um4') and f['size'] > 0]
+
+        if log_files:
+            from models.database import Transfer
+            session = self.database.get_session()
+            try:
+                successful = {t.filename for t in session.query(Transfer).filter_by(
+                    device_mac=self.device_mac, status='success').all()}
+            finally:
+                session.close()
+
+            not_downloaded = [f['filename'] for f in log_files
+                             if f['filename'] not in successful]
+
+            if not_downloaded:
+                file_list = "\n".join(f"  • {f}" for f in not_downloaded)
+                reply = QMessageBox.warning(
+                    self,
+                    "Undownloaded Logs",
+                    f"{len(not_downloaded)} log file(s) have NOT been downloaded "
+                    f"and will be permanently lost:\n\n{file_list}\n\n"
+                    f"Delete ALL logs anyway?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete All Logs",
+            "This will delete ALL log files including the active log "
+            "and reset log numbering to 1.\n\n"
+            "This action cannot be undone!",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        import requests
+        try:
+            response = requests.get(
+                f"http://{self.device_ip}/api/logstore/reset",
+                timeout=30
+            )
+            data = response.json()
+            if data.get("success"):
+                QMessageBox.information(
+                    self,
+                    "Reset Complete",
+                    f"Deleted {data.get('deleted', '?')} log(s). "
+                    f"Log numbering reset to 1."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Reset Failed",
+                    f"Error: {data.get('error', 'unknown')}"
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to reset LogStore: {e}")
+
         self._refresh_files()

@@ -42,6 +42,14 @@ class Logger {
 
         int32_t get_log_size() {return bufferLen;}
         int32_t get_inUse_max() {return inUse_max;}
+        bool isIdle() const { return idle; }
+
+        // Request a full reset (delete all logs, reset numbering).
+        // Called from HTTP handler; the Logger task performs the actual
+        // work on its own stack (safe for LFS/SD operations).
+        void requestReset() { reset_done = false; reset_result = 0; reset_requested = true; }
+        bool isResetDone() const { return reset_done; }
+        int32_t getResetResult() const { return reset_result; }
 
         // I/O timing stats (microseconds)
         uint32_t getWriteMin()   const { return (uint32_t)minTimeWriting; }
@@ -84,6 +92,10 @@ class Logger {
         uint32_t totalSyncEvents;
 
         uint32_t inUse_max;
+        volatile bool idle;
+        volatile bool reset_requested;
+        volatile bool reset_done;
+        volatile int32_t reset_result;
 };
 
 #endif

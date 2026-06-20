@@ -36,6 +36,7 @@ extern void generate_api_ep_stdio_json(char* buffer, size_t size, uint32_t clien
 extern void generate_api_tasks_json(char* buffer, size_t size);
 extern void generate_api_heap_json(char* buffer, size_t size);
 extern void generate_api_logstore_json(char* buffer, size_t size);
+extern void generate_api_logstore_reset_json(char* buffer, size_t size);
 extern int  api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
                             uint32_t offset, uint32_t len);
 
@@ -498,6 +499,8 @@ int fs_open_custom(struct fs_file *file, const char *name)
             generate_api_heap_json(api_file->data, api_buffer_size);
         } else if (strcmp(api_name, "logstore") == 0) {
             generate_api_logstore_json(api_file->data, api_buffer_size);
+        } else if (strcmp(api_name, "logstore/reset") == 0) {
+            generate_api_logstore_reset_json(api_file->data, api_buffer_size);
         } else {
             printf("fs_custom: Unknown API endpoint: %s\n", api_name);
             free(api_file->data);
