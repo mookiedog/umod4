@@ -37,6 +37,7 @@ extern void generate_api_tasks_json(char* buffer, size_t size);
 extern void generate_api_heap_json(char* buffer, size_t size);
 extern void generate_api_logstore_json(char* buffer, size_t size);
 extern void generate_api_logstore_reset_json(char* buffer, size_t size);
+extern void generate_api_console_json(char* buffer, size_t size, uint32_t client_offset);
 extern int  api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
                             uint32_t offset, uint32_t len);
 
@@ -416,6 +417,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
                                    strcmp(api_name, "wifi-scan") == 0) ? 4096 :
                                   (strcmp(api_name, "tasks") == 0) ? 2048 :
                                   (strcmp(api_name, "ecu-live-meta") == 0) ? 2048 :
+                                  (strncmp(api_name, "console/", 8) == 0) ? 8192 :
                                   (strncmp(api_name, "ep-stdio/", 9) == 0) ? 1536 :
                                   (strcmp(api_name, "info") == 0 ||
                                    strcmp(api_name, "image-store") == 0 ||
@@ -501,6 +503,9 @@ int fs_open_custom(struct fs_file *file, const char *name)
             generate_api_logstore_json(api_file->data, api_buffer_size);
         } else if (strcmp(api_name, "logstore/reset") == 0) {
             generate_api_logstore_reset_json(api_file->data, api_buffer_size);
+        } else if (strncmp(api_name, "console/", 8) == 0) {
+            uint32_t off = (uint32_t)strtoul(api_name + 8, NULL, 10);
+            generate_api_console_json(api_file->data, api_buffer_size, off);
         } else {
             printf("fs_custom: Unknown API endpoint: %s\n", api_name);
             free(api_file->data);
@@ -528,8 +533,10 @@ int fs_open_custom(struct fs_file *file, const char *name)
         file->pextension = api_file;
         file->flags = FS_FILE_FLAGS_HEADER_PERSISTENT;  // Don't set CUSTOM flag for in-memory
 
-        printf("fs_custom: Serving API '%s', %zu bytes\n",
-               api_name, api_file->file_size);
+        if (strncmp(api_name, "console", 7) != 0 &&
+            strncmp(api_name, "ep-stdio", 8) != 0)
+            printf("fs_custom: Serving API '%s', %zu bytes\n",
+                   api_name, api_file->file_size);
         return 1;  // Success
     }
 
@@ -924,12 +931,12 @@ void fs_close_custom(struct fs_file *file)
             // Chunk download — data points to static s_chunk_data_buf, do not free
             uint32_t t_close = time_us_32();
             uint32_t send_us = t_close - s_chunk_t_ready;
-            printf("CHK off=%lu gap=%luus lfs=%luus send=%luus sz=%lu\r",
-                   (unsigned long)s_chunk_off,
-                   (unsigned long)s_chunk_gap_us,
-                   (unsigned long)s_chunk_lfs_us,
-                   (unsigned long)send_us,
-                   (unsigned long)s_chunk_sz);
+            // printf("CHK off=%lu gap=%luus lfs=%luus send=%luus sz=%lu\r",
+            //        (unsigned long)s_chunk_off,
+            //        (unsigned long)s_chunk_gap_us,
+            //        (unsigned long)s_chunk_lfs_us,
+            //        (unsigned long)send_us,
+            //        (unsigned long)s_chunk_sz);
             s_chunk_t_prev_close = t_close;
             s_chunk_has_prev     = true;
 

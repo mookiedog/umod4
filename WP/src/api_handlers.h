@@ -153,6 +153,12 @@ void generate_api_ecu_live_meta_json(char* buffer, size_t size);
 void generate_api_logstore_json(char* buffer, size_t size);
 
 /**
+ * Generate JSON for GET /api/console?off=N endpoint.
+ * Returns new text from RTT channel 0 since offset N.
+ */
+void generate_api_console_json(char* buffer, size_t size, uint32_t client_offset);
+
+/**
  * Generate JSON for GET /api/logstore/reset endpoint.
  * Stops Logger, deletes all logs, resets numbering, restarts Logger.
  */

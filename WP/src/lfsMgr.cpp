@@ -430,8 +430,6 @@ void startFileSystem(void)
 {
     static hotPlugMgrCfg_t cfg;
 
-    printf("%s: 4-bit SDIO mode\n", __FUNCTION__);
-
     // Create the SdCardSDIO object - uses proven SDIO_RP2350 library low-level functions
     sdCard = new SdCardSDIO(SD_CARD_PIN);
 

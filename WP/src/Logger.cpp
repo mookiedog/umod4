@@ -232,9 +232,9 @@ int32_t Logger::writeChunk(uint8_t* buf, int32_t len)
     static uint32_t writeCount;
 
     writeCount++;
-    printf("%s: %d: logStore->write() time: %lld uSec, bytes written: %d (%.1f KB/sec)\n",
-           __FUNCTION__, writeCount, elapsed, bytesWritten,
-           elapsed > 0 ? ((1000000.0f / elapsed) * bytesWritten) / 1024.0f : 0.0f);
+    // printf("%s: %d: logStore->write() time: %lld uSec, bytes written: %d (%.1f KB/sec)\n",
+    //        __FUNCTION__, writeCount, elapsed, bytesWritten,
+    //        elapsed > 0 ? ((1000000.0f / elapsed) * bytesWritten) / 1024.0f : 0.0f);
 
     totalWriteEvents += 1;
     totalTimeWriting += elapsed;
@@ -253,7 +253,7 @@ int32_t Logger::syncLog()
     if (elapsed < minTimeSyncing) minTimeSyncing = elapsed;
     if (elapsed > maxTimeSyncing) maxTimeSyncing = elapsed;
 
-    printf("%s: syncMetadata(): %lld uSec (%lld/%lld)\n", __FUNCTION__, elapsed, minTimeSyncing, maxTimeSyncing);
+    // printf("%s: syncMetadata(): %lld uSec (%lld/%lld)\n", __FUNCTION__, elapsed, minTimeSyncing, maxTimeSyncing);
 
     totalSyncEvents += 1;
     totalTimeSyncing += elapsed;

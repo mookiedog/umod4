@@ -144,7 +144,7 @@ void FlashWp::get_boot_info()
         boot_slot = -1;
         target_slot = -1;
 
-        printf("%s: Reading boot_info\n", __FUNCTION__);
+        //printf("%s: Reading boot_info\n", __FUNCTION__);
         // Flush flash cache before querying partition table
         rom_flash_flush_cache();
 

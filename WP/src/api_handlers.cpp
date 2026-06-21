@@ -14,6 +14,7 @@
 #include "lfsMgr.h"
 #include "LogStore.h"
 #include "Logger.h"
+#include "SEGGER_RTT.h"
 #include "file_io_task.h"
 #include "ota_flash_task.h"
 #include "FlashWp.h"
@@ -586,6 +587,80 @@ void generate_api_logstore_json(char* buffer, size_t size)
         (unsigned long)wr_min, (unsigned long)wr_max, (unsigned long)wr_avg, (unsigned long)wr_count,
         (unsigned long)sy_min, (unsigned long)sy_max, (unsigned long)sy_avg, (unsigned long)sy_count,
         LOG_BUFFER_SIZE, (unsigned long)buf_max);
+}
+
+/**
+ * Build JSON response for GET /api/console?off=N
+ * Reads new text from RTT channel 0 since the client's offset.
+ * Returns {"off":N,"text":"..."} where N is the new offset for the next poll.
+ * Text is JSON-escaped (control chars, quotes, backslashes).
+ */
+void generate_api_console_json(char* buffer, size_t size, uint32_t client_offset)
+{
+    extern SEGGER_RTT_CB _SEGGER_RTT;
+    SEGGER_RTT_BUFFER_UP* ch = &_SEGGER_RTT.aUp[0];
+
+    unsigned wr = ch->WrOff;
+    unsigned buf_size = ch->SizeOfBuffer;
+    char* rtt_buf = ch->pBuffer;
+
+    if (!rtt_buf || buf_size == 0) {
+        snprintf(buffer, size, "{\"off\":0,\"text\":\"\"}");
+        return;
+    }
+
+    // Wrap-aware: use a monotonic write counter would be ideal, but RTT
+    // only gives us WrOff (0..buf_size-1). We use WrOff directly as the
+    // offset. If client_offset > buf_size or doesn't match current state,
+    // reset to current position (client missed data).
+    if (client_offset > buf_size) {
+        client_offset = wr;
+    }
+
+    // Calculate available bytes (circular)
+    unsigned avail;
+    if (wr >= client_offset) {
+        avail = wr - client_offset;
+    } else {
+        avail = buf_size - client_offset + wr;
+    }
+
+    // Copy and JSON-escape the RTT data into a temp area, then wrap
+    // with the JSON envelope. We need rd (final read position) before
+    // we can write the "off" field.
+    char* text_start = buffer + 64;     // reserve space for JSON header
+    size_t text_max = size - 64 - 4;    // leave room for header + closing
+    char* tp = text_start;
+
+    unsigned rd = client_offset;
+    for (unsigned i = 0; i < avail && (size_t)(tp - text_start) < text_max; i++) {
+        char c = rtt_buf[rd];
+        rd++;
+        if (rd >= buf_size) rd = 0;
+
+        if (c == '"') {
+            *tp++ = '\\'; *tp++ = '"';
+        } else if (c == '\\') {
+            *tp++ = '\\'; *tp++ = '\\';
+        } else if (c == '\n') {
+            *tp++ = '\\'; *tp++ = 'n';
+        } else if (c == '\r') {
+            // skip
+        } else if (c >= 0x20 && c < 0x7F) {
+            *tp++ = c;
+        }
+    }
+    size_t text_len = (size_t)(tp - text_start);
+
+    // Advance RdOff to where we actually read, so RTT can accept new
+    // writes. If we couldn't fit everything, the client picks up the
+    // rest on the next poll.
+    ch->RdOff = rd;
+
+    // Build the response: header + text + closing
+    int hdr_len = snprintf(buffer, 64, "{\"off\":%u,\"text\":\"", rd);
+    memmove(buffer + hdr_len, text_start, text_len);
+    memcpy(buffer + hdr_len + text_len, "\"}", 3);
 }
 
 /**
@@ -1326,19 +1401,22 @@ void generate_api_ep_stdio_json(char* buffer, size_t size, uint32_t client_offse
     uint32_t len = ep_stdio_read(client_offset, raw, sizeof(raw), &next, &overflow);
 
     size_t pos = 0;
-    pos += (size_t)snprintf(buffer + pos, size - pos, "{\"data\":\"");
+    pos += (size_t)snprintf(buffer + pos, size - pos, "{\"off\":%lu,\"text\":\"",
+                            (unsigned long)next);
+    if (overflow) {
+        const char* marker = "[...data lost...]\\n";
+        size_t mlen = strlen(marker);
+        if (pos + mlen < size) { memcpy(buffer + pos, marker, mlen); pos += mlen; }
+    }
     for (uint32_t i = 0; i < len && pos + 8 < size; i++) {
         uint8_t c = raw[i];
         if      (c == '"')  { buffer[pos++] = '\\'; buffer[pos++] = '"'; }
         else if (c == '\\') { buffer[pos++] = '\\'; buffer[pos++] = '\\'; }
         else if (c == '\n') { buffer[pos++] = '\\'; buffer[pos++] = 'n'; }
-        else if (c == '\r') { buffer[pos++] = '\\'; buffer[pos++] = 'r'; }
-        else if (c < 0x20)  { pos += (size_t)snprintf(buffer + pos, size - pos, "\\u%04x", (unsigned)c); }
-        else                { buffer[pos++] = (char)c; }
+        else if (c == '\r') { /* skip */ }
+        else if (c >= 0x20) { buffer[pos++] = (char)c; }
     }
-    snprintf(buffer + pos, size - pos,
-             "\",\"next\":%lu,\"overflow\":%s}",
-             (unsigned long)next, overflow ? "true" : "false");
+    snprintf(buffer + pos, size - pos, "\"}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1395,7 +1473,7 @@ int api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
 // ---------------------------------------------------------------------------
 // /api/tasks  — FreeRTOS task list with CPU time stats
 
-extern volatile uint32_t g_heap_max;
+extern const    uint32_t g_heap_max;
 extern volatile uint32_t g_heap_committed;
 extern volatile uint32_t g_heap_remaining;
 extern volatile uint32_t g_heap_inuse;

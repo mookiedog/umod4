@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>umod4 - Console</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        #console {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.8em;
+            line-height: 1.4;
+            padding: 12px;
+            border-radius: 5px;
+            height: 70vh;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 10px;
+        }
+        .tab {
+            padding: 8px 20px;
+            border: 1px solid #ccc;
+            background: #f0f0f0;
+            color: #666;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            width: auto;
+            margin: 0;
+            border-radius: 0;
+        }
+        .tab:first-child { border-radius: 5px 0 0 5px; }
+        .tab:last-child  { border-radius: 0 5px 5px 0; }
+        .tab.active {
+            background: #17a2b8;
+            color: white;
+            border-color: #17a2b8;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 0.85em;
+            color: #666;
+        }
+        .controls button {
+            padding: 6px 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #f8f9fa;
+            font-size: 0.9em;
+            cursor: pointer;
+            width: auto;
+            margin: 0 4px;
+        }
+        .controls button:hover { background: #e9ecef; }
+        #status { font-size: 0.8em; color: #999; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="ribbon">
+                <span class="ribbon-title">Console</span>
+                <div class="ribbon-status">
+                    <a href="/system.html" class="ribbon-icon-link" title="System">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#333" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                    </a>
+                    <div class="device-id" id="device-name"></div>
+                </div>
+            </div>
+        </div>
+        <div class="page-content">
+            <div class="tabs">
+                <button class="tab active" id="tab-wp" onclick="switchSource('wp')">WP</button>
+                <button class="tab" id="tab-ep" onclick="switchSource('ep')">EP</button>
+            </div>
+            <div class="controls">
+                <div>
+                    <button id="pause-btn" onclick="togglePause()">Pause</button>
+                    <button onclick="clearConsole()">Clear</button>
+                </div>
+                <div id="status"></div>
+                <div>
+                    <label><input type="checkbox" id="auto-scroll" checked> Auto-scroll</label>
+                </div>
+            </div>
+            <div id="console"></div>
+        </div>
+    </div>
+
+    <script>
+        var sources = {
+            wp: { url: '/api/console/', offset: 0, bytes: 0, content: '' },
+            ep: { url: '/api/ep-stdio/', offset: 0, bytes: 0, content: '' }
+        };
+        var active = 'wp';
+        var paused = false;
+
+        function switchSource(src) {
+            // Save current console content
+            sources[active].content = document.getElementById('console').textContent;
+            active = src;
+            document.getElementById('tab-wp').className = 'tab' + (src === 'wp' ? ' active' : '');
+            document.getElementById('tab-ep').className = 'tab' + (src === 'ep' ? ' active' : '');
+            // Restore saved content for the new source
+            document.getElementById('console').textContent = sources[active].content;
+            updateStatus();
+            var el = document.getElementById('console');
+            if (document.getElementById('auto-scroll').checked) {
+                el.scrollTop = el.scrollHeight;
+            }
+        }
+
+        function togglePause() {
+            paused = !paused;
+            var btn = document.getElementById('pause-btn');
+            btn.textContent = paused ? 'Resume' : 'Pause';
+        }
+
+        function clearConsole() {
+            document.getElementById('console').textContent = '';
+            sources[active].content = '';
+            sources[active].bytes = 0;
+            updateStatus();
+        }
+
+        function updateStatus() {
+            var b = sources[active].bytes;
+            document.getElementById('status').textContent =
+                b > 1024 ? (b / 1024).toFixed(1) + ' KB received' : b + ' B received';
+        }
+
+        function poll() {
+            if (paused) return;
+
+            var src = sources[active];
+            fetch(src.url + src.offset)
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    src.offset = d.off;
+                    if (d.text && d.text.length > 0) {
+                        var el = document.getElementById('console');
+                        var decoded = d.text.replace(/\\n/g, '\n');
+                        el.textContent += decoded;
+                        src.bytes += decoded.length;
+                        updateStatus();
+                        if (document.getElementById('auto-scroll').checked) {
+                            el.scrollTop = el.scrollHeight;
+                        }
+                    }
+                })
+                .catch(function() {
+                    document.getElementById('status').textContent = 'Connection lost';
+                });
+        }
+
+        fetch('/api/info')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.device_name) document.getElementById('device-name').textContent = d.device_name;
+            })
+            .catch(function() {});
+
+        // Check URL hash for initial source selection
+        if (window.location.hash === '#ep') switchSource('ep');
+
+        setInterval(poll, 500);
+    </script>
+</body>
+</html>

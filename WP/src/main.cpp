@@ -388,20 +388,21 @@ void __time_critical_func(isr_rx32)()
 // and the RP2350 UART silicon only does 8-bit transfers.
 // All ECU data comes across as 32-bit words, each containing a complete log event
 // that we will inserted into the log in atomic fashion.
-void initEpUart() {
+void initEpUart()
+{
 
     // Set up the PIO unit to act as our UART
     pio_sm_uart = pio_claim_unused_sm(PIO_UART, true);
     uint offset = pio_add_program(PIO_UART, &uart_rx32_program);
     uart_rx32_program_init(PIO_UART, pio_sm_uart, offset, EPLOG_RX_PIN, EP_TO_WP_BAUDRATE);
-    printf("UART_RX32: Using PIO%d, SM%d, program start @ offset %d (size: %d instructions)\n",
-           pio_get_index(PIO_UART), pio_sm_uart, offset, uart_rx32_program.length);
+    printf("UART_RX32: PIO%d, SM%d, addrs %d..%d\n",
+           pio_get_index(PIO_UART), pio_sm_uart, offset, offset+uart_rx32_program.length-1);
 
 
     // Assign an interrupt handler
     irq_set_exclusive_handler(PIO_UART_RX_IRQ, isr_rx32);
 
-    printf("%s: UART_RX32 ISR will be serviced by RP2350 core %d\n", __FUNCTION__, get_core_num());
+    printf("%s: UART_RX32 ISR serviced by core %d\n", __FUNCTION__, get_core_num());
     // Leave interrupts off until we enable the flowcontrol signal
 }
 
@@ -444,7 +445,10 @@ void allowEpToSendData()
 //   g_heap_remaining  uncommitted space still available to sbrk
 //   g_heap_inuse      bytes in live malloc() allocations right now
 //   g_heap_free       free bytes inside committed arena (may be fragmented)
-volatile uint32_t g_heap_max       = 0;
+static const uintptr_t heap_start = (uintptr_t)&__bss_end__;
+static const uintptr_t heap_limit = (uintptr_t)&__StackLimit;
+
+extern const uint32_t g_heap_max   = heap_limit - heap_start;
 volatile uint32_t g_heap_committed = 0;
 volatile uint32_t g_heap_remaining = 0;
 volatile uint32_t g_heap_inuse     = 0;
@@ -453,18 +457,12 @@ volatile uint32_t g_heap_free      = 0;
 // ----------------------------------------------------------------------------------
 void show_heap_stats(bool all=false)
 {
-    uintptr_t heap_start = (uintptr_t)&__bss_end__;
-    uintptr_t heap_limit = (uintptr_t)&__StackLimit;
-
-    const uint32_t max_heap = heap_limit - heap_start;
-
     struct mallinfo mi = mallinfo();
 
     // Store in globals FIRST so they're readable from the debugger even if
     // the printf below never completes (e.g. stdio mutex held at panic time).
-    g_heap_max       = max_heap;
     g_heap_committed = (uint32_t)mi.arena;
-    g_heap_remaining = max_heap - (uint32_t)mi.arena;
+    g_heap_remaining = g_heap_max - (uint32_t)mi.arena;
     g_heap_inuse     = (uint32_t)mi.uordblks;
     g_heap_free      = (uint32_t)mi.fordblks;
 
@@ -588,7 +586,9 @@ void boot_system(void* args)
 
     initEpUart();
 
-    printf("%s: Creating the logger\n", __FUNCTION__);
+    printf("%s: Begin\n", __FUNCTION__);
+
+    printf("- Starting logger\n");
     static uint8_t mergeBuf[LOG_BUFFER_SIZE];
     static Logger  s_logger(mergeBuf, LOG_BUFFER_SIZE);
     logger = &s_logger;
@@ -625,40 +625,40 @@ void boot_system(void* args)
         }
     );
 
-    printf("%s: Starting the filesystem\n", __FUNCTION__);
+    printf("- Starting filesystem\n");
     startFileSystem();
 
     // Now that the UART and logger are up: signal the EP that is is OK to send us data
-    printf("%s: EP is enabled to send us data\n", __FUNCTION__);
+    printf("- EP TX enabled\n");
     allowEpToSendData();
 
-    printf("%s: Starting the GPS\n", __FUNCTION__);
+    printf("- Starting GPS\n");
     startGps();
 
-    printf("%s: Starting the debug shell\n", __FUNCTION__);
+    printf("- Starting debug shell\n");
     dbgShell = new Shell(&lfs);
 
-    printf("%s: Starting the VFY task\n", __FUNCTION__);
+    printf("- Starting VFY task\n");
     vfy_task_init();
 
     // Load persistent config from flash; fall back to compile-time defaults if blank/corrupt
-    printf("%s: Loading config from flash\n", __FUNCTION__);
+    printf("- Loading config from flash\n");
     flash_config_load(&g_flash_config);
     strncpy(g_device_name, g_flash_config.device_name, sizeof(g_device_name) - 1);
 
     // Create the wifi manager and configure it from flash config
-    printf("%s: Creating WiFi manager\n", __FUNCTION__);
+    printf("- Starting WiFi manager\n");
     wifiMgr = new WiFiManager();
     wifiMgr->setCredentials(g_flash_config.wifi_ssid, g_flash_config.wifi_password);
     wifiMgr->setGps(gps);
 
-    printf("%s: Creating Network manager (MDL HTTP server)\n", __FUNCTION__);
+    printf("- Starting Network manager (MDL HTTP server)\n");
     networkMgr = new NetworkManager(wifiMgr);
 
-    printf("%s: Initializing file I/O task\n", __FUNCTION__);
+    printf("- Starting file I/O task\n");
     file_io_task_init();
 
-    printf("%s: Initializing OTA flash task\n", __FUNCTION__);
+    printf("- Starting OTA flash task\n");
     ota_flash_task_init();
 
     // Instantiate an SWD object to interact with the EP
@@ -672,11 +672,8 @@ void boot_system(void* args)
     configASSERT(g_swd_mutex);
     swd_boot_check();
 
-    printf("%s: Starting EP RTT forwarder\n", __FUNCTION__);
+    printf("- Starting EP RTT forwarder\n");
     ep_rtt_forwarder_init();
-
-    // A bit more accurate now that we have mostly booted:
-    show_heap_stats();
 
     // Periodically print heap stats so we can track usage trends over time.
     // If memory is leaking or fragmenting, this will show it in the RTT log.
@@ -687,6 +684,10 @@ void boot_system(void* args)
 
     // Enable this to debug lwip memory usage as program runs
     //debug_lwip_stats();
+
+    printf("%s: Complete\n", __FUNCTION__);
+    // A bit more accurate now that we have mostly booted:
+    show_heap_stats();
 
     // All done booting: delete this task
     vTaskDelete(NULL);
@@ -822,11 +823,10 @@ void ota_shutdown_logger(void)
 static void show_partition_info()
 {
     int32_t bs = FlashWp::get_boot_slot();
-    printf("WP Boot slot:   %d/%c\n", bs, (bs>=0) ? ('A'-1+bs) : '?');
+    printf("Boot slot:   %d/%c\n", bs, (bs>=0) ? ('A'-1+bs) : '?');
     int32_t ts = FlashWp::get_target_slot();
-    printf("WP Target slot: %d/%c\n", ts, (ts>=0) ? ('A'-1+ts) : '?');
-    printf("WP OTA is%s available\n", FlashWp::get_ota_availability() ? "" : " NOT");
-    printf("\n");
+    printf("Target slot: %d/%c\n", ts, (ts>=0) ? ('A'-1+ts) : '?');
+    printf("OTA is%s available\n", FlashWp::get_ota_availability() ? "" : " NOT");
 }
 
 // ----------------------------------------------------------------------------------
@@ -939,13 +939,14 @@ int main()
     wp_rtt_init();
     ep_rtt_channels_init();
 
-    printf("\n\nWP Core %d booting on board %s\n", get_core_num(), STRINGIFY(PICO_BOARD));
-    printf("WP Version JSON: %s\n", SYSTEM_JSON);
-    uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
-    printf("WP System clock: %.1f MHz\n", f_clk_sys / 1000.0);
+    printf("\n");
+    for (int i=0; i<40; i++) putchar('-');
 
-    printf("WP ");          // prepend heap stats to make it look like the other boot msgs
-    show_heap_stats(true);
+    printf("\nWP Core %d booting\n", get_core_num());
+    printf("WP Version: %s\n", SYSTEM_JSON);
+    uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
+    printf("WP Sysclk: %.1f MHz\n", f_clk_sys / 1000.0);
+    printf("WP Heap: %u\n", g_heap_max);
 
     show_partition_info();
     check_tbyb();

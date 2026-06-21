@@ -185,11 +185,11 @@ add_custom_command(
             ${WWW_DIR}/status.html
             ${WWW_DIR}/system.html
             ${WWW_DIR}/internals.html
+            ${WWW_DIR}/console.html
             ${WWW_DIR}/eprom_info.html
             ${WWW_DIR}/ecu_live.html
             ${WWW_DIR}/wifi_config.html
             ${WWW_DIR}/sd_info.html
-            ${WWW_DIR}/ep_stdio.html
             ${WWW_DIR}/tps_cal.html
             ${WWW_DIR}/style.css
             ${WWW_DIR}/TPS.svg
