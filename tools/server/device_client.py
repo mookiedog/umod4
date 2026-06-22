@@ -98,7 +98,7 @@ class DeviceClient:
             return None
 
     # Chunk size must match CHUNK_DOWNLOAD_MAX_SIZE in WP/src/fs_custom.cpp
-    CHUNK_DOWNLOAD_SIZE = 16 * 1024  # TEST: doubled from 8KB to match larger TCP window
+    CHUNK_DOWNLOAD_SIZE = 16 * 1024
     # Write buffering: accumulate chunks before flushing to disk.
     # Without this, the per-chunk write syscall (~3-5ms in WSL2) adds directly to
     # the gap time between receiving a chunk and sending the next GET request.

@@ -67,7 +67,6 @@
 // TCP window and send buffer: 12×MSS = 17520 bytes.
 // Must be large enough to hold one full chunk response (CHUNK_DOWNLOAD_MAX_SIZE + ~300 byte
 // headers) in a single tcp_write to avoid multi-round sends that cause IncompleteRead errors.
-// TEST: doubled from 6×MSS to measure whether WiFi throughput improves with larger window.
 #define TCP_WND                     (12 * TCP_MSS)
 #define TCP_MSS                     1460
 #define TCP_SND_BUF                 (12 * TCP_MSS)

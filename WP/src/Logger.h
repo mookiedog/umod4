@@ -15,7 +15,10 @@
 
 // Ring buffer for incoming log data. Must be a multiple of FLUSH_THRESHOLD
 // so that reads from the tail pointer never wrap past the end of the buffer.
-#define LOG_BUFFER_SIZE (80*1024)
+// Sized to hold the boot burst (~14.6 KB from EP metadata dump) plus
+// headroom. Steady-state peak is ~6.4 KB at 9 KB/s redline data rate.
+// With EP flow control (future), this could shrink to 8 KB.
+#define LOG_BUFFER_SIZE (24*1024)
 
 static_assert(LOG_BUFFER_SIZE % FLUSH_THRESHOLD == 0,
     "LOG_BUFFER_SIZE must be a multiple of FLUSH_THRESHOLD");
@@ -92,6 +95,8 @@ class Logger {
         uint32_t totalSyncEvents;
 
         uint32_t inUse_max;
+        volatile bool hwm_pending;
+        uint32_t hwm_reset_countdown;
         volatile bool idle;
         volatile bool reset_requested;
         volatile bool reset_done;

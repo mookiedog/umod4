@@ -510,4 +510,9 @@
 #define     LOGID_WP_RESET_REASON_HZD_SYS_RESET_REQ_MASK    0x0800  //   HAD_HZD_SYS_RESET_REQ: hazardous system reset request
 #define     LOGID_WP_RESET_REASON_WD_RESET_RSM_MASK         0x1000  //   HAD_WATCHDOG_RESET_RSM: watchdog reset state machine
 
+#define LOGID_WP_BUF_HWM_TYPE_U8                        ((LOGID_WP_BASE) + 0x0F)
+#define LOGID_WP_BUF_HWM_DLEN                           1
+#define LOGID_WP_BUF_HWM_NAME                           "Log Buffer HWM"
+#define LOGID_WP_BUF_HWM_UNITS                          "x256 bytes"
+
 #endif

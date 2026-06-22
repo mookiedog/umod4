@@ -1637,6 +1637,11 @@ def _process_single_file(logfile_path, output_path, args, L):
                     desc = ",".join(bits) if bits else "none"
                     print(f"{fmt_record(recordCnt, timekeeper)} WP_RST: 0x{reason:04X} ({desc})")
 
+                elif byte == L.LOGID_WP_BUF_HWM_TYPE_U8:
+                    hwm_raw = read(f, L.LOGID_WP_BUF_HWM_DLEN)[0]
+                    hwm_bytes = (hwm_raw + 1) * 256
+                    print(f"{fmt_record(recordCnt, timekeeper)} BUF_HWM: {hwm_raw} ({hwm_bytes} bytes)")
+
                 # Handle ECU events
                 elif byte == L.LOGID_ECU_CPU_EVENT_TYPE_U8:
                     event = read(f, L.LOGID_ECU_CPU_EVENT_DLEN)[0]

@@ -33,6 +33,8 @@ Logger::Logger(uint8_t* _buffer, int32_t _size)
     lastBufferP = buffer + _size - 1;
     headP = tailP = buffer;
     inUse_max = 0;
+    hwm_pending = false;
+    hwm_reset_countdown = 20;
     idle = true;
     reset_requested = false;
     reset_done = false;
@@ -164,6 +166,7 @@ bool __time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
     int32_t i = inUse();
     if (i > inUse_max) {
         inUse_max = i;
+        hwm_pending = true;
     }
 
     headP = hP;
@@ -212,6 +215,7 @@ bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* 
     int32_t i = inUse();
     if (i > inUse_max) {
         inUse_max = i;
+        hwm_pending = true;
     }
 
     // Release spinlock first, then exit critical section
@@ -390,6 +394,15 @@ void Logger::logTask()
                             printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n",
                                    __FUNCTION__, minTimeSyncing, maxTimeSyncing,
                                    totalTimeSyncing / totalSyncEvents);
+                        }
+                        if (hwm_pending) {
+                            hwm_pending = false;
+                            uint8_t hwm = (inUse_max > 65280) ? 255 : (uint8_t)(inUse_max / 256);
+                            logData(LOGID_WP_BUF_HWM_TYPE_U8, LOGID_WP_BUF_HWM_DLEN, &hwm);
+                            if (hwm_reset_countdown > 0) {
+                                hwm_reset_countdown--;
+                                inUse_max = 0;
+                            }
                         }
                         state = WAIT_FOR_DATA;
                     } else {

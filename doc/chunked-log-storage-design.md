@@ -2,22 +2,113 @@
 
 ## Problem
 
-LittleFS does not maintain a persistent free-space index. Every block allocation
-requires a full traversal of every file's block chain to determine which blocks
-are in use. On a large SD card with accumulated log data, this scan takes
-O(total_data / block_size) sector reads at ~500 us each.
+LittleFS performance does not fit well in applications that require storing large logfiles on SD cards, such as the umod4 project.
+Some of the LittleFS design choices that lend themselves to reliability have a performance cost.
+Specifically, one great aid to reliability is that LittleFS does not maintain a persistent free-space list.
+Not having a free-space list means that it is impossible for the filesystem to get out of sync regarding what the free-space list thinks is in-use versus what the files in the filesystem are actually using.
 
-At 650 MB of accumulated log files the scan takes ~20 seconds per pass through
-a single 8192-block lookahead window. On a 32 GB card that can require up to
-244 passes -- over 80 minutes -- to find a free block.
+The cost of not having a free-space list means that block allocation events may require a full traversal of every file's block chain to determine which blocks are in use.
+Blocks that are not actively in use must be free.
 
-The Logger's 80 KB ring buffer overflows in ~7 seconds at redline (11 KB/s).
-The system becomes unusable once accumulated file data exceeds roughly 230 MB
-(redline) to 356 MB (cruising at 7 KB/s).
+This has two impacts on a system:
 
-This is a fundamental LittleFS architectural limitation, not a configuration
-problem. No combination of block_size, lookahead_size, or background scanning
-can eliminate it -- only defer the threshold.
+1) filesystems containing a large number of small files will require a lot of reads to find a free block
+2) filesystems containing even a small number of very large log files will also require a lot of reads to find a free block
+
+Given that SD cards are many tens of GB in length, it can take LittleFS literally minutes of scanning to find a free block when the SD card starts to see serious usage.
+
+There are configuration adjustments that can be made to make the free-space searches "less bad", but fundamentally, the more data that is stored in a LittleFS filesystem, the worse LittleFS performs.
+Large log files on large SD cards are a worst-case situation for LittleFS.
+
+The delays are not necessarily predictable, which adds another wrinkle to a system using LittleFS.
+Writes may be proceeding fine, completing in a small number of milliseconds, then suddenly there will be a 10 second delay to complete a write.
+Under those circumstances, a system needs to be able to buffer the incoming data stream when LittleFS goes off on a free block hunt.
+This can have a considerable RAM requirement.
+
+These issues are the result of fundamental LittleFS architectural decisions, not configuration problems.
+No combination of block_size, lookahead_size, or background scanning can eliminate them.
+These configuration items only serve to defer the threshold before the search time overflows whatever RAM buffer can be supplied.
+
+## Situation
+
+My specific system falls into category 2: small numbers of very large log files.
+By this, I mean less than 20 log files where each logfile might be on the order of 5 to 100 megabytes in length.
+
+The existing logging data rate is on the order of 2K to 11K bytes/sec.
+Even using a large 80K RAM buffer to absorb incoming data during a LittleFS write delay results in being able to tolerate about 7 seconds of delay before the buffer overflows.
+Experiments show that for my system's specifically tuned LittleFS configuration and SD card write speeds, LittleFS can exceed this 7 second write-delay limit once my 64GB SD card has approximately 230 megabytes in its filesystem.
+At that point, I am losing data even with an 80K buffer when the card's capacity is not even 0.5% used.
+
+## Solution
+
+LittleFS has its strengths though, and reliability is the one I am interested in.
+The key is to play to its strengths while avoiding its weaknesses.
+
+Again, the situations I am trying to deal with are:
+
+1) Small number of giant logs (potentially > 100 megabytes)
+2) log data is purely sequential, always appended
+3) relatively high log data rate
+4) minimize RAM buffering for situations when LittleFS is unavoidably busy
+
+To solve all these problems, I added a thin meta filesystem on top of LittleFS called the LogStore.
+This is not as complex as it might sound.
+
+It starts by dividing the SD card's total storage space into 1024 chunks, regardless of card size.
+This number can be adjusted, but 1024 chunks seems fine.
+It means that there could be as many as 1023 log files of up to ~64 megabytes each when a 64GB card is being used, or a single logfile of up to 64G because a log file can use as many chunks as it can allocate.
+
+By convention, the first chunk on the SD card gets assigned to LittleFS usage.
+LittleFS creates a filesystem like normal within that chunk.
+This is actually a major win: by giving LittleFS less space to manage, its worst-case searches are bounded to a much smaller block count.
+The remainder of the chunks are managed by the LogStore.
+
+The key to everything is that log data is never stored in LittleFS.
+Instead, every log file created by the LogStore is defined by a small metadata structure.
+This data structure explains how to find the real log data by accessing raw SD card blocks in the LogStore area.
+We only depend on LittleFS to store these metadata files.
+
+At boot time, the LogStore code must scan all log metadata files in the LittleFS system.
+This is accomplished by assigning a consistent filename suffix for all metadata logfiles.
+As the LogStore scans the metadata files, it makes a note of any chunk that is in use using a RAM-based freelist, much like LittleFS would do itself.
+The difference is that the LogStore's RAM-resident free list data structure is tiny (128 bytes for 1024 chunks), but it describes the state of *every* chunk in the system.
+A LogStore free-space search will complete in the time to scan 32 words (128 bytes) of RAM, worst case.
+No SD reads required!
+
+When a log is opened for writing, the LogStore reads the metadata file from LittleFS and puts it into a small RAM-resident data structure.
+The metadata is small: the critical data is a list of the chunks it owns, and the current write offset into the logfile where new data will be appended.
+To keep things simple, writes must occur in multiples of SD card sector lengths (512 bytes).
+
+When it is time for the LogStore to write data to a log, LittleFS is used for what it does best: guarantee the reliability of the write operation:
+
+1) a raw start sector address gets calculated based on the current chunk's start address and the current write offset
+  a) if a write were go past the end of the current chunk, a new chunk would get allocated by scanning the RAM-resident free list, then adding that chunk to that log file's RAM-based metadata chunk list
+2) Sectors are written sequentially from that raw sector start address until all data is written
+3) Once written, the RAM-based metadata data structure is updated to increment the log length to account for the freshly written data
+4) The entire RAM-based metadata structure gets written to LittleFS overwriting the original metadata file
+  a) LittleFS guarantees that this re-write operation either completes or has no effect, but never corrupts the LittleFS filesystem
+
+The advantages are clear:
+1) Log data writes are extremely fast: direct SD card write operations involving sequential sectors, not going through LittleFS
+  a) The low-level write operations will never trigger a LittleFS search for freespace
+2) Rewriting the metadata file is efficient: metadata files are very short
+  a) If LittleFS triggers a freespace search during a metadata rewrite, the number of in-use blocks to be scanned is quite small because the giant log data files are not stored in LittleFS
+3) Allocating a new chunk to an existing log file will be rare (because log chunks are so huge), and fast (because the free-space structure is both tiny and RAM-resident)
+
+The act of writing data and then updating the metadata file in LittleFS acts very much like committing a journaled write operation in a more complex filesystem.
+If the "journal update" fails for any reason, you only lose the final write data: the state of the LittleFS filesystem and the log data in the log chunk area will reflect the situation just before the failed write occurred.
+
+The tradeoffs with this approach are also clear:
+1) a logfile containing 1 byte of data will allocate 60 megabytes of SD card space
+2) typical write speeds will be slower than LittleFS because the metadata file must be rewritten after each write
+
+Regarding underutilized chunks, Given that there are 1023 chunks, a 60G SD card could actually hold 1023 different files containing 1 byte, which is a lot of files. The basic number of chunks could be increased, and the only cost would be extra RAM for the freelist.
+But realistically, use LittleFS to store tiny files.
+LogStore is for saving giant logs.
+
+Typical LogStore write speeds will be slower because it is writing the data and the metadata every time.
+The point to remember is that typical write speeds were never the problem.
+The whole LogStore solution is about avoiding the worst-case LittleFS write times when it is used for large log files on large SD cards.
 
 ## Design: Fixed-Count Chunked Raw Storage
 
