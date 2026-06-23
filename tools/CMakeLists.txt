@@ -31,14 +31,15 @@ add_executable(checksum
 
 target_include_directories(checksum PRIVATE ${LIB_DIR}/inc)
 
-add_custom_target(checksum-wrapper
+add_custom_command(
+    OUTPUT ${TOOLS_INSTALL_DIR}/checksum
     DEPENDS checksum
+    VERBATIM
+    COMMAND ${CMAKE_COMMAND} -E copy checksum ${TOOLS_INSTALL_DIR}/checksum
 )
 
-add_custom_command(
-    TARGET checksum POST_BUILD
-    VERBATIM
-    COMMAND ${CMAKE_COMMAND} -E copy checksum ${TOOLS_INSTALL_DIR}
+add_custom_target(checksum-install ALL
+    DEPENDS ${TOOLS_INSTALL_DIR}/checksum
 )
 
 ####################################################################################################

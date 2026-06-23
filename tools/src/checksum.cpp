@@ -296,7 +296,7 @@ int main(int argc, char **argv)
     // Extract the name we were invoked with, discarding any path info in front of the name.
     // We'll use the resulting string for prefacing error messages.
     progname = strrchr(argv[0], '/');
-    if (!progname) {
+    if (progname) {
         progname++;         // skip over the final '/' in front of the name
     }
     else {
