@@ -462,7 +462,7 @@ SdErr_t SdCardSDIO::testCard()
 {
     uint8_t buffer[512] __attribute__((aligned(4)));
 
-    printf("Testing SDIO card read access on core %d...\n", get_core_num());
+    printf("SDIO: Testing read access on core %d...\n", get_core_num());
 
     // Fill the buffer with known contents so we can verify that it was overwritten or not
     for (int32_t i=0; i<sizeof(buffer); i++) {

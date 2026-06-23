@@ -191,14 +191,14 @@ bool LogStore::init(lfs_t* _lfs, SdCardBase* _sd)
     chunk_bytes = chunk_sectors * 512;
     uint32_t waste_sectors = total_sectors - (chunk_sectors * LOGSTORE_NUM_CHUNKS);
 
-    printf("LogStore: SD card %.1f GB (%lu sectors)\n",
-           (float)total_sectors * 512 / (1024 * 1024 * 1024),
-           (unsigned long)total_sectors);
-    printf("LogStore: %u chunks x %.1f MB each (chunk 0 = LFS, 1-%u = log data)\n",
-           LOGSTORE_NUM_CHUNKS,
-           (float)chunk_bytes / (1024 * 1024),
+    printf("LogStore Allocations\n");
+    printf("  SD Card: %lu sectors x 512 bytes = %.1f GB\n",
+           (unsigned long)total_sectors, (float)total_sectors * 512 / (1024*1024*1024));
+    printf("  LogStore: %u chunks of %.1f MB each\n",
+           LOGSTORE_NUM_CHUNKS, (float)chunk_bytes / (1024 * 1024));
+    printf("  Chunk 0 = LFS, chunks 1-%u = log data\n",
            LOGSTORE_NUM_CHUNKS - 1);
-    printf("LogStore: %lu sectors (%.1f MB) unused at end of card\n",
+    printf("  %lu sectors (%.1f MB) unused at end of card\n",
            (unsigned long)waste_sectors,
            (float)waste_sectors * 512 / (1024 * 1024));
 
@@ -264,11 +264,11 @@ bool LogStore::init(lfs_t* _lfs, SdCardBase* _sd)
     uint32_t fsck_errors = verify();
 
     uint32_t free = getFreeChunks();
-    printf("LogStore: %lu chunks total, %lu logs found, %lu chunks free (%.0f MB)\n",
+    printf("LogStore: %lu chunks total, %lu logs found, %lu chunks free (%.1f GB)\n",
            (unsigned long)LOGSTORE_NUM_CHUNKS,
            (unsigned long)log_count,
            (unsigned long)free,
-           (float)free * chunk_bytes / (1024 * 1024));
+           (float)free * chunk_bytes / (1024 * 1024 * 1024));
 
     return true;
 }

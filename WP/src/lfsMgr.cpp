@@ -263,17 +263,6 @@ bool comingOnline(SdCardBase* sdCard)
     uint32_t chunk0_sectors = sectorCount / LOGSTORE_NUM_CHUNKS;
     lfs_cfg.block_count = (chunk0_sectors * 512) / LFS_BLOCK_SIZE;
 
-    printf("Filesystem Configuration\n");
-    printf("  SD Card: %u sectors x 512 bytes = %.1f GB\n",
-           sectorCount, (float)sectorCount * 512 / 1e9);
-    printf("  LittleFS: %u blocks x %u bytes\n",
-           (uint32_t)lfs_cfg.block_count, LFS_BLOCK_SIZE);
-    printf("  read_size:      %d\n", lfs_cfg.read_size);
-    printf("  prog_size:      %d\n", lfs_cfg.prog_size);
-    printf("  cache_size:     %d\n", lfs_cfg.cache_size);
-    printf("  lookahead_size: %d\n", lfs_cfg.lookahead_size);
-    printf("  metadatas_max:  %d\n", lfs_cfg.metadata_max);
-
     // This disables wear-leveling because SD cards do it themselves.
     // See https://github.com/joltwallet/esp_littlefs/issues/211#issuecomment-2585285239
     lfs_cfg.block_cycles = -1;
@@ -365,6 +354,15 @@ bool comingOnline(SdCardBase* sdCard)
             return false;
         }
     }
+
+    printf("LittleFS Configuration (Chunk 0)\n");
+    printf("  block_count:    %u blocks x %u bytes\n",
+           (uint32_t)lfs_cfg.block_count, (uint32_t)lfs_cfg.block_size);
+    printf("  read_size:      %u\n", (uint32_t)lfs_cfg.read_size);
+    printf("  prog_size:      %u\n", (uint32_t)lfs_cfg.prog_size);
+    printf("  cache_size:     %u\n", (uint32_t)lfs_cfg.cache_size);
+    printf("  lookahead_size: %u\n", (uint32_t)lfs_cfg.lookahead_size);
+    printf("  metadata_max:   %u\n", (uint32_t)lfs_cfg.metadata_max);
 
     return true;
 }
