@@ -6,8 +6,9 @@
 #include "umod4_WP.h"
 #include "log_ids.h"
 #include "WiFiManager.h"
+#include "Trace.h"
 
-const uint32_t dbg = 1;
+static uint8_t dbg = 0;
 extern void pico_set_led(bool on);
 extern WiFiManager* wifiMgr;
 
@@ -27,6 +28,7 @@ void start_logger_task(void *pvParameters)
 // ----------------------------------------------------------------------------------
 Logger::Logger(uint8_t* _buffer, int32_t _size)
 {
+    Trace::reg("logger", &dbg);
     buffer = _buffer;
     bufferLen = _size;
 
@@ -388,11 +390,10 @@ void Logger::logTask()
                         totalByteCount += totalToWrite;
                         if (totalByteCount > (1024 * 1024)) {
                             totalByteCount -= (1024 * 1024);
-                            printf("%s: Writes: min: %llu uSec, max: %llu, avg: %llu\n",
-                                   __FUNCTION__, minTimeWriting, maxTimeWriting,
-                                   totalTimeWriting / totalWriteEvents);
-                            printf("%s: Syncs:  min: %llu uSec, max: %llu, avg: %llu\n",
-                                   __FUNCTION__, minTimeSyncing, maxTimeSyncing,
+                            printf("logTask: Write %llu/%llu/%llu uS, Sync %llu/%llu/%llu uS\n",
+                                   minTimeWriting, maxTimeWriting,
+                                   totalTimeWriting / totalWriteEvents,
+                                   minTimeSyncing, maxTimeSyncing,
                                    totalTimeSyncing / totalSyncEvents);
                         }
                         if (hwm_pending) {

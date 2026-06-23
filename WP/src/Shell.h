@@ -38,6 +38,7 @@ class Shell {
     void cmd_flashEp(char* args);
     void cmd_dumpEp(char* args);
     void cmd_wifi(char* args);
+    void cmd_trace(char* args);
 
     const char* cwd;
 

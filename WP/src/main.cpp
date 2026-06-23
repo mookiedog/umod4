@@ -43,6 +43,7 @@
 #include "lwip/memp.h"
 #include "hardware/structs/systick.h"
 #include "hardware/structs/powman.h"
+#include "Trace.h"
 
 
 
@@ -454,6 +455,8 @@ volatile uint32_t g_heap_remaining = 0;
 volatile uint32_t g_heap_inuse     = 0;
 volatile uint32_t g_heap_free      = 0;
 
+static uint8_t heap_dbg = 0;
+
 // ----------------------------------------------------------------------------------
 void show_heap_stats(bool all=false)
 {
@@ -677,13 +680,17 @@ void boot_system(void* args)
 
     // Periodically print heap stats so we can track usage trends over time.
     // If memory is leaking or fragmenting, this will show it in the RTT log.
+    Trace::reg("heap", &heap_dbg);
+
     xTimerStart(
         xTimerCreate("heap", pdMS_TO_TICKS(300000), pdTRUE, nullptr,
-                     [](TimerHandle_t) { show_heap_stats(false); }),
+                     [](TimerHandle_t) { if (heap_dbg) show_heap_stats(false); }),
         0);
 
     // Enable this to debug lwip memory usage as program runs
     //debug_lwip_stats();
+
+    Trace::loadConfig();
 
     printf("%s: Complete\n", __FUNCTION__);
     // A bit more accurate now that we have mostly booted:

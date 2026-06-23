@@ -20,6 +20,7 @@
 
 #include "Logger.h"
 #include "task_stats.h"
+#include "Trace.h"
 
 // The tiny_regex_c interface library:
 #include "re.h"
@@ -873,6 +874,12 @@ void Shell::cmd_wifi(char* args)
 }
 
 // ----------------------------------------------------------------------------------
+void Shell::cmd_trace(char* args)
+{
+    Trace::cmdTrace(args);
+}
+
+// ----------------------------------------------------------------------------------
 void Shell::cmd_heap()
 {
     show_heap_stats(true);
@@ -1076,6 +1083,9 @@ void Shell::cmd_sdperf(char* args)
                             }
                             else if (strcmp(cmd, "wifi") == 0) {
                                 cmd_wifi(args);
+                            }
+                            else if (strcmp(cmd, "trace") == 0) {
+                                cmd_trace(args);
                             }
                             #if 0
                             else if (strcmp(cmd, "cp") == 0) {

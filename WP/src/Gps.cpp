@@ -18,10 +18,11 @@
 
 #include "Logger.h"
 #include "log_ids.h"
+#include "Trace.h"
 
 uint32_t msgCount;
 
-static uint32_t dbg = 0;
+static uint8_t dbg = 0;
 
 // Defining this next symbol tells the GPS to disable NMEA and communicate via UBX only
 #define UBX_ONLY_MODE
@@ -89,6 +90,7 @@ void pps_isr(uint gpio, uint32_t events)
 // ----------------------------------------------------------------------------------
 Gps::Gps(Uart* _uart) /*: UartCallback()*/
 {
+    Trace::reg("gps", &dbg);
     uart = _uart;
 
     locationKnown = false;

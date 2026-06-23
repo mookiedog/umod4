@@ -23,6 +23,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include "Trace.h"
+
+static uint8_t dbg = 0;
 
 // External references from main.cpp
 extern const char* get_wp_version(void);
@@ -295,7 +298,7 @@ void generate_api_sha256_json(char* buffer, size_t size, const char* filename)
         snprintf(buffer, size,
                  "{\"error\": \"No hash available for '%s' (file must be downloaded first)\"}",
                  filename);
-        printf("api_sha256: No cached hash for '%s'\n", filename);
+        if (dbg) printf("api_sha256: No cached hash for '%s'\n", filename);
         return;
     }
 
@@ -315,7 +318,7 @@ void generate_api_sha256_json(char* buffer, size_t size, const char* filename)
              filename,
              sha256_hex);
 
-    printf("api_sha256: Returned hash for '%s': %.16s...\n", filename, sha256_hex);
+    if (dbg) printf("api_sha256: Returned hash for '%s': %.16s...\n", filename, sha256_hex);
 }
 
 /**
@@ -915,7 +918,7 @@ void generate_api_sd_info_json(char* buffer, size_t size)
 // No CGI handlers needed - APIs are served as virtual files via fs_open_custom()
 void api_handlers_register(void)
 {
-    // Nothing to register - APIs handled by custom filesystem
+    Trace::reg("api", &dbg);
 }
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,11 @@ bool g_captive_portal_active = false;
 // Global WiFi scan results - written by WiFiManager, read by /api/wifi-scan handler
 WifiScanResults g_wifi_scan_results = {};
 
+#include "Trace.h"
+static uint8_t dbg = 0;
+
+#define WIFI_PRINTF(fmt, ...) do { if (dbg) printf(fmt, ##__VA_ARGS__); } while(0)
+
 // Device name and config globals owned by main.cpp
 extern flash_config_t g_flash_config;
 extern char g_device_name[64];
@@ -39,6 +44,7 @@ void start_wifiMgr_task(void *pvParameters)
 
 WiFiManager::WiFiManager()
 {
+    Trace::reg("wifi", &dbg);
     connected_ = false;
     taskHandle_ = NULL;
     state_ = State::UNINITIALIZED;
@@ -148,7 +154,7 @@ int WiFiManager::scanResultCallback(void* env, const cyw43_ev_scan_result_t* res
 // Updates g_wifi_scan_results and home_ssid_found_.
 void WiFiManager::performScan()
 {
-    printf("WiFiMgr: Scanning for networks (home='%s')\n", wifiSsid_);
+    WIFI_PRINTF("WiFiMgr: Scanning for networks (home='%s')\n", wifiSsid_);
     home_ssid_found_ = false;
     g_wifi_scan_results.count = 0;
     g_wifi_scan_results.scanning = true;
@@ -162,10 +168,10 @@ void WiFiManager::performScan()
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     } else {
-        printf("WiFiMgr: Scan failed (%d)\n", err);
+        WIFI_PRINTF("WiFiMgr: Scan failed (%d)\n", err);
     }
     g_wifi_scan_results.scanning = false;
-    printf("WiFiMgr: Scan complete, %d networks found\n", g_wifi_scan_results.count);
+    WIFI_PRINTF("WiFiMgr: Scan complete, %d networks found\n", g_wifi_scan_results.count);
 }
 
 // ----------------------------------------------------------------------------------
@@ -211,9 +217,9 @@ void WiFiManager::WiFiManager_task()
 
         switch (state_) {
             case State::UNINITIALIZED:
-                printf("WiFiMgr: Initializing hardware...\n");
+                WIFI_PRINTF("WiFiMgr: Initializing hardware...\n");
                 if (cyw43_arch_init()) {
-                    printf("WiFiMgr: cyw43_arch_init failed!\n");
+                    WIFI_PRINTF("WiFiMgr: cyw43_arch_init failed!\n");
                     vTaskDelay(pdMS_TO_TICKS(1000));
                 }
                 else {
@@ -225,7 +231,7 @@ void WiFiManager::WiFiManager_task()
 
                     uint8_t mac[6];
                     cyw43_hal_get_mac(CYW43_HAL_MAC_WLAN0, mac);
-                    printf("WiFiMgr: MAC %02X:%02X:%02X:%02X:%02X:%02X\n",
+                    WIFI_PRINTF("WiFiMgr: MAC %02X:%02X:%02X:%02X:%02X:%02X\n",
                            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
                     bool name_needs_mac = (g_flash_config.device_name[0] == '\0' ||
@@ -240,7 +246,7 @@ void WiFiManager::WiFiManager_task()
                         strncpy(g_device_name, g_flash_config.device_name,
                                 sizeof(g_device_name) - 1);
                         flash_config_save(&g_flash_config);
-                        printf("WiFiMgr: Device name set to '%s'\n", g_flash_config.device_name);
+                        WIFI_PRINTF("WiFiMgr: Device name set to '%s'\n", g_flash_config.device_name);
                     }
                     state_ = State::CHECK_WIFI_ALLOWED;
                 }
@@ -248,10 +254,10 @@ void WiFiManager::WiFiManager_task()
 
             case State::CHECK_WIFI_ALLOWED:
                 if (wifiSsid_[0] == '\0') {
-                    printf("WiFiMgr: No WiFi credentials - entering AP mode\n");
+                    WIFI_PRINTF("WiFiMgr: No WiFi credentials - entering AP mode\n");
                     state_ = State::AP_STARTING;
                 } else {
-                    printf("WiFiMgr: Enabling Station Mode\n");
+                    WIFI_PRINTF("WiFiMgr: Enabling Station Mode\n");
                     state_ = State::WIFI_POWERING_UP;
                 }
                 break;
@@ -262,32 +268,32 @@ void WiFiManager::WiFiManager_task()
                 break;
 
             case State::CONNECTING:
-                printf("WiFiMgr: Connecting to SSID: %s\n", wifiSsid_);
+                WIFI_PRINTF("WiFiMgr: Connecting to SSID: %s\n", wifiSsid_);
                 {
                     int err = cyw43_arch_wifi_connect_timeout_ms(
                                 wifiSsid_, wifiPassword_,
                                 CYW43_AUTH_WPA2_AES_PSK, 10000);
 
                     if (err == 0) {
-                        printf("WiFiMgr: Link Up, waiting for IP...\n");
+                        WIFI_PRINTF("WiFiMgr: Link Up, waiting for IP...\n");
                         state_ = State::WAITING_FOR_IP;
                         dhcp_start_time = xTaskGetTickCount();
                         fail_count = 0;
                     } else if (err == CYW43_LINK_NONET) {
                         // SSID not found - no point retrying, go straight to AP mode
-                        printf("WiFiMgr: SSID not found (%d) - falling back to AP mode\n", err);
+                        WIFI_PRINTF("WiFiMgr: SSID not found (%d) - falling back to AP mode\n", err);
                         state_ = State::AP_STARTING;
                     } else if (err == PICO_ERROR_BADAUTH) {
                         // Wrong password - no point retrying, go straight to AP mode
-                        printf("WiFiMgr: Bad credentials (%d) - falling back to AP mode\n", err);
+                        WIFI_PRINTF("WiFiMgr: Bad credentials (%d) - falling back to AP mode\n", err);
                         auth_failed_ = true;
                         state_ = State::AP_STARTING;
                     } else {
                         // Transient failure (timeout, general error) - retry up to 3 times
-                        printf("WiFiMgr: Connection failed (%d)\n", err);
+                        WIFI_PRINTF("WiFiMgr: Connection failed (%d)\n", err);
                         fail_count++;
                         if (fail_count >= 3) {
-                            printf("WiFiMgr: STA connect failed %d times - falling back to AP mode\n", fail_count);
+                            WIFI_PRINTF("WiFiMgr: STA connect failed %d times - falling back to AP mode\n", fail_count);
                             state_ = State::AP_STARTING;
                         } else {
                             vTaskDelay(pdMS_TO_TICKS(5000));
@@ -302,14 +308,14 @@ void WiFiManager::WiFiManager_task()
                     const ip4_addr_t* addr = netif_ip4_addr(n);
 
                     if (addr && addr->addr != 0) {
-                        printf("WiFiMgr: Connected! IP: %s\n", ip4addr_ntoa(addr));
+                        WIFI_PRINTF("WiFiMgr: Connected! IP: %s\n", ip4addr_ntoa(addr));
 
                         // Reset server address so discovery runs on every connect
                         hasServerAddress_ = false;
                         discovery_countdown_ = 0;
 
                         // Disable WiFi power save for minimum latency
-                        printf("WiFiMgr: Disabling WiFi power save\n");
+                        WIFI_PRINTF("WiFiMgr: Disabling WiFi power save\n");
                         // CYW43_NONE_PM: Pure performance, no power savings
                         // CYW43_PERFORMANCE_PM: performance oriented, with some power savings
                         // CYW43_AGGRESSIVE_PM: aggressive power management, at cost of performance
@@ -322,12 +328,12 @@ void WiFiManager::WiFiManager_task()
                         // Start periodic heartbeat timer (5 minutes)
                         if (heartbeatTimer_ != NULL) {
                             xTimerStart(heartbeatTimer_, 0);
-                            printf("WiFiMgr: Started heartbeat timer (5 min interval)\n");
+                            WIFI_PRINTF("WiFiMgr: Started heartbeat timer (5 min interval)\n");
                         }
                     } else {
                         // Check for DHCP timeout (15 seconds)
                         if ((xTaskGetTickCount() - dhcp_start_time) > pdMS_TO_TICKS(15000)) {
-                            printf("WiFiMgr: DHCP Timeout\n");
+                            WIFI_PRINTF("WiFiMgr: DHCP Timeout\n");
                             state_ = State::REBOOT_CYW43;
                         }
                         vTaskDelay(pdMS_TO_TICKS(250)); // Poll IP frequently
@@ -342,7 +348,7 @@ void WiFiManager::WiFiManager_task()
                 }
                 else {
                     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
-                    printf("WiFiMgr: Connection lost\n");
+                    WIFI_PRINTF("WiFiMgr: Connection lost\n");
                     if (heartbeatTimer_ != NULL) {
                         xTimerStop(heartbeatTimer_, 0);
                     }
@@ -376,7 +382,7 @@ void WiFiManager::WiFiManager_task()
                     dhcp_server_deinit(&ap_dhcp_server_);
                     cyw43_arch_disable_ap_mode();
                     ap_mode_active_ = false;
-                    printf("WiFiMgr: AP mode stopped\n");
+                    WIFI_PRINTF("WiFiMgr: AP mode stopped\n");
                 } else {
                     cyw43_arch_disable_sta_mode();
                 }
@@ -397,7 +403,7 @@ void WiFiManager::WiFiManager_task()
                 // will be corrupted. This is harmless only as long as MEMP_MEM_MALLOC=1
                 // routes all pool allocations through malloc instead of the pool arrays.
                 // If MEMP_MEM_MALLOC is ever disabled, this path must be reworked.
-                printf("WiFiMgr: Hard resetting CYW43 chip...\n");
+                WIFI_PRINTF("WiFiMgr: Hard resetting CYW43 chip...\n");
                 stopDiscovery();
                 if (ap_mode_active_) {
                     g_captive_portal_active = false;
@@ -440,7 +446,7 @@ void WiFiManager::WiFiManager_task()
                                     ? g_flash_config.ap_password
                                     : ap_ssid_resolved_;
 
-                printf("WiFiMgr: Starting AP mode SSID='%s'\n", ap_ssid_resolved_);
+                WIFI_PRINTF("WiFiMgr: Starting AP mode SSID='%s'\n", ap_ssid_resolved_);
                 cyw43_arch_enable_ap_mode(ap_ssid_resolved_, ap_pw, CYW43_AUTH_WPA2_AES_PSK);
 
                 // Start DHCP server using the SDK's default AP IP (192.168.4.1)
@@ -455,7 +461,7 @@ void WiFiManager::WiFiManager_task()
                 ap_mode_active_ = true;
                 g_captive_portal_active = true;
 
-                printf("WiFiMgr: AP active - connect to '%s', captive portal on 192.168.4.1\n",
+                WIFI_PRINTF("WiFiMgr: AP active - connect to '%s', captive portal on 192.168.4.1\n",
                        ap_ssid_resolved_);
                 state_ = State::AP_ACTIVE;
                 break;
@@ -465,7 +471,7 @@ void WiFiManager::WiFiManager_task()
             {
                 // Shut down radio if bike is moving
                 if (gps_ != nullptr && gps_->getSpeedMph() > 20.0f) {
-                    printf("WiFiMgr: Speed > 20 MPH - shutting down radio\n");
+                    WIFI_PRINTF("WiFiMgr: Speed > 20 MPH - shutting down radio\n");
                     state_ = State::RADIO_OFF;
                     break;
                 }
@@ -493,13 +499,13 @@ void WiFiManager::WiFiManager_task()
             {
                 performScan();
                 if (home_ssid_found_ && !auth_failed_) {
-                    printf("WiFiMgr: Home network found - switching to STA\n");
+                    WIFI_PRINTF("WiFiMgr: Home network found - switching to STA\n");
                     state_ = State::DISCONNECTING;
                 } else {
                     if (home_ssid_found_ && auth_failed_) {
-                        printf("WiFiMgr: Home network visible but credentials failed - staying in AP mode\n");
+                        WIFI_PRINTF("WiFiMgr: Home network visible but credentials failed - staying in AP mode\n");
                     } else {
-                        printf("WiFiMgr: Home network not found\n");
+                        WIFI_PRINTF("WiFiMgr: Home network not found\n");
                     }
                     scan_countdown_ = 60;
                     state_ = State::AP_ACTIVE;
@@ -517,10 +523,10 @@ void WiFiManager::WiFiManager_task()
                     dhcp_server_deinit(&ap_dhcp_server_);
                     cyw43_arch_disable_ap_mode();
                     ap_mode_active_ = false;
-                    printf("WiFiMgr: AP mode stopped\n");
+                    WIFI_PRINTF("WiFiMgr: AP mode stopped\n");
                 }
                 cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
-                printf("WiFiMgr: Radio off - power cycle to resume\n");
+                WIFI_PRINTF("WiFiMgr: Radio off - power cycle to resume\n");
                 // Stay here until power cycle
                 while (true) {
                     vTaskDelay(pdMS_TO_TICKS(10000));
@@ -563,7 +569,7 @@ void WiFiManager::sendDiscoveryBroadcast()
     if (!discovery_pcb_) {
         discovery_pcb_ = udp_new();
         if (!discovery_pcb_) {
-            printf("WiFiMgr: Discovery: failed to allocate PCB\n");
+            WIFI_PRINTF("WiFiMgr: Discovery: failed to allocate PCB\n");
             cyw43_arch_lwip_end();
             return;
         }
@@ -579,9 +585,9 @@ void WiFiManager::sendDiscoveryBroadcast()
         err_t err = udp_sendto(discovery_pcb_, p, &broadcast, DEFAULT_SERVER_PORT);
         pbuf_free(p);
         if (err == ERR_OK) {
-            printf("WiFiMgr: Discovery broadcast sent\n");
+            WIFI_PRINTF("WiFiMgr: Discovery broadcast sent\n");
         } else {
-            printf("WiFiMgr: Discovery broadcast failed (err=%d)\n", err);
+            WIFI_PRINTF("WiFiMgr: Discovery broadcast failed (err=%d)\n", err);
         }
     }
 
@@ -627,7 +633,7 @@ void WiFiManager::discoveryReplyCallback(void* arg, struct udp_pcb* pcb,
         if (parsed > 0) self->discovered_server_port_ = parsed;
     }
 
-    printf("WiFiMgr: Server discovered at %s:%u\n",
+    WIFI_PRINTF("WiFiMgr: Server discovered at %s:%u\n",
            self->discovered_server_ip_, self->discovered_server_port_);
 
     // Signal the WiFiManager task to save to flash and send check-in.
@@ -644,7 +650,7 @@ void WiFiManager::setServerAddress(const char* server_hostname, uint16_t server_
         serverHostname_[sizeof(serverHostname_) - 1] = '\0';
         serverPort_ = server_port;
         hasServerAddress_ = true;
-        printf("WiFiMgr: Server address set to %s:%u\n", serverHostname_, serverPort_);
+        WIFI_PRINTF("WiFiMgr: Server address set to %s:%u\n", serverHostname_, serverPort_);
     }
 }
 
@@ -659,7 +665,7 @@ void WiFiManager::setCredentials(const char* ssid, const char* password)
         wifiPassword_[sizeof(wifiPassword_) - 1] = '\0';
     }
     auth_failed_ = false;  // new credentials — allow STA reconnect attempt
-    printf("WiFiMgr: Credentials set (SSID='%s')\n", wifiSsid_);
+    WIFI_PRINTF("WiFiMgr: Credentials set (SSID='%s')\n", wifiSsid_);
 }
 
 void WiFiManager::sendCheckInNotification()
@@ -678,7 +684,7 @@ void WiFiManager::sendCheckInNotification()
     // Get our IP address
     char ip_str[16];
     if (!getIPAddress(ip_str, sizeof(ip_str))) {
-        printf("WiFiMgr: Cannot send check-in - no IP address\n");
+        WIFI_PRINTF("WiFiMgr: Cannot send check-in - no IP address\n");
         return;
     }
 
@@ -688,7 +694,7 @@ void WiFiManager::sendCheckInNotification()
              "{\"device_mac\":\"%s\",\"ip\":\"%s\"}",
              mac_str, ip_str);
 
-    printf("WiFiMgr: Resolving server hostname: %s\n", serverHostname_);
+    WIFI_PRINTF("WiFiMgr: Resolving server hostname: %s\n", serverHostname_);
 
     // Resolve address before acquiring the lwIP lock.
     // netconn_gethostbyname() posts to the tcpip thread and blocks waiting for
@@ -698,21 +704,21 @@ void WiFiManager::sendCheckInNotification()
 
     if (!ip4addr_aton(serverHostname_, &server_addr)) {
         // Not a literal IP, resolve via DNS/mDNS
-        printf("WiFiMgr: Not a literal IP, resolving via DNS...\n");
+        WIFI_PRINTF("WiFiMgr: Not a literal IP, resolving via DNS...\n");
 
         err_t dns_err = netconn_gethostbyname(serverHostname_, &server_addr);
         if (dns_err != ERR_OK) {
-            printf("WiFiMgr: Failed to resolve %s (err=%d)\n", serverHostname_, dns_err);
+            WIFI_PRINTF("WiFiMgr: Failed to resolve %s (err=%d)\n", serverHostname_, dns_err);
             return;
         }
 
-        printf("WiFiMgr: Resolved %s to %s\n", serverHostname_, ip4addr_ntoa(&server_addr));
+        WIFI_PRINTF("WiFiMgr: Resolved %s to %s\n", serverHostname_, ip4addr_ntoa(&server_addr));
     } else {
-        printf("WiFiMgr: Using literal IP address: %s\n", ip4addr_ntoa(&server_addr));
+        WIFI_PRINTF("WiFiMgr: Using literal IP address: %s\n", ip4addr_ntoa(&server_addr));
     }
 
-    printf("WiFiMgr: Sending check-in to %s:%u\n", ip4addr_ntoa(&server_addr), serverPort_);
-    printf("WiFiMgr: Payload: %s\n", payload);
+    WIFI_PRINTF("WiFiMgr: Sending check-in to %s:%u\n", ip4addr_ntoa(&server_addr), serverPort_);
+    WIFI_PRINTF("WiFiMgr: Payload: %s\n", payload);
 
     // All lwIP raw API calls must be made with the lwIP lock held.
     // This function is called from the WiFiMgr task and from the FreeRTOS timer
@@ -723,7 +729,7 @@ void WiFiManager::sendCheckInNotification()
 
     struct udp_pcb* pcb = udp_new();
     if (!pcb) {
-        printf("WiFiMgr: Failed to create UDP PCB\n");
+        WIFI_PRINTF("WiFiMgr: Failed to create UDP PCB\n");
         cyw43_arch_lwip_end();
         return;
     }
@@ -731,7 +737,7 @@ void WiFiManager::sendCheckInNotification()
     // Allocate pbuf for payload
     struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, strlen(payload), PBUF_RAM);
     if (!p) {
-        printf("WiFiMgr: Failed to allocate pbuf\n");
+        WIFI_PRINTF("WiFiMgr: Failed to allocate pbuf\n");
         udp_remove(pcb);
         cyw43_arch_lwip_end();
         return;
@@ -743,9 +749,9 @@ void WiFiManager::sendCheckInNotification()
     // Send UDP packet
     err_t err = udp_sendto(pcb, p, &server_addr, serverPort_);
     if (err != ERR_OK) {
-        printf("WiFiMgr: UDP send failed: %d\n", err);
+        WIFI_PRINTF("WiFiMgr: UDP send failed: %d\n", err);
     } else {
-        printf("WiFiMgr: Check-in notification sent successfully\n");
+        WIFI_PRINTF("WiFiMgr: Check-in notification sent successfully\n");
     }
 
     // Clean up

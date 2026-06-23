@@ -263,6 +263,7 @@ add_executable(${PROJECT_NAME}
     # Note: fsdata.c is NOT listed here - it's included by SDK's fs.c via HTTPD_FSDATA_FILE
     src/httpd_stubs.cpp
     src/ep_rtt_forwarder.cpp
+    src/Trace.cpp
 
     # The RAM-resident SwdReflash binary that gets loaded to EP via SWD:
     ${SWDREFLASH_C}

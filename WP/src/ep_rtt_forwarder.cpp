@@ -8,6 +8,9 @@
 #include "Swd.h"
 #include "swd_lock.h"
 #include "hardware/sync.h"
+#include "Trace.h"
+
+static uint8_t dbg = 0;
 
 // -------------------------------------------------------------------------
 // SEGGER_RTT_BUFFER_UP layout (24 bytes per channel, host reads from pBuffer)
@@ -204,7 +207,7 @@ static bool forward_channel(EpChanState& ch, uint32_t cb_addr, int ch_idx)
                            + (uint32_t)ch_idx * RTT_BUF_UP_SIZE
                            + RTT_BUF_RDOFF_OFF;
     if (!swd->write_target_mem(rd_off_addr, &new_rd_off, 4)) {
-        printf("ep_rtt_fwd: ch%d RdOff write failed\n", ch_idx);
+        if (dbg) printf("ep_rtt_fwd: ch%d RdOff write failed\n", ch_idx);
         return false;
     }
 
@@ -240,14 +243,14 @@ static void ep_rtt_forwarder_task(void*)
             // Step 2: Read EpInfo from USB DPSRAM
             uint32_t ep_info_words[2];
             if (!swd->read_target_mem(EP_INFO_ADDR, ep_info_words, sizeof(ep_info_words))) {
-                printf("ep_rtt_fwd: EpInfo read failed at 0x%08x\n", EP_INFO_ADDR);
+                if (dbg) printf("ep_rtt_fwd: EpInfo read failed at 0x%08x\n", EP_INFO_ADDR);
                 s_connected = false;
             } else {
                 uint32_t magic = ep_info_words[0];
                 rtt_cb_addr    = ep_info_words[1];
 
                 if (magic != EP_INFO_MAGIC) {
-                    printf("ep_rtt_fwd: waiting for EP (magic=0x%08x, want 0x%08x)\n",
+                    if (dbg) printf("ep_rtt_fwd: waiting for EP (magic=0x%08x, want 0x%08x)\n",
                            magic, EP_INFO_MAGIC);
                 } else {
                     // Step 3: Read BUFFER_UP descriptors
@@ -258,7 +261,7 @@ static void ep_rtt_forwarder_task(void*)
                         EpChanState fresh;
                         fresh.wp_channel = s_chan[i].wp_channel;
                         if (!read_up_buf(rtt_cb_addr, i, fresh)) {
-                            printf("ep_rtt_fwd: BUFFER_UP read failed (cb=0x%08x)\n", rtt_cb_addr);
+                            if (dbg) printf("ep_rtt_fwd: BUFFER_UP read failed (cb=0x%08x)\n", rtt_cb_addr);
                             setup_ok = false;
                             break;
                         }
@@ -281,7 +284,7 @@ static void ep_rtt_forwarder_task(void*)
             continue;
         }
 
-        printf("ep_rtt_fwd: connected cb=0x%08x\n"
+        if (dbg) printf("ep_rtt_fwd: connected cb=0x%08x\n"
                "  ch0: buf=0x%08x size=%u rdoff=%u\n"
                "  ch1: buf=0x%08x size=%u rdoff=%u\n",
                rtt_cb_addr,
@@ -300,7 +303,7 @@ static void ep_rtt_forwarder_task(void*)
             xSemaphoreGiveRecursive(g_swd_mutex);
 
             if (!poll_ok) {
-                printf("ep_rtt_fwd: SWD error during poll, reconnecting\n");
+                if (dbg) printf("ep_rtt_fwd: SWD error during poll, reconnecting\n");
                 s_connected = false;
                 break;
             }
@@ -325,6 +328,7 @@ void ep_rtt_channels_init(void)
 // -------------------------------------------------------------------------
 void ep_rtt_forwarder_init(void)
 {
+    Trace::reg("ep_rtt", &dbg);
     xTaskCreate(ep_rtt_forwarder_task, "ep_rtt_fwd",
                 512,    // stack words
                 nullptr, tskIDLE_PRIORITY + 1, nullptr);

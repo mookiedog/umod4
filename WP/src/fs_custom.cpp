@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "Trace.h"
+
+static uint8_t dbg = 0;
 
 // Forward declarations for API JSON generators
 extern void generate_api_info_json(char* buffer, size_t size);
@@ -121,8 +124,9 @@ static lfs_soff_t        s_lfs_next_offset;        // expected file position aft
 
 void fs_custom_init(lfs_t* lfs_ptr)
 {
+    Trace::reg("fs_custom", &dbg);
     g_lfs = lfs_ptr;
-    printf("fs_custom: Initialized with LittleFS context\n");
+    if (dbg) printf("fs_custom: Initialized with LittleFS context\n");
 }
 
 void fs_custom_close_persistent_handle(void)
@@ -533,7 +537,8 @@ int fs_open_custom(struct fs_file *file, const char *name)
         file->pextension = api_file;
         file->flags = FS_FILE_FLAGS_HEADER_PERSISTENT;  // Don't set CUSTOM flag for in-memory
 
-        if (strncmp(api_name, "console", 7) != 0 &&
+        if (dbg &&
+            strncmp(api_name, "console", 7) != 0 &&
             strncmp(api_name, "ep-stdio", 8) != 0)
             printf("fs_custom: Serving API '%s', %zu bytes\n",
                    api_name, api_file->file_size);
@@ -696,7 +701,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
                     file->flags = FS_FILE_FLAGS_HEADER_INCLUDED |
                                   FS_FILE_FLAGS_HEADER_PERSISTENT |
                                   FS_FILE_FLAGS_CUSTOM;
-                    printf("fs_custom: Serving background.jpg from LittleFS (%zu bytes)\n", lfs_file->file_size);
+                    if (dbg) printf("fs_custom: Serving background.jpg from LittleFS (%zu bytes)\n", lfs_file->file_size);
                     return 1;
                 }
                 printf("fs_custom: background.jpg not found in LittleFS (err=%d), trying fsdata.c\n", err);
@@ -963,14 +968,14 @@ void fs_close_custom(struct fs_file *file)
                     memcpy(&g_file_hash_cache.hash, &result, sizeof(sha256_result_t));
                     g_file_hash_cache.valid = true;
 
-                    printf("fs_custom: Closed file '%s' (%zu/%zu bytes), SHA-256 cached\n",
+                    if (dbg) printf("fs_custom: Closed file '%s' (%zu/%zu bytes), SHA-256 cached\n",
                            lfs_file->sha_filename, lfs_file->bytes_read, lfs_file->file_size);
                 } else {
-                    printf("fs_custom: Closed file '%s' (%zu/%zu bytes, aborted), SHA-256 released\n",
+                    if (dbg) printf("fs_custom: Closed file '%s' (%zu/%zu bytes, aborted), SHA-256 released\n",
                            lfs_file->sha_filename, lfs_file->bytes_read, lfs_file->file_size);
                 }
             } else {
-                printf("fs_custom: Closed file (%zu/%zu bytes transferred)\n",
+                if (dbg) printf("fs_custom: Closed file (%zu/%zu bytes transferred)\n",
                        lfs_file->bytes_read, lfs_file->file_size);
             }
         }
