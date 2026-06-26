@@ -134,8 +134,12 @@ def _run(ocd, results, context):
         while True:
             try:
                 reply = vfy.command("wifi", timeout=5.0)
-            except RttError as e:
-                results.fatal("prov_ap_boot", str(e))
+            except RttError:
+                if time.monotonic() >= deadline:
+                    results.fatal("prov_ap_boot",
+                        f"VFY channel not responding after {AP_BOOT_WAIT:.0f}s")
+                time.sleep(1.0)
+                continue
             try:
                 state = json.loads(reply).get("wifi", {}).get("state", "")
             except (json.JSONDecodeError, AttributeError):

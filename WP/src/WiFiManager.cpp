@@ -218,6 +218,15 @@ void WiFiManager::WiFiManager_task()
         switch (state_) {
             case State::UNINITIALIZED:
                 WIFI_PRINTF("WiFiMgr: Initializing hardware...\n");
+                // Power-cycle the CYW43 module. It survives an RP2350
+                // software reset, so without this, cyw43_arch_init()
+                // can hang if the module was active from a previous boot.
+                gpio_init(CYW43_DEFAULT_PIN_WL_REG_ON);
+                gpio_set_dir(CYW43_DEFAULT_PIN_WL_REG_ON, GPIO_OUT);
+                gpio_put(CYW43_DEFAULT_PIN_WL_REG_ON, 0);
+                vTaskDelay(pdMS_TO_TICKS(10));
+                gpio_put(CYW43_DEFAULT_PIN_WL_REG_ON, 1);
+                vTaskDelay(pdMS_TO_TICKS(10));
                 if (cyw43_arch_init()) {
                     WIFI_PRINTF("WiFiMgr: cyw43_arch_init failed!\n");
                     vTaskDelay(pdMS_TO_TICKS(1000));

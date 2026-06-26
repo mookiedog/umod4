@@ -3,6 +3,7 @@ Basic VFY channel tests — verifies firmware is alive and responding.
 """
 
 import json
+import time
 
 from harness.rtt import RttChannel, RttError
 
@@ -49,13 +50,17 @@ def run(ocd, results, context):
         # ----------------------------------------------------------------
         results.start("sd")
         try:
-            data = _cmd(vfy, "sd")
-            s = data.get("sd", {})
-            sd_state = s.get("state", "")
-            if sd_state == "operational":
-                results.passed("sd", f"size_mb={s.get('size_mb','?')}")
-            else:
-                results.fatal("sd", f"SD card not present or not operational (state={sd_state}) — insert card and retry")
+            sd_deadline = time.monotonic() + 10.0
+            while True:
+                data = _cmd(vfy, "sd")
+                s = data.get("sd", {})
+                sd_state = s.get("state", "")
+                if sd_state == "operational":
+                    results.passed("sd", f"size_mb={s.get('size_mb','?')}")
+                    break
+                if time.monotonic() >= sd_deadline:
+                    results.fatal("sd", f"SD card not operational after 10s (state={sd_state})")
+                time.sleep(1.0)
         except (RttError, ValueError) as e:
             results.fatal("sd", str(e))
 

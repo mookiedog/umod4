@@ -25,12 +25,18 @@ import serial.tools.list_ports
 from harness.usb_ids import AP_PROXY_VID, AP_PROXY_PID
 
 
-def find_port(vid=AP_PROXY_VID, pid=AP_PROXY_PID):
-    """Return the serial device path for a USB device with vid:pid, or None."""
-    for p in serial.tools.list_ports.comports():
-        if p.vid == vid and p.pid == pid:
-            return p.device
-    return None
+def find_port(vid=AP_PROXY_VID, pid=AP_PROXY_PID, timeout=10.0):
+    """Return the serial device path for a USB device with vid:pid, or None.
+    Retries for up to timeout seconds to handle WSL2 USB enumeration delays."""
+    import time
+    deadline = time.monotonic() + timeout
+    while True:
+        for p in serial.tools.list_ports.comports():
+            if p.vid == vid and p.pid == pid:
+                return p.device
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.5)
 
 
 class ApProxyError(Exception):

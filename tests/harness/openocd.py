@@ -104,15 +104,87 @@ class OpenOCD:
         self.wait_ready(timeout=timeout)
 
     def wait_ready(self, timeout=RTT_TIMEOUT):
-        """Block until RTT control block is found, or raise OpenOCDError."""
+        """Block until RTT control block is found AND the VFY channel
+        responds, confirming the firmware is fully booted.
+        The RTT control block is a static variable found early in boot,
+        but VfyTask may not be running yet — without this check, commands
+        sent to the VFY channel go into the void."""
         if not self._rtt_ready.wait(timeout=timeout):
             raise OpenOCDError(
                 f"RTT control block not found within {timeout}s.\n"
                 + self._last_log(20)
             )
+        self._wait_vfy_channel(timeout=timeout)
 
     def rtt_port(self, channel):
         return RTT_PORT_BASE + channel
+
+    def tcl_command(self, cmd, timeout=30.0):
+        """Send a command to the running OpenOCD's TCL port (6666).
+        Returns the response string. Raises OpenOCDError on failure."""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect(("localhost", 6666))
+            # OpenOCD TCL protocol: send command + 0x1a terminator
+            sock.sendall((cmd + "\x1a").encode())
+            # Read response until 0x1a terminator
+            response = b""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+                if b"\x1a" in chunk:
+                    break
+            sock.close()
+            return response.rstrip(b"\x1a").decode().strip()
+        except Exception as e:
+            raise OpenOCDError(f"TCL command failed: {e}")
+
+    def program_flash(self, filepath, address):
+        """Program a binary file to flash via the running OpenOCD.
+        Halts the target, programs, but does NOT reset."""
+        self.tcl_command("halt")
+        result = self.tcl_command(f"program {{{filepath}}} 0x{address:08X}")
+        if "Error" in result:
+            raise OpenOCDError(f"Flash programming failed: {result}")
+
+    def reset_and_wait(self, timeout=RTT_TIMEOUT):
+        """Issue a reset and wait for RTT to come back.
+        Restarts RTT scanning and TCP servers so OpenOCD finds the new
+        control block and clients can reconnect to the RTT channels."""
+        with self._lock:
+            self._rtt_ready.clear()
+        self.tcl_command("reset run")
+        self.tcl_command("rtt stop")
+        self.tcl_command(f"rtt setup {RTT_SEARCH[0]} {RTT_SEARCH[1]} \"SEGGER RTT\"")
+        self.tcl_command("rtt start")
+        for ch in range(5):
+            port = RTT_PORT_BASE + ch
+            try:
+                self.tcl_command(f"rtt server stop {port}")
+            except OpenOCDError:
+                pass
+            self.tcl_command(f"rtt server start {port} {ch}")
+        self.wait_ready(timeout=timeout)
+
+    def _wait_vfy_channel(self, timeout=RTT_TIMEOUT):
+        """Poll the VFY RTT channel until it responds, confirming VfyTask
+        is running. The RTT control block can be found before the firmware
+        has initialized channel buffers — this ensures the channel is live."""
+        from harness.rtt import RttChannel, RttError
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                with RttChannel(self.rtt_port(1), connect_timeout=2.0) as vfy:
+                    reply = vfy.command("heap", timeout=2.0)
+                    if reply:
+                        return
+            except Exception:
+                pass
+            time.sleep(0.5)
+        raise OpenOCDError(f"VFY channel not responding within {timeout}s")
 
     # ------------------------------------------------------------------
     def __enter__(self):

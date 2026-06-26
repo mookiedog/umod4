@@ -25,6 +25,7 @@ Adding a migration test for a new config version (e.g. v1):
 import json
 import os
 import re
+import tempfile
 import time
 
 from harness.rtt import RttChannel, RttError
@@ -42,23 +43,33 @@ FLASH_WP           = os.path.join(_PROJ_ROOT, "tools", "flash_WP")
 WP_BUILD_DIR       = os.path.join(_PROJ_ROOT, "build", "WP")
 
 POST_FLASH_SETTLE  = 10.0   # seconds after flashing before RTT is live
-BOOT_SETTLE        = 8.0    # seconds after config inject + reset before checking RTT
 WIFI_CONNECT_TIMEOUT = 30.0 # seconds to wait for STA connect in cfg_valid_v0
 
 
 def _inject_config(ocd, blob: bytes) -> None:
     """Write a 512-byte config blob to the WP config partition and reboot.
 
-    Stops the running OpenOCD, uses restore_wp_config() (which spawns its own
-    OpenOCD instance to program flash and reset the device), then restarts
-    the persistent OpenOCD session without issuing another reset.
+    Uses the already-running OpenOCD's TCL interface to halt the target,
+    program the config, and reset — no separate OpenOCD process, no probe
+    release/reacquire races, no fixed sleep.
     """
     record = Record(PROC_WP, WP_FLASH_BASE + WP_CONFIG_OFFSET, blob)
-    ocd.stop()
-    restore_wp_config([record])          # programs flash, issues reset run
-    time.sleep(BOOT_SETTLE)
-    ocd.start(reset=False)               # reconnect; device already rebooting
-    ocd.wait_ready()
+
+    # Pad to sector size with 0xFF
+    WP_FLASH_SECTOR = 4096
+    remainder = len(record.data) % WP_FLASH_SECTOR
+    padded = record.data if remainder == 0 else \
+             record.data + b'\xFF' * (WP_FLASH_SECTOR - remainder)
+
+    with tempfile.NamedTemporaryFile(suffix='.bin', delete=False) as tmp:
+        tmp.write(padded)
+        tmp_path = tmp.name
+
+    try:
+        ocd.program_flash(tmp_path, record.address)
+        ocd.reset_and_wait()
+    finally:
+        os.unlink(tmp_path)
 
 
 def _wifi_state(ocd, timeout: float = 15.0) -> dict:
@@ -66,6 +77,22 @@ def _wifi_state(ocd, timeout: float = 15.0) -> dict:
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
         reply = vfy.command("wifi", timeout=timeout)
         return json.loads(reply).get("wifi", {})
+
+
+def _wait_wifi_state(ocd, expected: str, timeout: float = 15.0) -> dict:
+    """Poll RTT until wifi reaches expected state or timeout expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            state = _wifi_state(ocd, timeout=5.0)
+            if state.get("state") == expected:
+                return state
+            if state.get("state") != "not_connected":
+                return state
+        except Exception:
+            pass
+        time.sleep(1.0)
+    return _wifi_state(ocd, timeout=5.0)
 
 
 def _wait_wifi_connected(ocd, timeout: float = WIFI_CONNECT_TIMEOUT) -> dict:
@@ -123,7 +150,7 @@ def run(ocd, results, context):
         _inject_config(ocd, make_invalid_magic(
             wifi_ssid="garbage_ssid", wifi_password="garbage_pw",
             ap_ssid="garbage_ap",    ap_password="garbage_ap_pw"))
-        state = _wifi_state(ocd)
+        state = _wait_wifi_state(ocd, "ap_mode")
         if state.get("state") != "ap_mode":
             results.failed("cfg_invalid_magic",
                 f"Expected ap_mode, got: {state}")
@@ -149,7 +176,7 @@ def run(ocd, results, context):
         _inject_config(ocd, make_bad_crc(
             wifi_ssid="garbage_ssid", wifi_password="garbage_pw",
             ap_ssid="garbage_ap",    ap_password="garbage_ap_pw"))
-        state = _wifi_state(ocd)
+        state = _wait_wifi_state(ocd, "ap_mode")
         if state.get("state") != "ap_mode":
             results.failed("cfg_bad_crc",
                 f"Expected ap_mode, got: {state}")

@@ -82,7 +82,16 @@ def ensure_attached(hardware_id, linux_enum_timeout=10.0):
         return
     state = usbipd_state(hardware_id)
     if state == "Attached":
-        return   # already attached and enumerated from a previous call
+        if _linux_has_usb(hardware_id):
+            return   # genuinely attached and visible in Linux
+        # usbipd says Attached but Linux can't see it (stale after
+        # sleep/resume or WSL kernel hiccup). Detach and reattach.
+        subprocess.run(
+            ["usbipd.exe", "detach", "--hardware-id", hardware_id],
+            capture_output=True, text=True
+        )
+        time.sleep(1.0)
+        state = usbipd_state(hardware_id)
     if state is None:
         raise RuntimeError(
             f"USB device {hardware_id} not found — is it plugged in?"
