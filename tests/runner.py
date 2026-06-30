@@ -308,6 +308,16 @@ def _run_suite(suite, suite_name, ocd, results, context, ch0):
             suite.run(ocd, results, context)
     except SuiteAbort:
         pass
+    except RunnerFatal:
+        raise
+    except Exception as e:
+        # Any unhandled exception in a suite must not kill the whole run —
+        # record it as a failure and continue, so later suites still run
+        # and a report still gets written.
+        import traceback
+        tb = traceback.format_exc()
+        print(tb, file=sys.__stdout__, flush=True)
+        results.failed(f"{suite_name}_crashed", f"{type(e).__name__}: {e}")
 
     captured = buf.getvalue().strip()
     if captured:
@@ -511,6 +521,29 @@ def main():
         pass   # FATAL recorded; fall through to report + exit 1
 
     finally:
+        # Post-run cleanup: on a successful run, delete any files created
+        # during the run (OTA uploads, logs from each reboot) so the next
+        # run starts with a lean card. Skip on failure — leave evidence.
+        if results.all_passed and context.get("wp_ip"):
+            try:
+                sys.path.insert(0, os.path.join(PROJECT_ROOT, "tools", "server"))
+                from device_client import DeviceClient
+                client = DeviceClient(context["wp_ip"])
+                files = client.list_log_files() or []
+                deleted = 0
+                for f in files:
+                    name = f.get("filename", "") or f.get("name", "")
+                    ext = os.path.splitext(name)[1].lower()
+                    if ext in (".um4", ".uf2"):
+                        ok, _ = client.delete_log_file(name)
+                        if ok:
+                            deleted += 1
+                if deleted:
+                    print(f"Post-run cleanup: deleted {deleted} file(s)",
+                          file=sys.__stdout__, flush=True)
+            except Exception as e:
+                print(f"Post-run cleanup failed (non-fatal): {e}",
+                      file=sys.__stdout__, flush=True)
         ch0.stop()
         ocd.stop()
         ensure_detached(CMSIS_DAP_HW_ID)

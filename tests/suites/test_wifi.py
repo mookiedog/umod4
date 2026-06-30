@@ -6,6 +6,7 @@ Phase 1: Verify WP is connected to WiFi (via RTT VFY channel).
 Phase 2: Verify WP's HTTP server is reachable and returning valid responses.
 """
 
+import http.client
 import json
 import time
 import urllib.request
@@ -37,9 +38,9 @@ def _http_get_json_with_retry(ip, path, wait=HTTP_SERVER_WAIT):
     while True:
         try:
             return _http_get_json(ip, path)
-        except urllib.error.URLError as e:
+        except (urllib.error.URLError, http.client.IncompleteRead) as e:
             last_err = e
-            if "Connection refused" not in str(e) or time.monotonic() >= deadline:
+            if time.monotonic() >= deadline:
                 raise
             time.sleep(1.0)
 

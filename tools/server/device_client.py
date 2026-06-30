@@ -86,9 +86,11 @@ class DeviceClient:
             Example: [{"filename": "ride_001.um4", "size": 5242880}, ...]
         """
         try:
+            # Use a longer timeout: enumerating many files via LFS can take
+            # several seconds (measured 7s+ with 142 files on card).
             response = requests.get(
                 f"{self.base_url}/api/list",
-                timeout=self.timeout
+                timeout=max(self.timeout, 30)
             )
             response.raise_for_status()
             data = response.json()
