@@ -29,7 +29,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2040.cfg"
         ],
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2040/hardware_regs/RP2040.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2040/hardware_regs/RP2040.svd",
         "openOCDLaunchCommands": ["adapter speed 5000"],
         "rttConfig": {
             "enabled": true,
@@ -60,7 +60,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2040.cfg"
         ],
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2040/hardware_regs/RP2040.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2040/hardware_regs/RP2040.svd",
         "runToEntryPoint": "main",
         "openOCDLaunchCommands": ["adapter speed 5000"],
         "postRestartCommands": [
@@ -99,7 +99,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2040.cfg"
         ],
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2040/hardware_regs/RP2040.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2040/hardware_regs/RP2040.svd",
         "runToEntryPoint": "main",
         // Work around for stopping at main on restart
         "postRestartCommands": [
@@ -139,7 +139,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2040.cfg"
         ],
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2040/hardware_regs/RP2040.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2040/hardware_regs/RP2040.svd",
         "openOCDLaunchCommands": ["adapter speed 20000"],
         // Do not stop the CPU when attaching:
         //"postAttachCommands": ["continue"],
@@ -173,7 +173,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2350.cfg"
         ],
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2350/hardware_regs/RP2350.svd",
         "openOCDLaunchCommands": ["adapter speed 20000"],
         // GDB 'load' writes ELF sections to their SRAM addresses directly.
         // After load, manually set SP and PC from the vector table.
@@ -213,7 +213,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2040.cfg"
         ],
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2040/hardware_regs/RP2040.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2040/hardware_regs/RP2040.svd",
 
         // Debug sessions will not start without setting the adaptor speed as below
         "openOCDLaunchCommands": ["adapter speed 20000"],
@@ -263,7 +263,7 @@
         // Enabling this next line causes all kinds of trouble, like only showing 1 core, not stopping at breakpoints.
         // Things seem to work fine without it...
         //"rtos": "FreeRTOS",
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2350/hardware_regs/RP2350.svd",
         "runToEntryPoint": "main",
         // Work around for stopping at main on restart
         "postRestartCommands": [
@@ -313,7 +313,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2350.cfg"
         ],
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2350/hardware_regs/RP2350.svd",
         "openOCDLaunchCommands": ["adapter speed 20000", "gdb_memory_map disable"],
         // Ch0=WP_STDIO, Ch1=WP_VFY (test verification), Ch2=WP_SHELL (bidirectional)
         "rttConfig" : {
@@ -354,7 +354,7 @@
             "interface/cmsis-dap.cfg",
             "target/rp2350.cfg"
         ],
-        "svdFile": "${env:PICO_SDK_PATH}/src/rp2350/hardware_regs/RP2350.svd",
+        "svdFile": "${workspaceFolder}/build/pico-sdk-current/src/rp2350/hardware_regs/RP2350.svd",
         "runToEntryPoint": "main",
 
         // Debug sessions will not start without setting the adaptor speed

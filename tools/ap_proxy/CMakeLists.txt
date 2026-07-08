@@ -2,16 +2,12 @@ cmake_minimum_required(VERSION 3.13)
 
 # Part of the umod4 superbuild — built as an ExternalProject.
 # Output: build/ap_proxy/ap_proxy.elf and ap_proxy.uf2
-#
-# Standalone build also works:
-#   cd tools/ap_proxy
-#   cmake -GNinja -B build
-#   cmake --build build
 
 set(PICO_BOARD pico_w)
 
+# The superbuild is expected to pass in PICO_SDK_PATH
 if(NOT DEFINED PICO_SDK_PATH)
-    set(PICO_SDK_PATH "$ENV{HOME}/projects/pico-sdk/2.2.0")
+    message(FATAL_ERROR "PICO_SDK_PATH is undefined: Can't find PicoSDK")
 endif()
 
 # Locate the ARM toolchain — same base path used by the umod4 superbuild.

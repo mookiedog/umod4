@@ -10,6 +10,10 @@ if(NOT DEFINED PICO_SDK_PATH)
     message(FATAL_ERROR "PICO_SDK_PATH is undefined: Can't find PicoSDK")
 endif()
 
+if(NOT DEFINED FREERTOS_KERNEL_PATH)
+    message(FATAL_ERROR "FREERTOS_KERNEL_PATH is undefined: Can't find FreeRTOS-Kernel")
+endif()
+
 # --------------------------------------------------------------------------------------------------
 # Define the project
 
@@ -52,10 +56,9 @@ set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -mcpu=${CPU} -mthumb")
 
 set(TOOLS_DIR ${CMAKE_BINARY_DIR}/tools)
 
-# Tell the build system where to find the root of the FreeRTOS-Kernel
-set(FREERTOS_KERNEL_PATH ${PICO_SDK_PATH}/FreeRTOS-Kernel)
-
-# Important: Use the RP2040 kernel importer!
+# This is the generic FreeRTOS-Kernel importer script. Despite living under a "RP2040"
+# path, it auto-detects PICO_PLATFORM and dispatches to the correct port (RP2350_ARM_NTZ
+# for this project) -- it is not RP2040-specific despite its location.
 include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 #add_subdirectory(${PICO_SDK_PATH}/lib/lwip)

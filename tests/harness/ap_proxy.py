@@ -14,6 +14,9 @@ Protocol: line-based text, newline-terminated.
   POST <path> <json>         -> OK <http_status> <json_body>
   DISCONNECT                 -> OK
   PING                       -> OK
+
+The <path>/JSON values this harness sends must match the routes registered in
+WP/src/api_handlers.h — that file is the other half of this coupling.
 """
 
 import json

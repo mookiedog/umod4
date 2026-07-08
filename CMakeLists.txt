@@ -26,7 +26,7 @@ include(ExternalProject)
 #   ├── pico-sdk
 #   └── umod4
 
-set(PROJECTS_PATH ${CMAKE_SOURCE_DIR}/..)
+get_filename_component(PROJECTS_PATH "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
 set(PICO_EXAMPLES_PATH ${PROJECTS_PATH}/pico-examples)
 
 # The Pico SDK is too big to download for every project on this machine that might want to use it.
@@ -43,8 +43,24 @@ set(PICO_EXAMPLES_PATH ${PROJECTS_PATH}/pico-examples)
 # Select the SDK version. This variable gets passed into the WP and EP external projects.
 # At the moment, both EP and WP use the same SDK version.
 # It would be possible for the WP and EP to use different versions of the SDK, should that need arise.
-set(PICO_SDK_VERSION 2.2.0)
+set(PICO_SDK_VERSION 2.3.0)
 set(PICO_SDK_PATH ${PROJECTS_PATH}/pico-sdk/${PICO_SDK_VERSION})
+
+# FreeRTOS-Kernel lives as its own sibling checkout, independent of the pico-sdk version --
+# it is not part of any official pico-sdk release, and pinning it inside a versioned SDK
+# directory means it has to be re-vendored by hand every time PICO_SDK_VERSION changes.
+# See BUILDING.md for how this checkout was set up and which commit it is pinned to.
+set(FREERTOS_KERNEL_PATH ${PROJECTS_PATH}/FreeRTOS-Kernel)
+
+# .vscode/launch.json needs to know PICO_SDK_PATH too (for its svdFile entries), but
+# launch.json is static JSON with no way to ask CMake for the value directly. Rather than
+# relying on an environment variable (which goes stale the moment PICO_SDK_VERSION above
+# changes, since nothing forces a shell/WSL restart to pick up a fresh export), maintain a
+# fixed-name symlink that always points at the current version. launch.json then references
+# the stable path build/pico-sdk-current and never needs editing when the version changes.
+set(PICO_SDK_SYMLINK ${CMAKE_BINARY_DIR}/pico-sdk-current)
+file(REMOVE ${PICO_SDK_SYMLINK})
+file(CREATE_LINK ${PICO_SDK_PATH} ${PICO_SDK_SYMLINK} SYMBOLIC)
 
 # Create a Python Virtual Environment (venv) in the build directory so that we can install a few
 # required Python packages without using the normal, system-wide python installation mechanisms.
@@ -176,6 +192,7 @@ ExternalProject_Add(picotool
     GIT_SHALLOW TRUE
     CMAKE_ARGS
         -DCMAKE_INSTALL_PREFIX=$ENV{HOME}/.local
+        -DPICO_SDK_PATH=${PICO_SDK_PATH}
     INSTALL_COMMAND
         cmake --install .
         COMMAND ${CMAKE_COMMAND} -E make_directory $ENV{HOME}/.local/share/picotool
@@ -251,10 +268,9 @@ message(STATUS "Adding the 'ecu' project")
 
 set(ECU_CMAKE_ARG_LIST
     -DLIB_DIR=${LIB_DIR}
-    -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/host.cmake
     ${METADATA_DEFS}
-    ${PYTHON_DEFS}
+    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
 )
 
 ExternalProject_Add(ecu
@@ -275,12 +291,12 @@ set(EP_CMAKE_ARG_LIST
     -DLIB_DIR=${LIB_DIR}
     -DEPROM_LIB_SRC_DIR=${CMAKE_SOURCE_DIR}/eprom_lib
     -DECU_BINARY_DIR=${CMAKE_BINARY_DIR}/ecu
-    -DECU_SOURCE_DIR=${CMAKE_SOURCE_DIR}/ecu
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
     -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
-    ${PYTHON_DEFS}
+    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
+    -DPYTHON_SITEPACKAGES=${VENV_PATH}/lib/python${PYTHON_VERSION}/site-packages
 )
 
 ExternalProject_Add(EP
@@ -363,9 +379,10 @@ set(WP_CMAKE_ARG_LIST
     -DLIB_DIR=${LIB_DIR}
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
+    -DFREERTOS_KERNEL_PATH=${FREERTOS_KERNEL_PATH}
     -DLFS_SRC_DIR=${LFS_SRC_DIR}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
-    ${PYTHON_DEFS}
+    -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
 )
 
 ExternalProject_Add(WP

@@ -717,18 +717,31 @@ git checkout 2.2.0
 ```
 
 Our new git tag now matches its directory name.
-Update the new branch so that it can do WiFi, Bluetooth, and FreeRTOS:
+Update the new branch so that it can do WiFi and Bluetooth:
 
 ```bash
 git submodule update --init --recursive
 ```
 
-Finally, create an environment variable used by various parts of the build system to explain where to find the version of SDK they should be using:
+No environment variable is needed — the umod4 superbuild's top-level `CMakeLists.txt` computes the SDK path itself from its `PICO_SDK_VERSION` setting (see the next section), and passes it down to every subproject.
+
+#### FreeRTOS-Kernel
+
+FreeRTOS-Kernel is __not__ part of any official pico-sdk release — Raspberry Pi's own tooling expects it to be cloned as an entirely separate, independent checkout, as a sibling of `pico-sdk` (not nested inside a specific SDK version). This is deliberate: FreeRTOS-Kernel's release cadence has nothing to do with the SDK's, and pinning it inside a versioned SDK directory just means it has to be re-vendored by hand every time `PICO_SDK_VERSION` changes.
+
+Clone it once, as a sibling of `pico-sdk`:
 
 ```bash
-echo "export PICO_SDK_PATH=/home/$(id -u -n)/projects/pico-sdk/2.2.0" >> ~/.bashrc
-. ~/.bashrc
+cd ~/projects
+git clone https://github.com/FreeRTOS/FreeRTOS-Kernel
+cd FreeRTOS-Kernel
+git checkout V11.3.0
+git submodule update --init --recursive
 ```
+
+That release tag is pinned deliberately — it's the version this project has actually been built and tested against, and it includes the `RP2350_ARM_NTZ` community port (via the `Community-Supported-Ports` submodule) that WP needs. Don't casually move this checkout to a newer release without re-testing a full WP build on real hardware: FreeRTOS-Kernel releases do change core kernel behavior (not just port-specific code) — for example V11.3.0 added a `configASSERT` in task creation that actively checks stack depth against the port's initial frame size, and WP's `configASSERT` is a real, non-stubbed `assert()`. A clean compile only proves there's no API/ABI break; it does not prove the new release behaves identically on target hardware.
+
+The umod4 superbuild computes `FREERTOS_KERNEL_PATH` from this location automatically (see top-level `CMakeLists.txt`) and passes it to WP; no environment variable or manual per-SDK-version setup is needed here either.
 
 #### Maintaining Multiple SDK Versions
 
@@ -743,7 +756,7 @@ In fact, there are benefits to leaving old versions around:
 
 By following the instructions above to load new SDK versions 'beside' the old ones, your system can contain multiple versions of the SDK and each project can use the version that it needs.
 
-Note that if you ever upgrade the SDK at some point, you will need to re-export the PICO_SDK_PATH to point at the new version, as shown in the previous section.
+Note that if you ever upgrade the SDK at some point, you only need to change `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` — everything else (including VS Code's debug SVD file lookup) follows automatically from that one setting.
 
 ## Getting the Umod4 Source Code
 

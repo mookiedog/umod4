@@ -1,6 +1,10 @@
 #ifndef API_HANDLERS_H
 #define API_HANDLERS_H
 
+// The routes and JSON shapes registered here are called over HTTP (via ap_proxy)
+// by tests/harness/ap_proxy.py during AP-mode provisioning tests. Changing a path
+// or a JSON field name breaks that harness silently, not at compile time.
+
 #include "lwip/apps/httpd.h"
 
 /**

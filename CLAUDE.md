@@ -36,6 +36,10 @@ Hard stop rule: After 2 failures on the same approach, stop and write a summary:
 
 When the user asks "what is going on?" or "are you sure?", treat this as a signal to stop and give an honest assessment — not to defend the current approach and propose the next attempt.
 
+## Other Interactions
+
+- if the user ends a prompt using a phrase or sentence like "Discuss." it means do not rush ahead and start editing, it means that you and the user need to discuss the situation before moving forward with a solution.
+
 ## Project Overview
 
 Umod4 is a data logging system for Aprilia Gen 1 motorcycle fuel injection ECUs. It replaces the ECU's EPROM with a sophisticated circuit board containing two ARM processors (EP and WP) that emulate the EPROM, log ECU data streams, correlate with GPS data, and provide future wireless capabilities.
@@ -270,6 +274,10 @@ Subsequent crank events go from CRID1 through CRID11, when a CAM event will occu
 
 **VS Code/CMake Bug:**
 Cannot select debug targets normally due to ExternalProject_Add() preventing VS Code from finding executables. Workaround: Use F1 -> "Debug: Select And Start Debugging" and manually pick launch configuration.
+
+**"Clean Rebuild" does not actually clean EP/WP/etc.:**
+F1 -> "CMake: Clean Rebuild" only cleans files tracked by the top-level superbuild project (its own stamp/tracking files). Each `ExternalProject_Add()` subproject (EP, WP, ecu, tools, SwdReflash, WpUsbBoot, ap_proxy, picotool) is a fully independent nested CMake+Ninja project under `build/<name>/`, with its own `build.ninja` and `CMakeCache.txt` — the top-level `clean` target has no knowledge of what's inside those directories and cannot reach them. A "Clean Rebuild" can complete successfully while leaving every subproject's actual compiled artifacts (e.g. `build/EP/EP.uf2`) completely untouched, same file, same timestamp, as before.
+To force a genuine full rebuild of one subproject: `rm -rf build/<name>` and rebuild. For a fast, real (non-fake) rebuild that just needs to bump a stale artifact timestamp: touch one of that subproject's own source files and rebuild — this triggers a real incremental recompile+relink without recompiling everything.
 
 ## Coding Conventions
 
