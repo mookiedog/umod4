@@ -8,7 +8,7 @@
 #include "SdCardSDIO.h"
 
 
-extern void pico_set_led(bool on);
+extern void led_disk_bsy_set(bool on);
 
 // SD card instance - owned by lfsMgr, created in startFileSystem()
 SdCardBase* sdCard = nullptr;
@@ -75,11 +75,11 @@ int lfs_read(const struct lfs_config *c, lfs_block_t block_num, lfs_off_t off, v
         return LFS_ERR_INVAL;
     }
 
-    pico_set_led(true);
+    led_disk_bsy_set(true);
     uint32_t t0 = time_us_32();
     err = sd->readSectors(sector, num_sectors, buffer);
     uint32_t elapsed = time_us_32() - t0;
-    pico_set_led(false);
+    led_disk_bsy_set(false);
 
     if (err != SD_ERR_NOERR) {
         printf("%s: ERROR: sector=%u count=%u err=%d\n", __FUNCTION__, sector, num_sectors, err);
@@ -121,11 +121,11 @@ int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const
         return LFS_ERR_INVAL;
     }
 
-    pico_set_led(true);
+    led_disk_bsy_set(true);
     uint32_t t0 = time_us_32();
     err = sd->writeSectors(sector, num_sectors, buffer);
     uint32_t elapsed = time_us_32() - t0;
-    pico_set_led(false);
+    led_disk_bsy_set(false);
 
 
     if (err != SD_ERR_NOERR) {

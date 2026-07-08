@@ -21,7 +21,7 @@
 
 #include "pico/cyw43_arch.h"
 
-extern void pico_toggle_led();
+extern void led_disk_bsy_toggle();
 
 // UF2 magic numbers
 #define UF2_MAGIC_START0 0x0A324655
@@ -450,7 +450,7 @@ int32_t FlashWp::flashUf2(
             }
 
             // Give a visual indication of progress: toggle the LED as each sector finishes
-            pico_toggle_led();
+            led_disk_bsy_toggle();
 
             // Flush buffer for new sector in case it is only partially filled before it gets written
             memset(sector_buffer, 0xFF, FLASH_SECTOR_SIZE_BYTES);

@@ -144,8 +144,8 @@ class OpenOCD:
 
     def program_flash(self, filepath, address):
         """Program a binary file to flash via the running OpenOCD.
-        Halts the target, programs, but does NOT reset."""
-        self.tcl_command("halt")
+        Resets and halts the target (clean state), programs, but does NOT reset."""
+        self.tcl_command("reset halt")
         result = self.tcl_command(f"program {{{filepath}}} 0x{address:08X}")
         if "Error" in result:
             raise OpenOCDError(f"Flash programming failed: {result}")

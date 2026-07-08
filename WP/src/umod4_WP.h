@@ -39,7 +39,27 @@
 #define PIO_UART            pio2
 #define   PIO_UART_RX_IRQ   PIO2_IRQ_0
 
-// The GPIO pin assignments are as per the PCB 4V1 circuit board.
+// GPIO pin assignments as per PCB 4V2.
+//
+// The design changes from 4V1 to 4V2 were intended to be backwards compatible.
+// Executing 4V2 code on a 4V1 would of course not have access to new 4V2 features,
+// but there would be no harmful effects either.
+// WARNING! there is 1 potential incompatibility: using SPARE6_ADC on a 4V1 board
+// could cause the HC11 to reset!
+//
+// GP   | 4V1 Name      | 4V2 Name      | Notes
+// -----|---------------|---------------|-------------------------------------------------
+// GP5  | SPARE2        | EP_SWD_DIS    | Now has physical 0.1 jumper header on PCB
+// GP16 | LCD_MISO      | SPARE3        | LCD connector retired; footprint for LED present
+// GP17 | LCD_CS        | SPARE4        | LCD connector retired; footprint for LED present
+// GP18 | LCD_SCK       | SPARE5        | LCD connector retired
+// GP19 | LCD_MOSI      | EN_VDD_SD     | SD card power switch (SY6280) enable
+// GP20 | LCD_DC        | VCCB_PWR      | ECU bus power detect; not wired on 4V1
+// GP21 | LCD_BKLT      | EP_BOOTSEL    | Force EP into BOOTSEL; no-op on 4V1
+// GP26 | SPARE1        | DISK_BSY      | SD activity LED (was already SPARE1_LED on 4V1)
+// GP27 | SPARE0        | SPARE0_ADC    | Renamed to reflect ADC capability
+// GP28 | RESET_HC11    | SPARE6_ADC    | HC11 reset from WP removed in 4V2; GP28 now spare ADC
+// GP22 | WS2812_PIN    | WS2812_PIN    | 4V2 supports a second pixel not present on 4V1
 
 // Now we define the extra stuff on the umod4 board that the PicoW will be driving:
 // "Pin" numbers actually refer to GPIO ID, not a package pin number!
@@ -62,37 +82,29 @@
 #define EP_SWCLK_PIN        2
 #define EP_SWDAT_PIN        3
 
-// Spare IOs for future use
-#define SPARE0_PIN          27
+// Spare IOs
+#define SPARE0_ADC_PIN      27          // 4V1: SPARE0_PIN (renamed to reflect ADC capability)
+#define SCOPE_TRIGGER_PIN   (SPARE0_ADC_PIN)
 
-// Spare0 will be used as a scope trigger output
-#define SCOPE_TRIGGER_PIN (SPARE0_PIN)
+#define DISK_BSY_PIN        26          // 4V1: SPARE1_PIN / SPARE1_LED_PIN — SD activity LED
+#define EP_SWD_DIS_PIN      5           // 4V1: SPARE2_PIN — now has physical jumper header
 
-// SPARE1 has been redefined as an add-on LED indicator wired as postive logic: 1 means LED ON
-#define SPARE1_PIN          26
-#define SPARE1_LED_PIN      (SPARE1_PIN)
+// Former LCD connector pins (SPI0) repurposed in 4V2 (4V1 LCD connector was retired):
+#define SPARE3_PIN          16          // 4V1: LCD_MISO
+#define SPARE4_PIN          17          // 4V1: LCD_CS
+#define SPARE5_PIN          18          // 4V1: LCD_SCK
+#define EN_VDD_SD_PIN       19          // 4V1: LCD_MOSI — SD power switch (SY6280) enable
+#define VCCB_PWR_PIN        20          // 4V1: LCD_DC   — ECU bus power detect; absent on 4V1
+#define EP_BOOTSEL_PIN      21          // 4V1: LCD_BKLT — force EP into BOOTSEL; no-op on 4V1
 
-// SPARE2 is an unallocated spare GPIO, available for future use.
-#define SPARE2_PIN          5
-
-// Interface for driving a local LCD using SPI1
-#define LCD_SPI_PORT        spi0
-#define LCD_BKLT_PIN        21
-#define LCD_DC_PIN          20
-#define LCD_SCK_PIN         18
-#define LCD_MOSI_PIN        19
-#define LCD_MISO_PIN        16
-#define LCD_CS_PIN          17
-
-// Interface to MicroSD card using SPI0
-#define SD_SPI_PORT         spi1
+// Interface to MicroSD card uses PIO for 4-bit SD mode
 #define SD_SCK_PIN          10
 #define SD_MOSI_PIN         11
 #define SD_MISO_PIN         12
 #define SD_CS_PIN           15
 #define SD_CARD_PIN         6
 
-// Alternate names for data GPIOs in 4-bit mode.
+// Alternate names for data GPIOs in 4-bit SD mode.
 // Must be 4 consecutively increasing GPIO numbers starting with SD_MOSI_PIN
 #define SD_DAT0             12
 #define SD_DAT1             13
@@ -102,15 +114,12 @@
 // The GPIO used to drive the WS2812 DataIn signal
 #define WS2812_PIN          22
 // The number of WS2812 chips daisy-chained on the PCB
-#define WS2812_PIXCNT       1
+#define WS2812_PIXCNT       2           // 4V1: 1 — second pixel silently unused on 4V1
 
 // Controls the EP 'RUN' (A.K.A. "!Reset") signal. Active low to reset the EP.
 #define EP_RUN_PIN          4
 
-// The WP retains the hardware ability to reset the ECU, but this feature is not used.
-// The reason is that we would not want a malfunctioning WP from preventing the ECU
-// from letting the engine run. We always want to be able to ride home!
-#define RESET_HC11          28
+#define SPARE6_ADC_PIN      28          // 4V1: RESET_HC11 — removed in 4V2; GP28 now spare ADC
 
 #define STRINGIFY(x) STRINGIFY2(x)
 #define STRINGIFY2(x) #x

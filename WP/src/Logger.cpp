@@ -9,7 +9,7 @@
 #include "Trace.h"
 
 static uint8_t dbg = 0;
-extern void pico_set_led(bool on);
+extern void led_disk_bsy_set(bool on);
 extern WiFiManager* wifiMgr;
 
 // ----------------------------------------------------------------------------------

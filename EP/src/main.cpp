@@ -657,8 +657,10 @@ int main(void)
     initCpu();
 
     #if defined EP_TO_WP_TX_GPIO
-        // Before doing anything, we init the pin we will be transmitting on to the WP to have a pullup.
-        // A future PCB rev will install a pullup resistor
+        // If this GPIO is a TX line (as opposed to being CLKOUT), it needs a pullup.
+        // The 4V1 board needs to enable the pullup.
+        // A 4V2 board has an external pullup.
+        // It is harmless to enable the built-in pullup on a 4V2 so we always do that.
         gpio_init(EP_TO_WP_TX_GPIO);
         gpio_set_dir(EP_TO_WP_TX_GPIO, GPIO_IN);
         gpio_set_pulls(EP_TO_WP_TX_GPIO, true, false);    // pullup

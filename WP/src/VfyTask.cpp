@@ -752,7 +752,7 @@ static void cmd_swd_test_connect(void)
 {
     SWDLock lock;
 
-    if (!gpio_get(SPARE2_PIN)) {
+    if (!gpio_get(EP_SWD_DIS_PIN)) {
         s_swd_state = SWD_INHIBITED;
         vfy_printf("{\"swd_test_connect\":{\"state\":\"inhibited\"}}\n");
         return;
@@ -869,7 +869,7 @@ static void vfy_task(void*)
 // No EP reset is performed — EP is already running normally at this point.
 void swd_boot_check(void)
 {
-    if (!gpio_get(SPARE2_PIN)) {
+    if (!gpio_get(EP_SWD_DIS_PIN)) {
         s_swd_state = SWD_INHIBITED;
         return;
     }

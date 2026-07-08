@@ -80,7 +80,7 @@ flash_config_t g_flash_config;
 char g_device_name[64] = "";
 const char* get_device_name(void) { return g_device_name; }
 
-void pico_set_led(bool led_on);
+void led_disk_bsy_set(bool led_on);
 
 // This array tracks the most recently-received data from the ECU data stream
 // The array is indexed by the ECU log ID
@@ -665,7 +665,7 @@ void boot_system(void* args)
     ota_flash_task_init();
 
     // Instantiate an SWD object to interact with the EP
-    swd = new Swd(PIO_SWD, EP_SWCLK_PIN, EP_SWDAT_PIN, /*verbose=*/false, SPARE2_PIN);
+    swd = new Swd(PIO_SWD, EP_SWCLK_PIN, EP_SWDAT_PIN, /*verbose=*/false, EP_SWD_DIS_PIN);
 
     // Read EP flash image-store once at startup and cache the JSON.
     // EP flash is static; doing this here keeps SWD off the lwIP tcpip thread.
@@ -701,62 +701,74 @@ void boot_system(void* args)
 }
 
 // --------------------------------------------------------------------------------------------
-// The Pico2W does not have a simple LED, but the umod4 board adds one for it to drive.
-void pico_led_init(void)
+void led_disk_bsy_init(void)
 {
-    gpio_init(SPARE1_LED_PIN);
-    gpio_put(SPARE1_LED_PIN, 0);
-    gpio_set_dir(SPARE1_LED_PIN, GPIO_OUT);
+    gpio_init(DISK_BSY_PIN);
+    gpio_put(DISK_BSY_PIN, 0);
+    gpio_set_dir(DISK_BSY_PIN, GPIO_OUT);
 }
 
-void pico_set_led(bool led_on)
+void led_disk_bsy_set(bool led_on)
 {
-    gpio_put(SPARE1_LED_PIN, led_on);
+    gpio_put(DISK_BSY_PIN, led_on);
 }
 
-void pico_toggle_led()
+void led_disk_bsy_toggle()
 {
-    gpio_xor_mask(1u<<SPARE1_LED_PIN);
+    gpio_xor_mask(1u<<DISK_BSY_PIN);
 }
 
 // --------------------------------------------------------------------------------------------
-// Fast flash the LED 'count' times as a most basic sign of life as we boot.
+// Fast flash the DISK_BSY LED 'count' times as a most basic sign of life as we boot.
+// We will use the DISK_BSY LED because it exists on both 4V1 (as a bodge) and 4V2.
 void hello(int32_t count)
 {
-    pico_led_init();
+    led_disk_bsy_init();
 
     for (uint32_t i=0; i<count; i++) {
-        pico_set_led(true);
+        led_disk_bsy_set(true);
         sleep_ms(10);
-        pico_set_led(false);
+        led_disk_bsy_set(false);
         sleep_ms(50);
     }
 }
 
 // --------------------------------------------------------------------------------------------
-// Init all three SPAREx GPIOs as inputs, with pullups.
+// Init spare GPIOs.
 void initSpareIos()
 {
     #if defined SCOPE_TRIGGER_PIN
-    // Scope trigger will be rising edge
+    // Scope trigger will be rising edge output
     gpio_init(SCOPE_TRIGGER_PIN);
     gpio_put(SCOPE_TRIGGER_PIN, 0);
     gpio_set_dir(SCOPE_TRIGGER_PIN, GPIO_OUT);
     #else
-    gpio_init(SPARE0_PIN);
-    gpio_set_dir(SPARE0_PIN, GPIO_IN);
-    gpio_set_pulls(SPARE0_PIN, false, true);    // pulldown
+    gpio_init(SPARE0_ADC_PIN);
+    gpio_set_dir(SPARE0_ADC_PIN, GPIO_IN);
+    gpio_set_pulls(SPARE0_ADC_PIN, false, true);    // pulldown
     #endif
 
-    #if !defined SPARE1_LED_PIN
-    gpio_init(SPARE1_PIN);
-    gpio_set_dir(SPARE1_PIN, GPIO_IN);
-    gpio_set_pulls(SPARE1_PIN, false, true);    // pulldown
-    #endif
+    // On a 4V2, SPARE3/4 have LED footprints (positive logic: 1=ON)
+    // Init them as outputs with LEDs off to begin with
+    gpio_init(SPARE3_PIN);
+    gpio_put(SPARE3_PIN, 0);
+    gpio_set_dir(SPARE3_PIN, GPIO_OUT);
 
-    gpio_init(SPARE2_PIN);
-    gpio_set_dir(SPARE2_PIN, GPIO_IN);
-    gpio_set_pulls(SPARE2_PIN, true, false);    // pullup
+    gpio_init(SPARE4_PIN);
+    gpio_put(SPARE4_PIN, 0);
+    gpio_set_dir(SPARE4_PIN, GPIO_OUT);
+
+    // SPARE6_ADC (GP28) needs careful treatment due to 4V1/4V2 differences:
+    //   4V1: GP28 was wired to the HC11 RESET circuit. The HC11 runs normally with
+    //        GP28 high-Z (the WP never drove it). A pulldown here could disturb the
+    //        reset circuit, so no pulls are applied.
+    //   4V2: GP28 is a true spare ADC pin with no PCB connection. High-Z is fine.
+    // gpio_init() sets input direction and disables pulls — correct for both boards.
+    gpio_init(SPARE6_ADC_PIN);
+
+    gpio_init(EP_SWD_DIS_PIN);
+    gpio_set_dir(EP_SWD_DIS_PIN, GPIO_IN);
+    gpio_set_pulls(EP_SWD_DIS_PIN, true, false);    // pullup
 }
 
 // ----------------------------------------------------------------------------------
@@ -915,8 +927,8 @@ int main()
     // Read reset reason before anything can clear it.
     wp_reset_reason = (uint16_t)(powman_hw->chip_reset >> 16);
 
-    // Simulate having pullup resistors on EPLOG_RX_PIN and EPLOG_FLOWCTRL_PIN.
-    // Any future PCB4.2 rev of the PCB must add pullups to both of these signals!
+    // 4V1 PCBs need to enable the built-in resistors on EPLOG_RX_PIN and EPLOG_FLOWCTRL_PIN.
+    // 4V2 boards have external pullup resistors. Enabling the built-in pullups is harmless
     gpio_init(EPLOG_RX_PIN);
     gpio_set_dir(EPLOG_RX_PIN, GPIO_IN);
     gpio_set_pulls(EPLOG_RX_PIN, true, false);
@@ -929,6 +941,7 @@ int main()
 
     // Init PPS pin to have a pulldown so that it can't cause rising-edge interrupts
     // if no module is present
+    // Neither 4V1 nor 4V2 have an external pullup resistor so this is required on both.
     gpio_init(GPS_PPS_PIN);
     gpio_set_dir(GPS_PPS_PIN, GPIO_IN);
     gpio_set_pulls(GPS_PPS_PIN, false, true);
@@ -936,6 +949,9 @@ int main()
     // It has turned out to be very useful that the WP always resets the EP.
     // The only concern would be if the WP got into some kind of boot-loop.
     // This would have the very undesirable side effect of not allowing the engine to run.
+    // Were this to happen, the "get out of jail free" card to break the bootloop and get home again
+    // would be to hold down the WP BOOTSEL button, then turn on the ignition.
+    // The WP would not boot, but the EP would boot and load the most recent EPROM image.
     epResetAndRun();
 
     hello(3);

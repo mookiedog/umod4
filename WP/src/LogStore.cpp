@@ -6,6 +6,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+extern void led_disk_bsy_set(bool on);
+
 LogStore* logStore = nullptr;
 
 LogStore::LogStore()
@@ -436,9 +438,11 @@ int32_t LogStore::write(const uint8_t* data, uint32_t len)
         uint32_t to_write = (len < remaining_bytes) ? len : remaining_bytes;
 
         if (to_write > 0) {
+            led_disk_bsy_set(true);
             sd_lock();
             SdErr_t err = sd->writeSectors(active_sector, to_write / 512, data);
             sd_unlock();
+            led_disk_bsy_set(false);
 
             if (err != SD_ERR_NOERR) {
                 printf("LogStore: writeSectors failed at sector %lu: %d\n",
@@ -668,9 +672,11 @@ int32_t LogStore::readLog(uint32_t log_number, uint32_t offset, uint8_t* buffer,
         uint32_t sector = chunkStartSector(info.chunks[chunk_idx]) + (chunk_offset / 512);
         uint32_t num_sectors = (to_read + 511) / 512;
 
+        led_disk_bsy_set(true);
         sd_lock();
         SdErr_t err = sd->readSectors(sector, num_sectors, buffer);
         sd_unlock();
+        led_disk_bsy_set(false);
 
         if (err != SD_ERR_NOERR) {
             printf("LogStore: readSectors failed at sector %lu: %d\n",

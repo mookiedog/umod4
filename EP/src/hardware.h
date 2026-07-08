@@ -86,7 +86,7 @@
         #define EP_TO_WP_BAUDRATE       2500000
     #endif
 
-    // This pin is driven by the WP when it is ready for data from the EP.
+    // This pin is driven to '0' by the WP when it is ready for data from the EP.
     #define FLOWCTRL_GPIO 25
 
     // The CE signal passes through an inverting voltage converter. This means that
