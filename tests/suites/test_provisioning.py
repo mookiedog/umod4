@@ -204,26 +204,30 @@ def _run(ocd, results, context):
             results.fatal("prov_set_wifi", str(e))
 
     # ----------------------------------------------------------------
-    # prov_wait_reboot — wait for WP to save config and reboot
-    # WP emits {"wp_ota":"CONFIG_REBOOT"} after WiFi shutdown and config
-    # save, just before the 1s drain delay and watchdog reboot.
+    # prov_wait_reboot — wait for WP to reboot after config save.
+    # Detect the reboot by polling the VFY channel until it stops responding
+    # (RTT drops when WP reboots), then reconnect OpenOCD and wait for the
+    # new boot to come up.  This is more reliable than catching a one-shot
+    # CONFIG_REBOOT message that fires just before the watchdog trips —
+    # RTT does not buffer for clients that connect after the message is sent.
     # ----------------------------------------------------------------
 
     results.start("prov_wait_reboot")
-    print("  Waiting for config-save reboot signal...")
-    try:
-        with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
-            vfy.wait_for('{"wp_ota":"CONFIG_REBOOT"', timeout=15.0)
-    except RttError as e:
-        results.fatal("prov_wait_reboot", f"CONFIG_REBOOT signal not received: {e}")
+    print("  Waiting for reboot (watching RTT drop)...")
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline:
+        try:
+            with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL), connect_timeout=1.0) as vfy:
+                vfy.command("heap", timeout=2.0)
+            time.sleep(0.2)
+        except Exception:
+            break
+    else:
+        results.fatal("prov_wait_reboot", "Timeout waiting for WP to reboot (RTT never dropped)")
 
-    # The signal fires 1s before the watchdog reboot (vTaskDelay in firmware).
-    # Wait past that before reconnecting so OpenOCD attaches to the cold boot,
-    # not the old firmware still in its drain delay.
-    time.sleep(1.5)
     print("  Reconnecting for cold boot...")
     try:
-        ocd.reconnect(timeout=10.0)
+        ocd.reconnect(timeout=20.0)
     except (OpenOCDError, OSError) as e:
         results.fatal("prov_wait_reboot", f"OpenOCD reconnect failed: {e}")
     results.passed("prov_wait_reboot", "RTT live after reboot")

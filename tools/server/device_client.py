@@ -78,7 +78,7 @@ class DeviceClient:
             print(f"Error getting sd-info from {self.device_ip}: {e}")
             return None
 
-    def list_log_files(self) -> Optional[List[Dict]]:
+    def list_log_files(self, quiet=False) -> Optional[List[Dict]]:
         """List available log files on device via /api/list endpoint.
 
         Returns:
@@ -96,7 +96,8 @@ class DeviceClient:
             data = response.json()
             return data.get('files', [])
         except Exception as e:
-            print(f"Error listing files from {self.device_ip}: {e}")
+            if not quiet:
+                print(f"Error listing files from {self.device_ip}: {e}")
             return None
 
     # Chunk size must match CHUNK_DOWNLOAD_MAX_SIZE in WP/src/fs_custom.cpp

@@ -37,12 +37,12 @@ set(PICO_EXAMPLES_PATH ${PROJECTS_PATH}/pico-examples)
 #   └── pico-sdk
 #       ├── 1.5.1
 #       ├── 2.0.0
-#       └── 2.1.1
+#       ├── 2.1.1
+#       └── <future version>
 
 
 # Select the SDK version. This variable gets passed into the WP and EP external projects.
-# At the moment, both EP and WP use the same SDK version.
-# It would be possible for the WP and EP to use different versions of the SDK, should that need arise.
+# *** WARNING: changing the SDK version requires deleting the build directory!!
 set(PICO_SDK_VERSION 2.3.0)
 set(PICO_SDK_PATH ${PROJECTS_PATH}/pico-sdk/${PICO_SDK_VERSION})
 

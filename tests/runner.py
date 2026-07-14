@@ -529,9 +529,15 @@ def main():
                 sys.path.insert(0, os.path.join(PROJECT_ROOT, "tools", "server"))
                 from device_client import DeviceClient
                 client = DeviceClient(context["wp_ip"])
-                files = client.list_log_files() or []
+                # WP may be rebooting (e.g. after OTA); wait up to 30s for HTTP
+                files = None
+                for attempt in range(6):
+                    files = client.list_log_files(quiet=(attempt < 5))
+                    if files is not None:
+                        break
+                    time.sleep(5.0)
                 deleted = 0
-                for f in files:
+                for f in (files or []):
                     name = f.get("filename", "") or f.get("name", "")
                     ext = os.path.splitext(name)[1].lower()
                     if ext in (".um4", ".uf2"):

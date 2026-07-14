@@ -43,6 +43,11 @@ except ImportError:
     Logsyms = None
     LOGSYMS_PRELOADED = False
 
+# Optional progress callback, set by callers (e.g. viz.py) that invoke main()
+# in-process and want periodic progress reports during a long decode.
+# Signature: callback(bytes_read, total_bytes)
+PROGRESS_CALLBACK = None
+
 # ================================================================================================
 # Output Handler Classes
 # ================================================================================================
@@ -1512,6 +1517,11 @@ def _process_single_file(logfile_path, output_path, args, L):
         print(f"Error: Input file '{logfile_path}' not found.", file=sys.stderr)
         return 1
 
+    # Known upfront so PROGRESS_CALLBACK can report a percentage without
+    # waiting for EOF.
+    total_input_bytes = os.path.getsize(logfile_path)
+    last_progress_pct = -1
+
     # Prevent overwriting the input file
     if os.path.abspath(output_path) == os.path.abspath(logfile_path):
         print(f"Error: output file '{output_path}' would overwrite input file", file=sys.stderr)
@@ -1577,6 +1587,14 @@ def _process_single_file(logfile_path, output_path, args, L):
             while (True):
                 # Capture byte offset of this event before reading anything
                 record_offset = address
+
+                # Report progress at most once per percentage point, not per
+                # record - this loop can run millions of times on a large log.
+                if PROGRESS_CALLBACK is not None and total_input_bytes > 0:
+                    pct = (record_offset * 100) // total_input_bytes
+                    if pct != last_progress_pct:
+                        last_progress_pct = pct
+                        PROGRESS_CALLBACK(record_offset, total_input_bytes)
 
                 # Emit a seek_index entry each time decoded time crosses a new second boundary.
                 # Stored state (time_ns, byte_offset, overflow_count, last_raw_ts) is sufficient
@@ -2569,7 +2587,10 @@ def _process_single_file(logfile_path, output_path, args, L):
                     print(f"{fmt_record(recordCnt, timekeeper)} ERR:    Unknown LOGID 0x{byte:02X}")
                     #read(f, 1)
 
-            # End of file reached - print summary
+            # End of file reached - report a final 100% and print summary
+            if PROGRESS_CALLBACK is not None and total_input_bytes > 0:
+                PROGRESS_CALLBACK(total_input_bytes, total_input_bytes)
+
             final_time_sec = timekeeper.get_time_ns() / 1e9
             file_size = f.tell()
             summary_msg = f"\n# Decoding complete: {recordCnt} records processed, {file_size} bytes read, {final_time_sec:.2f} seconds of data"

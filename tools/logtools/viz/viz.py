@@ -1088,7 +1088,7 @@ class DataVisualizationTool(QMainWindow):
 
     def load_file_with_conversion(self, filename):
         """Load a file, offering to convert from .um4 to .h5 if needed."""
-        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox, QProgressDialog
         import subprocess
 
         # Check if file is HDF5
@@ -1162,22 +1162,34 @@ class DataVisualizationTool(QMainWindow):
                     )
                     return
 
-                # Show progress message
-                QMessageBox.information(
-                    self,
-                    "Converting...",
-                    f"Converting {os.path.basename(filename)} to HDF5...\n\n"
-                    f"This may take a moment. Click OK to continue.",
-                    QMessageBox.StandardButton.Ok
+                # Live progress dialog - decodelog.main() runs synchronously
+                # on this thread, so the callback below also calls
+                # processEvents() to keep the bar (and the rest of the
+                # window) repainting during the otherwise-blocking call.
+                progress = QProgressDialog(
+                    f"Converting {os.path.basename(filename)} to HDF5...",
+                    None,  # no cancel button - decode can't be interrupted mid-loop
+                    0, 100, self
                 )
+                progress.setWindowTitle("Converting...")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.setValue(0)
 
-                # Save original sys.argv and replace it with our arguments
+                def _on_decode_progress(bytes_read, total_bytes):
+                    progress.setValue(int(bytes_read * 100 / total_bytes))
+                    QApplication.processEvents()
+
+                # Save original sys.argv/callback and replace with ours
                 original_argv = sys.argv
                 sys.argv = ['decodelog', filename, '--format', 'h5', '-o', h5_filename]
+                decodelog.PROGRESS_CALLBACK = _on_decode_progress
 
                 try:
                     # Call the decoder's main function directly
                     decodelog.main()
+                    progress.setValue(100)
+                    progress.close()
 
                     # Success - load the converted file
                     QMessageBox.information(
@@ -1189,8 +1201,10 @@ class DataVisualizationTool(QMainWindow):
                     self.load_hdf5_file_internal(h5_filename)
 
                 finally:
-                    # Restore original sys.argv
+                    # Restore original sys.argv/callback
                     sys.argv = original_argv
+                    decodelog.PROGRESS_CALLBACK = None
+                    progress.close()
 
             except Exception as e:
                 QMessageBox.critical(
@@ -3566,7 +3580,10 @@ class DataVisualizationTool(QMainWindow):
         try:
             if shutil.which('wslview'):
                 subprocess.Popen(['wslview', html_file])
-            elif shutil.which('powershell.exe'):
+            elif shutil.which('wslpath') and shutil.which('powershell.exe'):
+                # wslpath only exists inside WSL, so this branch (unlike a bare
+                # powershell.exe check) won't misfire on native Windows, where
+                # powershell.exe is on PATH but wslpath is not.
                 from pathlib import PureWindowsPath
                 result = subprocess.run(['wslpath', '-w', html_file],
                                       capture_output=True, text=True)
@@ -3585,6 +3602,13 @@ class DataVisualizationTool(QMainWindow):
         except Exception as e:
             self.debug_print(f"Error opening browser: {e}")
             self.debug_print(f"Map file: {html_file}")
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                "Could Not Open Map",
+                f"The GPS track was generated but could not be opened in a browser:\n\n{e}\n\n"
+                f"You can open it manually:\n{html_file}"
+            )
 
     def _save_per_file_settings(self):
         """Save current visualizer state to .viz file."""

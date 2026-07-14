@@ -1,0 +1,114 @@
+umod4 Data Visualizer (viz) - Try It Out
+==========================================
+Test Bundle Version: 0.1
+
+This lets you try the umod4 data log viewer on a sample motorcycle log,
+with nothing pre-installed except the two steps below.
+
+STEP 1 - Install uv (one-time)
+-------------------------------
+
+uv is a small, standalone tool installer. It is NOT Python and does not
+touch any Python already on your machine.
+
+Windows (PowerShell - a normal, non-administrator PowerShell window is
+fine, no "Run as Administrator" needed):
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+Linux / WSL:
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+After installing, close and reopen your terminal, then confirm it worked:
+    uv --version
+
+STEP 2 - Run the visualizer
+-----------------------------
+
+Open a terminal (PowerShell on Windows, a regular terminal on Linux/WSL)
+INSIDE this extracted folder (the one containing this file), then run:
+
+    uv run --project . logtools/viz/viz.py SAMPLE.um4
+
+(Replace SAMPLE.um4 with the actual .um4 filename included in this
+folder - there should be exactly one.)
+
+The first run will download the required packages (mostly Qt/PySide6,
+roughly 250-300MB) - this only happens once.
+
+STEP 3 - Convert the log (first time only)
+---------------------------------------------
+
+A window will open and ask a couple of quick questions before showing
+any data, since this is a raw log file that hasn't been converted yet:
+
+1. "Would you like to convert it to HDF5 format?" -> click Yes.
+2. A save dialog appears asking where to save the converted file. The
+   suggested name and location (same folder, same name, .h5 extension)
+   is correct - just click Save.
+3. A short "Converting..." message appears - click OK and wait a few
+   seconds.
+
+After that, the visualizer loads automatically and you should see graphs
+of real motorcycle data: RPM, throttle position, spark timing, GPS
+speed, and more.
+
+If you open the same log again later, it skips straight to loading,
+since the converted .h5 file now already sits next to the .um4 file.
+
+For more on how to use the visualizer once it's open (selecting data
+streams, navigating, zooming), see README_Visualizer_User_Guide.md
+(https://github.com/mookiedog/umod4/blob/main/tools/README_Visualizer_User_Guide.md)
+and README_Visualizer.md
+(https://github.com/mookiedog/umod4/blob/main/tools/README_Visualizer.md).
+
+CLEANING UP / REMOVING THIS LATER
+------------------------------------
+
+If you want to get rid of this afterward, there are a few layers to it,
+depending on how thorough you want to be.
+
+1. Delete this extracted folder.
+   This removes the visualizer itself and the packages downloaded just
+   for it.
+
+2. Reclaim the shared package cache (roughly 800MB).
+   The first time you (or any uv-based tool) ran something on this
+   machine, uv downloaded and cached the underlying packages (Qt,
+   numpy, etc.) in a shared location separate from this folder, so that
+   future updates - or other uv-based tools - don't have to re-download
+   them every time. Deleting the folder in step 1 does NOT remove this
+   cache. To reclaim that disk space:
+       uv cache clean
+   Note: this clears uv's cache for your whole machine, not just this
+   folder. If you ever use uv for something else afterward, it will
+   simply be rebuilt as needed - nothing is lost by clearing it now.
+
+3. Remove uv itself (optional - most people can stop at step 2).
+   uv is a small, separate tool, not part of umod4, and steps 1-2 don't
+   touch it. To remove it completely:
+
+   Linux / WSL:
+       rm ~/.local/bin/uv ~/.local/bin/uvx
+
+   Windows (PowerShell):
+       Remove-Item "$env:USERPROFILE\.local\bin\uv.exe","$env:USERPROFILE\.local\bin\uvx.exe"
+
+   uv's installer also added a line to your shell startup file
+   (Linux/WSL) or a per-user PATH entry (Windows) so "uv" could be
+   found from any terminal. Removing that is optional cleanup - a
+   leftover PATH entry pointing at a deleted file is harmless - but if
+   you want it gone too: on Linux/WSL look for a reference to
+   ".local/bin" in your shell's startup file (e.g. ~/.bashrc or
+   ~/.profile); on Windows check your user Environment Variables
+   settings.
+
+WHAT TO REPORT BACK
+--------------------
+
+- Did step 1 (installing uv) work without errors?
+- Did step 3 finish with a real window full of graphs?
+- What OS/version were you on (Windows 10/11, Ubuntu version, etc.)?
+- Anything that looked like an error message, even if it seemed to
+  still "work" - copy/paste it if you can.
+
+Thanks for trying this out!

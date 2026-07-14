@@ -148,6 +148,13 @@ class OpenOCD:
         self.tcl_command("reset halt")
         result = self.tcl_command(f"program {{{filepath}}} 0x{address:08X}")
         if "Error" in result:
+            # After a warm boot (e.g. WP just wrote config to flash), the flash
+            # interface may need a moment to settle.  One retry with a fresh
+            # reset halt is usually enough.
+            time.sleep(1.0)
+            self.tcl_command("reset halt")
+            result = self.tcl_command(f"program {{{filepath}}} 0x{address:08X}")
+        if "Error" in result:
             raise OpenOCDError(f"Flash programming failed: {result}")
 
     def reset_and_wait(self, timeout=RTT_TIMEOUT):

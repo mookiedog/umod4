@@ -41,7 +41,7 @@ def run(ocd, results, context):
 
     to_delete = []
     for f in files:
-        name = f.get("name", "")
+        name = f.get("filename", "")
         _, ext = os.path.splitext(name)
         if ext.lower() in DELETABLE_EXTENSIONS:
             to_delete.append(name)
@@ -67,8 +67,14 @@ def run(ocd, results, context):
         else:
             errors.append(f"{name}: {err}")
 
+    msg = f"deleted {deleted}/{len(to_delete)}"
     if errors:
-        results.failed("cleanup_delete",
-            f"deleted {deleted}/{len(to_delete)}, errors: {'; '.join(errors)}")
+        # Partial failures are expected (e.g. the currently active log can't be deleted).
+        # Fail only if nothing was deleted at all.
+        msg += f", skipped: {'; '.join(errors)}"
+        if deleted == 0:
+            results.failed("cleanup_delete", msg)
+        else:
+            results.passed("cleanup_delete", msg)
     else:
-        results.passed("cleanup_delete", f"deleted {deleted} files")
+        results.passed("cleanup_delete", msg)

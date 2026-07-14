@@ -31,27 +31,41 @@ void* endOfRam = (void*)&__end__;
 #define LED_ON  0
 #define LED_OFF 1
 
-// Define the function pointers
-typedef void (*rom_connect_internal_flash_fn)(void);
-typedef void (*rom_flash_exit_xip_fn)(void);
-
-// This manual setting up of QSPI flash interface is required in case the flash is completely blank,
-// or if swd connected and halted the processor before the bootrom had done this itself.
+// Set up the flash interface from any starting state (blank flash, halted before boot2, etc.).
+//
+// SwdReflash is loaded by the debugger after a reset-halt, so boot2 never runs and
+// xip_ctrl_hw->ctrl is in its post-reset default (XIP not configured).
+//
+// SDK 2.3.0 added flash_save_hardware_state() at the start of flash_range_erase/program,
+// which snapshots xip_ctrl_hw->ctrl, and flash_restore_hardware_state() at the end, which
+// puts it back.  If we haven't set up XIP before the first call, the snapshot captures the
+// non-XIP reset value.  After the erase/program completes, restore writes that value back,
+// leaving XIP disabled.  The verify loop then reads via XIP_NOCACHE_BASE and hangs.
+//
+// Fix: call connect + exit_xip + flush_cache + enter_cmd_xip once at startup to put
+// xip_ctrl_hw->ctrl into a valid slow-03h XIP state.  The snapshot then captures that state,
+// restore preserves it, and XIP_NOCACHE reads work throughout.
 void init_flash_for_reflash() {
-    // 1. Look up the functions in the ROM table
+    typedef void (*rom_connect_internal_flash_fn)(void);
+    typedef void (*rom_flash_exit_xip_fn)(void);
+    typedef void (*rom_flash_flush_cache_fn)(void);
+    typedef void (*rom_flash_enter_cmd_xip_fn)(void);
+
     rom_connect_internal_flash_fn connect_internal_flash =
         (rom_connect_internal_flash_fn)rom_func_lookup_inline(ROM_FUNC_CONNECT_INTERNAL_FLASH);
-
     rom_flash_exit_xip_fn flash_exit_xip =
         (rom_flash_exit_xip_fn)rom_func_lookup_inline(ROM_FUNC_FLASH_EXIT_XIP);
+    rom_flash_flush_cache_fn flash_flush_cache =
+        (rom_flash_flush_cache_fn)rom_func_lookup_inline(ROM_FUNC_FLASH_FLUSH_CACHE);
+    rom_flash_enter_cmd_xip_fn flash_enter_cmd_xip =
+        (rom_flash_enter_cmd_xip_fn)rom_func_lookup_inline(ROM_FUNC_FLASH_ENTER_CMD_XIP);
 
-    // 2. Execute the initialization
-    if (connect_internal_flash && flash_exit_xip) {
-        // Restore QSPI pad controls and connect the SSI (Synchronous Serial Interface)
-        connect_internal_flash();
-
-        // Put the flash into a clean state (standard SPI) so the SDK can manage it
-        flash_exit_xip();
+    if (connect_internal_flash && flash_exit_xip && flash_flush_cache && flash_enter_cmd_xip) {
+        connect_internal_flash();  // configure SSI/pads for SPI access
+        flash_exit_xip();          // reset flash chip to standard SPI mode
+        flash_flush_cache();       // clean cache state, deassert CSn
+        flash_enter_cmd_xip();     // re-enable XIP in slow 03h mode so flash_init_boot2_copyout
+                                   // can read from XIP_BASE on the first flash_range_erase call
     }
 }
 
@@ -74,7 +88,12 @@ int main(void)
     gpio_put(DBG_BSY_LSB, LED_OFF);
     gpio_set_dir(DBG_BSY_LSB, GPIO_OUT);
 
-    // Make sure the QSPI interface is set up and ready
+    // One-time flash interface setup required because SwdReflash is debugger-loaded into SRAM
+    // after reset-halt; boot2 never ran, so xip_ctrl_hw->ctrl is in post-reset state.
+    // SDK 2.3.0+ saves/restores that register around every flash_range_erase/program call.
+    // Without this call the snapshot captures a non-XIP value, restore disables XIP, and
+    // subsequent XIP_NOCACHE verify reads hang.  If a future SDK version adds more hardware
+    // state to flash_save_hardware_state(), check whether that state also needs pre-warming here.
     init_flash_for_reflash();
 
     // Flush all the mailboxes

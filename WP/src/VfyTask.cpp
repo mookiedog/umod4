@@ -691,7 +691,8 @@ static void cmd_swd_test_flash(const char* arg)
             }
             if (mbox.status > MAILBOX_STATUS_BUSY) break;
             if (time_us_32() - t0 > 10000000u) {
-                vfy_printf("{\"swd_test_flash\":{\"state\":\"flash_timeout\"}}\n");
+                vfy_printf("{\"swd_test_flash\":{\"state\":\"flash_timeout\",\"last_status\":%ld}}\n",
+                           (long)mbox.status);
                 return;
             }
             vTaskDelay(pdMS_TO_TICKS(100));
