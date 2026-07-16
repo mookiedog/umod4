@@ -16,6 +16,7 @@
 #include "hardware/structs/scb.h"
 #include "hardware/structs/systick.h"
 #include "hardware/flash.h"
+#include "hardware/resets.h"
 #include "hardware/sync.h"
 #include "pico/bootrom.h"
 #include "FlashBuffer.h"
@@ -24,6 +25,9 @@
 #include "umod4_EP.h"   // For EP flash size
 #include "hardware.h"   // From EP/src/hardware.h for DBG_BSY_LSB
 
+// 64KB block erase opcode - defined in SDK flash.c but not exported in hardware/flash.h
+#define FLASH_BLOCK_ERASE_CMD 0xd8u
+
 
 extern uint32_t __end__;
 void* endOfRam = (void*)&__end__;
@@ -31,21 +35,32 @@ void* endOfRam = (void*)&__end__;
 #define LED_ON  0
 #define LED_OFF 1
 
-// Set up the flash interface from any starting state (blank flash, halted before boot2, etc.).
+// Set up the flash interface from any starting state.
 //
-// SwdReflash is loaded by the debugger after a reset-halt, so boot2 never runs and
-// xip_ctrl_hw->ctrl is in its post-reset default (XIP not configured).
+// SwdReflash is loaded by the debugger via connect_target() which HALTS the RP2040 but
+// does NOT reset it.  EP may be halted at any point in its boot sequence — including
+// mid-SSI-transaction — so the SSI peripheral can be in an unknown or partially-configured
+// state.  The ROM connect_internal_flash/flash_exit_xip functions cannot reliably recover
+// from an SSI that is stuck mid-transaction.
 //
-// SDK 2.3.0 added flash_save_hardware_state() at the start of flash_range_erase/program,
-// which snapshots xip_ctrl_hw->ctrl, and flash_restore_hardware_state() at the end, which
-// puts it back.  If we haven't set up XIP before the first call, the snapshot captures the
-// non-XIP reset value.  After the erase/program completes, restore writes that value back,
-// leaving XIP disabled.  The verify loop then reads via XIP_NOCACHE_BASE and hangs.
+// Fix part 1: explicitly reset the XIP (which includes the SSI on RP2040) and QSPI
+// peripherals via the RP2040 reset controller, putting SSI in a guaranteed clean state
+// before the ROM calls touch it.
 //
-// Fix: call connect + exit_xip + flush_cache + enter_cmd_xip once at startup to put
-// xip_ctrl_hw->ctrl into a valid slow-03h XIP state.  The snapshot then captures that state,
-// restore preserves it, and XIP_NOCACHE reads work throughout.
+// Fix part 2: SDK 2.3.0 added flash_save_hardware_state() at the start of
+// flash_range_erase/program, which snapshots xip_ctrl_hw->ctrl, and
+// flash_restore_hardware_state() at the end which puts it back.  If XIP was not
+// already enabled when the snapshot was taken, restore disables XIP and the verify
+// loop reads via XIP_NOCACHE_BASE hang.  Calling enter_cmd_xip here ensures the
+// snapshot captures a valid slow-03h XIP state so restore preserves it.
 void init_flash_for_reflash() {
+    // Deassert all QSPI pins momentarily by resetting the IO and pad blocks.
+    // The XIP/SSI peripheral itself has no reset bit on RP2040, but resetting
+    // IO_QSPI + PADS_QSPI forces CSn high (pin no longer driven), which aborts
+    // any in-progress flash command and returns the chip to standby.  After
+    // unreset, connect_internal_flash reconfigures the SSI and pads cleanly.
+    reset_block(RESETS_RESET_IO_QSPI_BITS | RESETS_RESET_PADS_QSPI_BITS);
+    unreset_block_wait(RESETS_RESET_IO_QSPI_BITS | RESETS_RESET_PADS_QSPI_BITS);
     typedef void (*rom_connect_internal_flash_fn)(void);
     typedef void (*rom_flash_exit_xip_fn)(void);
     typedef void (*rom_flash_flush_cache_fn)(void);
@@ -64,8 +79,7 @@ void init_flash_for_reflash() {
         connect_internal_flash();  // configure SSI/pads for SPI access
         flash_exit_xip();          // reset flash chip to standard SPI mode
         flash_flush_cache();       // clean cache state, deassert CSn
-        flash_enter_cmd_xip();     // re-enable XIP in slow 03h mode so flash_init_boot2_copyout
-                                   // can read from XIP_BASE on the first flash_range_erase call
+        flash_enter_cmd_xip();     // leave XIP in a known valid slow-03h state before any flash ops
     }
 }
 
@@ -166,17 +180,51 @@ int main(void)
                 }
 
                 // No errors so far: Let's do this thing!
-                // Specify using the big block erase
-                // Erase the desired range
+                //
+                // Use direct ROM calls instead of the SDK flash_range_erase/program wrappers.
+                // SDK 2.3.0 added flash_save/restore_hardware_state around those wrappers, which
+                // snapshots xip_ctrl_hw->ctrl before the erase/program and restores it after.
+                // When boot2 has not run (as here — SwdReflash is debugger-loaded into SRAM),
+                // the snapshot captures the post-reset (non-XIP) value, restore disables XIP,
+                // and subsequent XIP_NOCACHE verify reads hang.  Calling the ROM functions
+                // directly bypasses the save/restore entirely.  Granular status codes between
+                // each sub-step let us pinpoint exactly which call hangs if this fails again.
+                typedef void (*rom_connect_fn)(void);
+                typedef void (*rom_exit_xip_fn)(void);
+                typedef void (*rom_erase_fn)(uint32_t, size_t, uint32_t, uint8_t);
+                typedef void (*rom_program_fn)(uint32_t, const uint8_t *, size_t);
+                typedef void (*rom_flush_fn)(void);
+                typedef void (*rom_enter_xip_fn)(void);
+
+                rom_connect_fn   rom_connect   = (rom_connect_fn)  rom_func_lookup_inline(ROM_FUNC_CONNECT_INTERNAL_FLASH);
+                rom_exit_xip_fn  rom_exit_xip  = (rom_exit_xip_fn) rom_func_lookup_inline(ROM_FUNC_FLASH_EXIT_XIP);
+                rom_erase_fn     rom_erase     = (rom_erase_fn)    rom_func_lookup_inline(ROM_FUNC_FLASH_RANGE_ERASE);
+                rom_program_fn   rom_program   = (rom_program_fn)  rom_func_lookup_inline(ROM_FUNC_FLASH_RANGE_PROGRAM);
+                rom_flush_fn     rom_flush     = (rom_flush_fn)    rom_func_lookup_inline(ROM_FUNC_FLASH_FLUSH_CACHE);
+                rom_enter_xip_fn rom_enter_xip = (rom_enter_xip_fn)rom_func_lookup_inline(ROM_FUNC_FLASH_ENTER_CMD_XIP);
+
+                if (!rom_connect || !rom_exit_xip || !rom_erase || !rom_program || !rom_flush || !rom_enter_xip) {
+                    status = MAILBOX_STATUS_ERR_CMD;
+                    goto abort;
+                }
+
+                // Erase the desired range using 64KB block erase (D8h)
                 gpio_put(DBG_BSY_LSB, LED_OFF);          // LED is OFF while erasing
-                mbox->status = -1;
                 uint32_t offset = mbox->target_addr - XIP_BASE;
-                flash_range_erase(offset, flash_length);
-                mbox->status = -2;
+                mbox->status = -1;   // about to connect_internal_flash
+                rom_connect();
+                mbox->status = -11;  // about to flash_exit_xip
+                rom_exit_xip();
+                mbox->status = -12;  // about to ROM erase
+                rom_erase(offset, flash_length, FLASH_BLOCK_SIZE, FLASH_BLOCK_ERASE_CMD);
+                mbox->status = -13;  // about to flush_cache
+                rom_flush();
+                mbox->status = -14;  // about to enter_cmd_xip
+                rom_enter_xip();
+                mbox->status = -2;   // erase done
 
                 // Verify erase via XIP_NOCACHE_BASE to bypass cache and read
-                // actual flash contents. flash_range_erase() flushes the cache,
-                // but XIP_NOCACHE guarantees we never get a cached value.
+                // actual flash contents.
                 {
                     uint32_t nc = mbox->target_addr - XIP_BASE + XIP_NOCACHE_BASE;
                     uint32_t* ev_sa = (uint32_t*)(nc);
@@ -190,12 +238,20 @@ int main(void)
                 }
 
                 // Program the flash
-                mbox->status = -3;
-                gpio_put(DBG_BSY_LSB, LED_ON);          // LED is ON while programming
-                flash_range_program(offset, (uint8_t*)mbox->buffer_addr, mbox->length);
+                gpio_put(DBG_BSY_LSB, LED_ON);           // LED is ON while programming
+                mbox->status = -3;   // about to connect_internal_flash
+                rom_connect();
+                mbox->status = -21;  // about to flash_exit_xip
+                rom_exit_xip();
+                mbox->status = -22;  // about to ROM program
+                rom_program(offset, (const uint8_t *)mbox->buffer_addr, mbox->length);
+                mbox->status = -23;  // about to flush_cache
+                rom_flush();
+                mbox->status = -24;  // about to enter_cmd_xip
+                rom_enter_xip();
 
                 // Verify program via XIP_NOCACHE_BASE against the source buffer.
-                mbox->status = -4;
+                mbox->status = -4;   // program done, about to verify
                 {
                     uint32_t nc = mbox->target_addr - XIP_BASE + XIP_NOCACHE_BASE;
                     uint32_t* sa = (uint32_t*)(nc);
