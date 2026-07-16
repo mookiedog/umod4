@@ -25,6 +25,7 @@ extern uint16_t ecuLiveLog[256];
 extern uint16_t ecuLogidRxCount[256];
 extern const char* get_ecu_metadata_str(void);
 extern bool        get_ecu_metadata_complete(void);
+extern bool        get_ep_uart_ready(void);
 extern Gps* gps;
 
 extern volatile uint32_t g_t1_oflo_prev_us;
@@ -769,6 +770,20 @@ static void cmd_swd_test_flash(const char* arg)
                (unsigned long)scratch_addr);
 }
 
+// Causal completion signal for EP OTA: returns "ready" once isr_rx32 has
+// received LOGID_GEN_EP_LOG_VER — the first event EP emits every boot.
+// epResetAndRun() clears the flag before each reset, so this transitions
+// pending→ready exactly once per EP boot cycle.
+static void cmd_ep_ready(void)
+{
+    if (get_ep_uart_ready()) {
+        vfy_printf("{\"ep_ready\":{\"state\":\"ready\",\"eclk_khz\":%u}}\n",
+                   (unsigned)ecuLiveLog[LOGID_EP_ECLK_KHZ_TYPE_U16]);
+    } else {
+        vfy_printf("{\"ep_ready\":{\"state\":\"pending\"}}\n");
+    }
+}
+
 // Re-run the SWD connectivity check against the running EP and update the
 // cached state.  Used by the OTA EP test suite after reflashing EP to
 // confirm the new image booted successfully.
@@ -863,6 +878,7 @@ static void vfy_task(void*)
                     else if (strcmp(buf, "heap")                    == 0) cmd_heap();
                     else if (strcmp(buf, "status")                  == 0) cmd_status();
                     else if (strcmp(buf, "ota")                     == 0) cmd_ota();
+                    else if (strcmp(buf, "ep_ready")                == 0) cmd_ep_ready();
                     else if (strcmp(buf, "swd_test_connect")        == 0) cmd_swd_test_connect();
                     else if (strcmp(buf, "swd_test_flash")          == 0) cmd_swd_test_flash(arg);
                     else if (strcmp(buf, "filesystem_test_rw")      == 0) cmd_filesystem_test_rw();

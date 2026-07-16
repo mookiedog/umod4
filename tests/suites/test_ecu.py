@@ -103,7 +103,10 @@ def run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
 
         # ----------------------------------------------------------------
-        # Phase 1a: verify ECU is powered via E-clock frequency
+        # Phase 1a: verify ECU is powered via E-clock frequency.
+        # By the time test_ecu runs, test_ota_ep has already waited for
+        # ep_uart_ready — meaning EP's UART stream is flowing and ecuLiveLog
+        # is populated.  eclk_khz=0 here is a genuine ECU fault, not a race.
         try:
             snap = _get_ecu(vfy)
         except (RttError, ValueError, json.JSONDecodeError) as e:

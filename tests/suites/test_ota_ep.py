@@ -67,33 +67,31 @@ def run(ocd, results, context):
     with RttChannel(ocd.rtt_port(WP_VFY_CHANNEL)) as vfy:
 
         # ----------------------------------------------------------------
-        # ep_runs_after — swd_test_connect confirms EP alive after reboot
-        # FlashEp::flashUf2 reboots EP at the end of programming.
+        # ep_runs_after — wait for EP's first UART log event after reflash.
+        # epResetAndRun() clears the ep_uart_ready flag before resetting EP.
+        # isr_rx32 sets it when LOGID_GEN_EP_LOG_VER arrives — the first
+        # event EP emits every boot, before eclk_khz or any ECU data.
+        # This is a causal signal, not a timing guess: the flag is false
+        # until the UART stream is genuinely flowing.
         # ----------------------------------------------------------------
 
-        # Poll until EP finishes booting after reflash.
-        # EP's BSS memset during boot clobbers the SRAM test pattern, causing
-        # roundtrip_fail if we check too early.  Retry until ready or timeout.
         results.start("ep_runs_after")
         deadline = time.monotonic() + SWD_TIMEOUT
         reply = ""
         while True:
             try:
-                reply = vfy.command("swd_test_connect", timeout=5.0)
-                state = json.loads(reply).get("swd_test_connect", {}).get("state")
+                reply = vfy.command("ep_ready", timeout=5.0)
+                state = json.loads(reply).get("ep_ready", {}).get("state")
                 if state == "ready":
                     results.passed("ep_runs_after", reply)
-                    break
-                if state == "inhibited":
-                    results.abort("ep_runs_after", reply)
                     break
             except (RttError, json.JSONDecodeError):
                 pass
             if time.monotonic() >= deadline:
                 results.abort("ep_runs_after",
-                              f"EP not ready after {SWD_TIMEOUT:.0f}s: {reply}")
+                              f"EP UART not ready after {SWD_TIMEOUT:.0f}s: {reply}")
                 break
-            time.sleep(1.0)
+            time.sleep(0.25)
 
         # ----------------------------------------------------------------
         # ep_cleanup — delete EP.uf2 from WP LFS after successful reflash

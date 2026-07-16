@@ -100,6 +100,13 @@ uint16_t ecuLogidRxCount[256];
 volatile uint32_t g_last_ecu_data_us = 0;
 uint32_t get_last_ecu_data_us(void) { return g_last_ecu_data_us; }
 
+// Set to true when isr_rx32 receives LOGID_GEN_EP_LOG_VER — the first event EP
+// emits every boot, confirming the UART stream is flowing after a reflash.
+// Cleared by epResetAndRun() so the next ep_ready query sees "pending" until
+// the newly-booted EP sends its log version.
+volatile bool ep_uart_ready = false;
+bool get_ep_uart_ready(void) { return ep_uart_ready; }
+
 // Timestamp (time_us_32) of the most recent crankshaft event from the ECU.
 // Updated in isr_rx32 when LOGID_ECU_CRANKREF_ID_TYPE_U8 is received.
 // Zero until the first crank event — engine is considered running if this
@@ -321,6 +328,9 @@ void __time_critical_func(isr_rx32)()
         // Certain logIds need special processing: take care of that here
         bool log_it = true;
         switch (logId) {
+            case LOGID_GEN_EP_LOG_VER_TYPE_U8:
+                ep_uart_ready = true;
+                break;
             case LOGID_ECU_RAW_VTA_TYPE_U16: {
                 uint16_t vta = (rxWord >> 16) & 0xFFFF;
                 if (vta == dedup_prev_vta) log_it = false;
@@ -829,6 +839,7 @@ void initSpareIos()
 // ----------------------------------------------------------------------------------
 void epResetAndRun()
 {
+    ep_uart_ready = false;
     gpio_init(EP_RUN_PIN);
     gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
     gpio_put(EP_RUN_PIN, 0);
