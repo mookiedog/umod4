@@ -84,8 +84,9 @@ static const char* hw_state_str(SdCardBase::state_t s)
         case SdCardBase::POWER_UP:    return "power_up";
         case SdCardBase::INIT_CARD:   return "init_card";
         case SdCardBase::VERIFYING:   return "verifying";
-        case SdCardBase::OPERATIONAL: return "operational";
-        default:                      return "unknown";
+        case SdCardBase::OPERATIONAL:   return "operational";
+        case SdCardBase::GOING_OFFLINE: return "going_offline";
+        default:                        return "unknown";
     }
 }
 
@@ -127,10 +128,11 @@ static void emit_sd(void)
 
 static void emit_filesystem(void)
 {
-    vfy_printf("\"filesystem\":{\"state\":\"%s\",\"reformatted\":%s,\"mount_ms\":%lu}",
+    vfy_printf("\"filesystem\":{\"state\":\"%s\",\"reformatted\":%s,\"mount_ms\":%lu,\"active_log\":%ld}",
                lfs_mounted ? "mounted" : "not_mounted",
                lfs_reformatted ? "true" : "false",
-               (unsigned long)lfs_mount_ms);
+               (unsigned long)lfs_mount_ms,
+               (long)(logStore ? logStore->getActiveLogNumber() : -1));
 }
 
 static void emit_gps(void)
@@ -355,6 +357,27 @@ static void cmd_filesystem_test_delete(const char* arg)
         return;
     }
     vfy_printf("{\"filesystem_test_delete\":{\"state\":\"ok\",\"file\":\"%s\"}}\n", arg);
+}
+
+// Simulates a real card ejection without physically removing the card: forces the hotplug
+// state machine into GOING_OFFLINE, which performs the exact same clean unmount (closes the
+// active log, unmounts LFS, shuts down SD access) that a real removal triggers from OPERATIONAL,
+// then falls through to NO_CARD. Since the card is still physically present, cardPresent()
+// still reads true and the state machine naturally remounts it, simulating an eject/reinsert
+// cycle end to end.
+static void cmd_sd_simulate_removal(void)
+{
+    if (!sdCard) {
+        vfy_printf("{\"sd_simulate_removal\":{\"state\":\"no_card_object\"}}\n");
+        return;
+    }
+    if (sdCard->state != SdCardBase::OPERATIONAL) {
+        vfy_printf("{\"sd_simulate_removal\":{\"state\":\"not_operational\",\"hw_state\":\"%s\"}}\n",
+                   hw_state_str(sdCard->state));
+        return;
+    }
+    sdCard->state = SdCardBase::GOING_OFFLINE;
+    vfy_printf("{\"sd_simulate_removal\":{\"state\":\"ok\"}}\n");
 }
 
 static void cmd_logger_stop(void)
@@ -844,6 +867,7 @@ static void vfy_task(void*)
                     else if (strcmp(buf, "swd_test_flash")          == 0) cmd_swd_test_flash(arg);
                     else if (strcmp(buf, "filesystem_test_rw")      == 0) cmd_filesystem_test_rw();
                     else if (strcmp(buf, "filesystem_test_delete")  == 0) cmd_filesystem_test_delete(arg);
+                    else if (strcmp(buf, "sd_simulate_removal")       == 0) cmd_sd_simulate_removal();
                     else if (strcmp(buf, "logger_stop")               == 0) cmd_logger_stop();
                     else if (strcmp(buf, "logger_start")             == 0) cmd_logger_start();
                     else if (strcmp(buf, "logstore_fsck")             == 0) cmd_logstore_fsck();

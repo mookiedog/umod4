@@ -17,6 +17,7 @@
 
 #include "BoardRev.h"
 #include "FlashConfig.h"
+#include "SdPower.h"
 #include "FlashWp.h"
 #include "Gps.h"
 #include "lfsMgr.h"
@@ -1018,6 +1019,10 @@ int main()
     gpio_init(GPS_PPS_PIN);
     gpio_set_dir(GPS_PPS_PIN, GPIO_IN);
     gpio_set_pulls(GPS_PPS_PIN, false, true);
+
+    // Default SD card power OFF. The hotplug manager task (SdCardSDIO::hotPlugManager)
+    // turns it on/off via its POWER_UP/NO_CARD states once the scheduler is running.
+    sd_power_init();
 
     // It has turned out to be very useful that the WP always resets the EP.
     // The only concern would be if the WP got into some kind of boot-loop.

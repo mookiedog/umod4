@@ -13,6 +13,7 @@
 #include "task.h"
 
 #include "NeoPixelConnect.h"
+#include "SdPower.h"
 
 extern NeoPixelConnect* rgb_led;
 
@@ -278,6 +279,13 @@ SdErr_t SdCardSDIO::readCSD()
 // --------------------------------------------------------------------------------------------
 SdErr_t SdCardSDIO::init()
 {
+    // Backstop: refuse to touch the bus (below, we set pullups on SDIO_D0-D3 before the
+    // card is confirmed powered) if the power switch isn't actually on, independent of
+    // whatever state the hotplug manager thinks it's in.
+    if (!sd_power_is_on()) {
+        return SD_ERR_NOT_POWERED;
+    }
+
     isSDHC = false;
     rca = 0;
 
@@ -451,8 +459,10 @@ SdErr_t SdCardSDIO::init()
 // --------------------------------------------------------------------------------------------
 SdErr_t SdCardSDIO::shutdown()
 {
-    // TODO: Power down SD card and shut down SDIO PIO state machine
+    // TODO: shut down SDIO PIO state machine
     printf("%s: shutdown in progress\n", __FUNCTION__);
+
+    sd_power_off();
 
     return SD_ERR_NOERR;
 }
@@ -641,6 +651,11 @@ SdErr_t SdCardSDIO::readSectors(uint32_t sector_num, uint32_t num_sectors, void 
         return SD_ERR_NOT_OPERATIONAL;
     }
 
+    // Backstop: independent of the state machine, refuse to drive the bus if power is off.
+    if (!sd_power_is_on()) {
+        return SD_ERR_NOT_POWERED;
+    }
+
     // Check alignment: buffer must be 4-byte aligned (library requirement)
     if (((uintptr_t)buffer & 3) != 0) {
         return SD_ERR_BAD_ARG;
@@ -713,6 +728,11 @@ SdErr_t SdCardSDIO::writeSectors(uint32_t sector_num, uint32_t num_sectors, cons
 
     if (!operational()) {
         return SD_ERR_NOT_OPERATIONAL;
+    }
+
+    // Backstop: independent of the state machine, refuse to drive the bus if power is off.
+    if (!sd_power_is_on()) {
+        return SD_ERR_NOT_POWERED;
     }
 
     // Check alignment: buffer must be 4-byte aligned (library requirement)
@@ -840,7 +860,9 @@ void SdCardSDIO::hotPlugManager(void* arg)
     while (1) {
         switch (sdCard->state) {
             case NO_CARD:
-            // Turn the card power off
+            // Turn the card power off (works on 4V2, NOP on 4V1)
+            sd_power_off();
+
             // Turn the LED RED
             rgb_led->neoPixelSetValue(0, 16, 0, 0, true);
 
@@ -882,7 +904,7 @@ void SdCardSDIO::hotPlugManager(void* arg)
             // no faster than 100 uSec and no slower than 35 mSec.
             // Once the supply voltage is stable, we need to wait at least 1 mSec
             // before talking to the card.
-            //poweron();
+            sd_power_on();
             vTaskDelay(pdMS_TO_TICKS(50));
             sdCard->state = INIT_CARD;
             break;
@@ -944,12 +966,20 @@ void SdCardSDIO::hotPlugManager(void* arg)
             case OPERATIONAL:
             // Check periodically to make sure the card is still present
             if (!sdCard->cardPresent()) {
-                sdCard->state = NO_CARD;
-                hotPlug_cfg->goingDown(sdCard);
+                sdCard->state = GOING_OFFLINE;
             }
             else {
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
+            break;
+
+            case GOING_OFFLINE:
+            // Entered either by OPERATIONAL detecting a real removal, or by a test/debug
+            // command forcing this state directly to simulate one.
+            // Either way, this resets the WP's own in-memory mount/log state (active_log_number,
+            // lfs_mounted, etc.) so firmware doesn't get stuck expecting a card that's gone.
+            sdCard->state = NO_CARD;
+            hotPlug_cfg->goingDown(sdCard);
             break;
 
             default:

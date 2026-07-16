@@ -61,6 +61,11 @@ Logger::Logger(uint8_t* _buffer, int32_t _size)
 // ----------------------------------------------------------------------------------
 void Logger::deinit()
 {
+    // Close out whatever log was active before the filesystem goes away -- otherwise
+    // LogStore::active_log_number stays set forever (LogStore is a single object that
+    // outlives mount cycles), and createLog() refuses every log on remount.
+    logStore->closeActiveLog();
+
     lfs = nullptr;
     memset(logName, 0, sizeof(logName));
 

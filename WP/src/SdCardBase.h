@@ -32,6 +32,7 @@ typedef int32_t SdErr_t;
 #define SD_ERR_NOT_OPERATIONAL  -32   // The hotplug manager is not happy with the card
 #define SD_ERR_BAD_ARG          -33   // Bad argument passed to an SdCard method
 #define SD_ERR_IO               -34   // Some sort of IO error when performing SD access
+#define SD_ERR_NOT_POWERED      -35   // SD card power switch is off -- refuse to touch the bus
 
 #define SD_ERR_NOINIT   -99
 
@@ -63,7 +64,7 @@ class SdCardBase {
     // State machine for hotplug manager
     typedef enum {
         NO_CARD, MAYBE_CARD, POWER_UP, INIT_CARD,
-        VERIFYING, OPERATIONAL
+        VERIFYING, OPERATIONAL, GOING_OFFLINE
     } state_t;
 
     state_t state;
@@ -94,7 +95,7 @@ class SdCardBase {
 
     /// @brief Test if the system is operational
     /// @return true if in VERIFYING or OPERATIONAL states
-    bool operational() { return state >= VERIFYING; }
+    bool operational() { return state == VERIFYING || state == OPERATIONAL; }
 };
 
 #endif
