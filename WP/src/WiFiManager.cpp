@@ -72,7 +72,7 @@ WiFiManager::WiFiManager()
     taskHandle_ = xTaskCreateStatic(
         start_wifiMgr_task,
         "WiFiMgrTask",
-        1024,
+        sizeof(s_stack)/4,
         this,
         TASK_NORMAL_PRIORITY,
         s_stack, &s_tcb

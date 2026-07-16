@@ -578,6 +578,13 @@ static void debug_lwip_stats()
 // This function is used to perform the FreeRTOS task initialization.
 // FreeRTOS is known to be running when this routine is called so it is free
 // to use any FreeRTOS constructs and call any FreeRTOS routines.
+//
+// This is a dual-core SMP build. Any task created inside this task can start
+// running immediately on the other core, in parallel with the rest of this function.
+// In addition, normal preemptive task-swapping also applies to the core this
+// task runs on. The implication is that any global state a newly-created task's
+// startup code touches must already be fully initialized *before* that task
+// is created, not just before this boot_system() call finishes.
 void boot_system(void* args)
 {
     BaseType_t err;
@@ -593,6 +600,14 @@ void boot_system(void* args)
 
     printf("- Starting logger\n");
     static uint8_t mergeBuf[LOG_BUFFER_SIZE];
+
+    // Create LogStore (manages raw log partitions outside LFS) before Logger.
+    // Logger's constructor starts the "Log" task, and that task's startup code
+    // reads the global `logStore` immediately -- it must already point at a
+    // valid object before the task can possibly run.
+    static LogStore s_logStore;
+    logStore = &s_logStore;
+
     static Logger  s_logger(mergeBuf, LOG_BUFFER_SIZE);
     logger = &s_logger;
 
@@ -602,10 +617,6 @@ void boot_system(void* args)
 
     // Log the reset reason captured at the top of main() before anything cleared it.
     logger->logData(LOGID_WP_RESET_REASON_TYPE_U16, LOGID_WP_RESET_REASON_DLEN, (uint8_t*)&wp_reset_reason);
-
-    // Create LogStore (manages raw log partitions outside LFS)
-    static LogStore s_logStore;
-    logStore = &s_logStore;
 
     // Register Logger as the filesystem mount/unmount listener
     lfs_register_mount_callbacks(
@@ -777,7 +788,22 @@ void epResetAndRun()
     gpio_init(EP_RUN_PIN);
     gpio_set_dir(EP_RUN_PIN, GPIO_OUT);
     gpio_put(EP_RUN_PIN, 0);
+
+    #if 0
+        // TEMP DEBUG: single-step through here to verify that the WP can drive EP_BOOTSEL
+        // below the 0.8V VIL threshold during reset.
+        gpio_init(EP_BOOTSEL_PIN);
+        gpio_set_dir(EP_BOOTSEL_PIN, GPIO_OUT);
+        gpio_put(EP_BOOTSEL_PIN, 0);
+    #endif
+
     sleep_us(100);
+
+    #if 0
+        // Let EP_BOOTSEL float again
+        gpio_set_dir(EP_BOOTSEL_PIN, GPIO_IN);
+    #endif
+
     gpio_put(EP_RUN_PIN, 1);
 }
 
@@ -975,13 +1001,15 @@ int main()
     check_tbyb();
 
     // Create a transient task to boot the rest of the system
+    // It runs at NORMAL priority because any tasks it creates can start running immediately
+    // on the other core. A higher priority on boot_system does not stop that from happening.
     BaseType_t err = xTaskCreate(
-        boot_system,        // func ptr of task to run
-        "boot_system",      // task name
-        2048,               // stack size (words)
-        NULL,               // args
-        TASK_MAX_PRIORITY,  // make sure the boot task runs to completion before anything it starts
-        NULL                // task handle (if any)
+        boot_system,            // func ptr of task to run
+        "boot_system",          // task name
+        2048,                   // stack size (words)
+        NULL,                   // args
+        TASK_NORMAL_PRIORITY,
+        NULL                    // task handle (if any)
     );
 
     if (err != pdPASS) {

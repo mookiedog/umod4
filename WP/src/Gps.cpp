@@ -97,11 +97,6 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
     latitude_degrees = 0.0;
     longitude_degrees = 0.0;
     speed_mph_ = 0.0f;
-    static StackType_t  s_stack[1024];
-    static StaticTask_t s_tcb;
-    gps_taskHandle = xTaskCreateStatic(start_gps_rxTask, "Gps", 1024, this, TASK_HIGH_PRIORITY, s_stack, &s_tcb);
-
-    uart->notifyOnRx(gps_taskHandle);
 
     // Flag that we have never seen any fixtype yet
     fixType = -1;
@@ -136,6 +131,15 @@ Gps::Gps(Uart* _uart) /*: UartCallback()*/
     // The GPS PPS/Timepulse signal is synchronized to the rising edge, forming a 100 mSec duration high pulse.
     gpio_set_irq_enabled_with_callback(GPS_PPS_PIN, GPIO_IRQ_EDGE_RISE, true, &pps_isr);
     printf("%s: PPS ISR serviced by core %d\n", __FUNCTION__, get_core_num());
+
+    // Create the "Gps" task last: on this dual-core SMP build it can start running
+    // immediately on the other core, so every field and GPIO/IRQ setup above must
+    // already be complete before the task exists, not just before this constructor returns.
+    static StackType_t  s_stack[1024];
+    static StaticTask_t s_tcb;
+    gps_taskHandle = xTaskCreateStatic(start_gps_rxTask, "Gps", sizeof(s_stack)/4, this, TASK_HIGH_PRIORITY, s_stack, &s_tcb);
+
+    uart->notifyOnRx(gps_taskHandle);
 }
 
 

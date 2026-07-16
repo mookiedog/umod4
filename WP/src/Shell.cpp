@@ -56,7 +56,7 @@ Shell::Shell(lfs_t* _lfs)
 
     static StackType_t  s_stack[1024];
     static StaticTask_t s_tcb;
-    shell_taskHandle = xTaskCreateStatic(start_shell_task, "Shell", 1024, this, TASK_NORMAL_PRIORITY, s_stack, &s_tcb);
+    shell_taskHandle = xTaskCreateStatic(start_shell_task, "Shell", sizeof(s_stack)/4, this, TASK_NORMAL_PRIORITY, s_stack, &s_tcb);
 }
 
 

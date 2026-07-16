@@ -900,5 +900,7 @@ void swd_boot_check(void)
 // -------------------------------------------------------------------------
 void vfy_task_init(void)
 {
-    xTaskCreate(vfy_task, "vfy", 1024, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+    static StackType_t  s_stack[1024];
+    static StaticTask_t s_tcb;
+    xTaskCreateStatic(vfy_task, "vfy", sizeof(s_stack)/4, nullptr, tskIDLE_PRIORITY + 1, s_stack, &s_tcb);
 }

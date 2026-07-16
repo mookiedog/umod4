@@ -509,7 +509,7 @@ void file_io_task_init(void)
     io_task_handle = xTaskCreateStatic(
         file_io_task,
         "FileIO",
-        1024,
+        sizeof(s_stack)/4,
         NULL,
         TASK_HIGH_PRIORITY,  // Priority 3, below CYW43 but above normal tasks
         s_stack, &s_tcb

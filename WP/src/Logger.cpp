@@ -47,12 +47,12 @@ Logger::Logger(uint8_t* _buffer, int32_t _size)
     int spinlock_num = spin_lock_claim_unused(true);
     bufferLock = spin_lock_init(spinlock_num);
 
-    static StackType_t  s_stack[1024+512];
+    static StackType_t  s_stack[1536];
     static StaticTask_t s_tcb;
     log_taskHandle = xTaskCreateStatic(
         start_logger_task,
         "Log",
-        1024+512,
+        sizeof(s_stack)/4,
         this,
         TASK_NORMAL_PRIORITY,
         s_stack, &s_tcb);
