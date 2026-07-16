@@ -27,6 +27,7 @@ class Device(Base):
     is_online = Column(Boolean, default=False)  # Current connection status
     wp_version = Column(String)
     ep_version = Column(String)
+    pcb_version = Column(String)  # e.g. "4V1", "4V2", "Unknown"
     filesystem_status = Column(String)  # 'ok', 'no_card', 'mount_failed', or None
     filesystem_message = Column(String)  # Human-readable filesystem status message
     notes = Column(Text)
@@ -233,6 +234,13 @@ class Database:
                 """)
                 conn.commit()
                 print("Migration complete: Created 'device_uploads' table")
+
+            # Migration 7: Add 'pcb_version' column to devices table
+            if 'pcb_version' not in columns:
+                print("Migrating database: Adding 'pcb_version' column to devices table...")
+                cursor.execute("ALTER TABLE devices ADD COLUMN pcb_version TEXT")
+                conn.commit()
+                print("Migration complete: Added 'pcb_version' column")
 
         except Exception as e:
             print(f"Warning: Database migration failed: {e}")

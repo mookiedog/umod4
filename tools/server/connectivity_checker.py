@@ -222,4 +222,11 @@ class ConnectivityChecker:
                 updated = True
                 print(f"ConnectivityChecker: Device {device.display_name} ep_version updated to {new_ep_version}")
 
+        if 'pcb_version' in info:
+            new_pcb_version = info['pcb_version']
+            if device.pcb_version != new_pcb_version:
+                device.pcb_version = new_pcb_version
+                updated = True
+                print(f"ConnectivityChecker: Device {device.display_name} pcb_version updated to {new_pcb_version}")
+
         return updated

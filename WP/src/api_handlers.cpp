@@ -1,4 +1,5 @@
 #include "api_handlers.h"
+#include "BoardRev.h"
 #include "task_stats.h"
 #include "ep_flash_layout.h"
 #include "log_meta.h"
@@ -35,6 +36,7 @@ extern const char* wifi_get_ssid(void);
 extern const char* wifi_get_ap_ssid(void);
 extern int32_t wifi_get_rssi(void);
 extern uint16_t ecuLiveLog[256];
+extern WiFiManager* wifiMgr;
 extern const char* get_device_name(void);
 extern flash_config_t g_flash_config;
 extern const char* get_current_log_name(void);
@@ -106,6 +108,7 @@ void generate_api_info_json(char* buffer, size_t size)
              "{\n"
              "  \"device_name\": \"%s\",\n"
              "  \"device_mac\": \"%s\",\n"
+             "  \"pcb_version\": \"%s\",\n"
              "  \"wp_version\": %s,\n"
              "  \"ep_version\": %s,\n"
              "  \"uptime_seconds\": %lu,\n"
@@ -126,6 +129,7 @@ void generate_api_info_json(char* buffer, size_t size)
              "}",
              get_device_name(),
              mac_str,
+             boardrev_str(),
              get_wp_version(),
              ep_version_json,
              (unsigned long)uptime_seconds,
@@ -742,6 +746,8 @@ void generate_api_config_json(char* buffer, size_t size)
 {
     const flash_config_t* cfg = &g_flash_config;
     bool is_ap = wifi_is_ap_mode();
+    const char* server_host = (wifiMgr != nullptr) ? wifiMgr->getServerHostname() : "";
+    uint16_t server_port = (wifiMgr != nullptr) ? wifiMgr->getServerPort() : 0;
 
     snprintf(buffer, size,
              "{\n"
@@ -750,12 +756,16 @@ void generate_api_config_json(char* buffer, size_t size)
              "  \"wifi_password\": \"***\",\n"
              "  \"ap_ssid\": \"%s\",\n"
              "  \"ap_password\": \"***\",\n"
-             "  \"wifi_mode\": \"%s\"\n"
+             "  \"wifi_mode\": \"%s\",\n"
+             "  \"server_host\": \"%s\",\n"
+             "  \"server_port\": %u\n"
              "}",
              cfg->device_name,
              cfg->wifi_ssid,
              cfg->ap_ssid,
-             is_ap ? "ap" : "sta");
+             is_ap ? "ap" : "sta",
+             server_host,
+             server_port);
 }
 
 /**

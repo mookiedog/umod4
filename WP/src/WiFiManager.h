@@ -154,6 +154,17 @@ public:
     void setServerAddress(const char* server_hostname, uint16_t server_port = DEFAULT_SERVER_PORT);
 
     /**
+     * Get the server hostname/IP address currently used for check-ins.
+     * Empty string if never set (e.g. no check-in has happened yet).
+     */
+    const char* getServerHostname() const { return serverHostname_; }
+
+    /**
+     * Get the server UDP port currently used for check-ins.
+     */
+    uint16_t getServerPort() const { return serverPort_; }
+
+    /**
      * Set WiFi station credentials (SSID and password).
      * Must be called before the WiFiManager task reaches CONNECTING state.
      */

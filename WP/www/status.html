@@ -20,20 +20,17 @@
             padding-bottom: 6px;
             border-bottom: 1px solid #eee;
         }
-        .form-row {
-            margin-bottom: 14px;
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 0.95em;
         }
-        label {
-            display: block;
-            font-size: 0.9em;
-            color: #555;
-            margin-bottom: 4px;
-        }
-        .readonly-value {
-            padding: 10px 12px;
-            font-size: 1em;
-            color: #333;
-        }
+        .info-row:last-child { border-bottom: none; }
+        .info-label { color: #555; }
+        .info-value { color: #333; text-align: right; }
         .readonly-link {
             padding: 10px 12px;
             font-size: 1em;
@@ -73,29 +70,45 @@
 
         <div class="section">
             <div class="section-title">Device</div>
-            <div class="form-row">
-                <label>Device Name</label>
-                <div class="readonly-value" id="device_name_display">--</div>
+            <div class="info-row">
+                <span class="info-label">Device Name</span>
+                <span class="info-value" id="device_name_display">--</span>
             </div>
-            <div class="form-row">
-                <label>MAC Address</label>
-                <div class="readonly-value" id="mac">--</div>
+            <div class="info-row">
+                <span class="info-label">MAC Address</span>
+                <span class="info-value" id="mac">--</span>
             </div>
-            <div class="form-row">
-                <label>Uptime</label>
-                <div class="readonly-value" id="uptime">--</div>
+            <div class="info-row">
+                <span class="info-label">Uptime</span>
+                <span class="info-value" id="uptime">--</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Firmware</div>
+            <div class="info-row">
+                <span class="info-label">PCB Revision</span>
+                <span class="info-value" id="pcb_version">--</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">WP Build</span>
+                <span class="info-value" id="wp_build">--</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">EP Build</span>
+                <span class="info-value" id="ep_build">--</span>
             </div>
         </div>
 
         <div class="section">
             <div class="section-title">Network</div>
-            <div class="form-row">
-                <label>Server Address</label>
-                <div class="readonly-value" id="server_addr">Discovering&hellip;</div>
+            <div class="info-row">
+                <span class="info-label">Server Address</span>
+                <span class="info-value" id="server_addr">Discovering&hellip;</span>
             </div>
         </div>
 
-        <div class="form-row" style="margin-bottom: 28px;">
+        <div style="margin-bottom: 28px;">
             <a href="/wifi_config.html" class="readonly-link" style="display:block; text-align:center; padding:14px; background:#6c757d; color:white; border-radius:6px; font-weight:600; text-decoration:none;">Settings</a>
         </div>
 
@@ -125,6 +138,9 @@
                     }
                     document.getElementById('uptime').textContent = fmtUptime(data.uptime_seconds);
                     document.getElementById('mac').textContent = data.device_mac || 'Unknown';
+                    document.getElementById('pcb_version').textContent = data.pcb_version || 'Unknown';
+                    document.getElementById('wp_build').textContent = (data.wp_version && data.wp_version.BT) || 'Unknown';
+                    document.getElementById('ep_build').textContent = (data.ep_version && data.ep_version.BT) || 'Not yet received';
                 })
                 .catch(function() {});
         }

@@ -493,6 +493,8 @@ class DeviceListWidget(QWidget):
                         if 'ep_version' in info:
                             ep_ver = info['ep_version']
                             device.ep_version = json.dumps(ep_ver) if isinstance(ep_ver, dict) else ep_ver
+                        if 'pcb_version' in info:
+                            device.pcb_version = info['pcb_version']
 
                         print(f"Device {device.mac_address} is online at {device.last_ip} (fs_status: {device.filesystem_status})")
                     else:
@@ -999,6 +1001,10 @@ class ManageDeviceWidget(QWidget):
         self.ep_version_label = QLabel("-")
         info_layout.addWidget(self.ep_version_label, 3, 1)
 
+        info_layout.addWidget(QLabel("PCB Revision:"), 4, 0)
+        self.pcb_version_label = QLabel("-")
+        info_layout.addWidget(self.pcb_version_label, 4, 1)
+
         info_layout.setColumnStretch(1, 1)
         layout.addWidget(info_group)
 
@@ -1064,6 +1070,7 @@ class ManageDeviceWidget(QWidget):
             self.path_label.setText("-")
             self.wp_version_label.setText("-")
             self.ep_version_label.setText("-")
+            self.pcb_version_label.setText("-")
             self.device_is_online = False
             self._update_button_states()
             return
@@ -1085,6 +1092,7 @@ class ManageDeviceWidget(QWidget):
             self.path_label.setText(device.log_storage_path or "-")
             self.wp_version_label.setText(format_wp_version(device.wp_version))
             self.ep_version_label.setText(format_wp_version(device.ep_version))
+            self.pcb_version_label.setText(device.pcb_version or "-")
 
             self.device_is_online = getattr(device, 'is_online', False)
 

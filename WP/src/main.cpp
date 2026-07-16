@@ -15,6 +15,7 @@
 #include "semphr.h"
 #include "timers.h"
 
+#include "BoardRev.h"
 #include "FlashConfig.h"
 #include "FlashWp.h"
 #include "Gps.h"
@@ -244,8 +245,41 @@ bool        get_ecu_metadata_complete(void) { return ecu_metadata_complete; }
 static char           ep_build_meta_str[EP_BUILD_META_STR_LEN] = "";
 static int            ep_build_meta_pos  = 0;
 static volatile bool  ep_build_meta_complete = false;
+static bool           ep_build_meta_reformatted = false;
 
-const char* get_ep_build_meta_str(void)    { return ep_build_meta_str; }
+// EP reports its build date as "YYYY-MM-DD HH:MM:SS" (CMake-generated). WP's own build date
+// comes from the compiler's __DATE__/__TIME__ macros, "Mmm DD YYYY HH:MM:SS". Reformat EP's
+// date to match WP's style so downstream consumers (server, device web UI) see one consistent
+// format without each needing their own conversion logic. Leaves the string untouched if it
+// doesn't parse as expected. NOT ISR-safe (sscanf/snprintf) -- only call outside isr_rx32().
+static void reformat_ep_build_date(char* json_buf, size_t json_buf_size)
+{
+    static const char* month_names[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+
+    int year, month, day, hour, minute, second;
+    if (sscanf(json_buf, "{\"BT\":\"%d-%d-%d %d:%d:%d\"}",
+               &year, &month, &day, &hour, &minute, &second) != 6) {
+        return;
+    }
+    if (month < 1 || month > 12) {
+        return;
+    }
+
+    snprintf(json_buf, json_buf_size, "{\"BT\":\"%s %02d %04d %02d:%02d:%02d\"}",
+             month_names[month - 1], day, year, hour, minute, second);
+}
+
+const char* get_ep_build_meta_str(void)
+{
+    if (ep_build_meta_complete && !ep_build_meta_reformatted) {
+        reformat_ep_build_date(ep_build_meta_str, sizeof(ep_build_meta_str));
+        ep_build_meta_reformatted = true;
+    }
+    return ep_build_meta_str;
+}
 bool        get_ep_build_meta_complete(void) { return ep_build_meta_complete; }
 
 // Reset EP capture buffers so fresh data is accepted after EP reboots.
@@ -352,6 +386,7 @@ void __time_critical_func(isr_rx32)()
                         if (ep_build_meta_complete) {
                             ep_build_meta_pos = 0;
                             ep_build_meta_complete = false;
+                            ep_build_meta_reformatted = false;
                         }
                         if (ep_build_meta_pos < EP_BUILD_META_STR_LEN - 1)
                             ep_build_meta_str[ep_build_meta_pos++] = c;
@@ -592,7 +627,13 @@ void boot_system(void* args)
     // Get the LED working first so that it can be used by the rest of the system.
     // We need to tell it which PIO to use, but it will claim its own state machine.
     rgb_led = new NeoPixelConnect(WS2812_PIN, WS2812_PIXCNT, PIO_WS2812);
+    // Explicitly force all pixels off. On 4V2 that's 2 pixels; nothing else in the codebase ever
+    // addresses pixel 1, so it otherwise sits at whatever color it powered up in. No-op on 4V1
+    // (only 1 pixel exists, so neoPixelShow()'s loop never reaches a nonexistent pixel 1).
+    rgb_led->neoPixelClear(true);
     rgb_led->neoPixelSetValue(0, 16, 16, 16, true);
+    rgb_led->neoPixelSetValue(1,  0, 16, 16, true);
+
 
     initEpUart();
 
@@ -712,16 +753,18 @@ void boot_system(void* args)
 }
 
 // --------------------------------------------------------------------------------------------
+void led_disk_bsy_set(bool led_on)
+{
+    // 4V1 wires the LED active-HIGH. 4V2 wires it active-LOW (a PCB mistake, not intentional).
+    bool active_low = (boardrev_get() == PCB_REV_4V2);
+    gpio_put(DISK_BSY_PIN, active_low ? !led_on : led_on);
+}
+
 void led_disk_bsy_init(void)
 {
     gpio_init(DISK_BSY_PIN);
-    gpio_put(DISK_BSY_PIN, 0);
+    led_disk_bsy_set(false);
     gpio_set_dir(DISK_BSY_PIN, GPIO_OUT);
-}
-
-void led_disk_bsy_set(bool led_on)
-{
-    gpio_put(DISK_BSY_PIN, led_on);
 }
 
 void led_disk_bsy_toggle()
@@ -759,14 +802,14 @@ void initSpareIos()
     gpio_set_pulls(SPARE0_ADC_PIN, false, true);    // pulldown
     #endif
 
-    // On a 4V2, SPARE3/4 have LED footprints (positive logic: 1=ON)
+    // On a 4V2, SPARE3/4 have LED footprints (active-low: 0=ON, 1=OFF)
     // Init them as outputs with LEDs off to begin with
     gpio_init(SPARE3_PIN);
-    gpio_put(SPARE3_PIN, 0);
+    gpio_put(SPARE3_PIN, 1);
     gpio_set_dir(SPARE3_PIN, GPIO_OUT);
 
     gpio_init(SPARE4_PIN);
-    gpio_put(SPARE4_PIN, 0);
+    gpio_put(SPARE4_PIN, 1);
     gpio_set_dir(SPARE4_PIN, GPIO_OUT);
 
     // SPARE6_ADC (GP28) needs careful treatment due to 4V1/4V2 differences:
@@ -953,8 +996,12 @@ int main()
     // Read reset reason before anything can clear it.
     wp_reset_reason = (uint16_t)(powman_hw->chip_reset >> 16);
 
+    // Must run before hello() because the active level of the LED used for hello() depends on board rev
+    boardrev_detect();
+
     // 4V1 PCBs need to enable the built-in resistors on EPLOG_RX_PIN and EPLOG_FLOWCTRL_PIN.
-    // 4V2 boards have external pullup resistors. Enabling the built-in pullups is harmless
+    // 4V2 boards have external pullup resistors.
+    // Enabling the built-in pullups is harmless so we don't bother checking PCB revision.
     gpio_init(EPLOG_RX_PIN);
     gpio_set_dir(EPLOG_RX_PIN, GPIO_IN);
     gpio_set_pulls(EPLOG_RX_PIN, true, false);
@@ -991,7 +1038,8 @@ int main()
     printf("\n");
     for (int i=0; i<40; i++) putchar('-');
 
-    printf("\nWP Core %d booting\n", get_core_num());
+    printf("\nPCB Version: %s\n", boardrev_str());
+    printf("WP Core %d booting\n", get_core_num());
     printf("WP Version: %s\n", SYSTEM_JSON);
     uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
     printf("WP Sysclk: %.1f MHz\n", f_clk_sys / 1000.0);

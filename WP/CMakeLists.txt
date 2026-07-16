@@ -226,6 +226,7 @@ add_custom_command(
 add_custom_target(generate_swdreflash_binary DEPENDS ${SWDREFLASH_C} ${SWDREFLASH_H})
 
 add_executable(${PROJECT_NAME}
+    src/BoardRev.cpp
     src/Clock.cpp
     src/Crc.cpp
     src/FlashEp.cpp
