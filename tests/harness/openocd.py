@@ -30,6 +30,19 @@ RTT_PORT_BASE = 9000
 # WP boot takes ~2-3 s; 20 s gives plenty of margin.
 RTT_TIMEOUT = 20.0
 
+# How long to wait for the VFY RTT channel to respond after RTT is found.
+#
+# When WP was flashed with 'picotool load -p 1' (TBYB mode, which flash_WP always
+# uses), the bootrom starts a warm boot: check_tbyb() busy-waits ~2 s, commits the
+# OTA, and fires a watchdog reset.  FreeRTOS never starts during the warm boot, so
+# VfyTask never runs.  OpenOCD finds the RTT control block during the warm boot and
+# fires "_rtt_ready", but _wait_vfy_channel must then survive through the watchdog
+# reset cycle (~2 s) and the subsequent cold boot (~3 s) before VfyTask is up.
+# Each failed poll attempt takes 0.5 s (command timeout) + 0.5 s (sleep) = 1 s, so
+# 6-8 attempts elapse before VfyTask is reachable.  45 s gives wide margin even if
+# the cold boot runs long or a WiFi/SWD init step inside boot_system is slow.
+VFY_TIMEOUT = 45.0
+
 
 class OpenOCDError(Exception):
     pass
@@ -103,7 +116,7 @@ class OpenOCD:
         self.start(reset=False)
         self.wait_ready(timeout=timeout)
 
-    def wait_ready(self, timeout=RTT_TIMEOUT):
+    def wait_ready(self, timeout=RTT_TIMEOUT, vfy_timeout=VFY_TIMEOUT):
         """Block until RTT control block is found AND the VFY channel
         responds, confirming the firmware is fully booted.
         The RTT control block is a static variable found early in boot,
@@ -114,7 +127,7 @@ class OpenOCD:
                 f"RTT control block not found within {timeout}s.\n"
                 + self._last_log(20)
             )
-        self._wait_vfy_channel(timeout=timeout)
+        self._wait_vfy_channel(timeout=vfy_timeout)
 
     def rtt_port(self, channel):
         return RTT_PORT_BASE + channel
@@ -176,7 +189,7 @@ class OpenOCD:
             self.tcl_command(f"rtt server start {port} {ch}")
         self.wait_ready(timeout=timeout)
 
-    def _wait_vfy_channel(self, timeout=RTT_TIMEOUT):
+    def _wait_vfy_channel(self, timeout=VFY_TIMEOUT):
         """Poll the VFY RTT channel until it responds, confirming VfyTask
         is running. The RTT control block can be found before the firmware
         has initialized channel buffers — this ensures the channel is live."""
@@ -185,7 +198,7 @@ class OpenOCD:
         while time.monotonic() < deadline:
             try:
                 with RttChannel(self.rtt_port(1), connect_timeout=2.0) as vfy:
-                    reply = vfy.command("heap", timeout=2.0)
+                    reply = vfy.command("heap", timeout=0.5)
                     if reply:
                         return
             except Exception:

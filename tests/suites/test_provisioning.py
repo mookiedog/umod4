@@ -82,7 +82,7 @@ def _run(ocd, results, context):
     r = subprocess.run([WP_ENTER_BOOTSEL, WP_USB_BOOT_BINARY],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        detail = r.stderr.strip() or r.stdout.strip()
+        detail = r.stdout.strip() or r.stderr.strip()
         print("  NOTE: ensure that the WP is connected to the test PC via USB cable")
         results.fatal("prov_enter_bootsel",
             f"wp_enter_bootsel failed (exit {r.returncode}): {detail}")
@@ -99,7 +99,7 @@ def _run(ocd, results, context):
     print(f"  Erasing and flashing WP from {WP_BUILD_DIR} ...")
     r = subprocess.run([FLASH_WP, "-e", WP_BUILD_DIR], capture_output=True, text=True)
     if r.returncode != 0:
-        detail = r.stderr.strip() or r.stdout.strip()
+        detail = r.stdout.strip() or r.stderr.strip()
         results.fatal("prov_flash_wp",
             f"flash_WP -e failed (exit {r.returncode}): {detail}")
     results.passed("prov_flash_wp")

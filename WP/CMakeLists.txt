@@ -240,6 +240,7 @@ add_executable(${PROJECT_NAME}
     src/NeoPixelConnect.cpp
     src/Psm.cpp
     src/SdCardSDIO.cpp
+    src/SdPower.cpp
     src/Shell.cpp
     src/Swd.cpp
     src/VfyTask.cpp

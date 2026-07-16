@@ -390,14 +390,18 @@ def flash_wp():
     result = subprocess.run([WP_ENTER_BOOTSEL, WP_USB_BOOT_BINARY],
                             capture_output=True, text=True)
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip()
+        # Prefer stdout: the wrapper script's own diagnostic echoes (the
+        # actionable messages) go to stdout, while OpenOCD's verbose log
+        # noise goes to stderr and is non-empty on essentially every run,
+        # so falling back to stderr-first buries the useful message.
+        detail = result.stdout.strip() or result.stderr.strip()
         raise RuntimeError(f"wp_enter_bootsel failed (exit {result.returncode}): {detail}")
 
     print(f"Flashing WP from {WP_BUILD_DIR} ...", flush=True)
     result = subprocess.run([FLASH_WP, WP_BUILD_DIR],
                             capture_output=True, text=True)
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip()
+        detail = result.stdout.strip() or result.stderr.strip()
         raise RuntimeError(f"flash_WP failed (exit {result.returncode}): {detail}")
     print("Flash complete.\n", flush=True)
 
@@ -428,6 +432,8 @@ def _parse_args():
                    help="Expected ECU L000C register value (hex or decimal; default: use test constant 0x10)")
     p.add_argument("--preflight-only", action="store_true", dest="preflight_only",
                    help="Run pre-flight checks only, then exit")
+    p.add_argument("--skip-preflight", action="store_true", dest="skip_preflight",
+                   help="Skip USB/tool preflight checks (for stress-test loops where the probe is known-good)")
     p.add_argument("--no-flash", action="store_true", dest="no_flash",
                    help="Skip reflashing WP and run tests against the already-loaded firmware")
     p.add_argument("--allow-stale", action="store_true", dest="allow_stale",
@@ -449,18 +455,24 @@ def main():
     ch0     = RttCapture(RTT_PORT_BASE + 0)   # WP printf; reconnects automatically
 
     try:
-        print("[harness.preflight]", file=sys.__stdout__, flush=True)
-        results.start_suite("preflight")
+        if args.skip_preflight:
+            try:
+                ensure_attached(CMSIS_DAP_HW_ID)
+            except RuntimeError as e:
+                results.fatal("cmsis_dap_attach", str(e))
+        else:
+            print("[harness.preflight]", file=sys.__stdout__, flush=True)
+            results.start_suite("preflight")
 
-        suite_names = [s.__name__ for s in suites]
-        preflight.run_all(results, args, PROJECT_ROOT, suite_names)
+            suite_names = [s.__name__ for s in suites]
+            preflight.run_all(results, args, PROJECT_ROOT, suite_names)
 
-        try:
-            ensure_attached(CMSIS_DAP_HW_ID)
-        except RuntimeError as e:
-            results.fatal("cmsis_dap_attach", str(e))
+            try:
+                ensure_attached(CMSIS_DAP_HW_ID)
+            except RuntimeError as e:
+                results.fatal("cmsis_dap_attach", str(e))
 
-        preflight.check_probe_not_busy(results)
+            preflight.check_probe_not_busy(results)
 
         print("[harness.build_state]", file=sys.__stdout__, flush=True)
         results.start_suite("build_state")

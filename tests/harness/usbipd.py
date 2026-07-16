@@ -93,6 +93,13 @@ def ensure_attached(hardware_id, linux_enum_timeout=10.0):
         time.sleep(1.0)
         state = usbipd_state(hardware_id)
     if state is None:
+        # Device may be transiently absent: Windows re-enumerates it for a few
+        # seconds after usbipd releases it at the end of the previous test run.
+        deadline = time.monotonic() + 10.0
+        while state is None and time.monotonic() < deadline:
+            time.sleep(0.5)
+            state = usbipd_state(hardware_id)
+    if state is None:
         raise RuntimeError(
             f"USB device {hardware_id} not found — is it plugged in?"
         )
@@ -101,13 +108,23 @@ def ensure_attached(hardware_id, linux_enum_timeout=10.0):
             f"USB device {hardware_id} is not bound. "
             f"Run tools/setup_usb_wsl.ps1 as Administrator, then unplug and replug the device."
         )
-    result = subprocess.run(
-        ["usbipd.exe", "attach", "--hardware-id", hardware_id, "--wsl"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
+    # Retry attach a few times — Windows processes (e.g. SearchIndexer) can briefly
+    # hold a newly-enumerated device and cause the first attach attempt to fail.
+    last_result = None
+    for attempt in range(4):
+        last_result = subprocess.run(
+            ["usbipd.exe", "attach", "--hardware-id", hardware_id, "--wsl"],
+            capture_output=True, text=True
+        )
+        if last_result.returncode == 0:
+            break
+        time.sleep(2.0)
+    if last_result.returncode != 0:
+        out = last_result.stdout.strip()
+        err = last_result.stderr.strip()
+        detail = "\n".join(x for x in [out, err] if x)
         raise RuntimeError(
-            f"usbipd attach {hardware_id} failed: {result.stderr.strip()}"
+            f"usbipd attach {hardware_id} failed after retries:\n{detail}"
         )
     state = usbipd_state(hardware_id)
     if state != "Attached":

@@ -125,13 +125,13 @@ def run(ocd, results, context):
     if r.returncode != 0:
         results.fatal("cfg_flash_wp",
             f"wp_enter_bootsel failed (exit {r.returncode}): "
-            f"{r.stderr.strip() or r.stdout.strip()}")
+            f"{r.stdout.strip() or r.stderr.strip()}")
     print(f"  Flashing WP from {WP_BUILD_DIR} ...")
     r = subprocess.run([FLASH_WP, "-e", WP_BUILD_DIR], capture_output=True, text=True)
     if r.returncode != 0:
         results.fatal("cfg_flash_wp",
             f"flash_WP -e failed (exit {r.returncode}): "
-            f"{r.stderr.strip() or r.stdout.strip()}")
+            f"{r.stdout.strip() or r.stderr.strip()}")
     print(f"  Waiting {POST_FLASH_SETTLE:.0f}s for WP boot...")
     time.sleep(POST_FLASH_SETTLE)
     ocd.start(reset=False)
