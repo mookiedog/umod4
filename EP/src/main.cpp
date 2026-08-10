@@ -522,6 +522,7 @@ void showBootMessages(uint16_t eclk_khz)
 {
     const char* fname = "bt";
     printf("\n%s: EP <Built %s>\n", fname, ep_build_datetime());
+    printf("%s: Reset reason: 0x%02x\n", fname, ep_reset_reason);
     uint32_t f_clk_sys_khz = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
     printf("%s: Sysclk:  %u MHz\n", fname, (f_clk_sys_khz + 500) / 1000);
     printf("%s: HC11clk: %u KHz\n", fname, eclk_khz);

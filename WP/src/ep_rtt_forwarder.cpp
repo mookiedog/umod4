@@ -61,7 +61,7 @@ static char s_ep_vfy_buf[1024];
 
 // -------------------------------------------------------------------------
 // EP stdio circular buffer — tees EP ch0 output for the web interface.
-#define EP_STDIO_BUF_SIZE   1024u
+#define EP_STDIO_BUF_SIZE   4096u
 static uint8_t           s_ep_stdio_buf[EP_STDIO_BUF_SIZE];
 static volatile uint32_t s_ep_stdio_wr;     // monotonically increasing byte count
 

@@ -50,8 +50,8 @@
 // GP   | 4V1 Name      | 4V2 Name      | Notes
 // -----|---------------|---------------|-------------------------------------------------
 // GP5  | SPARE2        | EP_SWD_DIS    | Now has physical 0.1 jumper header on PCB
-// GP16 | LCD_MISO      | SPARE3        | LCD connector retired; footprint for LED present
-// GP17 | LCD_CS        | SPARE4        | LCD connector retired; footprint for LED present
+// GP16 | LCD_MISO      | SPARE3        | LCD connector retired; footprint for YELLOW LED present
+// GP17 | LCD_CS        | SPARE4        | LCD connector retired; footprint for RED LED present
 // GP18 | LCD_SCK       | SPARE5        | LCD connector retired
 // GP19 | LCD_MOSI      | EN_VDD_SD     | SD card power switch (SY6280) enable
 // GP20 | LCD_DC        | VCCB_PWR      | ECU bus power detect; not wired on 4V1

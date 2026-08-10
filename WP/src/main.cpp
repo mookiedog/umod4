@@ -308,6 +308,8 @@ static uint16_t dedup_prev_thw = 0xFFFF;
 
 void __time_critical_func(isr_rx32)()
 {
+    gpio_put(SPARE3_PIN, 0);   // yellow LED on for the duration of this ISR (active-low)
+
     // If we are getting behind in our receiving duties, tell the EP to pause sending
     uint level = pio_sm_get_rx_fifo_level(PIO_UART, pio_sm_uart);
     bool backpressure_required = (level >= EP_FLOWCTRL_THRESHOLD);
@@ -423,6 +425,13 @@ void __time_critical_func(isr_rx32)()
     #if defined EPLOG_FLOWCTRL_PIN
     gpio_put(EPLOG_FLOWCTRL_PIN, 0);
     #endif
+
+    // Yellow LED reflects backpressure: leave it on if we had to pause EP this
+    // cycle, otherwise turn it back off. At 2.5Mbaud this should read as a dim
+    // glow during normal traffic vs. solid-on when the RX FIFO is backed up.
+    if (!backpressure_required) {
+        gpio_put(SPARE3_PIN, 1);
+    }
 
     // The fifo-not-empty interrupt is cleared automatically when we empty out the FIFO
 }
@@ -860,6 +869,12 @@ void epResetAndRun()
     #endif
 
     gpio_put(EP_RUN_PIN, 1);
+
+    // Release the pin back to input rather than leaving it driven. An external
+    // 10K pullup holds it high (EP running) either way, but as an input, a
+    // stray/corrupted write to the GPIO_OUT register can no longer physically
+    // assert EP_RUN low -- the pad ignores GPIO_OUT while OE is clear.
+    gpio_set_dir(EP_RUN_PIN, GPIO_IN);
 }
 
 // ----------------------------------------------------------------------------------
