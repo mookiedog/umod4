@@ -28,6 +28,14 @@
 #define SPARK_ISR
 #define VTA_CONVERSION_SMOOTHING
 ;#define RELOCATED_STACK
+
+; Bench-test only: ECU code skips the real mainloop, fires both front (IG1x) and rear (IG2x) coils
+; as though the engine were idling at 1200 RPM. No other engine sensors are needed, just ECU power.
+;
+; Note: There is no need to uncomment the next symbol: ecu/CMakeLists.txt will define it
+; via -DBENCH_IGNITION_TEST to create build/ecu/sparky.bin alongside the normal UM4.bin.
+;#define BENCH_IGNITION_TEST
+
 ;--------------------------------------------------------------------------------
 
 
@@ -940,7 +948,7 @@ ECMP1B  =       0x1078
 ;PG4 -     T         (input)  Diagnostic Test connector
 ;PG3 -     MS1       (input)  Map Select #1
 ;PG2 -     SS        (input)  Sidestand switch
-;PG1 -     ??        (input)  A weird-ass signal that appears to be a free-running toggle signal: is this the watchdog signal for the voltage regulator?
+;PG1 -     ??        (input)  A weird-ass signal that appears to be a free-running toggle signal
 ;PG0 -     CLT       (input)  Clutch switch
 
 ;The PORTG inputs are debounced by software.  A change is not
@@ -975,7 +983,14 @@ derestricted = map1
 ;PH1       ROM_OK    (output) the selfTest routine drives this to '1' if EPROM cksum is OK
 ;PH2       WL        (output) drives data stream to instrument panel? or Warning Light (the "EFI" indicator on dash)?
 ;PH3       RAM_OK    (output) the selfTest routine drives this to '1' if the RAM test is OK
-;PH4       ??        (input)  has a pullup & testpoint, used in selftest code
+;PH4       WDOG_TEST (input)  PCB has a pullup & testpoint on this pin.
+;                             Gates a factory self-test sequence that exercises the TA8000F's watchdog (see PJ3/ALIVE below)
+;                             Means two different things depending on where in that sequence you are:
+;                             1. Entry requires PH4=1 (with PH7=0, see label LD82E_89).
+;                             2. Once inside, after RAM/ROM self-tests pass:
+;                                - PH4=0 keeps petting the watchdog (PJ3 toggles in a loop)
+;                                - releasing PH4 back to its default pulled-up '1' stops petting and wedges the CPU forever
+;                                  which will cause the regulator's watchdog to fire.
 ;PH5       HEAT      (output) Unused by this software, but PCB does seem to drive something
 ;PH6       FP        (output) drives the fuel pump relay (0=relay energized)
 ;PH7       SELFTEST  (input)  has pullup & testpoint: 0=perform a SELF TEST and wedge, 1=normal operation
@@ -986,8 +1001,10 @@ derestricted = map1
 ;PJ0       TAC       (output) tachometer drive
 ;PJ1       VSV       (ouput)  who knows?  it has a driver, but the bike does not connect to the harness
 ;PJ2       --        (output) <unused>
-;PJ3       ALIVE     (output) The self-test toggles this line as long as PH4 is '1'.
-;                             It should toggle at roughly 200 Hz since it is in the 5 mSec main loop routine.
+;PJ3       ALIVE     (output) Toggling this line pets the watchdog built into the TA8000F voltage regulator.
+;                             This output is capacitively coupled into the TA8000F CK pin, as per the datasheet.
+;                             The watchdog timeout period is controlled by hardware RC time constant.
+;                             The timeout period has been measured to be roughly 63 mSec.
 
 
 
@@ -2142,7 +2159,9 @@ reset:
 
 ; Now that we have initialized all the time-sensitive registers (above),
 ; we can afford the time to log the metadata:
+#if !defined BENCH_IGNITION_TEST
         jsr     log_metadata
+#endif
 
         ldX     #0x01FF                 ;clear all of RAM (bug: doesn't clear location 0x0000!)
         ldaA    #0x00
@@ -2340,6 +2359,10 @@ reset:
 
         ldaA    #0x08                   ;Timer O5I4 can be input capture or output compare, but not both at the same time.
         staA    PACTL                   ;Configure it to operate as Input Capture 4 where it will watch for spark-watcher events.
+
+#ifdef BENCH_IGNITION_TEST
+        jmp     BenchIgnitionTest       ;Bench-only: never enters the real mainloop
+#endif
         cli
 
 ;*****************************************************************
@@ -5948,9 +5971,11 @@ LD60B_43:
 LD82E:  bclr    *L0002 #0b01000000
         bset    *L0012 #0b00001000
 
+; Pet the watchdog timer built into the TA8000F Voltage Regulator chip.
+; This means that we pet the timer every 5 mSec.
         sei
         ldaB    PORTJ
-        eorB    #0b00001000             ;toggle PJ3: the "i'm alive" bit at ~200 Hz
+        eorB    #0b00001000             ;toggle PJ3: the "i'm alive" bit
         staB    PORTJ
         cli
 
@@ -6866,6 +6891,8 @@ LD82E_88:
         staB    L0139
 
 ;-----------------------------------------------------------------
+; Check if we are being asked to enter SELF TEST mode.
+; To enter self test, external test equipment must pull PH4/WDOG_TEST to 1 (wdog test disabled) and PH7/SELF_TEST to 0 (enter selftest).
 LD82E_89:
         ldaA    PORTH
         bitA    #0b00010000             ;test PH4
@@ -11723,6 +11750,131 @@ T1_OFLO_ISR:
         clrB
         stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; The overflow event must have occurred at timer count 0x0000
         rti
+
+#ifdef BENCH_IGNITION_TEST
+;-----------------------------------------------------------------------------------
+; Bench-only: fires both coils (front: PA7/OC1, net IG11/IG12; rear: PA6/OC2, net
+; IG21/IG22) to simulate a 60-degree V-twin idling at exactly 1200 RPM. No
+; functioning ECU sensors are required, meaning this code will run on a bench.
+;
+; 1200 RPM = 20 rev/sec = 50ms/rev. A full 4-stroke combustion cycle spans 2
+; revolutions (100ms), split here into 12 "subrotations" of 60 degrees each
+; (~8.333ms/subrotation) to mirror the real engine's CRID0..CRID11 crank event
+; structure, even though there's no real crank signal on the bench:
+;
+;   subrotation:   0  1  2  3  4    5    6  7  8  9   10    11
+;   front coil:                   chg  fire
+;   rear  coil:                                    chg  fire
+;   watchdog:      petted once per subrotation, all 12
+;
+; A subrotation's ~8.333ms length is used directly both as the coil dwell time
+; (close enough to the real ~8ms dwell) and as the watchdog pet interval -- well
+; within the TA8000F's measured ~63ms timeout (see PJ3/ALIVE comment above), so
+; petting once per subrotation carries comfortable margin, not just "close enough."
+;
+; This code should be entered directly from reset initialization in place of the
+; real mainloop, once LC05C's init has already left PA6/PA7 idling high (safe
+; state).
+;
+; This routine runs forever so it needs to pet the TA8000F watchdog during operation.
+;
+; The fuel pump (PH6, active low) is disabled on entry, since reset init enables it
+; and the real mainloop that would normally manage it never runs.
+;-----------------------------------------------------------------------------------
+BenchIgnitionTest:
+        sei                     ;ints off for the duration
+
+        ldaA    PORTH           ;Reset init enabled the fuel pump (PH6=0) and only the real mainloop
+        oraA    #0x40           ;ever disables it. We never run that, so disable it here (PH6=1)
+        staA    PORTH           ;so the pump does not run on the bench.
+
+        ldaA    TCTL1           ;The regular ECU code programmed PA6 to be controlled by OC2
+        andA    #0x3F           ;We undo that here so we can control PA6 directly as a GPIO bit
+        staA    TCTL1
+
+        ldaA    #0x00           ;The regular ECU code programmed PA7 to be controlled by OC1
+        staA    OC1M            ;We undo that here so we can control PA7 directly as a GPIO bit
+
+; Reserve stack scratch RAM: two 16-bit variables used by BenchDelay, plus one
+; 8-bit subrotation index. Never freed since this code never returns.
+        des
+        des
+        des
+        des
+        des
+        des
+        tsX
+;At this point:
+;  0,X = The 16-bit tick count parameter, passed to BenchDelay
+;  2,X = The 16-bit T0 TCNT count when we entered the BenchDelay routine
+;  4,X = The current subrotation index (0..11), persists across BenchDelay calls
+
+        clr     4, X            ;start at subrotation 0
+
+; Each pass through this loop is one 60-degree subrotation (~8.333ms @ 1200 RPM).
+BenchCycle:
+        ldaA    PORTJ
+        eorA    #0x08           ;Pet the TA8000F's watchdog by toggling PJ3 (ALIVE)
+        staA    PORTJ
+
+        ldaA    4, X
+        cmpA    #4
+        bne     1f
+        ldaA    PORTA
+        andA    #0x7F           ;PA7=0: start charging front coil (IG11 driven low)
+        staA    PORTA
+        bra     CycleDly
+
+1:      cmpA    #5
+        bne     2f
+        ldaA    PORTA
+        oraA    #0x80           ;PA7=1: fire front coil (IG11 released back high)
+        staA    PORTA
+        bra     CycleDly
+
+2:      cmpA    #9
+        bne     3f
+        ldaA    PORTA
+        andA    #0xBF           ;PA6=0: start charging rear coil (IG21 driven low)
+        staA    PORTA
+        bra     CycleDly
+
+3:      cmpA    #10
+        bne     CycleDly
+        ldaA    PORTA
+        oraA    #0x40           ;PA6=1: fire rear coil (IG21 released back high)
+        staA    PORTA
+
+CycleDly:
+        ldD     #(4167)         ;one subrotation: ~100ms/12 @ 2us/tick
+        bsr     BenchDelay
+
+        ldaA    4, X            ;advance to the next subrotation, wrapping 11->0
+        incA
+        staA    4, X            ;assume no wrap is required
+        eorA    #12
+        bne     BenchCycle
+
+        staA    4, X            ;A is known to be 0x00
+        bra     BenchCycle
+
+; BenchDelay(uint16_t ticks)
+; Busy-waits for the desired number of 2us TCNT ticks (passed in D).
+; Note: X must point at the first of the two 16-bit variables reserved above.
+
+BenchDelay:
+        stD     0, X            ;save the desired delay for this call
+        ldD     TCNT
+        stD     2, X            ;save this call's own T0 entry-time mark
+
+BenchDelayLoop:
+        ldD     TCNT
+        subD    2, X            ;elapsed = TCNT - T0
+        subD    0, X            ;compare elapsed to desired delay
+        blo     BenchDelayLoop  ;br if elapsed < desired delay
+
+        rts
+#endif
 
 ;----------------------------------------------------------------
 lastInstr:

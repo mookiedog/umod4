@@ -929,6 +929,7 @@ The most important ones are:
 * __build/EP/EP.uf2:__ the EP firmware image
 * __build/WP/WP.uf2:__ the WP firmware image
 * __build/ecu/UM4.bin:__ An ECU EPROM image containing the data-logging ECU codebase with default 549USA maps. A UM4.bin image is contained inside every EP.uf2 image where it acts as the default built-in EPROM image. If desired, UM4.bin can be uploaded to the EP's image library if you wanted to retain a specific version of it.
+* __build/ecu/sparky.bin:__ A bench-only ECU image built from the same source as UM4.bin with `BENCH_IGNITION_TEST` defined. It skips the real ECU mainloop and just fires both front and rear ignition coils as though the engine were idling at 1200 RPM. It is not included in EP.uf2; upload it to the EP's image library or flash it into an 29C256 if you want to use it.
 
 The server program will reflash the umod4 OTA (Over The Air) using the EP.uf2 and WP.uf2 files.
 
