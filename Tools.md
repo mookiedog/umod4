@@ -61,11 +61,21 @@ It exists as a timesaver if I need to put a umod4 into AP mode during bench test
 
 Usage:
 
-python3 ~/projects/umod4/tools/set_credentials --name test --ssid BaHouse --password <passwd>
+```bash
+build/.venv/bin/python3 tools/set_credentials --device-name test --sta-ssid BaHouse --sta-password <passwd>
+```
 
-The ssid and password do not have to be specified on the command line if they are defined in your bash environment as:
+Other options: `--ap-ssid` and `--ap-password` set the device's own AP network name and password, and `--port` selects the ap_proxy serial port if it is not auto-detected.
+
+Any option that is not given on the command line is taken from the environment, using the same variables as the test runner:
 
 ```bash
-UMOD4_WIFI_SSID=<your-network-ssid>
-UMOD4_WIFI_PASSWORD=<your-network-password>
+UMOD4_STA_SSID=<your-network-ssid>
+UMOD4_STA_PASSWORD=<your-network-password>
+UMOD4_DEVICE_NAME=<device-name>
+UMOD4_AP_SSID=<new-ap-ssid>
+UMOD4_AP_PASSWORD=<new-ap-password>
 ```
+
+With all of those defined, running the script with no arguments provisions the device.
+Only the values supplied are written.

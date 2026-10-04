@@ -575,6 +575,11 @@ Your webpage won't have a cool background image yet - that's something you can c
 
 Feel free to click around a bit. But don't get too distracted though, the next step is to install EP firmware, below.
 
+#### Provisioning Without A Phone (Developers)
+
+If you have an ap_proxy Pico W attached to your PC, `tools/set_credentials` can perform the provisioning steps above for you, including setting a new AP password, without connecting a phone to the umod4's AP.
+See [Install WP WiFi Credentials](./Tools.md#install-wp-wifi-credentials) for usage.
+
 ### EP Software Installation
 
 Now that the WP is on your home network, you can flash the EP firmware over WiFi.

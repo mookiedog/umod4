@@ -273,7 +273,7 @@ pass/fail decision based on `state`; the firmware only reports facts.
 
 ```bash
 # Full run: erase config partition, flash latest firmware, provision WiFi, run all suites
-build/.venv/bin/python3 tests/runner.py --ssid <network> --password <pw> --device-name <name>
+build/.venv/bin/python3 tests/runner.py --sta-ssid <network> --sta-password <pw> --device-name <name>
 
 # Partial run: flash latest firmware (config partition preserved), run specific suites
 build/.venv/bin/python3 tests/runner.py test_basic test_ep_swd test_wifi test_ota_ep test_ota_wp
@@ -312,7 +312,7 @@ warn or auto-resolve.
 | `ep_uf2` | `build/EP/EP.uf2` exists | Abort |
 | `wpusbboot_bin` | `build/WpUsbBoot/WpUsbBoot` binary exists | Abort |
 | `python_venv` | `build/.venv/bin/python3` exists and `requests` package is importable | Abort |
-| `args_wifi` | `--ssid` and `--password` command-line arguments are present | Abort |
+| `args_wifi` | `--sta-ssid` and `--sta-password` command-line arguments are present | Abort |
 | `args_device_name` | `--device-name` command-line argument is present | Abort |
 
 **WSL detection:** `/proc/version` is checked for "microsoft".  When WSL is detected,
@@ -396,7 +396,7 @@ firmware state.
 
 **Notes:**
 
-- `--ssid`, `--password`, and `--device-name` are required `runner.py` arguments; never hardcoded.
+- `--sta-ssid`, `--sta-password`, and `--device-name` are required `runner.py` arguments; never hardcoded.
 - Default AP password = device name = AP SSID (e.g. `umod4_3BFF`).  Generated from MAC
   bytes on first boot, written to both `ap_ssid` and `ap_password` in flash config.
 - `prov_set_wifi` posts all three fields (device name, SSID, password) in a single request

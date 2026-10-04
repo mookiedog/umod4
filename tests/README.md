@@ -59,16 +59,16 @@ scratch.
 This would be the typical way to run the test suite, testing everything.
 
 ```bash
-build/.venv/bin/python3 tests/runner.py --ssid <network> --password <pw> --device-name <name>
+build/.venv/bin/python3 tests/runner.py --sta-ssid <network> --sta-password <pw> --device-name <name>
 ```
 
-The `--ssid` and `--password` arguments can also be supplied via environment variables
-`UMOD4_WIFI_SSID` and `UMOD4_WIFI_PASSWORD`, which is convenient when running the
-suite repeatedly:
+The `--sta-ssid` and `--sta-password` arguments can also be supplied via environment variables
+`UMOD4_STA_SSID` and `UMOD4_STA_PASSWORD`, which is convenient when running the
+suite repeatedly (`UMOD4_DEVICE_NAME`, `UMOD4_AP_SSID` and `UMOD4_AP_PASSWORD` work the same way):
 
 ```bash
-export UMOD4_WIFI_SSID="MyNetwork"
-export UMOD4_WIFI_PASSWORD="secret"
+export UMOD4_STA_SSID="MyNetwork"
+export UMOD4_STA_PASSWORD="secret"
 build/.venv/bin/python3 tests/runner.py
 ```
 
