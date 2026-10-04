@@ -101,11 +101,14 @@ message(STATUS "Detected Python version: ${PYTHON_VERSION}")
 
 # At this point: python3 is found, a venv exists, and a specific version has been identified.
 # Bundle those symbols to pass to all external_projects
+# Python modules generated from log_ids.h (Logsyms.py, LogMeta.py) get written to this directory.
+set(PYTHON_GEN_DIR ${CMAKE_BINARY_DIR}/python_packages)
+
 set(PYTHON_DEFS
     -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
     -DVENV_PATH=${VENV_PATH}
     -DPYTHON_VERSION=${PYTHON_VERSION}
-    -DPYTHON_SITEPACKAGES=${VENV_PATH}/lib/python${PYTHON_VERSION}/site-packages
+    -DPYTHON_GEN_DIR=${PYTHON_GEN_DIR}
 )
 
 # Use the 'pip' from within the new virtual enviroment to install the packages
@@ -296,7 +299,7 @@ set(EP_CMAKE_ARG_LIST
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
     -DTOOLS_SOURCE_DIR=${TOOLS_SOURCE_DIR}
     -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
-    -DPYTHON_SITEPACKAGES=${VENV_PATH}/lib/python${PYTHON_VERSION}/site-packages
+    -DPYTHON_GEN_DIR=${PYTHON_GEN_DIR}
 )
 
 ExternalProject_Add(EP

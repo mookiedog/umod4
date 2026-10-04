@@ -164,9 +164,9 @@ target_sources(tx_encoder INTERFACE
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/tx_encoder.c
   VERBATIM
-  COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/generate_encoder.py -i ${PYTHON_SITEPACKAGES}/Logsyms/Logsyms.py -o ${CMAKE_CURRENT_BINARY_DIR}/tx_encoder.c
+  COMMAND ${Python3_EXECUTABLE} ${TOOLS_SOURCE_DIR}/generate_encoder.py -i ${PYTHON_GEN_DIR}/Logsyms.py -o ${CMAKE_CURRENT_BINARY_DIR}/tx_encoder.c
   DEPENDS
-    ${PYTHON_SITEPACKAGES}/Logsyms/Logsyms.py
+    ${PYTHON_GEN_DIR}/Logsyms.py
     ${TOOLS_SOURCE_DIR}/generate_encoder.py
   COMMENT "Generating ${CMAKE_CURRENT_BINARY_DIR}/tx_encoder.c from Logsyms.py"
 )

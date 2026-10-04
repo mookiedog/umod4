@@ -18,7 +18,19 @@ Items marked **(verify)** are guesses or inferences that Phase 0 must confirm be
     (Configuring the real subprojects with it is the Phase 2 gate.)
   * 0.4: `uv` is found under `bash -lic`, via `~/.profile`.
     Not tested: the Windows Task Scheduler / `wsl.exe` launch itself, which can only be checked by a real nightly run (Phase 2 or 3 gate).
-* **Phase 1: not started.**
+* **Phase 1: done 2026-10-04** (committed on `uv-migration`).
+  * `Logsyms.py` and `LogMeta.py` are generated straight into `build/python_packages/` (`PYTHON_GEN_DIR`).
+    Nothing is installed into the venv any more; the `__init__.py` re-export packages are gone.
+  * `EP/CMakeLists.txt` and `decodelog.py` read from that directory; `decodelog.py` no longer walks to `build/.venv`.
+  * Verified with the old venv copies moved aside: incremental build OK, EP `tx_encoder.c` byte-identical, `decodelog.py` HDF5 identical to the pre-change baseline (68 of 68 datasets), `-L` override and the missing-directory error message work, viz imports.
+  * Full hardware suite: 69 of 69 passed in one continuous run.
+  * The gate's "clean build from an empty `build/`" was not done: it re-clones picotool and reinstalls it into `~/.local`, and wipes `build/test_reports`.
+    It stays on the list for the Phase 2 gate, where the venv itself moves.
+* **Provisioning is intermittently flaky (found while running the Phase 1 gate; not caused by this migration).**
+  Two failure modes were seen at `prov_set_wifi`:
+  `ERR request failed` (the WP applied the config and rebooted, but the HTTP response was lost: the WP powers off the WiFi chip ~300 ms after queuing the reboot), and `Timeout (10s)` (the config was NOT applied; cause unknown).
+  A harness change that tolerates a lost response is kept as an **uncommitted** edit to `tests/suites/test_provisioning.py` while the timeout mode is investigated.
+  Phase commits must stage files by name so that edit stays out of them.
 
 ## Goals
 
@@ -193,6 +205,9 @@ Do not start the next phase until the gate passes.
 * **Merge point 1** (recommended): independent and low risk.
 
 ### Phase 2: The uv environment
+
+* Heads-up: editing the top-level `CMakeLists.txt` makes `tests/harness/build_state.py` report `WpUsbBoot` as stale (it treats that file as a source of every subproject).
+  Touch `WpUsbBoot/main.c` and run `ninja` (a genuine recompile) before running the suite.
 
 * Add `pyproject.toml`, `uv.lock`, `.python-version`, `.gitignore` entry for `.venv`.
 * CMake: `uv sync` replaces venv creation and the pip block; venv at repo-root `.venv`; update `PYTHON_DEFS`.
