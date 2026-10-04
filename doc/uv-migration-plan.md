@@ -18,7 +18,7 @@ Items marked **(verify)** are guesses or inferences that Phase 0 must confirm be
     (Configuring the real subprojects with it is the Phase 2 gate.)
   * 0.4: `uv` is found under `bash -lic`, via `~/.profile`.
     Not tested: the Windows Task Scheduler / `wsl.exe` launch itself, which can only be checked by a real nightly run (Phase 2 or 3 gate).
-* **Phase 1: done 2026-10-04** (committed on `uv-migration`).
+* **Phase 1: done 2026-10-04** (committed on `uv-migration`, `6dbaab4`).
   * `Logsyms.py` and `LogMeta.py` are generated straight into `build/python_packages/` (`PYTHON_GEN_DIR`).
     Nothing is installed into the venv any more; the `__init__.py` re-export packages are gone.
   * `EP/CMakeLists.txt` and `decodelog.py` read from that directory; `decodelog.py` no longer walks to `build/.venv`.
@@ -26,6 +26,15 @@ Items marked **(verify)** are guesses or inferences that Phase 0 must confirm be
   * Full hardware suite: 69 of 69 passed in one continuous run.
   * The gate's "clean build from an empty `build/`" was not done: it re-clones picotool and reinstalls it into `~/.local`, and wipes `build/test_reports`.
     It stays on the list for the Phase 2 gate, where the venv itself moves.
+* **Phase 2: done 2026-10-04** (committed on `uv-migration`).
+  * `pyproject.toml` (dependency groups: build, decode, viz, server, test; `default-groups = "all"`), `uv.lock` (30 packages, 499 lines), `requires-python = "==3.12.*"`, `.venv/` in `.gitignore`.
+  * The top-level `CMakeLists.txt` finds uv and runs `uv sync --locked` instead of creating `build/.venv` and running 17 `pip install` commands; the venv is now `<repo>/.venv`.
+    `PYTHON_DEFS` now carries only `Python3_EXECUTABLE` and `PYTHON_GEN_DIR` (`VENV_PATH` and `PYTHON_VERSION` were unused by any subproject).
+  * Updated: `run_server.sh`, `flash_ap_proxy`, `nightly_run.sh` (`uv run`), `preflight.py` (adds a `uv_present` check, looks for `.venv`), error messages in three suites, and the docs (BUILDING.md has a new uv section replacing the python3-venv step).
+  * Gate, all passed: genuine clean build from an empty `build/` and `.venv` (configure and ninja exit 0, 45 s; artifact sizes identical to before); `uv run decodelog.py` HDF5 identical to the pre-migration baseline (68 of 68 datasets); environment found from any directory; full hardware suite via `uv run`: 70 of 70 in one continuous run.
+  * Not done: running `nightly_run.sh` by hand. The nightly task has been broken for months, per robin, so it is not a gate.
+  * Not touched on purpose: `tests/runner.py` (its docstring still shows `build/.venv/bin/python3`) and `tests/suites/test_provisioning.py`, which carry uncommitted harness edits (see below).
+  * Lesson: configure with `-G Ninja` (VS Code's `cmake.generator`); without it the littlefs sub-build fails with a confusing "Ninja is GNU Make" error.
 * **Provisioning is intermittently flaky (found while running the Phase 1 gate; not caused by this migration).**
   Two failure modes were seen at `prov_set_wifi`:
   `ERR request failed` (the WP applied the config and rebooted, but the HTTP response was lost: the WP powers off the WiFi chip ~300 ms after queuing the reboot), and `Timeout (10s)` (the config was NOT applied; cause unknown).
@@ -55,8 +64,12 @@ Items marked **(verify)** are guesses or inferences that Phase 0 must confirm be
 * **LogMeta:** DECIDED for this migration: **keep it** (see "Background: Why LogMeta Exists").
   It is generated as a flat module next to Logsyms.
   Whether to ever wire it into the Python tools, or delete it, is a separate decision that this migration does not force.
-* **Python version pin.** The current venv is Python 3.12.3, the test bundle ran 3.14, CMake requires 3.10 or newer.
-  Recommendation: `.python-version` pinning 3.12 for developers, `requires-python = ">=3.10"` in `pyproject.toml`.
+* **Python version pin:** DECIDED 2026-10-04: `requires-python = "==3.12.*"` (no separate `.python-version` file: with an exact pin it would only duplicate this line).
+  The original 3.10 floor was accidental (nothing needed it).
+  A floor with no ceiling makes `uv.lock` record wheels for every future Python too: `>=3.12` gave 30 packages / 1,013 lines, `==3.12.*` gives 30 / 499, from the original 36 / 1,538.
+  For a tools repo nobody depends on, pinning the one tested version is the right convention, and it means testers run what was tested.
+  The pin does not make `.venv` big (about 390 MB, 233 MB of it PySide6); a Python that uv has to download is stored once per machine, outside `.venv`.
+  Documented in `pyproject.toml` and BUILDING.md.
 * **Merge points** (see "How The Work Is Merged").
 
 ## Baseline Record (what "before" looks like)
@@ -206,10 +219,10 @@ Do not start the next phase until the gate passes.
 
 ### Phase 2: The uv environment
 
-* Heads-up: editing the top-level `CMakeLists.txt` makes `tests/harness/build_state.py` report `WpUsbBoot` as stale (it treats that file as a source of every subproject).
-  Touch `WpUsbBoot/main.c` and run `ninja` (a genuine recompile) before running the suite.
+* Heads-up: in an *incremental* build, editing the top-level `CMakeLists.txt` makes `tests/harness/build_state.py` report `WpUsbBoot` as stale (it treats that file as a source of every subproject).
+  Touch `WpUsbBoot/main.c` and run `ninja` (a genuine recompile). A clean build, as in this phase's gate, does not have the problem.
 
-* Add `pyproject.toml`, `uv.lock`, `.python-version`, `.gitignore` entry for `.venv`.
+* Add `pyproject.toml`, `uv.lock`, `.gitignore` entry for `.venv`.
 * CMake: `uv sync` replaces venv creation and the pip block; venv at repo-root `.venv`; update `PYTHON_DEFS`.
 * Update every hard-coded `build/.venv` path in code (the four scripts and `decodelog.py`'s fallback).
 * **Gate:** delete both `build/` and `.venv`, then configure and build from scratch; the full hardware suite passes; the nightly script runs to completion once by hand.

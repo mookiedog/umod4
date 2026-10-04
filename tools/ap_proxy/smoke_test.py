@@ -3,7 +3,7 @@
 Smoke test for ap_proxy firmware.
 
 Usage:
-    build/.venv/bin/python3 tools/ap_proxy/smoke_test.py [/dev/ttyACM0]
+    uv run tools/ap_proxy/smoke_test.py [/dev/ttyACM0]
 
 With no argument, scans all /dev/ttyACM* ports and uses the first that responds.
 Tests PING, STATUS, and SCAN — no umod4 device needed.

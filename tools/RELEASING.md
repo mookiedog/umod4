@@ -28,7 +28,7 @@ The visualizer is distributed as **multi-platform executables** (Windows, Linux,
 vim tools/logtools/viz/viz.py
 
 # Test locally
-build/.venv/bin/python3 tools/logtools/viz/viz.py tools/logtools/test_data/log_3.um4
+uv run tools/logtools/viz/viz.py tools/logtools/test_data/log_3.um4
 
 # Commit when satisfied
 git add tools/logtools/viz/

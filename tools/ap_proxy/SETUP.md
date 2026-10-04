@@ -87,7 +87,7 @@ ls /dev/ttyACM*
 ## Running the Smoke Test
 
 ```bash
-build/.venv/bin/python3 tools/ap_proxy/smoke_test.py /dev/ttyACM0
+uv run tools/ap_proxy/smoke_test.py /dev/ttyACM0
 ```
 
 With a umod4 powered on in AP mode, the test will:

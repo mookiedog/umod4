@@ -8,7 +8,7 @@ Exercises the full end-to-end EP reflash path:
 
 Prerequisites: test_wifi must have run and stored wp_ip in context.
 
-Run with build/.venv/bin/python3 (needs 'requests').
+Run with 'uv run' (needs 'requests').
 """
 
 import json
@@ -35,7 +35,7 @@ def run(ocd, results, context):
         from device_client import DeviceClient
     except ImportError as e:
         results.abort("ep_reflash",
-            f"DeviceClient import failed: {e} — run with build/.venv/bin/python3")
+            f"DeviceClient import failed: {e} — run with 'uv run'")
 
     wp_ip = context.get("wp_ip")
     if not wp_ip:

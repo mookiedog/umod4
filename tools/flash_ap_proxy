@@ -25,7 +25,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VENV_PYTHON="$PROJECT_DIR/build/.venv/bin/python3"
+VENV_PYTHON="$PROJECT_DIR/.venv/bin/python3"
 
 # VID:PID from single source of truth
 USB_IDS="$SCRIPT_DIR/ap_proxy/usb_ids.txt"
@@ -237,7 +237,7 @@ if [ "$IS_WSL2" = true ]; then
             echo "ap_proxy is ready on $FOUND"
         else
             echo "Warning: ap_proxy did not respond to PING yet."
-            echo "Try: build/.venv/bin/python3 tools/ap_proxy/smoke_test.py"
+            echo "Try: uv run tools/ap_proxy/smoke_test.py"
         fi
     else
         echo "Warning: ap_proxy ($AP_PROXY_HW_ID) not found in usbipd after reboot."

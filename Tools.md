@@ -62,7 +62,7 @@ It exists as a timesaver if I need to put a umod4 into AP mode during bench test
 Usage:
 
 ```bash
-build/.venv/bin/python3 tools/set_credentials --device-name test --sta-ssid BaHouse --sta-password <passwd>
+uv run tools/set_credentials --device-name test --sta-ssid BaHouse --sta-password <passwd>
 ```
 
 Other options: `--ap-ssid` and `--ap-password` set the device's own AP network name and password, and `--port` selects the ap_proxy serial port if it is not auto-detected.

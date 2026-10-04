@@ -8,7 +8,7 @@ Exercises the full end-to-end WP self-reflash path:
 
 Prerequisites: test_wifi must have run and stored wp_ip in context.
 
-Run with build/.venv/bin/python3 (needs 'requests').
+Run with 'uv run' (needs 'requests').
 
 VFY milestone sequence emitted by WP firmware (ota_flash_task.cpp):
   {"wp_ota":"FLASH_START","file":"<path>"}   — flash programming beginning
@@ -45,7 +45,7 @@ def run(ocd, results, context):
         from device_client import DeviceClient
     except ImportError as e:
         results.abort("wp_ota_upload",
-            f"DeviceClient import failed: {e} — run with build/.venv/bin/python3")
+            f"DeviceClient import failed: {e} — run with 'uv run'")
 
     wp_ip = context.get("wp_ip")
     if not wp_ip:

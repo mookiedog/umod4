@@ -59,7 +59,7 @@ scratch.
 This would be the typical way to run the test suite, testing everything.
 
 ```bash
-build/.venv/bin/python3 tests/runner.py --sta-ssid <network> --sta-password <pw> --device-name <name>
+uv run tests/runner.py --sta-ssid <network> --sta-password <pw> --device-name <name>
 ```
 
 The `--sta-ssid` and `--sta-password` arguments can also be supplied via environment variables
@@ -69,7 +69,7 @@ suite repeatedly (`UMOD4_DEVICE_NAME`, `UMOD4_AP_SSID` and `UMOD4_AP_PASSWORD` w
 ```bash
 export UMOD4_STA_SSID="MyNetwork"
 export UMOD4_STA_PASSWORD="secret"
-build/.venv/bin/python3 tests/runner.py
+uv run tests/runner.py
 ```
 
 **Partial run (skip provisioning)** — flashes the latest WP firmware but leaves the
@@ -79,13 +79,13 @@ preserved.
 A developer might use this mode to save time during test suite development.
 
 ```bash
-build/.venv/bin/python3 tests/runner.py test_basic test_ep_swd test_wifi test_ota_ep test_ota_wp
+uv run tests/runner.py test_basic test_ep_swd test_wifi test_ota_ep test_ota_wp
 ```
 
 To run a single suite:
 
 ```bash
-build/.venv/bin/python3 tests/runner.py test_basic
+uv run tests/runner.py test_basic
 ```
 
 ### Expected Output

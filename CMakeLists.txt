@@ -62,100 +62,39 @@ set(PICO_SDK_SYMLINK ${CMAKE_BINARY_DIR}/pico-sdk-current)
 file(REMOVE ${PICO_SDK_SYMLINK})
 file(CREATE_LINK ${PICO_SDK_PATH} ${PICO_SDK_SYMLINK} SYMBOLIC)
 
-# Create a Python Virtual Environment (venv) in the build directory so that we can install a few
-# required Python packages without using the normal, system-wide python installation mechanisms.
-set(VENV_PATH "${CMAKE_CURRENT_BINARY_DIR}/.venv")
-
-if(EXISTS ${VENV_PATH})
-    set(Python3_EXECUTABLE "${VENV_PATH}/bin/python3")
-else()
-    message(STATUS "   ---> Creating a Python virtual environment for this project")
-    find_package (Python3 3.10 COMPONENTS Interpreter)
-    execute_process (COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_PATH}")
-
-    # Use an existing python implementation to bootstrap creation the required virtual environment
-    ## update the environment with VIRTUAL_ENV variable (mimic the activate script)
-    set (ENV{VIRTUAL_ENV} "${VENV_PATH}")
-    ## change the context of the search
-    set (Python3_FIND_VIRTUALENV FIRST)
-    ## unset Python3_EXECUTABLE because it is also an input variable (see documentation, Artifacts Specification section)
-    unset (Python3_EXECUTABLE)
-    ## Launch a new search which will find it in the venv
-    find_package (Python3 COMPONENTS Interpreter Development)
+# The Python environment is managed by uv. pyproject.toml lists the packages (in dependency groups)
+# and uv.lock pins their exact versions. 'uv sync' creates the virtual environment at <repo>/.venv
+# if it does not exist and makes it match the lock file. The environment lives outside build/ so it
+# survives deleting build/. For a truly clean state, delete .venv as well as build/.
+find_program(UV_EXECUTABLE uv HINTS $ENV{HOME}/.local/bin)
+if(NOT UV_EXECUTABLE)
+    message(FATAL_ERROR "uv was not found. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh\n"
+                        "See BUILDING.md for details.")
 endif()
 
-# Get the Python version from the virtual environment.
-# We will pass this down to the external projects that need it.
+set(VENV_PATH "${CMAKE_SOURCE_DIR}/.venv")
+
+message(STATUS "   ---> Syncing the Python environment with uv: ${VENV_PATH}")
 execute_process(
-    COMMAND ${Python3_EXECUTABLE} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-    OUTPUT_VARIABLE PYTHON_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE PYTHON_VERSION_RESULT
+    COMMAND ${UV_EXECUTABLE} sync --locked --project ${CMAKE_SOURCE_DIR}
+    RESULT_VARIABLE UV_SYNC_RESULT
 )
-
-if(NOT PYTHON_VERSION_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to determine Python version from virtual environment")
+if(NOT UV_SYNC_RESULT EQUAL 0)
+    message(FATAL_ERROR "'uv sync --locked' failed (exit ${UV_SYNC_RESULT}). "
+                        "If pyproject.toml was changed, run 'uv lock' to update uv.lock.")
 endif()
 
-message(STATUS "Detected Python version: ${PYTHON_VERSION}")
+set(Python3_EXECUTABLE "${VENV_PATH}/bin/python3")
+message(STATUS "Python interpreter: ${Python3_EXECUTABLE}")
 
-# At this point: python3 is found, a venv exists, and a specific version has been identified.
-# Bundle those symbols to pass to all external_projects
 # Python modules generated from log_ids.h (Logsyms.py, LogMeta.py) get written to this directory.
 set(PYTHON_GEN_DIR ${CMAKE_BINARY_DIR}/python_packages)
 
+# Bundle the Python symbols to pass to the external projects
 set(PYTHON_DEFS
     -DPython3_EXECUTABLE=${Python3_EXECUTABLE}
-    -DVENV_PATH=${VENV_PATH}
-    -DPYTHON_VERSION=${PYTHON_VERSION}
     -DPYTHON_GEN_DIR=${PYTHON_GEN_DIR}
 )
-
-# Use the 'pip' from within the new virtual enviroment to install the packages
-message(STATUS "   ---> Installing python lib: pymongo")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pymongo)
-
-message(STATUS "   ---> Installing python lib: JSON_minify")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install JSON_minify)
-
-message(STATUS "   ---> Installing python lib: mmh3")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install mmh3)
-
-message(STATUS "   ---> Installing python lib: numpy")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install numpy)
-
-message(STATUS "   ---> Installing python lib: h5py")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install h5py)
-
-message(STATUS "   ---> Installing python lib: pyside6-essentials")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pyside6-essentials)
-
-message(STATUS "   ---> Installing python lib: pyqtgraph")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pyqtgraph)
-
-message(STATUS "   ---> Installing python lib: pandas")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pandas)
-
-message(STATUS "   ---> Installing python lib: flask")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask)
-
-message(STATUS "   ---> Installing python lib: flask-cors")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install flask-cors)
-
-message(STATUS "   ---> Installing python lib: sqlalchemy")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install sqlalchemy)
-
-message(STATUS "   ---> Installing python lib: requests")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install requests)
-
-message(STATUS "   ---> Installing python lib: PyYAML")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install PyYAML)
-
-message(STATUS "   ---> Installing python lib: nuitka")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install nuitka)
-
-message(STATUS "   ---> Installing python lib: pyserial")
-execute_process(COMMAND ${Python3_EXECUTABLE} -m pip install pyserial)
 
 project(umod4)
 

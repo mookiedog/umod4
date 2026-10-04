@@ -77,7 +77,7 @@ if ! ninja -C "$PROJECT_ROOT/build" > "$BUILD_LOG" 2>&1; then
 fi
 
 # --- Test --------------------------------------------------------------------
-if "$PROJECT_ROOT/build/.venv/bin/python3" tests/runner.py > "$TEST_LOG" 2>&1; then
+if uv run --project "$PROJECT_ROOT" tests/runner.py > "$TEST_LOG" 2>&1; then
     notify "umod4 nightly: PASS" "default" \
         "$(date '+%Y-%m-%d %H:%M') - all suites passed."
     exit 0

@@ -74,7 +74,7 @@ cd ~/projects/umod4/build/ecu && ninja
 ```
 
 **Python Environment:**
-The build system creates a virtual environment at `build/.venv` and installs required packages (pymongo, JSON_minify, mmh3, numpy, h5py). Use `build/.venv/bin/python3` for running tools.
+The Python environment is managed by uv. `pyproject.toml` lists the packages (in dependency groups) and `uv.lock` pins their versions. The build runs `uv sync --locked`, which creates the virtual environment at `<repo>/.venv`. Run tools with `uv run <script>` from anywhere inside the repo; there is no venv to activate. The project is pinned to Python 3.12 (`requires-python = "==3.12.*"`; see BUILDING.md for why and how to change it). A truly clean state means deleting `.venv` as well as `build/`. Generated Python modules (`Logsyms.py`, `LogMeta.py`) are written to `build/python_packages/`.
 
 ### Build Output Locations
 
@@ -141,13 +141,13 @@ The build system creates a virtual environment at `build/.venv` and installs req
 **Log Decoder:**
 ```bash
 # Decode binary logs to HDF5 format
-build/.venv/bin/python3 tools/logtools/decoder/decodelog.py <logfile> --format hdf5 -o output.h5
+uv run tools/logtools/decoder/decodelog.py <logfile> --format hdf5 -o output.h5
 
 # Verify HDF5 output
-build/.venv/bin/python3 tools/logtools/decoder/verify_hdf5.py output.h5
+uv run tools/logtools/decoder/verify_hdf5.py output.h5
 
 # Run visualizer
-build/.venv/bin/python3 tools/logtools/viz/viz.py output.h5
+uv run tools/logtools/viz/viz.py output.h5
 ```
 
 **Key Tools:**
@@ -240,7 +240,7 @@ Edit `cmake/toolchains/arm-none-eabi.cmake`, update `ARM_NONE_EABI_VERSION` vari
 
 **Modifying Log Event IDs:**
 1. Edit `lib/inc/log_ids.h` file
-2. Run `build/.venv/bin/python3 tools/src/h2py.py` to regenerate Python constants
+2. Run `uv run tools/src/h2py.py` to regenerate Python constants
 3. Update `tools/logtools/decoder/decodelog.py` decoder logic for new events
 4. Rebuild affected components (all components include log headers from same directory)
 
@@ -296,8 +296,8 @@ To force a genuine full rebuild of one subproject: `rm -rf build/<name>` and reb
 - No panic() calls in EP (log errors instead to reach WP logfile)
 
 **Python (Tools):**
-- Use project venv: `build/.venv/bin/python3`
-- Required packages auto-installed by CMake
+- Run with `uv run <script>` (the project environment is `.venv`, managed by uv)
+- Add or change dependencies in `pyproject.toml`, then run `uv lock`
 
 ## Testing
 
@@ -309,13 +309,13 @@ The project has an automated hardware-in-the-loop test harness in `tests/`. It r
 
 ```bash
 # Run all suites (provisioning first — erases WP flash)
-build/.venv/bin/python3 tests/runner.py --ssid MyNetwork --password MyPass --device-name umod4_test_hw
+uv run tests/runner.py --sta-ssid MyNetwork --sta-password MyPass --device-name umod4_test_hw
 
 # Run specific suites (skips provisioning, board must already be flashed)
-build/.venv/bin/python3 tests/runner.py test_basic test_wifi
+uv run tests/runner.py test_basic test_wifi
 
 # Pre-flight checks only (USB devices, tools, build artifacts)
-build/.venv/bin/python3 tests/runner.py --preflight-only
+uv run tests/runner.py --preflight-only
 ```
 
 Reports are written to `build/test_reports/run_YYYYMMDD_HHMMSS.md` and `build/test_reports/latest.md`.

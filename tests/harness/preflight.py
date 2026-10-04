@@ -187,6 +187,7 @@ def run_all(results, args, project_root, suite_names):
         os.path.join(project_root, "build", "EP", "EP.uf2"), "EP.uf2")
     check_build_artifact(results, "wpusbboot_bin",
         os.path.join(project_root, "build", "WpUsbBoot", "WpUsbBoot"), "WpUsbBoot")
+    check_tool(results, "uv_present", "uv", "--version")
     check_python_venv(results,
-        os.path.join(project_root, "build", ".venv", "bin", "python3"))
+        os.path.join(project_root, ".venv", "bin", "python3"))
     check_args(results, args, suite_names)
