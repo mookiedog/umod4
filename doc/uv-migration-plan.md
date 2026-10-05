@@ -36,7 +36,7 @@ Items marked **(verify)** are guesses or inferences that Phase 0 must confirm be
   * Not touched on purpose: `tests/runner.py` (its docstring still shows `build/.venv/bin/python3`) and `tests/suites/test_provisioning.py`, which carry uncommitted harness edits (see below).
   * Lesson: configure with `-G Ninja` (VS Code's `cmake.generator`); without it the littlefs sub-build fails with a confusing "Ninja is GNU Make" error.
 * **Phase 4: script written and tested on Linux 2026-10-05; Windows tester check still to do.**
-  * `tools/make_viz_bundle` (stdlib only, run with `uv run tools/make_viz_bundle`) writes `dist/umod4-viz-<date>-<hash>[-dirty].zip` (2.2 MB, 33 files).
+  * `tools/make_viz_bundle` (stdlib only, run with `uv run tools/make_viz_bundle`) writes `build/dist/umod4-viz-<date>-<hash>[-dirty].zip` (2.2 MB, 33 files).
     It takes its file list from `git ls-files` (tracked `.py`/`.yaml` under `tools/logtools/decoder` and `viz`), generates `Logsyms.py` with `h2py.py` (no firmware build needed), and adds the root `pyproject.toml` and `uv.lock`, the sample log and a README built from `tools/TRY_ME.txt`.
   * Decision: the bundle ships the root `pyproject.toml`/`uv.lock` (one lock to maintain) and the recipient runs with `--only-group viz`; no trimmed pyproject of its own.
   * Tested after unpacking in a scratch directory with no repo or `build/` anywhere nearby: `uv run --project . --only-group viz` installs 10 packages (flask, sqlalchemy and pyserial absent; Python 3.12; `.venv` 371 MB); `decodelog.py` converts the sample log to HDF5 identical to the pre-migration baseline (68 of 68 datasets); `viz.py` starts and stays up with Qt in offscreen mode, no tracebacks.

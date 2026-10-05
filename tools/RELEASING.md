@@ -24,7 +24,8 @@ cd ~/projects/umod4
 uv run tools/make_viz_bundle
 ```
 
-This writes `dist/umod4-viz-<date>-<git hash>.zip` (the `dist/` directory is not tracked by git).
+This writes `build/dist/umod4-viz-<date>-<git hash>.zip`.
+It lives inside `build/` like every other generated file, so git ignores it and deleting `build/` removes it (rebuilding takes a few seconds).
 The version is marked `-dirty` if any bundled file has uncommitted changes, so commit first when making a real release.
 
 The zip contains:

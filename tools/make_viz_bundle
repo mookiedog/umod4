@@ -5,7 +5,8 @@ source tree or its build tools.
 
     uv run tools/make_viz_bundle
 
-The result is dist/umod4-viz-<date>-<git hash>[-dirty].zip.  The zip contains:
+The result is build/dist/umod4-viz-<date>-<git hash>[-dirty].zip (inside build/, like every other
+generated file, so it is untracked and safe to delete).  The zip contains:
 
   * the visualizer and the log decoder (the tracked .py and .yaml files under tools/logtools)
   * a freshly generated Logsyms.py, next to decodelog.py (generated here with h2py.py from
@@ -76,8 +77,8 @@ def main():
     top = f"umod4-viz-{version}"
     readme = (ROOT / README_TEMPLATE).read_text(encoding="utf-8").replace("{VERSION}", version)
 
-    dist = ROOT / "dist"
-    dist.mkdir(exist_ok=True)
+    dist = ROOT / "build" / "dist"
+    dist.mkdir(parents=True, exist_ok=True)
     zip_path = dist / f"{top}.zip"
 
     with tempfile.TemporaryDirectory() as tmp:
