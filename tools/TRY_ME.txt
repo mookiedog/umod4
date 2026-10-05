@@ -1,6 +1,6 @@
 umod4 Data Visualizer (viz) - Try It Out
 ==========================================
-Test Bundle Version: 0.1
+Bundle: {VERSION}
 
 This lets you try the umod4 data log viewer on a sample motorcycle log,
 with nothing pre-installed except the two steps below.
@@ -27,13 +27,14 @@ STEP 2 - Run the visualizer
 Open a terminal (PowerShell on Windows, a regular terminal on Linux/WSL)
 INSIDE this extracted folder (the one containing this file), then run:
 
-    uv run --project . logtools/viz/viz.py SAMPLE.um4
+    uv run --project . --only-group viz logtools/viz/viz.py log_3.um4
 
-(Replace SAMPLE.um4 with the actual .um4 filename included in this
-folder - there should be exactly one.)
+(log_3.um4 is the sample motorcycle log included in this folder.)
 
 The first run will download the required packages (mostly Qt/PySide6,
-roughly 250-300MB) - this only happens once.
+roughly 250-300MB) - this only happens once. If this machine has no
+Python 3.12, uv will also download one for you; it is kept in uv's own
+folder and does not touch any other Python you may have.
 
 STEP 3 - Convert the log (first time only)
 ---------------------------------------------

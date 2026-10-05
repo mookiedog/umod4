@@ -12,109 +12,50 @@ Both live in the same repository but follow separate release schedules.
 
 ## Releasing the Visualizer
 
-The visualizer is distributed as **multi-platform executables** (Windows, Linux, macOS) built automatically by GitHub Actions.
+The visualizer is distributed as a **source bundle**: a zip file containing the visualizer and decoder code, the exact package versions it was tested with (`pyproject.toml` and `uv.lock`), a sample log, and instructions.
+The recipient only needs [uv](https://docs.astral.sh/uv/).
+On the first run uv downloads Python 3.12 (if the machine does not have it) and the packages, which are mostly Qt and amount to roughly 300 MB.
+There are no per-platform executables and no GitHub Actions: the bundle is built by running a script by hand.
 
-### Prerequisites
+### Building a bundle
 
-1. Python virtual environment set up for local testing (happens automatically during CMake configure)
-2. Test data in `tools/logtools/test_data/` (at least one `.um4` or `.log` file)
+```bash
+cd ~/projects/umod4
+uv run tools/make_viz_bundle
+```
+
+This writes `dist/umod4-viz-<date>-<git hash>.zip` (the `dist/` directory is not tracked by git).
+The version is marked `-dirty` if any bundled file has uncommitted changes, so commit first when making a real release.
+
+The zip contains:
+- `logtools/viz` and `logtools/decoder`: the tracked `.py` and `.yaml` files
+- `logtools/decoder/Logsyms.py`, generated on the spot from `lib/inc/log_ids.h` (no firmware build is needed)
+- `pyproject.toml` and `uv.lock`
+- `log_3.um4`, the sample log
+- `README.txt`: the instructions for the recipient, taken from the template `tools/TRY_ME.txt`
+
+The recipient's command is `uv run --project . --only-group viz logtools/viz/viz.py log_3.um4`.
+The `--only-group viz` part installs just the visualizer's packages and leaves out the server and test packages.
 
 ### Release Steps
 
-#### 1. Make and Test Changes
+1. **Make and test changes**, then commit them:
 
-```bash
-# Make your changes
-vim tools/logtools/viz/viz.py
+   ```bash
+   uv run tools/logtools/viz/viz.py tools/logtools/test_data/log_3.um4
+   git add tools/logtools/ && git commit -m "Add feature X, fix bug Y"
+   ```
 
-# Test locally
-uv run tools/logtools/viz/viz.py tools/logtools/test_data/log_3.um4
+2. **Build the bundle** (see above). A release should not be marked `-dirty`.
 
-# Commit when satisfied
-git add tools/logtools/viz/
-git commit -m "Add feature X, fix bug Y"
-git push origin main
-```
+3. **Test the zip on a machine that has only uv**, ideally a Windows machine: unzip it, run the command in `README.txt`, answer yes to converting the sample log, and check that graphs appear.
+   The test does not mean much on a machine that has the umod4 source tree, because that hides missing files.
 
-#### 2. Create and Push Git Tag
+4. **Hand it out.**
+   Either send the zip directly, or publish it: on GitHub go to Releases, draft a new release (optionally with a `viz-vX.Y.Z` tag), and attach the zip by hand.
 
-```bash
-# Create annotated tag with version
-git tag -a viz-v2.1.0 -m "Data Visualizer v2.1.0"
+   Note: until the old GitHub Actions workflow is deleted (Phase 5 of `doc/uv-migration-plan.md`), do not push a `viz-v*` tag: it would start that obsolete workflow.
 
-# Push tag to trigger automated build
-git push origin viz-v2.1.0
-```
-
-**What happens next:**
-1. GitHub Actions detects the `viz-v*` tag
-2. Spawns 3 parallel build jobs (Windows, Linux, macOS)
-3. Each job:
-   - Builds PyInstaller executable for that platform
-   - Packages with sample `.um4` log files
-   - Creates platform-specific ZIP archive
-4. Creates GitHub Release automatically with all 3 ZIP files attached
-
-You can monitor the build progress at: https://github.com/mookiedog/umod4/actions
-
-#### 3. Edit Release Notes (Optional)
-
-After the automated release is created:
-
-1. Go to: https://github.com/mookiedog/umod4/releases
-2. Find your new release (e.g., `viz-v2.1.0`)
-3. Click **Edit release**
-4. Update the auto-generated notes (see template below)
-5. Click **Update release**
-
-**Note:** GitHub auto-generates release notes from commit messages. You can enhance them with the template below.
-
-### Release Notes Template
-
-Use this template when editing the auto-generated release notes:
-
-```markdown
-# Data Visualizer v2.1.0
-
-## Downloads
-
-Choose the version for your operating system:
-- **DataVisualizer-Windows-v2.1.0.zip** - Windows 10 or later
-- **DataVisualizer-Linux-v2.1.0.zip** - Ubuntu 20.04+ or similar
-- **DataVisualizer-macOS-v2.1.0.zip** - macOS 10.13 (High Sierra) or later
-
-## What's New
-- Added injector bar tooltips showing duration and timing
-- Fixed zoom bug when switching between streams
-- Improved rendering performance for long logs
-
-## Installation
-1. Download the ZIP file for your platform
-2. Extract the ZIP file
-3. Run the DataVisualizer executable (no installation needed)
-
-## Sample Files
-Each release includes sample `.um4` log files for testing. The visualizer will automatically offer to convert them to HDF5 format when opened.
-
-## Compatibility
-Compatible with firmware v1.4.0 and later.
-
-## Running from Source (Alternative)
-If you prefer to run from source code:
-```bash
-git clone https://github.com/mookiedog/umod4.git
-cd umod4
-pip install -r tools/logtools/viz/requirements.txt
-python tools/logtools/viz/viz.py <logfile.h5>
-```
-
-## Known Issues
-- None
-
----
-
-**Full changelog**: https://github.com/mookiedog/umod4/compare/viz-v2.0.0...viz-v2.1.0
-```
 
 ### Version Numbering
 

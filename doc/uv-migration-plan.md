@@ -35,6 +35,13 @@ Items marked **(verify)** are guesses or inferences that Phase 0 must confirm be
   * Not done: running `nightly_run.sh` by hand. The nightly task has been broken for months, per robin, so it is not a gate.
   * Not touched on purpose: `tests/runner.py` (its docstring still shows `build/.venv/bin/python3`) and `tests/suites/test_provisioning.py`, which carry uncommitted harness edits (see below).
   * Lesson: configure with `-G Ninja` (VS Code's `cmake.generator`); without it the littlefs sub-build fails with a confusing "Ninja is GNU Make" error.
+* **Phase 4: script written and tested on Linux 2026-10-05; Windows tester check still to do.**
+  * `tools/make_viz_bundle` (stdlib only, run with `uv run tools/make_viz_bundle`) writes `dist/umod4-viz-<date>-<hash>[-dirty].zip` (2.2 MB, 33 files).
+    It takes its file list from `git ls-files` (tracked `.py`/`.yaml` under `tools/logtools/decoder` and `viz`), generates `Logsyms.py` with `h2py.py` (no firmware build needed), and adds the root `pyproject.toml` and `uv.lock`, the sample log and a README built from `tools/TRY_ME.txt`.
+  * Decision: the bundle ships the root `pyproject.toml`/`uv.lock` (one lock to maintain) and the recipient runs with `--only-group viz`; no trimmed pyproject of its own.
+  * Tested after unpacking in a scratch directory with no repo or `build/` anywhere nearby: `uv run --project . --only-group viz` installs 10 packages (flask, sqlalchemy and pyserial absent; Python 3.12; `.venv` 371 MB); `decodelog.py` converts the sample log to HDF5 identical to the pre-migration baseline (68 of 68 datasets); `viz.py` starts and stays up with Qt in offscreen mode, no tracebacks.
+  * Not tested: Windows, and a real GUI session (click through the convert dialog and see graphs).
+  * `tools/RELEASING.md`'s visualizer section now describes this flow; no GitHub Actions, no upload step.
 * **Provisioning is intermittently flaky (found while running the Phase 1 gate; not caused by this migration).**
   Two failure modes were seen at `prov_set_wifi`:
   `ERR request failed` (the WP applied the config and rebooted, but the HTTP response was lost: the WP powers off the WiFi chip ~300 ms after queuing the reboot), and `Timeout (10s)` (the config was NOT applied; cause unknown).
@@ -241,7 +248,15 @@ Do not start the next phase until the gate passes.
 ### Phase 5: Remove the old mechanisms
 
 * Delete: `.github/workflows/visualizer-release.yml`, the Nuitka and PyInstaller code and comments in `decodelog.py` and `viz.py`, `tools/logtools/viz/requirements.txt`, `tools/server/requirements.txt`, the PyInstaller `.gitignore` entries, and the Nuitka and PyInstaller text in the docs.
-* **Gate:** a grep for `nuitka` and `pyinstaller` finds nothing outside this plan and the history; clean build and hardware suite pass.
+* Clean up the old release tags and the stale remote branch (facts gathered 2026-10-04; all of this was read-only so far):
+  * GitHub has **no tags and no releases** (`git ls-remote --tags origin` and the GitHub API both report zero), so tags need no action on GitHub.
+  * The repo has **24 local-only `viz-v*` tags**: 22 early/test tags (`viz-v0.0.3` through `viz-v0.0.26-test`, 2025-12-08/09) on throwaway CI-experiment commits, plus two annotated "Linux/Windows Pre-Alpha Test Release" tags, `viz-v0.1.0` and `viz-v0.2.0` (2025-12-13/14), which are on `main`.
+  * Deleting the tags orphans nothing: every tagged commit is also reachable from the remote branch `origin/fix/pyinstaller-hook`.
+  * That remote branch (stale since 2025-12-09, 24 commits not on `main`, the throwaway CI experiments) is the other clutter.
+    Deleting it on GitHub is outward-facing and hard to undo, so it is a separate step needing robin's explicit go-ahead; the commits would then survive only in the local repo and the OneDrive backup.
+  * Steps: (1) save a tag-to-commit list to a file so any tag can be recreated; (2) delete the 22 test/early tags locally (`git tag -d`); (3) decide about `viz-v0.1.0` and `viz-v0.2.0` (they are history markers on `main`; the old process produced nothing useful, so removing them is consistent); (4) decide about deleting `origin/fix/pyinstaller-hook`.
+  * **Open questions for robin, to be answered when Phase 5 starts:** keep or delete the two annotated tags? delete the remote branch or leave it?
+* **Gate:** a grep for `nuitka` and `pyinstaller` finds nothing outside this plan and the history; clean build and hardware suite pass; `git tag -l 'viz-v*'` shows only what was deliberately kept.
 
 ### Phase 6: Docs sweep
 

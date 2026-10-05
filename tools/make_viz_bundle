@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""
+Build a self-contained "try the visualizer" bundle for someone who does not have the umod4
+source tree or its build tools.
+
+    uv run tools/make_viz_bundle
+
+The result is dist/umod4-viz-<date>-<git hash>[-dirty].zip.  The zip contains:
+
+  * the visualizer and the log decoder (the tracked .py and .yaml files under tools/logtools)
+  * a freshly generated Logsyms.py, next to decodelog.py (generated here with h2py.py from
+    lib/inc/log_ids.h, so no firmware build is needed)
+  * pyproject.toml and uv.lock, so that the recipient gets exactly the package versions that
+    were tested
+  * a sample log, and a README (tools/TRY_ME.txt) with the instructions for the recipient
+
+The recipient needs only uv.  See tools/RELEASING.md for how this fits into a release.
+"""
+
+import datetime
+import subprocess
+import sys
+import tempfile
+import zipfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+CODE_DIRS = ["tools/logtools/decoder", "tools/logtools/viz"]
+CODE_SUFFIXES = {".py", ".yaml"}
+PROJECT_FILES = ["pyproject.toml", "uv.lock"]
+README_TEMPLATE = "tools/TRY_ME.txt"
+SAMPLE_LOG = "tools/logtools/test_data/log_3.um4"
+LOG_IDS = "lib/inc/log_ids.h"
+H2PY = "tools/src/h2py.py"
+
+
+def git(*args):
+    result = subprocess.run(["git", "-C", str(ROOT), *args],
+                            check=True, capture_output=True, text=True)
+    return result.stdout
+
+
+def code_files():
+    """Tracked decoder/viz files that belong in the bundle, as repo-relative path strings."""
+    files = []
+    for d in CODE_DIRS:
+        for name in git("ls-files", "--", d).splitlines():
+            if Path(name).suffix in CODE_SUFFIXES:
+                files.append(name)
+    return files
+
+
+def bundle_version(source_files):
+    """<date>-<short hash>, plus -dirty if any bundled file differs from the commit."""
+    short_hash = git("rev-parse", "--short", "HEAD").strip()
+    changed = git("status", "--porcelain", "--untracked-files=no", "--", *source_files).strip()
+    dirty = "-dirty" if changed else ""
+    return f"{datetime.date.today():%Y%m%d}-{short_hash}{dirty}"
+
+
+def generate_logsyms(out_path):
+    """Run h2py.py (relative paths, from the repo root) to produce Logsyms.py."""
+    subprocess.run([sys.executable, H2PY, "--class-name", "Logsyms", "-o", str(out_path), LOG_IDS],
+                   cwd=ROOT, check=True, capture_output=True, text=True)
+
+
+def main():
+    code = code_files()
+    source_files = code + PROJECT_FILES + [README_TEMPLATE, SAMPLE_LOG, LOG_IDS]
+    for name in source_files:
+        if not (ROOT / name).is_file():
+            sys.exit(f"ERROR: expected file is missing: {name}")
+
+    version = bundle_version(source_files)
+    top = f"umod4-viz-{version}"
+    readme = (ROOT / README_TEMPLATE).read_text(encoding="utf-8").replace("{VERSION}", version)
+
+    dist = ROOT / "dist"
+    dist.mkdir(exist_ok=True)
+    zip_path = dist / f"{top}.zip"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        logsyms = Path(tmp) / "Logsyms.py"
+        generate_logsyms(logsyms)
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(f"{top}/README.txt", readme)
+            for name in PROJECT_FILES:
+                z.write(ROOT / name, f"{top}/{name}")
+            z.write(ROOT / SAMPLE_LOG, f"{top}/{Path(SAMPLE_LOG).name}")
+            for name in code:
+                # tools/logtools/viz/viz.py -> logtools/viz/viz.py
+                z.write(ROOT / name, f"{top}/{Path(name).relative_to('tools')}")
+            z.write(logsyms, f"{top}/logtools/decoder/Logsyms.py")
+
+    print(f"Wrote {zip_path.relative_to(ROOT)}  ({zip_path.stat().st_size / 1e6:.1f} MB, "
+          f"{len(code) + len(PROJECT_FILES) + 3} files)")
+    if version.endswith("-dirty"):
+        print("Note: some bundled files have uncommitted changes (the version is marked -dirty).")
+
+
+if __name__ == "__main__":
+    main()

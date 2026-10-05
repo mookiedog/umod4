@@ -5,6 +5,7 @@ __*
 
 build/
 .venv/
+dist/
 *.bak
 ~$*
 
