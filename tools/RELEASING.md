@@ -55,8 +55,6 @@ The `--only-group viz` part installs just the visualizer's packages and leaves o
 4. **Hand it out.**
    Either send the zip directly, or publish it: on GitHub go to Releases, draft a new release (optionally with a `viz-vX.Y.Z` tag), and attach the zip by hand.
 
-   Note: until the old GitHub Actions workflow is deleted (Phase 5 of `doc/uv-migration-plan.md`), do not push a `viz-v*` tag: it would start that obsolete workflow.
-
 
 ### Version Numbering
 
@@ -129,41 +127,16 @@ git push origin firmware-v1.6.0
 
 ---
 
-## Manual Local Builds (Optional)
-
-For testing or one-off builds, you can use the local build script:
-
-```bash
-# Build for your current platform only
-./tools/build-release.sh v2.1.0-test
-```
-
-This creates a local build in `build/releases/visualizer/v2.1.0-test/` but does NOT create a GitHub release. Useful for:
-- Testing changes before pushing a tag
-- Creating custom builds for specific platforms
-- Debugging build issues
-
-**Note**: The script builds for the platform you're running on (Linux on WSL2, Windows on Windows, etc.). For official releases with all platforms, use the GitHub Actions workflow by pushing a tag.
-
----
-
 ## Troubleshooting
 
-**Build script fails:**
-- Ensure you're in project root
-- Check that `build/.venv` exists (run CMake configure if not)
-- Verify test data exists in `tools/logtools/test_data/`
+**`tools/make_viz_bundle` fails:**
+- Run it from inside the repository, with uv: `uv run tools/make_viz_bundle` (the script asks git for its file list, so git must be installed)
+- "expected file is missing" means a file the bundle needs was moved or deleted; the message names it
 
-**PyInstaller import errors:**
-- Install PyInstaller: `build/.venv/bin/pip install pyinstaller`
-- Check all dependencies installed: `pip install -r tools/logtools/viz/requirements.txt`
-
-**Executable won't run on Windows:**
-- Test with Wine first on Linux
-- Check Windows Defender isn't blocking it
-- Ensure antivirus allows unsigned executables
+**The recipient's first run is slow, or does not start:**
+- The first run downloads Python 3.12 (if the machine has none) and about 300 MB of packages, so it needs an internet connection
+- uv itself must be installed first; `README.txt` in the bundle explains how
 
 **GitHub upload fails:**
-- Check file size <2GB (shouldn't be an issue)
-- Try uploading via web interface instead of git-release
-- Split into multiple files if needed
+- Check the file size is under 2 GB (it should be about 2 MB)
+- Try uploading through the web interface instead

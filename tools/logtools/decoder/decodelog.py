@@ -34,8 +34,9 @@ except ImportError:
     np = None
     h5py = None
 
-# Logsyms - Try to import at module level for Nuitka bundling
-# If not available (during development before CMake build), will be imported later from venv
+# Logsyms: try to import it at module level.
+# In a release bundle (tools/make_viz_bundle) Logsyms.py sits next to this file, so it is found here.
+# In a development tree it is generated into build/python_packages, and main() looks for it there.
 try:
     import Logsyms
     LOGSYMS_PRELOADED = True
@@ -2661,57 +2662,46 @@ def main():
     if args.format == 'h5' and not HDF5_AVAILABLE:
         parser.error("HDF5 format requires h5py and numpy. Please install them.")
 
-    # Import Logsyms - handle both Nuitka frozen binaries and normal Python execution
-    # First check if Logsyms was already imported at module level (for Nuitka bundling)
+    # Import Logsyms.  In a release bundle it was already found at module level (see the top of this
+    # file).  In a development tree, look for it in build/python_packages, or in the directory given
+    # with -L.
     if LOGSYMS_PRELOADED:
         ls = Logsyms
         L = ls.Logsyms
         print(f"# Logsyms preloaded at module level")
     else:
-        # Nuitka sets __compiled__ attribute on compiled modules/functions
-        is_nuitka = hasattr(sys.modules[__name__], '__compiled__') or '__nuitka__' in dir(__builtins__)
-        is_frozen = getattr(sys, 'frozen', False)  # PyInstaller, py2exe, cx_freeze
+        # Not found at module level: look for it in the development tree (build/python_packages)
+        from pathlib import Path
 
-        if is_nuitka or is_frozen:
-            print(f"FATAL ERROR: Running in compiled binary but Logsyms was not bundled", file=sys.stderr)
-            print(f"This is a build error - Logsyms must be included during compilation", file=sys.stderr)
-            print(f"Detection: nuitka={is_nuitka}, frozen={is_frozen}", file=sys.stderr)
-            print(f"sys.path = {sys.path}", file=sys.stderr)
-            print(f"Available modules: {sorted([m for m in sys.modules.keys() if not m.startswith('_')])[:20]}", file=sys.stderr)
-            return 1
+        if args.Logsyms:
+            gen_dir = args.Logsyms
         else:
-            # Running as normal Python script - need to find Logsyms in venv
-            from pathlib import Path
+            # Walk up from the script's directory to find the project root
+            # (identified by having a build/python_packages directory)
+            d = Path(__file__).parent.absolute()
+            gen_dir = None
+            while d != d.parent:
+                candidate = d / "build" / "python_packages"
+                if candidate.is_dir():
+                    gen_dir = str(candidate)
+                    break
+                d = d.parent
 
-            if args.Logsyms:
-                gen_dir = args.Logsyms
-            else:
-                # Walk up from the script's directory to find the project root
-                # (identified by having a build/python_packages directory)
-                d = Path(__file__).parent.absolute()
-                gen_dir = None
-                while d != d.parent:
-                    candidate = d / "build" / "python_packages"
-                    if candidate.is_dir():
-                        gen_dir = str(candidate)
-                        break
-                    d = d.parent
-
-                if gen_dir is None:
-                    print("FATAL ERROR: Could not find build/python_packages in any parent directory", file=sys.stderr)
-                    print("Try building the project first with CMake to generate Logsyms", file=sys.stderr)
-                    return 1
-
-            sys.path.insert(0, gen_dir)
-            print(f"# Logsyms imported from <{gen_dir}>")
-
-            try:
-                import Logsyms as ls
-                L = ls.Logsyms
-            except ImportError as e:
-                print(f"FATAL ERROR: Could not import Logsyms from {gen_dir}: {e}", file=sys.stderr)
-                print(f"Try building the project first with CMake to generate Logsyms", file=sys.stderr)
+            if gen_dir is None:
+                print("FATAL ERROR: Could not find build/python_packages in any parent directory", file=sys.stderr)
+                print("Try building the project first with CMake to generate Logsyms", file=sys.stderr)
                 return 1
+
+        sys.path.insert(0, gen_dir)
+        print(f"# Logsyms imported from <{gen_dir}>")
+
+        try:
+            import Logsyms as ls
+            L = ls.Logsyms
+        except ImportError as e:
+            print(f"FATAL ERROR: Could not import Logsyms from {gen_dir}: {e}", file=sys.stderr)
+            print(f"Try building the project first with CMake to generate Logsyms", file=sys.stderr)
+            return 1
 
     # Process each file
     errors = 0

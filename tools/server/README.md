@@ -16,17 +16,13 @@ Desktop application for receiving log files from umod4 motorcycle data loggers.
 
 ### Development (WSL2/Linux)
 
+The Python environment, including this server's packages (the `server` dependency group in `pyproject.toml`), is managed by uv from the top of the umod4 directory.
+There is nothing to install by hand once the project has been built (see BUILDING.md):
+
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
 # Run server
-python umod4_server.py
+tools/server/run_server.sh
 ```
-
-### Production (Windows .exe)
-
-Build with Nuitka (see build_windows.bat) or download pre-built release.
 
 ## Usage
 
@@ -82,7 +78,6 @@ Right-click log file in transfer history:
 ```
 tools/server/
 ├── umod4_server.py         # Main application entry point
-├── requirements.txt         # Python dependencies
 ├── http_server.py          # Flask HTTP server
 ├── test_client.py          # Mock device for testing
 ├── models/
@@ -178,7 +173,6 @@ Phase 0 implementation includes:
 - ⏳ Connection log widget (TODO)
 - ⏳ Settings dialog (TODO)
 - ⏳ System tray integration (TODO)
-- ⏳ Nuitka build script (TODO)
 
 ## Next Steps (Phase 1+)
 

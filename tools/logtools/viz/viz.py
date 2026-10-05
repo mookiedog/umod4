@@ -23,7 +23,7 @@ if sys.platform == 'win32':
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     else:
-        # Fallback for older Python or Nuitka-compiled binaries
+        # Fallback for Python versions whose stdout has no reconfigure()
         sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, errors='replace')
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, errors='replace')
 import argparse
@@ -62,7 +62,7 @@ from viz_components.data import HDF5DataLoader, DataManager
 from viz_components.navigation import ViewNavigationController, ViewHistory
 
 # Import decoder for .um4 file conversion
-# Try to import directly first (works in Nuitka onefile builds where modules are bundled)
+# Try to import directly first; if that fails, fall back to the decoder directory below
 DECODER_IMPORT_ERROR = None
 try:
     import decodelog

@@ -84,7 +84,7 @@ Phase 0 of the WiFi task implementation is complete. This phase delivers a worki
 ### 6. Documentation
 
 - **README.md**: Comprehensive usage guide, API documentation, architecture
-- **requirements.txt**: All Python dependencies
+- **pyproject.toml** (repo root): the `server` dependency group lists the Python dependencies
 - **PHASE0_SUMMARY.md**: This file
 
 ## File Structure
@@ -94,7 +94,6 @@ tools/server/
 ├── umod4_server.py          # Main application (571 lines)
 ├── http_server.py           # Flask HTTP server (238 lines)
 ├── test_client.py           # Test client (188 lines)
-├── requirements.txt         # Dependencies (7 packages)
 ├── README.md                # User documentation
 ├── PHASE0_SUMMARY.md        # This file
 ├── models/
@@ -120,8 +119,7 @@ Total: ~1,705 lines of Python code
 ```bash
 cd tools/server
 
-# Install dependencies
-pip install -r requirements.txt
+# The Python environment is managed by uv (see BUILDING.md); nothing to install by hand
 
 # Run server
 python umod4_server.py
@@ -132,7 +130,7 @@ python test_client.py
 
 ### Windows Production
 
-Nuitka build script to be added in next iteration (similar to viz tool).
+No standalone executable is built. The server runs from source with uv.
 
 ## Phase 0 Acceptance Criteria
 
@@ -145,7 +143,6 @@ Nuitka build script to be added in next iteration (similar to viz tool).
 | Right-click log file opens viz | ✅ | Checks multiple paths |
 | Settings menu allows path changes | ✅ | Context menu on device list |
 | Multi-device support from start | ✅ | Database schema supports multiple devices |
-| Build with Nuitka | ⏳ | To be added (needs build_windows.bat) |
 
 ## Deferred to Future Iterations
 
@@ -155,8 +152,6 @@ These items were listed in the original Phase 0 plan but are deferred to keep th
 2. **Device Status Dashboard**: Real-time device stats (battery, SD space, etc.)
 3. **Settings Dialog**: Global settings (server port, viz path, etc.)
 4. **System Tray Integration**: Background service mode
-5. **Nuitka Build Script**: `build_windows.bat` for creating .exe
-6. **GitHub Actions Workflow**: Automated release building
 
 **Rationale**: Core functionality is complete. These are polish items that can be added iteratively.
 
@@ -175,7 +170,6 @@ These items were listed in the original Phase 0 plan but are deferred to keep th
 1. Install dependencies in test environment
 2. Run server and test client to verify functionality
 3. Fix any runtime issues discovered
-4. Add Nuitka build script (copy from viz tool pattern)
 
 ### Phase 1 (WP Firmware)
 

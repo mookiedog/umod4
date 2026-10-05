@@ -73,37 +73,3 @@ As a result, markers only get draw when the zoom level is sufficient so that the
 If you can't see markers, zoom in some more.
 
 Marker streams do not trigger changes of axis ownership.
-
----
-
-## For Developers: Build Diagnostics
-
-If you're building the visualizer with PyInstaller and encountering issues (especially with Windows builds), comprehensive diagnostic tools are available.
-
-### Quick Diagnostic Check
-
-```bash
-# Run local diagnostic before pushing to GitHub
-./tools/diagnose_pyinstaller.sh
-
-# Analyze an existing executable
-./tools/analyze_existing_build.sh path/to/DataVisualizer.exe
-```
-
-### Documentation
-
-* [QUICK_REFERENCE.md](QUICK_REFERENCE.md) - Quick command reference
-* [DIAGNOSTIC_TOOLS_SUMMARY.md](DIAGNOSTIC_TOOLS_SUMMARY.md) - Complete system overview
-* [PYINSTALLER_DIAGNOSTICS.md](PYINSTALLER_DIAGNOSTICS.md) - Detailed debugging guide
-
-### What These Tools Do
-
-The diagnostic system automatically:
-
-1. Extracts and inspects PyInstaller executables
-2. Tests module availability at runtime
-3. Analyzes build logs for warnings and errors
-4. Compares builds across Windows/Linux/macOS
-5. Generates comprehensive reports showing exactly what's wrong
-
-This eliminates the guess-and-check cycle when modules are missing from packaged executables.
