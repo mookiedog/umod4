@@ -773,7 +773,7 @@ the bus/address of the WP slot is stable.
 **Locating the partition:**
 
 The config partition address and size are compile-time constants in `FlashConfig.h`.
-They are mirrored as a single constant in `tests/harness/flash_layout.py`.  If the
+They are mirrored as constants (`WP_CONFIG_OFFSET`, `WP_CONFIG_SIZE`) in `tests/harness/flash_ops.py`.  If the
 partition layout ever changes, both are updated together.  No runtime discovery is
 needed — the partition layout is fixed at build time and does not move between
 firmware versions.

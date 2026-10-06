@@ -11,9 +11,9 @@ This directory contains sample log files for testing the decoder and visualizer.
 ## File Format
 
 - `.log` or `.um4` files are raw binary logs from the umod4 hardware
-- These files can be converted to HDF5 format using `decodelog.py`:
+- These files can be converted to HDF5 format using `decodelog.py` (run from the umod4 directory):
   ```bash
-  python ../decoder/decodelog.py sample.log --format hdf5 -o sample.h5
+  uv run tools/logtools/decoder/decodelog.py tools/logtools/test_data/log_3.um4 --format h5 -o log_3.h5
   ```
 
 ## Adding Sample Logs

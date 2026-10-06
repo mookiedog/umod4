@@ -15,19 +15,19 @@ This tool can do 2 things to a raw umod4 logfile:
 
 ## Running the Decoder
 
-To run the decoder, type:
+From inside the umod4 directory, type:
 
-    decodelog.py --format hr <path-to-log-file>
+    uv run tools/logtools/decoder/decodelog.py --format hr <path-to-log-file>
 
 The format 'hr' says to make a Human-Readable version of the log.
-The format 'h5' would tell the decoder to produce and HDF5 version of the log, suitable for the visualizer to display.
+The format 'h5' would tell the decoder to produce an HDF5 version of the log, suitable for the visualizer to display.
 
-Currently: it's not _remotely_ as simple to run decodelog.py as shown above.
-The decoder and visualizer programs require a lot of python packages to be installed.
-One way to do it is to install the entire umod4 project so that it can be built on your machine.
-Once you can build the project, you can activate a Python virtual environment created by the project that makes everything work, including taking care of getting all the required Python packages installed.
+The decoder needs a few Python packages, and a generated file of log ID constants (`Logsyms.py`).
+Both come from building the umod4 project once (see [BUILDING.md](../BUILDING.md)): the build installs the packages with uv, and writes `Logsyms.py` into `build/python_packages/`.
+There is no virtual environment to activate: `uv run` finds the project's environment by itself.
 
-At some point in the future, I will package up the decoder and visualizer so that they are more standalone and can be run without having to build the entire umod4 software universe.
+If you only want to look at logs, you do not need to build the project.
+`tools/make_viz_bundle` packages the visualizer and the decoder into a small zip that needs only uv (see [RELEASING.md](RELEASING.md)).
 
 ## DecodeLog: Human Readable
 
@@ -99,6 +99,6 @@ That is precisely what a visualizer needs in order to quickly scan the large log
 
 To decode a log into HDF5 format, you would type:
 
-    decodelog.py --format h5 <path-to-log-file>
+    uv run tools/logtools/decoder/decodelog.py --format h5 <path-to-log-file>
 
 Note that there is really no reason to create .h5 files 'manually' in this fashion: the visualizer will invoke the log decoder to create h5 files for you, as needed.

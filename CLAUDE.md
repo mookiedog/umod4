@@ -74,7 +74,7 @@ cd ~/projects/umod4/build/ecu && ninja
 ```
 
 **Python Environment:**
-The Python environment is managed by uv. `pyproject.toml` lists the packages (in dependency groups) and `uv.lock` pins their versions. The build runs `uv sync --locked`, which creates the virtual environment at `<repo>/.venv`. Run tools with `uv run <script>` from anywhere inside the repo; there is no venv to activate. The project is pinned to Python 3.12 (`requires-python = "==3.12.*"`; see BUILDING.md for why and how to change it). A truly clean state means deleting `.venv` as well as `build/`. Generated Python modules (`Logsyms.py`, `LogMeta.py`) are written to `build/python_packages/`.
+The Python environment is managed by uv. `pyproject.toml` lists the packages (in dependency groups) and `uv.lock` pins their versions. The build runs `uv sync --locked`, which creates the virtual environment at `<repo>/.venv`. Run tools with `uv run <script>` from anywhere inside the repo; there is no venv to activate. The project is pinned to Python 3.12 (`requires-python = "==3.12.*"`; see the comment above that line in `pyproject.toml` for why and how to change it). A truly clean state means deleting `.venv` as well as `build/`. Generated Python modules (`Logsyms.py`, `LogMeta.py`) are written to `build/python_packages/`.
 
 ### Build Output Locations
 
@@ -95,11 +95,11 @@ The Python environment is managed by uv. `pyproject.toml` lists the packages (in
 
 **Key Files:**
 - `ecu/src/UM4.S` - Main ECU assembly code
-- `ecu/src/ECU_log.h` - ECU log event ID definitions
+- `lib/inc/log_ids.h` - log event ID definitions (shared by the ECU, EP and WP)
 
 ### EP (EPROM Processor)
 - **Processor:** RP2040 (Cortex-M0+)
-- **SDK:** Raspberry Pi Pico SDK 2.2.0 (configurable in top-level CMakeLists.txt)
+- **SDK:** Raspberry Pi Pico SDK 2.3.0 (configurable in top-level CMakeLists.txt)
 - **Toolchain:** arm-none-eabi-gcc 15.2.rel1 (at `/opt/arm/arm-none-eabi/15.2.rel1`)
 - **Source:** `EP/src/`
 
@@ -110,16 +110,15 @@ The Python environment is managed by uv. `pyproject.toml` lists the packages (in
 **Key Capabilities:**
 - Emulates 32KB EPROM with regions that can act as RAM (expands ECU's 512 bytes)
 - Loads and combines multiple EPROM images from 16MB SPI flash partition
-- Forwards ECU data stream to WP via UART at 921600 baud
+- Forwards ECU data stream to WP via UART at 2.5 megabaud
 - Logs all HC11 accesses to circular buffer (8,192 entries × 4 bytes = 32KB) for debugging
-- BSON document-based EPROM library with metadata
+- Image store and image selector for the EPROM images in flash (replaced the earlier BSON-based EPROM library)
 - has RTT debug output, NOT UART!
 
 **Important Files:**
 - `EP/src/epromEmulator.h` - Core EPROM emulation on Core 1
 - `EP/src/EpromLoader.h` - Image loading and management on Core 0
-- `EP/src/bsonlib.h` - BSON document handling for EPROM library
-- `EP/src/EP_log.h` - EP log event IDs
+- `EP/src/image_store_config.json` - which images go into the image store
 
 ### WP (Wireless Processor)
 - **Processor:** RP2350 on Pico2W (Cortex-M33, more RAM/speed than RP2040)
@@ -141,7 +140,7 @@ The Python environment is managed by uv. `pyproject.toml` lists the packages (in
 **Log Decoder:**
 ```bash
 # Decode binary logs to HDF5 format
-uv run tools/logtools/decoder/decodelog.py <logfile> --format hdf5 -o output.h5
+uv run tools/logtools/decoder/decodelog.py <logfile> --format h5 -o output.h5
 
 # Verify HDF5 output
 uv run tools/logtools/decoder/verify_hdf5.py output.h5
@@ -168,10 +167,8 @@ JSON description files for stock Aprilia EPROMs (549USA, RP58, etc.).
 
 ## Log System Architecture
 
-The system uses a hierarchical log ID system with separate header files:
-- `ecu/src/ECU_log.h` - ECU-generated events
-- `EP/src/EP_log.h` - EP-generated events
-- `WP/src/WP_log.h` - WP-generated events (GPS, filesystem)
+All log event IDs (ECU, EP, WP and general) are defined in one header, `lib/inc/log_ids.h`.
+The build turns it into the Python constants (`Logsyms.py`, plus `LogMeta.py`) that the decoder uses.
 
 **Log Format:** Binary stream of event IDs followed by data bytes. Events include 16-bit timestamps (2μs resolution, wraparound handled). HDF5 output provides unified nanosecond time axis across all events.
 
@@ -216,14 +213,14 @@ F1 -> "Debug: Select And Start Debugging" -> "*** EP: Launch CMSIS-DAP"
 - m68hc11-elf toolchain (built from binutils source, installed to ~/.local/bin)
 - arm-none-eabi-gcc 15.2.rel1 (installed to /opt/arm/arm-none-eabi/15.2.rel1)
 - OpenOCD (built from raspberrypi fork for RP2xxx support)
-- Raspberry Pi Pico SDK 2.2.0 (at ~/projects/pico-sdk/2.2.0)
-- Python 3.10+ with venv support
+- Raspberry Pi Pico SDK 2.3.0 (at ~/projects/pico-sdk/2.3.0)
+- uv (installs and manages the Python environment, Python 3.12; see BUILDING.md)
 
 **Directory Layout Assumption:**
 The build system expects this specific structure:
 ```
 ~/projects/
-├── pico-sdk/2.2.0/    - Pico SDK (version configurable in CMakeLists.txt)
+├── pico-sdk/2.3.0/    - Pico SDK (version configurable in CMakeLists.txt)
 ├── pico-examples/     - Optional SDK examples
 ├── picotool/          - Picotool (built and installed to ~/.local/bin)
 ├── openocd/           - OpenOCD from raspberrypi GitHub
@@ -240,9 +237,8 @@ Edit `cmake/toolchains/arm-none-eabi.cmake`, update `ARM_NONE_EABI_VERSION` vari
 
 **Modifying Log Event IDs:**
 1. Edit `lib/inc/log_ids.h` file
-2. Run `uv run tools/src/h2py.py` to regenerate Python constants
-3. Update `tools/logtools/decoder/decodelog.py` decoder logic for new events
-4. Rebuild affected components (all components include log headers from same directory)
+2. Update `tools/logtools/decoder/decodelog.py` decoder logic for new events
+3. Rebuild (F7 or `ninja`): the build regenerates the Python constants (`Logsyms.py`, `LogMeta.py` in `build/python_packages/`) from `log_ids.h` automatically, and every component includes the header from the same directory
 
 ## Key Technical Details
 

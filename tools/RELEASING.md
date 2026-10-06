@@ -90,7 +90,7 @@ Firmware releases are less frequent and follow a different process since they re
 # Make firmware changes
 vim ecu/src/UM4.S
 vim EP/src/epromEmulator.h
-vim WP/src/main.c
+vim WP/src/main.cpp
 
 # Build
 cd build
@@ -108,7 +108,7 @@ git push origin main
 #### 2. Update Compatibility Notes
 
 If log format changed, update:
-- `ecu/src/ECU_log.h`, `EP/src/EP_log.h`, or `WP/src/WP_log.h`
+- `lib/inc/log_ids.h`
 - `tools/logtools/decoder/decodelog.py` decoder logic
 - Compatibility notes in release description
 

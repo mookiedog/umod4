@@ -8,7 +8,7 @@ This project has been ongoing since about 2004. It all started as a project to r
 
 Along the way, "figuring things out" turned into a project that allowed me to stream real-time ECU data out of the fuel injection computer. The ECU data stream was then combined externally with a GPS position and velocity data stream, giving me my own personal racing datalogger.
 
-One result from that work is an annotated version of the original ECU codebase. Obviously, it is my interpretation of what is going on inside the ECU codebase. It is not complete, either. But if you have ever had the desire to stare at some impenetrable 68HC11 assembly code, check out the [ultraMod source code](ecu/src/ultraMod.S)!
+One result from that work is an annotated version of the original ECU codebase. Obviously, it is my interpretation of what is going on inside the ECU codebase. It is not complete, either. But if you have ever had the desire to stare at some impenetrable 68HC11 assembly code, check out the [ECU source code](ecu/src/UM4.S)!
 
 Once the version 3 hardware was working back in 2006-ish timeframe, I had to go riding. Here is a graph generated from a datalog from way back when. For this graph, the only data I included was RPM, throttle position, and the state of the clutch switch.  It shows me doing a 0-100MPH run:
 

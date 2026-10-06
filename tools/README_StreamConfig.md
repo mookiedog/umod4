@@ -7,7 +7,7 @@ The visualizer uses a YAML-based configuration system to define how data streams
 ## Configuration Files
 
 ### Base Configuration
-- **Location**: `tools/src/stream_config.yaml`
+- **Location**: `tools/logtools/viz/stream_config.yaml`
 - **Purpose**: Default configuration shipped with the application
 - **Scope**: Defines all available streams and their default settings
 
@@ -19,7 +19,7 @@ The visualizer uses a YAML-based configuration system to define how data streams
 ## How Local Overrides Work
 
 When you run the visualizer, it:
-1. Loads the base configuration from `tools/src/stream_config.yaml`
+1. Loads the base configuration from `tools/logtools/viz/stream_config.yaml`
 2. Checks if `./stream_config.yaml` exists in your current directory
 3. If found, **deep merges** the local config into the base config
 4. Only the values you specify in the local config are changed
@@ -37,7 +37,7 @@ The merge is **recursive** for nested dictionaries:
 
 ### Example 1: Change Stream Color
 
-**Base config** (`tools/src/stream_config.yaml`):
+**Base config** (`tools/logtools/viz/stream_config.yaml`):
 ```yaml
 streams:
   ecu_air_temp_c:
@@ -139,7 +139,7 @@ viz some_data.h5
 
 From highest to lowest priority:
 1. Local override (`./stream_config.yaml`)
-2. Base configuration (`tools/src/stream_config.yaml`)
+2. Base configuration (`tools/logtools/viz/stream_config.yaml`)
 
 ## Tips
 

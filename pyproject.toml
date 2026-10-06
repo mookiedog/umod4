@@ -5,8 +5,8 @@ description = "Python environment for the umod4 build, log decoder, visualizer, 
 # This is a tools repository, not a library: nobody installs it as a dependency, so it pins the one
 # Python version it is developed and tested on, instead of promising compatibility with others.
 # A narrow pin also keeps uv.lock small (the lock file records the wheels for every Python allowed).
-# To move to a newer Python: change this line, run 'uv lock', then rebuild and run the test
-# suite. See BUILDING.md.
+# To move to a newer Python: change this line, run 'uv lock', then rebuild everything and run the
+# test suite.
 requires-python = "==3.12.*"
 dependencies = []
 

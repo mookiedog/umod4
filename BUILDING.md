@@ -53,7 +53,7 @@ The high-level steps:
 * [Install Linux software](#linuxwsl2-software-installation)
   * [Host Tools](#install-linux-host-tools)
   * [Avahi](#avahi)
-  * [Python](#python)
+  * [Python and uv](#python-and-uv)
   * [Build a 68HC11 toolchain](#build-68hc11-toolchain) (required to create Aprilia ECU software)
   * [Download ARM Tools](#get-the-download-link)
   * Build [OpenOCD](#install-openocd) for on-chip debugging of EP/WP
@@ -340,7 +340,7 @@ It is possible that they are already installed in the fresh WSL distro, but it i
 Install them as below:
 
 ```bash
-sudo apt install gcc g++ git unzip cmake jq ninja-build libncurses5-dev libncursesw5-dev
+sudo apt install gcc g++ git curl unzip cmake jq ninja-build libncurses5-dev libncursesw5-dev
 ```
 
 The ``gcc`` and ``g++`` compilers installed above generate code for your Linux __host__ machine, not the ARM chips on the Pico boards. The Pico SDK expects to find the host g++ compiler using an environment variable called 'CXX'.
@@ -382,7 +382,10 @@ wsl --shutdown
 #### Python and uv
 
 The umod4 system uses Python3 for some utility programs, as well as the visualizer and the test harness.
-The project's Python environment is managed by [uv](https://docs.astral.sh/uv/): the packages are listed in `pyproject.toml`, their exact versions are pinned in `uv.lock`, and the virtual environment lives in `.venv` at the top of the umod4 directory.
+Python uses packages to provide a lot of its functionality.
+Managing all the packages used by a complex Python environment can get very tricky.
+To make package management simpler for a umod4 user, the project's Python environment is managed by [uv](https://docs.astral.sh/uv/).
+The project's required packages are listed in `pyproject.toml`, their exact versions are pinned in `uv.lock`, and the virtual environment lives in `.venv` at the top of the umod4 directory.
 The build creates and updates that environment automatically (it runs `uv sync`), so the only thing to do by hand is to install uv.
 uv can also download a suitable Python itself, so there is no need to install a particular Python version or the `python3-venv` package.
 
@@ -398,27 +401,21 @@ $ uv --version
 ```
 
 After a build, Python tools are run with `uv run`, from anywhere inside the umod4 directory.
-There is no need to activate a virtual environment:
+There is no need to activate a virtual environment. For example:
 
 ```bash
 $ uv run tools/logtools/decoder/decodelog.py <logfile>
 ```
 
-##### Python Version
+If your machine does not already have Python 3.12, uv downloads one the first time it needs it.
+That is normal, and it only happens once per machine.
+The downloaded copy is kept in `~/.local/share/uv/python`, shared by every uv project, and not inside the project's `.venv`.
 
-The project is pinned to Python 3.12 (`requires-python = "==3.12.*"` in `pyproject.toml`).
-uv uses a Python 3.12 that is already installed if it finds one.
-If it does not, it downloads one once per machine into `~/.local/share/uv/python`: that copy is shared by every uv project and is not stored inside the project's `.venv`.
-
-The pin is deliberate.
-umod4 is a set of tools, not a library that other projects install, so there is nobody to be "compatible" for.
-Pinning one version means everybody runs the Python that the project is tested with.
-It also keeps `uv.lock` small, because that file records the downloadable files for every Python version the project allows.
-
-If a newer Python is ever needed: change `requires-python`, run `uv lock`, rebuild everything, and run the test harness.
+The project is deliberately pinned to Python 3.12.
+To find out why, or to change the version, see the comment above `requires-python` at the top of `pyproject.toml`: it explains the reasoning and lists the steps.
 
 The `.venv` directory is large (about 400 MB), mostly because of the Qt libraries (PySide6) that the visualizer and the server GUI use.
-That has nothing to do with the Python version.
+That is expected.
 
 #### Git and Line Endings
 
@@ -907,7 +904,7 @@ This is the worst-case build time though.
 Once the build is complete, subsequent builds only rebuild files that have changed which only takes a small number of seconds.
 
 _Note: The very first time you build, the build system will generate an error, by design.
-The issue: [picotool](#picotool) requires 'sudo' (administrator rights) in order to access the Pico USB devices.
+The issue: [picotool](https://github.com/raspberrypi/picotool) requires 'sudo' (administrator rights) in order to access the Pico USB devices.
 Installing an appropriate udev 'rules' file gets rid of the 'sudo' requirement and allows the build system to use picotool itself.
 The build system will verify that the required rules file is installed.
 If not, the build system will stop with an error message showing you the exact commands to run to install the rules file.
