@@ -310,8 +310,6 @@ __The umod4 requires a linux machine, or a Windows machine with WSL (Windows Sub
 
 * Windows machines must [install the terminal app](./BUILDING.md#windows-terminal-app)
 
-* Install the avahi tools, as described in the [build document](./BUILDING.md#avahi)
-
 * Open a bash terminal window and make yourself a [local bin directory](./BUILDING.md#create-a-local-bin-directory)
 
 * Install a prebuilt 'picotool' utility. Prebuilt binaries can be found [here](https://github.com/raspberrypi/pico-sdk-tools/releases). There may be more recent versions available, but the following instructions will get you an X86 version that should work fine:
@@ -553,20 +551,16 @@ You should see a new page on the phone saying that it is now connecting to the h
 The WP will reboot.
 This time, the WiFi LED should come solid (no more slow-flash) meaning that the WP is connected to home WiFi.
 
-At this point, you can find out the IP address of your new umod4 board on your home network.
+At this point, your umod4 is on your home network.
+You can reach its website from any phone or PC on that network.
 Replace 'Tuono' with whatever you named your umod4:
 
-```bash
-avahi-resolve-host-name -4 Tuono.local
-```
+    http://Tuono.local
 
-It will come back with something like:
+If your browser cannot find that name, use the umod4's IP address instead.
+You can find it in your router's list of connected devices, or in the device list of the umod4 server.
 
-```bash
-Tuono.local        192.168.1.11
-```
-
-For fun, go to a browser on your PC and enter that IP address in the browser address bar.
+For fun, go to a browser and enter the address.
 Your umod4 actually hosts a small website with all kinds of fun things to do:
 
 ![website-homepage](./doc/images/GETTING_STARTED/website-home.jpg)
@@ -582,22 +576,21 @@ See [Install WP WiFi Credentials](./Tools.md#install-wp-wifi-credentials) for us
 
 ### EP Software Installation
 
-Now that the WP is on your home network, you can flash the EP firmware over WiFi.
+Now that the WP is on your home network, the umod4 server can install the EP firmware over WiFi.
 
-For non-developers, type the following command, substituting the name you gave your device during WiFi provisioning. This also assumes that you put the EP.uf2 file in your ~ directory:
-
-```bash
-cd ~/projects/umod4
-./tools/flash_EP <your-umod4-device-name> ~
-```
-
-If you have a full development system working, type the following command, again putting in the real name you gave your device during provisioning:
+* Start the server:
 
 ```bash
-~/projects/umod4/tools/flash_EP <your-umod4-device-name> ~/projects/umod4/build/EP
+~/projects/umod4/tools/server/run_server.sh
 ```
 
-The script will connect to your device, upload the EP firmware, then program it via SWD.
+* Wait for your device to show up in the server's device list.
+The device's name is the one you chose during WiFi provisioning.
+* Select your device, then click __Reflash EP__.
+* Choose your `EP.uf2` file (the one you put in your home directory, or `~/projects/umod4/build/EP/EP.uf2` if you built it yourself).
+* Confirm the warning, and do not power off the device until the server reports success.
+
+The server uploads the firmware to the WP, which programs the EP over its SWD connection.
 When it completes, the EP is running the new firmware and the umod4 is fully installed.
 
 You will know that the EP firmware is running because the BSY LED will start flashing very brightly 2 times per second.

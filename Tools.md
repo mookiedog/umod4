@@ -40,6 +40,20 @@ Requirements:
 
 The flash_WP script will take care of reassigning the WP from Windows to WSL on WSL-based systems.
 
+## Flash the EP Over WiFi
+
+The EP is flashed by the WP over SWD, so no USB cable or BOOTSEL mode is involved.
+The WP must be running and connected to your home network, and its SD card must be inserted (the WP stages the EP image there).
+
+The normal way is the server GUI: select the device and click __Reflash EP__.
+
+For scripting, the server also has a command-line mode that skips the GUI:
+
+    tools/server/run_server.sh --ip <device-ip> --flash-ep build/EP/EP.uf2
+
+It uploads the file, triggers the reflash, prints the result and exits.
+Use the device's IP address (the server's device list shows it).
+
 ## ap_proxy
 
 The ap_proxy program is used to give the host PC a way to connect to a umod4 that is operating in AP mode.

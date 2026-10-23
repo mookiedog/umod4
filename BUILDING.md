@@ -52,7 +52,6 @@ The high-level steps:
   * [Install VS Code extensions](#vs-code-extensions)
 * [Install Linux software](#linuxwsl2-software-installation)
   * [Host Tools](#install-linux-host-tools)
-  * [Avahi](#avahi)
   * [Python and uv](#python-and-uv)
   * [Build a 68HC11 toolchain](#build-68hc11-toolchain) (required to create Aprilia ECU software)
   * [Download ARM Tools](#get-the-download-link)
@@ -349,34 +348,6 @@ Run the following commands to add the appropriate CXX definition to your .bashrc
 ```bash
 echo "export CXX=/usr/bin/g++" >> ~/.bashrc
 . ~/.bashrc
-```
-
-#### Avahi
-
-The avahi tools supply mDNS functionality needed by `flash_EP` to resolve device names on the home network.
-To install them, type:
-
-```bash
-sudo apt install avahi-daemon avahi-utils libnss-mdns
-```
-
-`avahi-daemon` handles `.local` hostname resolution.
-`avahi-utils` provides the `avahi-resolve-host-name` command that `flash_EP` uses for fast resolution (bypassing a WSL2 glibc/D-Bus issue that makes the standard resolver take ~9 seconds for `.local` names).
-
-WSL2 does not auto-start services, so configure it to start avahi-daemon automatically on every WSL startup.
-Edit `/etc/wsl.conf` (as root) and add or update the `[boot]` section:
-
-```ini
-[boot]
-command = service avahi-daemon start
-```
-
-If the file already has a `[boot]` section, add the `command` line to it — do not create a second `[boot]` section.
-
-Then restart WSL once from a PowerShell window for the change to take effect:
-
-```powershell
-wsl --shutdown
 ```
 
 #### Python and uv

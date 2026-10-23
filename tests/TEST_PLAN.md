@@ -122,24 +122,6 @@ server address).  Use it when you need a known-blank starting point.
 
 On WSL2 the script handles usbipd attach/re-attach automatically.
 
-### `tools/flash_EP`
-
-Flashes EP firmware over WiFi via WP's HTTP API.  Unlike `flash_WP`, no BOOTSEL mode or
-physical USB connection to EP is required — WP receives the image over WiFi and programs
-EP via its internal SWD connection.
-
-```bash
-tools/flash_EP umod4_garage                          # release mode (EP.uf2 beside script)
-tools/flash_EP umod4_garage ~/projects/umod4/build/EP  # dev mode
-```
-
-Prerequisites: WP must be running and connected to home WiFi.  The device is located via
-mDNS (`<device-name>.local`).  The SD card must be inserted (WP uses it as staging storage
-for the EP image before programming).
-
-This is the end-user tool for EP firmware updates.  The automated test harness exercises
-the same code path via `test_ota_ep` using the HTTP API directly.
-
 ### `tools/ap_proxy`
 
 Allows the test harness software running on a PC to connect to a umod4 running in AP
