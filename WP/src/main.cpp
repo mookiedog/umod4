@@ -5,6 +5,7 @@
 
 #include "hardware.h"
 #include "hardware/watchdog.h"
+#include "hardware/adc.h"
 #include "pico/stdlib.h"
 #include "pico/mutex.h"
 #include "pico/multicore.h"
@@ -1015,6 +1016,24 @@ void check_tbyb()
 }
 
 // ----------------------------------------------------------------------------------
+// Read VSYS in volts. The Pico2W routes VSYS/3 to GPIO29 (ADC channel 3).
+// GPIO29 is shared with the CYW43 SPI clock, so this is only safe before
+// cyw43_arch_init() has run (i.e. from main(), before the scheduler starts).
+static float read_vsys_volts()
+{
+    adc_init();
+    adc_gpio_init(PICO_VSYS_PIN);
+    adc_select_input(PICO_VSYS_PIN - 26);
+
+    const int N = 16;
+    uint32_t sum = 0;
+    for (int i=0; i<N; i++) {
+        sum += adc_read();
+    }
+    return 3.0f * 3.3f * (sum / (float)N) / 4096.0f;
+}
+
+// ----------------------------------------------------------------------------------
 // Before main() is called, the Pico boot code in pico-sdk/src/rp2_common/pico_standard_link/crt0.S
 // calls function runtime_init() in pico-sdk/src/rp2_common/pico_runtime/runtime.c
 // That is where all the behind-the-scenes initialization of the runtime occurs.
@@ -1074,6 +1093,7 @@ int main()
     printf("WP Version: %s\n", SYSTEM_JSON);
     uint32_t f_clk_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_SYS);
     printf("WP Sysclk: %.1f MHz\n", f_clk_sys / 1000.0);
+    printf("WP VSYS: %.2f V\n", read_vsys_volts());
     printf("WP Heap: %u\n", g_heap_max);
 
     show_partition_info();

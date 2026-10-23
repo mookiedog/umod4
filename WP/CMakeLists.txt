@@ -435,6 +435,7 @@ target_link_libraries(${PROJECT_NAME}
     pico_flash
     hardware_flash
     hardware_timer
+    hardware_adc
     cmsis_core
     hardware_pio
     hardware_dma
