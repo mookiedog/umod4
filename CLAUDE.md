@@ -142,9 +142,6 @@ The Python environment is managed by uv. `pyproject.toml` lists the packages (in
 # Decode binary logs to HDF5 format
 uv run tools/logtools/decoder/decodelog.py <logfile> --format h5 -o output.h5
 
-# Verify HDF5 output
-uv run tools/logtools/decoder/verify_hdf5.py output.h5
-
 # Run visualizer
 uv run tools/logtools/viz/viz.py output.h5
 ```
@@ -156,7 +153,6 @@ uv run tools/logtools/viz/viz.py output.h5
   - `generate_encoder.py` - Generates log encoding code
 - **Runtime log analysis tools** (in `tools/logtools/`):
   - `decoder/decodelog.py` - Decodes binary logs to HDF5 or text
-  - `decoder/verify_hdf5.py` - Validates HDF5 log structure and content
   - `viz/viz.py` - Interactive visualization tool for HDF5 logs
 
 ### EPROM Library (eprom_lib)
@@ -345,5 +341,4 @@ For ECU/engine validation (no automated equivalent):
 2. Install in bike ECU, verify engine runs correctly
 3. Verify data logging to SD card
 4. Extract and decode logs with `tools/logtools/decoder/decodelog.py`
-5. Validate HDF5 output with `tools/logtools/decoder/verify_hdf5.py`
-6. Visualize with `tools/logtools/viz/viz.py`
+5. Visualize with `tools/logtools/viz/viz.py`
