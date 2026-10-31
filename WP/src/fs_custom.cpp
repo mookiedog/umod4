@@ -2,6 +2,7 @@
 #include "lwip/apps/fs.h"
 #include "lfs.h"
 #include "LogStore.h"
+#include "lfsMgr.h"
 #include "pico/stdlib.h"
 #include "pico/sha256.h"
 #include <stdlib.h>
@@ -46,6 +47,13 @@ extern int  api_flash_read(uint8_t* buf, size_t buf_size, const char* region,
 
 // Global LittleFS context (set by fs_custom_init)
 static lfs_t* g_lfs = NULL;
+
+// g_lfs is the address of a global lfs_t, so it is never NULL even when no SD card is present.
+// Opening a file on an lfs_t that was never mounted faults, so always test lfs_mounted as well.
+static inline bool lfs_ready(void)
+{
+    return (g_lfs != NULL) && lfs_mounted;
+}
 
 // Set by WiFiManager when AP mode is active; cleared when returning to STA mode.
 // When true, unrecognised URIs are redirected to wifi_config.html to trigger
@@ -140,7 +148,7 @@ void fs_custom_close_persistent_handle(void)
 
 bool fs_custom_is_ready(void)
 {
-    return (g_lfs != NULL);
+    return lfs_ready();
 }
 
 /**
@@ -167,7 +175,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
     // with X-Chunk-SHA256 and X-File-Size response headers.
     // Each request is independent: LFS is opened, seeked, read, and closed in one shot.
     if (strncmp(path, "api/chunks/", 11) == 0) {
-        if (!g_lfs) {
+        if (!lfs_ready()) {
             printf("fs_custom: chunks: LittleFS not initialized\n");
             return 0;
         }
@@ -548,7 +556,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
     // Check if this is a log file request (/logs/*.um4)
     if (strncmp(path, "logs/", 5) == 0) {
         // Log files require LittleFS to be mounted
-        if (!g_lfs) {
+        if (!lfs_ready()) {
             printf("fs_custom: LittleFS not initialized for log file access\n");
             return 0;
         }
@@ -671,7 +679,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
     // Background image: serve from LittleFS with caching headers if uploaded,
     // else fall back to fsdata.c (which has its own Cache-Control from makefsdata).
     if (strcmp(path, "background.jpg") == 0) {
-        if (g_lfs) {
+        if (lfs_ready()) {
             struct lfs_custom_file* lfs_file =
                 (struct lfs_custom_file*)malloc(sizeof(struct lfs_custom_file));
             if (lfs_file) {
@@ -725,7 +733,7 @@ int fs_open_custom(struct fs_file *file, const char *name)
             return 0;
         }
 
-        if (!g_lfs) {
+        if (!lfs_ready()) {
             printf("fs_custom: LittleFS not mounted for /files/ request\n");
             return 0;
         }
@@ -787,11 +795,13 @@ int fs_open_custom(struct fs_file *file, const char *name)
     // Captive portal: in AP mode, redirect unrecognised URIs to wifi_config.html.
     // This makes iOS, Android, Windows, and macOS show a "Sign in to network"
     // notification automatically when the user connects to the AP.
-    // Exempt: wifi_config.html itself (the redirect target), status.html (device
-    // info page), api/ (form submission), logs/ (file downloads), and POST response
+    // Exempt: wifi_config.html itself (the redirect target), style.css (which
+    // wifi_config.html needs in order to render), status.html (device info
+    // page), api/ (form submission), logs/ (file downloads), and POST response
     // JSON files.
     if (g_captive_portal_active &&
         strcmp(path, "wifi_config.html") != 0 &&
+        strcmp(path, "style.css") != 0 &&
         strcmp(path, "status.html") != 0 &&
         strncmp(path, "api/", 4) != 0 &&
         strncmp(path, "logs/", 5) != 0 &&

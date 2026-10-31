@@ -195,6 +195,7 @@ add_custom_command(
             ${WWW_DIR}/sd_info.html
             ${WWW_DIR}/tps_cal.html
             ${WWW_DIR}/style.css
+            ${WWW_DIR}/background.jpg
             ${WWW_DIR}/TPS.svg
     WORKING_DIRECTORY ${WWW_DIR}
     COMMENT "Generating fsdata.c from www directory"
