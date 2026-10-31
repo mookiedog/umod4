@@ -201,7 +201,13 @@ def _run(ocd, results, context):
                     f"POST /api/config returned HTTP {code}: {body}")
             results.passed("prov_set_wifi", "config accepted — WP rebooting")
         except ApProxyError as e:
-            results.fatal("prov_set_wifi", str(e))
+            # The WP queues its config save+reboot and powers off the WiFi chip ~300 ms
+            # later (ota_flash_task.cpp), so the HTTP response can be lost even though
+            # the config was accepted.  A proxy error here is therefore not proof of
+            # failure: prov_wait_reboot verifies that the WP really rebooted, and fails
+            # (RTT never dropped) if it did not.
+            results.passed("prov_set_wifi",
+                f"POST response lost ({e}) — verifying reboot in prov_wait_reboot")
 
     # ----------------------------------------------------------------
     # prov_wait_reboot — wait for WP to reboot after config save.
