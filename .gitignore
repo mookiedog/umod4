@@ -2,6 +2,10 @@
 __*/
 # Ignore any filename starting with double underscore:
 __*
+# ...except the names Python itself requires. This does not rescue files inside
+# an ignored __*/ directory.
+!__init__.py
+!__main__.py
 
 build/
 .venv/
