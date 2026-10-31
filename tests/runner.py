@@ -313,6 +313,14 @@ def _run_suite(suite, suite_name, ocd, results, context, ch0):
     except SuiteAbort:
         pass
     except RunnerFatal:
+        # Keep what the suite printed and what the WP printed up to the fatal error:
+        # the report is the only record of why the run was aborted.
+        captured = buf.getvalue().strip()
+        if captured:
+            results.record_suite_output(suite_name, captured)
+        ch0_text = ch0.since_mark().strip()
+        if ch0_text:
+            results.record_ch0_output(suite_name, ch0_text)
         raise
     except Exception as e:
         # Any unhandled exception in a suite must not kill the whole run —
@@ -508,6 +516,13 @@ def main():
                     ocd.start(reset=True)
                     ocd.wait_ready()
                 except (OpenOCDError, OSError) as e:
+                    # Nothing has run yet, so keep what OpenOCD and the WP printed:
+                    # they are the only evidence of why start-up failed.
+                    results.record_suite_output(results._suite,
+                        "OpenOCD log (tail):\n" + ocd._last_log(40))
+                    startup_ch0 = ch0.since_mark().strip()
+                    if startup_ch0:
+                        results.record_ch0_output(results._suite, startup_ch0)
                     results.fatal("openocd_rtt", str(e))
 
                 # Guard against a pending TBYB warm-boot: if the last flash used
