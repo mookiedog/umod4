@@ -19,7 +19,9 @@ const char* helpMsg =
 "  -s --s16             A standard 16-bit additive checksum (default)\n"
 "  -3 --murmur3         A murmur3 hash\n"
 "  -o --start-offset    start offset where calculation begins (default: 0)\n"
-"  -l --length          number of bytes to include in the calculation (default: all)"
+"  -l --length          number of bytes to include in the calculation (default: to end of file)\n"
+"\n"
+"Offset and length are decimal by default. A 0x prefix indicates a hex value (e.g. -o 0x4000 -l 0x4000).\n"
 
 "\n"
 "  -v --verbose\n"
@@ -48,6 +50,12 @@ int32_t offset_arg = 0;
 
 // Make a note that a length argument has not been seen
 int32_t length_arg = -1;
+
+// Numeric arguments are hex if they start with 0x, otherwise decimal (no octal)
+static int numberBase(const char* s)
+{
+    return (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) ? 16 : 10;
+}
 
 void processOptions(int argc, char** argv)
 {
@@ -119,7 +127,7 @@ void processOptions(int argc, char** argv)
 
         case 'o':
             if (debug_flag) printf ("option -o with value `%s'\n", optarg);
-            offset_arg = strtol(optarg, &eptr, 16);
+            offset_arg = strtol(optarg, &eptr, numberBase(optarg));
             if (*eptr) {
                 fprintf(stderr, "%s: Illegal character in offset argument: '%c'\n", progname, *eptr);
                 exit(-1);
@@ -140,7 +148,7 @@ void processOptions(int argc, char** argv)
 
         case 'l':
             if (debug_flag) printf ("option -l with value `%s'\n", optarg);
-            length_arg = strtol(optarg, &eptr, 16);
+            length_arg = strtol(optarg, &eptr, numberBase(optarg));
             if (*eptr) {
                 fprintf(stderr, "%s: Illegal character in length argument: '%c'\n", progname, *eptr);
                 exit(-1);
@@ -169,15 +177,31 @@ void processOptions(int argc, char** argv)
     }
 }
 
-void sum16(FILE* fptr)
+void sum16(FILE* fptr, int32_t offset, int32_t length)
 {
     uint8_t buffer[BUFFER_SIZE_BYTES];
     uint32_t bytesRead, totalBytesRead;
 
+    // If an offset was specified, skip to the start of where the calculation should begin
+    if (offset > 0) {
+        fseek(fptr, offset, SEEK_SET);
+    }
+
     totalBytesRead = 0;
     uint16_t cksum16 = 0;
+    int32_t lengthRemaining = length;
     do {
-        bytesRead = fread((void*)buffer, 1, sizeof(buffer), fptr);
+        // Without a length argument, process until end of file
+        size_t bytesToProcess = sizeof(buffer);
+        if ((length >= 0) && ((int32_t)bytesToProcess > lengthRemaining)) {
+            bytesToProcess = lengthRemaining;
+        }
+        bytesRead = (bytesToProcess > 0) ? fread((void*)buffer, 1, bytesToProcess, fptr) : 0;
+        if ((length >= 0) && (bytesRead < bytesToProcess)) {
+            fprintf(stderr, "%s: Requested starting offset and length goes past end of data file\n", progname);
+            exit(-1);
+        }
+        lengthRemaining -= bytesRead;
         totalBytesRead += bytesRead;
         if (bytesRead > 0) {
             for (uint32_t i=0; i< bytesRead; i++) {
@@ -326,7 +350,7 @@ int main(int argc, char **argv)
 
     switch (algo) {
         case ALGO_SUM16:
-            sum16(fptr);
+            sum16(fptr, offset_arg, length_arg);
             break;
 
         case ALGO_MURMUR3:
