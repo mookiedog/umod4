@@ -8,7 +8,7 @@
 # Two modes of operation:
 #   Release mode:  run without a directory argument from the folder containing
 #                  this script (e.g. a downloaded release zip).  The script
-#                  looks for WP.uf2 and partition_table.uf2 beside itself.
+#                  looks for WP.uf2 and WP_partition.uf2 beside itself.
 #                    ./flash_WP -e
 #   Dev/build mode: pass the build output directory explicitly.
 #                    flash_WP -e ~/projects/umod4/build/WP
@@ -50,7 +50,7 @@ if [ ! -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
-PARTITION_TABLE="$TARGET_DIR/partition_table.uf2"
+PARTITION_TABLE="$TARGET_DIR/WP_partition.uf2"
 WP_IMAGE="$TARGET_DIR/WP.uf2"
 
 for file in "$PARTITION_TABLE" "$WP_IMAGE"; do

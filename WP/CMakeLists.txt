@@ -469,7 +469,7 @@ pico_add_extra_outputs(${PROJECT_NAME})
 
 # Generate a standalone partition table UF2 for flashing onto a blank system
 # before flashing the OTA UF2 build.
-set(PARTITION_TABLE_UF2 ${CMAKE_BINARY_DIR}/partition_table.uf2)
+set(PARTITION_TABLE_UF2 ${CMAKE_BINARY_DIR}/WP_partition.uf2)
 add_custom_command(
     OUTPUT ${PARTITION_TABLE_UF2}
     COMMAND picotool partition create ${PARTITION_TABLE_JSON} ${PARTITION_TABLE_UF2}

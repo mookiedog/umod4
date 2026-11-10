@@ -52,13 +52,13 @@ _ARTIFACTS = [
         "wp_uf2",
         "WP.uf2",
         os.path.join("build", "WP", "WP.uf2"),
-        ["WP/src", "lib", "SwdReflash/src", "cmake", "CMakeLists.txt"],
+        ["WP/src", "WP/CMakeLists.txt", "lib", "SwdReflash/src", "cmake", "CMakeLists.txt"],
     ),
     (
         "ep_uf2",
         "EP.uf2",
         os.path.join("build", "EP", "EP.uf2"),
-        ["EP/src", "lib", "cmake", "CMakeLists.txt"],
+        ["EP/src", "EP/CMakeLists.txt", "lib", "cmake", "CMakeLists.txt"],
     ),
     (
         "wpusbboot",

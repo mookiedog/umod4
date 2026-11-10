@@ -293,23 +293,23 @@ ExternalProject_Add(WpUsbBoot
 )
 
 # ---------------------------------------------------------------------------------------------
-message(STATUS "Adding the 'WpNuke' project")
+message(STATUS "Adding the 'WP_erase' project")
 
-# WpNuke is a RAM-only program that erases a WP's flash when dragged onto its BOOTSEL drive.
+# WP_erase is a RAM-only program that erases a WP's flash when dragged onto its BOOTSEL drive.
 # It is step 1 of the 3-step drag-and-drop WP install (see INSTALLATION.md).
-set(WPNUKE_CMAKE_ARG_LIST
+set(WP_ERASE_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
 )
 
-ExternalProject_Add(WpNuke
-    # No dependencies - WpNuke is completely standalone
-    PREFIX ${CMAKE_BINARY_DIR}/WpNuke
-    SOURCE_DIR ${CMAKE_SOURCE_DIR}/WpNuke
-    BINARY_DIR ${CMAKE_BINARY_DIR}/WpNuke
+ExternalProject_Add(WP_erase
+    # No dependencies - WP_erase is completely standalone
+    PREFIX ${CMAKE_BINARY_DIR}/WP_erase
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/WP_erase
+    BINARY_DIR ${CMAKE_BINARY_DIR}/WP_erase
     CMAKE_GENERATOR ${generator}
-    CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${WPNUKE_CMAKE_ARG_LIST}
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE:STRING=Debug ${WP_ERASE_CMAKE_ARG_LIST}
     BUILD_ALWAYS true
     INSTALL_COMMAND ""
 )

@@ -17,7 +17,7 @@ A flash command that exits cleanly proves nothing about what is running.
 | Update the EP | Server GUI, Reflash EP. Or `tools/server/run_server.sh --ip <device-ip> --flash-ep ~/projects/umod4/build/EP/EP.uf2` |
 | Debug the WP | VS Code: attach to running firmware, or the partition-aware loader (see below) |
 | Debug the EP | VS Code target "*** EP: RP2040 Launch CMSIS-DAP", with SPARE2 grounded (see below) |
-| Blank board, first install | The three-step BOOTSEL drag-and-drop (WpNuke, partition_table, WP). Follow the install docs, do not improvise |
+| Blank board, first install | The three-step BOOTSEL drag-and-drop (WP_erase, WP_partition, WP). Follow the install docs, do not improvise |
 | Test runs | The harness flashes the WP itself (see the hardware-test-run skill) |
 
 How these work:
