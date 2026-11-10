@@ -1,225 +1,105 @@
 # Umod4: The UltraMod, Version 4
 
-![Voiding A Warranty](doc/images/voiding-warranty.jpg)
+<!-- AI coding agents: before doing anything else, read AGENTS.md in the repository root. It explains who you are probably working with and how to help them. -->
 
-## History
+![Voiding A Warranty](doc/images/README/voiding-warranty.jpg)
 
-This project has been ongoing since about 2004. It all started as a project to reverse engineer how the fuel injection system worked on my spanking new 2003 Aprilia Tuono. To make a long story short, it was pretty successful and I had a ton of fun figuring things out.
+The umod4 is the 4th generation of a data logger for Gen1 Aprilia fuel-injection ECUs.
+On every ride, it records what your throttle hand was doing and how the engine was responding to it, along with your precise location and velocity.
+Back in the garage, these ride logs upload automatically over WiFi to your PC, where you can explore them in a graphical visualizer.
+Because the umod4 replaces the ECU's EPROM with a large Flash memory, it can hold a whole library of EPROM images to choose from.
+Before the next ride, you can push a new or tweaked image into the library, then use your phone to choose which one to run, at home or out on the road.
 
-Along the way, "figuring things out" turned into a project that allowed me to stream real-time ECU data out of the fuel injection computer. The ECU data stream was then combined externally with a GPS position and velocity data stream, giving me my own personal racing datalogger.
+## Phone Control
 
-One result from that work is an annotated version of the original ECU codebase. Obviously, it is my interpretation of what is going on inside the ECU codebase. It is not complete, either. But if you have ever had the desire to stare at some impenetrable 68HC11 assembly code, check out the [ECU source code](ecu/src/UM4.S)!
+These are just a couple of examples to show the kinds of things you can do with your phone, at home or on the road.
 
-Once the version 3 hardware was working back in 2006-ish timeframe, I had to go riding. Here is a graph generated from a datalog from way back when. For this graph, the only data I included was RPM, throttle position, and the state of the clutch switch.  It shows me doing a 0-100MPH run:
+| | | |
+|:---:|:---:|:---:|
+| <img src="doc/images/README/web-ctrl-home.png" width="250" alt="Phone screenshot of the umod4 home page: buttons for EPROM Management, Filesystem, System, Live Stream and TPS Calibration"> | <img src="doc/images/README/web-ctrl-eprom-library.png" width="250" alt="Phone screenshot of the image library: a list of EPROM images with Add, Edit and Delete buttons, and a form for editing the selected image"> | <img src="doc/images/README/web-ctrl-image-selector.png" width="250" alt="Phone screenshot of EPROM Management: ECU online, the last boot, and a boot selector that picks the code and maps to run"> |
+| The home page, on a phone | The EPROM image library: add, edit, delete | Choosing which code and maps the ECU runs |
 
-![0 to 100](doc/images/0-100.jpg)
+## Server
 
-You can learn many things from that data log. Mostly, it proves that I'm slow: it took me about 7.9 seconds to go from 0 to 100MPH. A better rider than me would have given it a lot more throttle (green trace) in first gear. You can see I was modulating the clutch around 4000 RPM or so. A better rider would probably have been using a higher RPM and might have slipped the clutch a bit longer before letting it lock up. It took me forever to get the throttle wide open in second gear. I was shifting at about 9500 RPM (1000 RPM below redline, not optimal!) and clearly, my shifts are slow. It's all proof as to why my day job was in software, not as a drag racer.
+The server runs on a PC on your local network.
+It automatically pulls new ride logs off a umod4 and lets you reflash the onboard processors.
 
-The RPM (red trace) may look surprisingly thick & ragged, if only because a 60 degree V-twin's crankshaft rotation speed is surprisingly inconsistent through the course of any adjacent pair of crankshaft rotations. The Umod4 logs the timing of the crankshaft rotation in increments of 1/6 of a rotation. The graph makes it clear that the crank does not rotate at a nice smooth speed: the 60 degree V-twin means that the crank is speeding up and slowing down as it makes a single rotation. Those effects are more pronounced at larger throttle openings. When I closed the throttle at the end of the run, you can see that the RPM becomes more consistent (the line gets thinner).
+<p align="center">
+<img src="doc/images/README/server-reflash-wp.png" width="560" alt="The umod4 server managing two devices, BenchECU and Tuono2, with a progress dialog showing a WP firmware update uploading over WiFi">
+<br>
+<em>The server pushing a firmware update to the bike's WP (Wireless Processor) over WiFi</em>
+</p>
 
-## Umod4 Updated
+## Visualizer
 
-This UltraMod4 project revisits the original hardware design and brings it about 20 years into the future. Fortunately, Moore's Law was active during the interim. The expensive and obsolete 32Kx8 Flash chip from the Ultramod V3 has been discarded in place of a $1 processor that is fast enough to emulate an EPROM. Making the EPROM into a software construct opens the door to some new, interesting features when writing custom ECU software. See the EP (Eprom Processor) [README](EP/README.md) for more info on what a software-based memory chip can do.
+The visualizer program runs on a PC.
+It lets you examine the data in your logs.
+On the left, a selector pane lets you control what data streams you will see in the main window.
+The bottom pane shows the entire ride.
+You can see the blue line (coolant temp) slowly come up to operating temp in that window.
+The narrow blue rectangle in the bottom window shows you what part of the log you are looking at in the main window.
 
-The latest V4 hardware supports the following features:
+![visualizer operation](doc/images/README/viz-cruising.png)
 
-* EPROM Processor (EP)
-  * RP2040 Dual-core ARM Cortex M0+ processor at 125 MHz
-  * Core1:
-    * Pretends to be the EPROM for the Aprilia Gen I ECU
-    * Provides a communications back channel to allow the Aprilia ECU to send data to the outside world
-  * Core 0:
-    * At boot time, constructs a EPROM image to present to the ECU from the image library
-      * 16 Megabytes of Flash for holding potentially hundreds of ECU images
-    * Forwards the incoming ECU data stream to the WP for logging
-* Wireless Processor (WP)
-  * Raspberry Pi Pico2W: RP2350 dual-core ARM Cortex M-33 at 150 MHz
-  * Correlates the incoming ECU data stream with GPS position and velocity information
-  * Logs the combined data stream to a micro SD Card
-  * WiFi interface for:
-    * OTA Firmware upgrades (WP and EP)
-    * Automatic log uploading to a local network server after a ride
-    * EPROM selection before a ride
-    * Live View of selected ECU data stream items
+From the main window, you can see that I started from a stop, slowly opened the throttle (green line) to let the revs rise, then changed to 2nd gear and whacked the throttle open.
+I let the throttle roll off as my speed increased, shifting to 3rd gear just over 50 MPH.
+The blue triangles represent when GPS position & velocity data was received.
+Of course, you can zoom in to any level of detail in a log, right down to a partial rotations of the crankshaft with the engine running at redline.
 
-## Umod4 Server
+The visualizer will generate a map in a web browser showing that GPS data.
+Here is the very first ride map I ever collected.
+It was a short loop around the neighborhood on a cold winter day:
 
-A small Python-based server program runs on a local PC.
-The server is responsible for downloading ride logs after a ride.
-A user can also use the server to push OTA (Over The Air) firmware upgrades via WiFi to a bike parked in the garage.
+![ride map using GPS](tools/images/ride-1-overview.jpg)
 
-Here are some screen shots of an early version of the server.
-It will change a lot over the next while.
-It may be simple, but for now it gets the job done:
+## Where To Go
 
-![umod4 server](doc/images/server-v0.png)
+People who encounter this project may be interested at many different levels, from a rider with minimal tech expertise to a hardware hacker or a software enthusiast.
+Find yourself below:
 
-Notice that it can handle multiple umod4 devices.
-You click on the one that you want to work with.
-In my case, I have my Tuono out in the garage, and a test ECU on my workbench downstairs:
-
-![umod4 BenchECU](doc/images/BenchECU.png)
-
-## Umod4 Log Visualizer
-
-Once the server pulls the logs onto my PC, I can fire up the visualizer and see everything that happened on my rides.
-The visualizer is a pretty complex program in and of itself, so you will just get a taste of it here.
-
-The visualizer displays the data logs collected by the umod4.
-There is a **lot** of data.
-The ECU tracks crankshaft position six times per revolution.
-The umod4 logs all of it!
-You can clearly see that in how the engine RPM in a big V-twin is not at all consistent in terms of a partial rotation: it looks "fuzzy" for lack of a better word as the crank speeds up and slows down during a single rotation.
-
-Here I am rolling up to a traffic light and turning right, then accellerating up to a GPS-indicated 52 MPH:
-
-![umod4 vizualizer](doc/images/viz-cruising.png)
-
-If you zoom in enough, the vizualizer will show you each rotation of the crankshaft, annotated with things like individual sparkplug firing events and spark timing, and fuel injector pulses in relation to the crank position:
-
-![umod4 vizualizer detail](doc/images/viz-detail.png)
-
-One of the most fun features is the visualizer's ability to overlay the GPS position and velocity data on top of a Google Map window.
-There is a whole lot more over at the visualizer [README page](tools/README_Visualizer.md).
-Check it out over there.
-
-## Hardware Block Diagram
-
-The Umod4 replaces the EPROM in a stock ECU with a circuit board to extend the capabilities of the overall system:
-![Umod4 Hardware Block Diagram](doc/images/BlockDiag.jpg)
-
-The SPI flash is the non-volatile storage that replaces the original EPROM.
-
-The "V-Cvt" block performs voltage conversion between the ECU's legacy 5 volt logic domain and the Umod4's 3.3V logic domain.
-
-The SD card is used to log the data stream arriving from the ECU. The NEO-8 GPS provides position and velocity location. The Pico-W logs everything to the SD card. The WiFi and Bluetooth interfaces on the Pico W will control Umod4 operation in some future software revision.
-
-The GPS module is a generic uBlox NEO-8 from Aliexpress. The NEO-8 can report position and velocity data 10 times a second.
-
-The board also contains a socketed Micro SD card.
-Now that WiFi is working, I can treat the SD card as being essentially non-removable.
-This is partly because it is a bit of a pain to physically access it when the ECU is mounted on the bike.
-It is mainly because the WiFi interface allows access to anything on the SD card filesystem, so there really should be no reason to remove it anymore.
-And in fact, once I got wifi working, I have never removed the SD card since.
-
-## Data Flow
-
-A detailed version of the hardware block diagram demonstrates the data flow in the system.
-
-![Data Flow Diagram](doc/images/DataFlow.jpg)
-
-Certain aspects might not be obvious. For one, the WP can directly control the EP's SWD (Single-Wire Debug) debug silicon unit. This allows the WP to reflash the EP in a bullet-proof fashion meaning that the EP cannot get bricked. The SWD mechanism also permits the WP to directly access the EP's SRAM even while the EP is running.
-
-## PCB Hardware
-
-The circuit board design is on Github, located [here](https://github.com/mookiedog/umod4-PCB).
-It is designed to be fabricated at JLCPCB.com.
-The part selections and circuit board CAM setup is ready to go for the JLCPCB fabrication process.
-This is important because the RP2040 processor is not suited to soldering by hand.
-It works better to spend a few bucks and have JLCPCB perform the fabrication process using commercial pick&place machines and a real reflow oven.
-
-![Umod4 PCB](doc/images/ultraMod4_pcb.jpg)
-
-I am developing software using the second revision of the PCB, named 4V1.
-It contains all the changes and improvements found while doing the 4V0 bringup.
-While developing the software, a list of changes for a potential 4V2 board is becoming clear.
-There are no critical 4V1 bugs, so as things stand, a 4V2 PCB update would be feature-driven.
-
-### Installation
-
-Installing a Umod4 PCB requires populating a connector in the original ECU PCB. There is an unused connector marked "CN1" located beside the HC11 CPU. The solder needs to be removed from the connector holes as seen here:
-
-![Umod4 ECU Prep 1](doc/images/ECU-CN1-before.jpg)
-
-Then, a new connector strip is added. The connections on this new strip are critical. First off, they add 2 more power and ground connections so that I am not trying to power everything on the board through the single power and GND connections on the EPROM socket. Secondly, the new connector gives me access to three critical signals required for working with the HC11 processor on the ECU:
-
-* HC11 RESET: allows the umod4 to prevent the ECU processor from running while it sets up the ECU code that it will present to the ECU
-* HC11 E clock: Synchronizes the timing between the umod4's fake EPROM interface and the ECU's processor clock
-* HC11 RW signal: lets the umod4 know if the current bus operation is a read or a write
-
-Depending on the specific write address, writes can represent requests to log data, or they can be treated as RAM accesses to special areas inside the EPROM image which act like RAM instead of EPROM. This allows the ECU firmware to expand its RAM space, which was pretty limited in the original system at only 512 bytes.
-
-![Umod4 ECU Prep 2](doc/images/ECU-CN1-after.jpg)
-
-With the new CN1 connector strip added as shown above, the Ultramod4 board can be installed. It gets held in place with 4 screws and standoffs (not shown in this picture). The board in this picture is an original 4V0:
-![Umod4 ECU Installed](doc/images/ECU-installed.jpg)
-
-The little white box with the three wires just above the ECU is a hardware debugger that was used to develop and debug the "Fake EPROM" software in the RP2040.
-
-The fake EPROM responds to the ECU processor's bus 2 million times a second.
-Each request needs to be performed properly and within the HC11's timing requirements.
-It has to be verifiably perfect in its timing and operation.
-The last thing I want is a software bug that makes my engine stop running.
-While my bike is straddling some railway tracks.
-With a train coming...
-
-Apart from a couple of bug fixes, the 4V1 board made a few substantive changes.
-One of them was to rotate the Pico processor module end for end so that a USB cable could be plugged into the board permanently while the ECU was mounted on the bike.
-The other end of the cable sits under the seat.
-When parked in the garage, the cable can be plugged into a nearby USB power supply.
-This source of power allows the 4V2 board to operate even though the bike is turned off.
-And that is how it will be able to do things like dump ride logs over a wifi connection, or get OTA firmware updates.
+| If you are... | Start here |
+|---|---|
+| Curious what a Umod4 would do for a rider | [WHY_UMOD4.md](WHY_UMOD4.md) |
+| A rider with a Umod4: setting it up and using it | [USER_GUIDE.md](USER_GUIDE.md) |
+| Building a board and installing it in an ECU | [GETTING_STARTED.md](GETTING_STARTED.md) |
+| Wondering how it works: the EP/WP design, the ECU interface, the board | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) |
+| A software developer: building, debugging, testing | [BUILDING.md](BUILDING.md), [DEBUGGING.md](DEBUGGING.md), [BENCH_TESTING.md](BENCH_TESTING.md), [Tools.md](Tools.md) |
+| Using an AI coding assistant (for example Claude Code in VS Code) to do any of the above | With Claude Code, open this repository in VS Code and type `/onboarding` in the Claude window, or ask it "help me with onboarding". With any other assistant, paste the link to this page into it and tell it to read [AGENTS.md](AGENTS.md) first. If you are an AI coding agent: before doing anything else, read [AGENTS.md](https://github.com/mookiedog/umod4/blob/main/AGENTS.md). It explains who you are probably working with, what to ask them, and how to help them |
+| Curious where this project came from | [HISTORY.md](HISTORY.md) |
+| Looking at one piece of the project | The README in that directory: [EP](EP/README.md), [WP](WP/README.md), [ECU](ecu/README.md), [log decoder](tools/README_LogDecoder.md), [visualizer](tools/README_Visualizer.md) |
 
 ## Status
 
-As always, things are in a state of flux. On the plus side:
+Everything here has been verified on my own bike and my own test bench setup.
 
-* The entire project is in a Github repository (you are reading it's README right now!)
-* The fake EPROM code has been working flawlessly for over a year now:
-  * The Tuono runs fine!
-  * I can mix and match maps from EPROMs with my data-logging codebase
-  * The EPROM image loader works with both normal and protected EPROMs
-* Data logging works: ECU data and GPS data are written to a single, time-correlated logfile, currently using LittleFS as the file system.
-* The WP module uses a Pico 2W now. The extra speed and RAM space is much appreciated over the original Pico W.
-* The server works
-* A log [Visualizer](./tools/README_Visualizer.md) exists
-* WiFi is real!
-  * Automatic log downloading works.
-  * OTA firmware upgrades work!
-  * A web-based control mechanism allows a user to select EPROM images
-  * The bike creates its own local wifi network to allow a user to control the system away from home
-* A new [4V2 revision](https://github.com/mookiedog/umod4-PCB) of the PCB is being planned
+| Area | State | Notes |
+|---|---|---|
+| Overall system | Working | logging, the WiFi control interface, the server, and the visualizer |
+| UM4 ECU datalogging firmware | Working | Logging mechanisms functional. Can easily be extended for any new ECU data that a user might want to log |
+| EP firmware (the fake EPROM) | Working | Tuono runs fine, EPROM selection mechanisms all functional |
+| WP firmware (WiFi, GPS, SD card, logging) | Working | LittleFS's trouble with large files on SD cards was resolved by adding the LogStore class |
+| Server | Working | automatic log download, OTA firmware upgrades |
+| Visualizer | Working | Minor bugs exist |
+| PCB | Working | 4V2 is the most recent board actually fabricated. A 4V3 would fix pad dimensions to suit JLCPCB's manufacturability requirements and resolve the noise issue below. No other functional changes are expected |
+| PCB noise issue | In progress | Noise appears at VSYS that could possibly damage the Pico2W's voltage regulator. A 4V2 board can be bodged with a silicon diode to add 0.8V of noise headroom. It is not known whether that is a complete fix for a 4V3, or whether more filtering is needed |
 
+## Getting a Board
 
-As mentioned earlier, the EP image loader can "mix and match" my special data-logging firmware with the maps out of any Aprilia EPROM that is compatible with the RP58 codebase.
-In short, that means that basically any Aprilia EPROM codebase except the early small valve engines can be converted to have data-logging capabilities.
+The [umod4 PCB design](https://github.com/mookiedog/umod4-PCB) is a separate project, also on Github.
+As mentioned in the Status section, the 4V2 board is the most recent board that has been fabricated and tested.
+The 4V3 update represents only minor changes, and is in progress.
+The 4V3 design will be software compatible with 4V2.
+I have no timeframe for finishing it.
 
-## Further Reading
-
-At the moment, this repository contains a number of pieces that make up the project:
-
-* The [EP](EP/README.md) (EPROM Processor): the 'fake' ERPOM used by the ECU
-* The [WP](WP/README.md) (Wireless Processor): the system that provides the user interface control over the Umod4
-* The [ECU](ecu/README.md): this is the special data-logging firmware
-* The [log decoder](tools/README_LogDecoder.md) tool
-* The [visualizer](tools/README_Visualizer.md) tool
-* The server does not have a README yet. Just run it - it is pretty self explanitory
-
-The old [eprom_lib](eprom_lib/README.md) has mostly been replaced by an "image library", built into the WP control website.
-The website allows you to load .bin files and attach metadata to those .bin files.
-The metadata means you can do things like add notes about how the .bin files are performing, even out on the road using your phone.
-
-Check out the README.md files in each of the repository subdirectories.
-
-The [umod4 hardware design](https://github.com/mookiedog/umod4-PCB) can also be found on github.
-
-## Building The Software
-
-For a real challenge, try [building the software system](BUILDING.md) yourself.
-It's not much use without a circuit board, but if you are a software person, you might give it a shot just for fun.
-If you do, please let me know how it goes so I can update the docs for anything that is broken or just not clear.
+As things stand, someone who is "skilled in the art" would be able to send the design files from the PCB project repo to JLCPCB and get boards fabricated.
 
 ## Clarity
 
 Just to set expectations, **this project is all just for fun**.
-I am **not** trying to build a product.
-I **do not** want to build a product.
-Any decent product that costs money needs support.
-Good support takes time, and I am very jealous of my time.
-Time is best spent on fun things.
-Which is **not support**.
+I am **not** trying to build a product or make money off this.
+The project licensing is completely permissive.
+If someone wants to turn it into a product, they are free to do so.
 
 ## ...As Always
 
-![Proudly-made-on-earth](doc/images/proudly-made-1.jpg)
+![Proudly-made-on-earth](doc/images/README/proudly-made-1.jpg)

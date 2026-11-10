@@ -72,7 +72,7 @@ Note: the easiest way to power everything is to obtain an original mating connec
 
 Failing that, the ECU can be powered via an AC adapter socket using a home-made bracket on the circuit board, as shown below:
 
-![image](doc/images/bench_power.jpg)
+![image](doc/images/BENCH_TESTING/bench_power.jpg)
 
 Follow the directions below to connect up power and ground.
 

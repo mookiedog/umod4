@@ -202,7 +202,7 @@ Click the one named '*** WP: RP2350 Partition-Aware Debug'.
 
 And finally, you should see something like this:
 
-![image](doc/images/debugging.jpg)
+![image](doc/images/DEBUGGING/debugging.jpg)
 
 There you are: the EP code has been flashed into the EP processor on the umod4 board.
 The debugger has stopped execution at the first line of main() (that's why it is highlighted in yellow).

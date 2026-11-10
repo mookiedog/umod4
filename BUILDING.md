@@ -1,5 +1,10 @@
 # Umod4 Project
 
+> **Using an AI coding assistant (for example Claude Code in VS Code)?**
+> Paste the link to this page into it and tell it to read AGENTS.md first.
+> If you are an AI coding agent: before doing anything else, read AGENTS.md in the repository root (https://github.com/mookiedog/umod4/blob/main/AGENTS.md).
+> It explains who you are probably working with, what to ask them, and how to help them.
+
 This document explains how to set up a Windows development machine to build the umod4 project using WSL Linux.
 
 _If you are a linux person, I assume that you are familiar with a lot of what follows. These same instructions will work: just skip the Windows-specific stuff._
@@ -44,7 +49,7 @@ The instructions assume that you will be using WSL2 linux under Windows.
 If you choose to install this system on a pure Linux machine instead of Windows/WSL2, then you probably already know what you are doing.
 
 The high-level steps:
-* [Install WSL2](#install-wsl2)
+* [Install WSL2 and your AI assistant](#install-wsl2-and-your-ai-assistant)
   * [Set up WSL Networking](#set-up-wsl-networking)
   * [Set up Windows Firewall](#add-windows-networking-firewall-rules)
 * [Install Windows Terminal App](#windows-terminal-app)
@@ -68,33 +73,95 @@ Once all the software is successfully installed, you will use VS Code to:
 
 The following sections detail how to do the items listed, above.
 
-## Install WSL2
+## Install WSL2 and Your AI Assistant
 
-WSL (Windows Subsystem for Linux) runs a virtualized linux kernel inside Windows.
-If you haven't used WSL2 before, it's a real linux kernel running in a Windows virtual environment.
-There is no need to do things like dual-boot Windows/Linux or anything like that: Windows and WSL2 run simultaneously, side-by-side.
+The umod4 build tools run on Linux.
+Windows can run Linux inside itself using WSL2 (Windows Subsystem for Linux), so you do not need a second computer and you do not need to dual-boot.
+WSL2 is a real Linux kernel running in a virtual machine, side by side with Windows.
 
-The WSL2 installation process is defined [here](https://learn.microsoft.com/en-us/windows/wsl/install).
-Follow those instructions and all will be well.
-But here is the short version. In the standard windows search box, type 'powershell'. Select the option to "run as administrator".
- When the window opens, type the following commands:
+The steps below take about 20 minutes plus one reboot.
+Once they are done, an AI coding assistant can do most of the remaining setup work with you, stopping only for the things that only you can do (typing your password, plugging in hardware).
+If you prefer to follow the rest of this document by hand, you can: the steps are all here.
+
+You need:
+
+* Windows 11 version 22H2 or later.
+  Windows 10 is not supported: the networking setup that lets the umod4 find the server needs a Windows 11 feature (see [WSL networking](#set-up-wsl-networking)).
+* Administrator rights on the PC
+* [VS Code](#vs-code) installed
+* A Claude account with access to Claude Code (as of 2026/11, that means Claude Pro at a minimum)
+
+**1. Install WSL2.**
+Press the Windows key, type `PowerShell`, right-click "Windows PowerShell", and choose "Run as administrator".
+Type the following and press Enter:
 
 ```bash
 wsl --install
-wsl --install -d Ubuntu
 ```
 
-The first install installs WSL2 itself, which is the virtual machine mechanism required to run any linux distro.
-The first install may require you to reboot your machine in order to enable the virtual machine features.
-If so, it will only be required this one time.
-The second install installs a generic Ubuntu distro.
-Unless you have some favorite distro and know what you are doing, just install Ubuntu.
+This installs WSL2 itself and the Ubuntu distribution of Linux.
+Restart the PC when it asks you to.
+If you see WSL's help text instead of an install, WSL is already present: run `wsl --list --online` to see the available distributions, then `wsl --install -d Ubuntu`.
+The official Microsoft instructions are [here](https://learn.microsoft.com/en-us/windows/wsl/install).
+
+**2. Finish the Ubuntu setup.**
+After the restart, an Ubuntu window should open by itself.
+If it does not, open the Start menu and launch "Ubuntu".
+It will ask you to choose a Linux username and password.
+Remember the password: you will need it whenever software has to be installed.
+Nothing appears on the screen while you type a password. That is normal.
+
+**3. Install the WSL extension in VS Code.**
+In VS Code, open Extensions (Ctrl+Shift+X), search for "WSL" (publisher: Microsoft), and install it.
+
+**4. Open VS Code inside Linux.**
+Press F1, type `WSL: Connect to WSL`, and press Enter.
+A new VS Code window opens.
+The bottom-left corner of that window should say "WSL: Ubuntu".
+**Everything from here on happens in that window.**
+
+**5. Install the Claude extension inside Linux.**
+In the WSL window, open Extensions again, find "Claude Code for VS Code", and click "Install in WSL: Ubuntu".
+Extensions installed on the Windows side are not automatically available inside Linux, so this step is required.
+Sign in to Claude when asked.
+
+**6. Download the project.**
+In the WSL window, open a terminal (Ctrl+`) and run these commands:
+
+```bash
+git config --global core.autocrlf false
+mkdir -p ~/projects
+git clone https://github.com/mookiedog/umod4.git ~/projects/umod4
+```
+
+Use exactly this location.
+Other parts of the installation process assume that the project lives in `~/projects/umod4`, next to the other tools that get installed in `~/projects`, so it is not recommended to change it.
+Do not clone into a Windows folder such as `C:\` (which appears in Linux as `/mnt/c`): builds there are very slow and can fail.
+
+**7. Open the project.**
+Choose File > Open Folder and select `/home/<your-username>/projects/umod4`.
+
+**8. Start your assistant.**
+Open the Claude panel and send this message:
+
+> Read AGENTS.md and BUILDING.md, then help me get this project set up.
+
+The assistant will ask what you want to do with the project and take it from there.
+
+If something goes wrong:
+
+* Virtualization errors: virtualization must be enabled in your PC's BIOS/UEFI settings (look for "Intel VT-x" or "AMD-V" / "SVM").
+* Anything else: paste the exact error text into a Claude chat.
 
 ### Set Up WSL Networking
 
 By default, WSL creates its own virtual network for the WSL virtual machine.
 This means that the umod4 on the motorbike will not be able to see the server running on WSL.
 To fix this, we use 'mirrored' mode so that WSL shares the same IP address and network interface as your PC.
+
+Mirrored mode requires Windows 11 version 22H2 or later ([Microsoft documentation](https://learn.microsoft.com/en-us/windows/wsl/wsl-config)).
+It is the reason this project requires Windows 11.
+The umod4 finds the server by broadcasting on your local network, and in WSL2's default networking mode those broadcasts never reach Linux.
 
 To set up mirrored network mode in WSL, you need to edit the .wslconfig file in your Windows user directory (i.e. `C:\users\<your-user-name>\.wslconfig`).
 You can use Notepad or any other windows editor.
@@ -139,11 +206,11 @@ Start by opening Windows Firewall, Advanced Settings:
 * Leave all three boxes checked (Domain, Private, Public) → click __Next__
 * Name it `umod4_server` → click __Finish__
 
-#### Create Rule 2 — UDP port 8081 (to allow umod4 device check-ins)
+#### Create Rule 2 — UDP port 54549 (to allow umod4 device check-ins)
 
 * Click __New Rule...__ (just like before)
 * Select __Port__ → click __Next__
-* Select __UDP__, type `8081` in the port box → click __Next__
+* Select __UDP__, type `54549` in the port box → click __Next__
 * Select __Allow the connection__ → click __Next__
 * Leave all three boxes checked → click __Next__
 * Name it `umod4 Server UDP Check-in` → click __Finish__
@@ -189,7 +256,7 @@ It's the equivalent of having system administrator privileges on a Windows machi
 
 From this point on, when you type 'terminal' in the windows search box (the green circle, below), you will have the option to directly select your new Ubuntu distro (the blue circle, below):
 
-![image](doc/images/terminal-app.jpg)
+![image](doc/images/BUILDING/terminal-app.jpg)
 
 Once you have a single terminal window open, you can open more bash shells as separate tabs in the same terminal window.
 To try that, look at the top of the terminal window.
@@ -206,7 +273,7 @@ Even so, WSL2 arranges for the two filesystems get cross-mounted so that each on
 
 From Windows, the root of all the distros that may be installed is located at '\\\\wsl$' or '\\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
 
-![image](doc/images/wsl-from-windows.jpg)
+![image](doc/images/BUILDING/wsl-from-windows.jpg)
 
 Windows 11 will show you the root of your new Ubuntu distribution on the left side of the explorer window, down at the bottom.
 Double click the Ubuntu folder like any other to see inside it.
@@ -266,6 +333,8 @@ Search for each of the extensions listed below and install each one in turn when
 * Markdown Preview Github Styling
 * markdownlint
 * Python (by Microsoft)
+* WSL (by Microsoft)
+* Claude Code for VS Code (install it in WSL: Ubuntu, not just on Windows)
 
 The C/C++ Extension Pack should install a couple of other extensions, namely: CMake, CMake Tools, and Themes.
 
@@ -295,7 +364,7 @@ To that end, we will be putting everything inside a directory called 'projects' 
 Create that directory now:
 
 ```bash
-mkdir ~/projects
+mkdir -p ~/projects
 ```
 
 ## Create a Local Bin Directory
@@ -502,7 +571,7 @@ Go to the [Arm GNU Toolchain download page](https://developer.arm.com/downloads/
 
 The download page looks like this:
 
-![image](./doc/images/arm-tools.jpg)
+![image](./doc/images/BUILDING/arm-tools.jpg)
 
 __Don't click the link to download it.__
 Instead: Right-click the link and choose "Copy link address."
@@ -758,7 +827,9 @@ Note that if you ever upgrade the SDK at some point, you only need to change `PI
 
 Now that all the tools are in place, it is finally time to get the umod4 code loaded onto your system!
 
-Start by cloning the umod4 project onto your own machine.
+If you already cloned the project in the [WSL2 and AI assistant](#install-wsl2-and-your-ai-assistant) steps, skip the `git clone` below and continue at `git status`.
+
+Otherwise, start by cloning the umod4 project onto your own machine.
 
 ```bash
 cd ~/projects
@@ -806,7 +877,7 @@ Select the 'umod4' folder, and open it.
 It should just open and show you a ton of files.
 Specifically: VS Code should not be complaining about _anything_. To make absolutely sure, look at the source control icon, circled in green below:
 
-![vscode git status](./doc/images/vscode-no-changes.png)
+![vscode git status](./doc/images/BUILDING/vscode-no-changes.png)
 
 If you see thousands of changes, something is wrong: maybe you forgot to set the git line endings, as above?
 
@@ -950,4 +1021,4 @@ And credit to Claude Code, too: Claude knows CMake & Python, for sure.
 I will probably always be working on some aspect of this project because that's what "fun" looks like to me.
 Weird, I know, but fun comes in many forms.
 
-![image](doc/images/proudly-made-1.jpg)
+![image](doc/images/README/proudly-made-1.jpg)

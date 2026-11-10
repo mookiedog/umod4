@@ -296,7 +296,7 @@ ExternalProject_Add(WpUsbBoot
 message(STATUS "Adding the 'WP_erase' project")
 
 # WP_erase is a RAM-only program that erases a WP's flash when dragged onto its BOOTSEL drive.
-# It is step 1 of the 3-step drag-and-drop WP install (see INSTALLATION.md).
+# It is step 1 of the 3-step drag-and-drop WP install (see GETTING_STARTED.md).
 set(WP_ERASE_CMAKE_ARG_LIST
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchains/arm-none-eabi.cmake
     -DPICO_SDK_PATH=${PICO_SDK_PATH}

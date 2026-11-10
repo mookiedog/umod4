@@ -533,20 +533,10 @@ call `ocd.reconnect()` **without** resetting WP — a debug reset would abort TB
 
 ### 6. EP Image Store (`test_image_store.py`) — PLANNED
 
-Verifies the EP image store at `0x10200000` (image selector BSON doc + 32KB image slots).
+Not yet designed.
+The previous plan assumed the old BSON image selector and has been removed.
 **Prerequisite:** Suite 3 (EP SWD) must pass first, specifically `swd_test_flash` which
 proves the SWD flash-programming mechanism that this suite depends on.
-
-| ID | Description | Destructive | Status |
-| --- | --- | --- | --- |
-| `imgstore_snapshot` | Read image store selector slot (0x10200000, 32KB) via SWD | No | planned |
-| `imgstore_selector_valid` | Parse selector BSON, verify structure and at least one image entry | No | planned |
-| `imgstore_slot_read` | Read slot 1 raw binary, verify not all-0xFF (slot populated) | No | planned |
-| `imgstore_erase_selector` | Erase selector slot, verify EP falls back to limp mode | Yes | planned |
-| `imgstore_restore` | Restore selector from snapshot, verify EP reloads correctly | Yes | planned |
-
-"Limp mode" = EP runs with blank image store — engine will not run but board is recoverable.
-The erase/restore cycle proves the snapshot mechanism works before it protects OTA tests.
 
 ---
 
@@ -762,17 +752,19 @@ firmware versions.
 
 #### EP Image Store
 
-Contains the image selector BSON doc and 32KB EPROM image slots at `0x10200000` on EP
-flash.  Only relevant to `test_image_store`.
+Contains 128 slots of 64KB each (8MB total) at `0x10200000` on EP flash.
+Slot 0 is the image selector (a BSON document describing how the EP builds its boot image).
+Every other slot holds one self-describing EPROM image: a 32KB BSON header followed by the 32KB raw EPROM binary.
+Layout constants are in `EP/src/ep_flash_layout.h` and are mirrored in `tests/harness/flash_ops.py`.
+Only relevant to `test_image_store`.
 
-**Mechanism:** Read via WP→EP SWD path using the existing `epread` VFY command
-(already implemented).  Restore via the same path.  No OpenOCD direct connection to
-EP is needed — WP acts as the SWD bridge.
+**Mechanism:** `flash_ops.py` reads the store over HTTP from the WP.
+`GET /api/image-store/scan` lists the occupied slots, and the slot contents are then fetched in 4KB chunks from the `ep-image-store` flash region.
+Restore is not yet implemented (it needs a POST firmware endpoint on the WP).
 
-Size to snapshot: the full image store region (256 × 32KB = 8MB) is impractical.
-Snapshot only the image selector slot (slot 0, 32KB at `0x10200000`) plus any
-populated image slots identified in the selector BSON.  Unpopulated slots (all-0xFF)
-need not be saved.
+Size to snapshot: the full image store region (8MB) is impractical.
+Snapshot slot 0 (the selector) plus every slot that the scan reports as occupied.
+Unpopulated slots (all-0xFF) need not be saved.
 
 ---
 

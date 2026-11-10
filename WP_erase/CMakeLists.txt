@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.13)
 # WP_erase builds a RAM-only program that erases the entire flash of a WP, then pops back up
 # as a BOOTSEL USB drive.
 # It is step 1 of the 3-step drag-and-drop WP install: erase, partition table, WP image.
-# See INSTALLATION.md.
+# See GETTING_STARTED.md.
 #
 # The program is the SDK's 'flash_nuke' example. We do not copy its source: like WP's
 # use of the ws2812 PIO file, we build it in place from the pico-examples checkout.

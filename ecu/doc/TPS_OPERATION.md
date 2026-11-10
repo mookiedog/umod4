@@ -138,4 +138,4 @@ It performs the exact same calibration procedure as the standard ECU firmware, b
 To use it, turn the bike's ignition on, then navigate to the bike's home webpage and select "TPS Calibration".
 Your phone will walk you through the calibration process showing you how to adjust the sensor in real time:
 
-![TPS-adjustments](../../doc/images/TPS_ADJUSTMENT/too-high.png)
+![TPS-adjustments](./images/TPS/too-high.png)

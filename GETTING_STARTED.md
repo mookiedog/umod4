@@ -1,151 +1,740 @@
 # Getting Started With Umod4
 
-_The assembly process defined in this doc is based on the premise that the umod4 boards will NOT have their male-male SIP pin strips installed when they arrive from the assembly house.
-To ensure the best possible pin alignment, this means that the ECU should be modded first._
+> **Using an AI coding assistant (for example Claude Code in VS Code)?**
+> Paste the link to this page into it and tell it to read AGENTS.md first.
+> If you are an AI coding agent: before doing anything else, read AGENTS.md in the repository root (https://github.com/mookiedog/umod4/blob/main/AGENTS.md).
+> It explains who you are probably working with, what to ask them, and how to help them.
 
 Getting a umod4 installed is a case of "some assembly required", but it is not as difficult as it might first appear.
+Read [Before you start](#before-you-start) and check the [parts lists](#parts) first.
 The steps below will be covered in detail:
 
-1) [ECU mods](#ecu-mods)
-1) [Umod4 hardware prep work](#umod4-hardware-prep)
-1) [Umod4 initial software installation](#umod4-initial-software-installation)
-1) [Mounting umod4 into ECU](#install-umod4-board-in-ecu)
-1) [Next Steps](#next-steps)
+1) [Modify the ECU](#1-modify-the-ecu)
+1) [Check umod4 board construction](#2-check-umod4-board-construction)
+1) [Prepare the GPS](#3-prepare-the-gps)
+1) [Mount the umod4 in the ECU](#4-mount-the-umod4-in-the-ecu)
+1) [Install the Pico2W](#5-install-the-pico2w)
+1) [Set up your PC](#6-set-up-your-pc)
+1) [Install the WP software](#7-install-the-wp-software)
+1) [Provisioning](#8-provisioning)
+1) [Install the EP software](#9-install-the-ep-software)
+1) [Install the ECU on the bike](#10-install-the-ecu-on-the-bike)
+1) [Garage setup](#11-garage-setup)
+1) [Next steps](#12-next-steps)
+
+Each step ends with a checkpoint: something you can see or test to confirm that the step worked before you go on.
+
+## Before you start
+
+Three decisions come before you buy any parts.
+In addition, check [Is it for you?](./WHY_UMOD4.md#is-it-for-you).
+
+**1. Are you willing to modify the ECU?**
+A umod4 needs a socket soldered into the ECU's circuit board (step 1).
+Without that socket, a umod4 cannot work.
+The modification does not change how the ECU behaves, and you can always put an EPROM back in.
+If you do not want to do the soldering yourself, find someone who does.
+
+**2. Which maps will your bike run?**
+The umod4 replaces your EPROM, so something has to supply the ECU's program and its fuel and ignition maps.
+You have three options:
+
+* **The built-in maps.**
+  The umod4 includes stock 549USA maps.
+* **A stock unprotected RP58-compatible Aprilia image.**
+  The project does not include any, but `.bin` files for many of them can be found on the web.
+* **Your own unprotected image.**
+  A 32 KB `.bin` file of your current unprotected EPROM.
+  The `.bin` file can come from an EPROM reader or it can be produced by tuning software such as TunerPro.
+
+**Protected EPROMs are a problem.**
+Some Aprilia and many aftermarket chips are scrambled so that they only function in conjunction with a daughterboard that plugs into the ECU's EPROM socket.
+The umod4 software in this repository cannot descramble those images.
+If your chip is protected and you cannot get an unscrambled file, you will need to find a .bin file for an unprotected EPROM with maps that work with your bike.
+
+You do **not** need a `.bin` file to verify umod4 operation.
+But before trying to start your bike's engine, if your bike requires anything other than built-in 549USA maps, you must install at least one compatible EPROM image.
+
+Installing images is described in section 6 of the [User Guide](./USER_GUIDE.md#6-choosing-what-the-ecu-runs-eprom-images).
+Before you ride on any new image, read the testing advice in the User Guide's safety section.
+
+**3. Garage WiFi.**
+The umod4 really needs power and WiFi where the bike is parked.
+Power is usually not a problem given that the big Rotax twins seem to need their batteries to be on chargers all the time.
+WiFi might be trickier though for some locations: see [Garage WiFi](#garage-wifi) for what you need and some options.
 
 ## Parts
 
-### Round-Pin SIP Sockets
+Check your parts before you start.
+They will be used in subsequent steps.
 
-SIP sockets come in strip form.
-There are many choices out there.
-DigiKey part #[25-0513-10](https://www.digikey.com/en/products/detail/aries-electronics/25-0513-10/4298) are very high quality.
+### Loose parts that ship with umod4
 
-Here is a detailed dimensional drawing of that part:
+* one 12-pin SIP socket strip (for the CN1 modification in step 1)
+* two 20-pin male-male round-pin strips (for the Pico2W)
+* one 5-pin male-male round-pin strip (for the GPS module)
+* four each of M3 nylon standoffs (8mm tall, thread length 6mm) and M3 nylon screws (thread length 6mm)
 
-![details](./doc/images/GETTING_STARTED/SIP-socket-detail.jpg)
+### Parts a user must supply
 
-The key specs on the connector:
+* A Pico2W module. Do **not** get a module with headers already soldered: they are square pin headers and they will **not** work with the umod4's round pin sockets!
+* A USB power supply: 5V at 1A is fine.
+* A micro USB data cable for initial software install, plus powering the umod4 when mounted on the bike.
+    I use a 1 meter cable.
+* A "double sided" uBlox NEO8M module.
+    These are available on Ali Express.
+    Contact me if you are not sure what to get.
+    The Ali Express modules almost all arrive with square-pin headers preinstalled.
+    These will need to be removed, then replaced with a 5 pin male-male round pin strip.
+* An amplified antenna for the GPS module (also from Ali Express).
+* M3 (metric) nylon hardware: screw, nut, and spacer to mount the GPS module to the umod4.
+    See [Mount the GPS](#mount-the-gps) for what to look for.
+* A micro SD card. It is **not** worth spending money on a large capacity card.
+    A 32G to 64G card is fine and will hold hundreds of ride logs.
 
-* height from PCB to top of socket 0.165 inch
-* 0.1 inch pin spacing
-* 0.020 pin diameter
-* gold plated contacts
+## 1. Modify the ECU
 
-Do not get connectors that are much different in height!
-I would say no more than about +- 10 thousandths difference in height, max.
+An ECU *must* be modified to use a umod4.
+The modification is simple and backwards-compatible: a modified ECU will function completely normally if you replace the umod4 with an EPROM afterwards.
 
-These ones come in strips of 25 pins and can be cut to length.
-Use good quality flush-cutters to cut them!
+**If you do not want to modify your ECU, stop here: the umod4 will not work without the modification!**
 
-You need two 20 pin strips for the Pico2W, one 12 pin strip for the CN1 connector, and a 5 pin strip for the GPS mount.
-That's 57 pins worth, or three of the 25-pin strips.
-I would get a couple spares though because sometimes when you trim them, the plastic fractures leaving the pin on the end without enough support.
+### Background
 
-### Round-Pin Male-Male Interconnect Strips
-
-The male-male interconnect strips that allow the umod4 to plug into the ECU sockets are harder to find.
-
-The pins should be round, approximately 0.020 in diameter.
-
-These ones from DigiKey (ED6864-64-ND) are very high quality: [Mill-Max 350-10-164-00-006000](https://www.digikey.com/en/products/detail/mill-max-manufacturing-corp/350-10-164-00-006000/357045?s=N4IgTCBcDaIMwFYAMBaAjKtA2ALCpqBWBSIAugL5A).
-
-They come from DigiKey in strips of 64 pins and can be cut to length.
-One 64-pin strip is enough: the system needs 28 for the EPROM, 12 for CN1, and 5 for the GPS module for a total of 45 pins.
-
-I have also used male-male interconnect strips from LCSC in Taiwan, part number [C2764600](https://www.lcsc.com/product-detail/C2764600.html?s_z=n_q_C2764600&globalKeyword=C2764600).
-These ones worked well, too.
-Note that these strips are only 20 pins long, so make sure to get enough.
-Again, get some spares in case something bad happens as you trim them to length.
-
-## ECU Mods
-
-All gen 1 ECUs were shipped with an uninstalled connector __CN1__, as seen below (top, center):
+All gen 1 ECUs were shipped with an uninstalled connector, marked **CN1** as seen below (top, center):
 
 ![CN1-before](./doc/images/GETTING_STARTED/CN1-before.jpg)
 
-The CN1 connector gives the umod4 access to extra power & ground pins, but most importantly, access to the ECU processor's RESET signal.
+CN1 gives the umod4 access to extra power & ground pins, as well as some important ECU processor signals that are not available at the EPROM socket.
 
-Adding this socket is pretty easy as PCB rework goes, but if you are not confident in your skills, find someone who is and buy them a beer to do it for you.
+The umod4 needs a socket added to the CN1 mounting holes.
+A umod4 board needs to plug into the existing EPROM socket as well as a new CN1 socket.
 
-__WARNING: be static safe when working with the ECU:__
-* __Wearing a ground strap is strongly recommended whenever you handle the ECU or umod4 PCBs!__
-* __Use an anti-static bag for the ECU and umod4 PCBs. Keep them in a bag when not in use!__
+Adding this socket is easy as PCB rework goes.
+But if you are not confident in your skills, **find someone who is**.
+
+**WARNING: be static safe when working with the ECU:**
+* **Wearing a ground strap is strongly recommended whenever you handle the ECU or umod4 PCBs!**
+* **Use an anti-static bag for the ECU and umod4 PCBs. Keep them in a bag when not in use!**
 
 ### Process
 
 Start by removing the ECU from bike.
 If you have never done that before, pay attention to the locking tabs when disconnecting the two big wiring harness connectors from the ECU.
 
-With the ECU out, take it to a workbench and perform the following steps:
+With the ECU on a workbench, perform the following steps:
 
-1) __Remove the ECU cover__ (4 screws)
+1) **Remove the ECU cover** (4 screws)
 
-1) __Remove ECU circuit board from ECU__ (7 screws)
+1) **Remove ECU circuit board from ECU** (9 screws)
 
-    Remember: be static safe! Keep the board in a static bag while you are not working on it.
+    * 7 screws on the PCB itself
+    * 2 screws that hold the PCB's heat sink to the steel fin on the ECU's bottom plate
 
-1) __Remove Solder From CN1 Solder Pads__
+    **Be static safe! Keep the board in a static bag while you are not working on it.**
 
-    Use a soldering iron and a solder sucker to remove the solder from all 12 holes on connector CN1.
-    My technique is to clamp the board vertically, then melt the solder from one side of the PCB and use the solder sucker from the other side.
+1) **Remove Solder From CN1 Solder Pads**
 
-    If you have trouble getting the last bit of solder out, it can help to start over: add some solder to the hole, then try the solder sucker again.
+    Use a soldering iron and a cheap [solder sucker](https://www.amazon.com/s?k=solder+sucker) to remove the solder from all 12 holes on connector CN1.
+
+    My technique:
+
+    * Clamp the board vertically
+    * **FIRST:** place the sucker directly over a hole on one side of the board
+    * **THEN:** melt the solder from the other side, trying not to cover the hole with the iron's tip
+    * trigger the sucker while the tip has the solder melted
+
+    If you have trouble getting all the solder out, let the board cool.
+    Start over by adding some solder to refill the hole, then try the sucker again.
 
     The goal is to end up with nice clean, solder-free mounting holes, as seen below:
 
     ![CN1-desoldered](./doc/images/GETTING_STARTED/CN1-desoldered.jpg)
 
-1) __Install Round-Pin SIP Socket Strip onto ECU PCB__
+1) **Install Round-Pin SIP Socket Strip into CN1**
 
-    Trim one of your round-pin [SIP sockets](#round-pin-sip-sockets) to be 12 pins long, and place it into the CN1 connector holes.
-    It should fit in very easily.
-    If not, you might need to clean more solder from one of the holes.
-    It needs to face __UP__, the same direction as the EPROM socket.
+    Insert the 12-pin [SIP socket strip](#round-pin-sip-sockets) into the CN1 holes.
+    The SIP socket holes need to face **the same direction as the EPROM socket holes**.
     You will be soldering on the back side of the ECU PCB.
 
-    To hold the new strip socket while it gets soldered, I use a rubber band around the whole ECU PCB to hold it in place. The rubber band does not need to be super-tight: it just needs to be strong enough to hold the SIP socket steady while you solder the first pin.
-    Adjust the socket under the rubber band so that it sits as vertically as you can get it.
+    To hold the new strip socket in place while it gets soldered, I use a rubber band around the whole ECU PCB.
+    The rubber band only needs to be tight enough to hold the SIP socket vertical and steady while you solder the first pin.
 
-    After soldering one pin somewhere in the middle of the strip, verify that the SIP socket is both vertical and pressed tightly against the ECU PCB. It is OK to make adjustments by remelting the initial pin you soldered and adjusting the socket with your finger to get it where you want it.
+    Applying a bit of electronics soldering flux is strongly recommended before soldering the socket pins!
 
-    Once you are happy with your alignment job on the first pin, solder all remaining pins on the SIP socket.
+    Start by soldering just one pin somewhere in the middle of the strip.
 
-    After soldering: do a visual inspection of your joints!
-    Use magnification if you can, like a jeweler's loupe.
-    Bad solder joints can cause all kinds of crazy/intermittent problems, especially in a high-vibration environment like a motorbike.
+    After the first pin is soldered, **STOP:** visually verify that the SIP socket is both perfectly vertical and pressed tightly against the ECU PCB.
+    If needed, you can easily make adjustments at this stage by remelting the single soldered pin and adjusting the socket with your finger.
+
+    Once you are happy with the alignment, solder all remaining pins on the SIP socket.
+
+    After soldering: do a visual inspection of your joints using a magnifier like a jeweler's loupe.
+    **Bad solder joints can cause all kinds of crazy/intermittent problems, especially in a high-vibration environment like a motorbike.**
+
+    If you have some "flux remover" spray, it is a good time to clean the back of the ECU PCB where you added CN1.
+    You can also use a Q-tip cotton swab and some isopropyl alcohol to clean off the flux residue.
 
     When complete, your ECU should look like this:
 
     ![CN1-after](./doc/images/GETTING_STARTED/CN1-after.jpg)
 
-## Umod4 Hardware Prep
+1) Mount ECU PCB
+
+    Once the ECU PCB passes visual inspection, it can be remounted onto the ECU's steel bottom plate.
+    When screwing down the ECU PCB, 4 of the original screws will be replaced with M3 nylon 8mm standoffs in the locations shown below.
+    These standoffs should **NOT** get torqued too tightly: they are plastic, not steel!
+    Finger tight is good enough.
+
+    ![standoffs](./doc/images/GETTING_STARTED/standoffs.jpg)
+
+**Checkpoint:**
+
+* the 12-pin socket strip stands vertical and flush against the ECU PCB
+* every pin is soldered
+* you have inspected each joint
+* the ECU PCB is remounted with nylon standoffs in the proper location, finger tight!
+
+## 2. Check umod4 board construction
+
+It is possible that certain parts might not be present on a board you receive.
+This section makes sure that everything you need is installed.
+If your board is missing any of these parts, you will need to obtain them and solder them on yourself.
+See [Appendix A: Building a board from scratch](#appendix-a-building-a-board-from-scratch) and [Appendix B: Parts and sourcing](#appendix-b-parts-and-sourcing) for help in that regard.
+
+### Confirm male-male mounting pins on rear
+
+Confirm that the umod4 board has the 3 round-pin male-male mounting strips installed.
+They are the 3 black male-pin strips seen here:
+
+![three male-male mounting strips](./doc/images/GETTING_STARTED/male-male-backside.jpg)
+
+### Confirm SIP sockets on front
+
+Confirm that the board has SIP sockets for the Pico2W and the GPS module.
+The GPS socket is the 5-pin SIP socket in the upper left.
+The Pico2W socket is made from the two long 20-pin SIP socket strips:
+
+![pico and GPS socket strips](./doc/images/GETTING_STARTED/SIP-sockets-frontside.png)
+
+**Checkpoint:**
+
+* Three male-male mounting strips are confirmed present on the rear of the board
+* Three female SIP socket strips for Pico2W and GPS are present on the front
+
+## 3. Prepare the GPS
+
+All of the GPS modules I have obtained from Ali Express arrive with 0.025" square pin headers already soldered into them.
+Since the umod4 board has a round-pin socket for the GPS, these headers need to be replaced.
+
+The easiest way to remove the square-pin headers is destructively: use flush cutters to cut off the pins as they exit the plastic, then break the plastic between each pin.
+This allows the old pins to be unsoldered and removed one at a time.
+Use a solder sucker to clean out the old holes.
+
+Carefully examine the male-male pins.
+You will see that the two sides are different:
+
+![male-male pins](./doc/images/GETTING_STARTED/male-male-strips.jpg)
+
+The flat side is designed to sit against the circuit board that the strips are soldered into.
+The conical side of the strip is designed to plug into a socket.
+
+Insert the male-male pin strip on the side of the GPS with the uBlox module so that the flat side of the strip is flush with the GPS module's circuit board.
+The conical side of the pins should face away from the PCB, as shown below:
+
+![GPS pins](./doc/images/GETTING_STARTED/gps-pins.jpg)
+
+Make absolutely sure that your setup matches the photo:
+
+* the male-male pin strip is on same side as uBlox module
+* conical side of strip pins faces **away from the GPS board**
+
+If so, then flip the GPS module over and solder the interconnect strip.
+
+### Mount the GPS
+
+Mounting the GPS involves working with a umod4 board that is loose on a static-safe benchtop, not yet installed in the ECU.
+
+**Be very careful at this stage to avoid accidentally bending the male-male mounting pins on the backside of the umod4!**
+
+Plug the GPS module into the 5-pin GPS socket on the umod4.
+It should look like this:
+
+![floating GPS](./doc/images/GETTING_STARTED/gps-floating.jpg)
+
+You need to mechanically screw the GPS down at this point while the back of the umod4 board is still accessible.
+Once the umod4 is plugged into the ECU, it is very difficult to reach a fastener on the backside.
+
+My apologies: you are on your own at this step and may have to make a trip to the hardware store.
+I use a nylon screw, spacer, and nut to mount the GPS to the umod4. A 15-ish mm metric M3 screw will do.
+You might need to shorten a 20mm screw.
+I made my own nut for the bottom by cutting the threads off a 6mm nylon standoff with an xacto knife.
+Whatever you use on the backside should be no taller than 6mm or else it will contact the ECU PCB and the umod4 will not sit flat!
+The spacer should be approximately 8mm tall and **made of plastic** to avoid potential electrical shorts on the GPS module pins.
+The length of the spacer should be such that the GPS module sits parallel to the umod4.
+
+*Don't bother attaching the GPS antenna yet.
+It would not hurt, but it would mainly be in the way during the next sections*
+
+**Checkpoint:**
+
+* GPS has square-pin header removed
+* GPS module has its round-pin male-male strip soldered down precisely as per the photo
+* GPS module plugged into its socket as per photo
+* Mounting screw and spacer installed and screwed down
+* Verify GPS mounting hardware on the backside of the umod4 is no more than 6mm thick
+
+## 4. Mount the umod4 in the ECU
+
+With the GPS module installed and screwed down, it is time to install the umod4 in the ECU.
+
+This is not hard, but it is slightly trickier than installing a plain EPROM because now you need to line up three sets of pins.
+
+**Carefully** get all 3 rows of pins lined up with their socket holes on the ECU PCB.
+It is easiest to start with the new CN1 pins because they are very easy to see.
+Once they are lined up, verify that the pins that mate with the EPROM socket are also properly lined up.
+You should notice that the pins will drop into their corresponding socket holes for a few mm before they stop moving.
+This is good: it indicates that your alignment is correct.
+
+**If you are at all unsure with the alignment, start over!**
+
+Once you are happy with the pin alignment, put one thumb on top of the chip labeled U6, and your other thumb between the Pico2W socket strips at the end nearest U6.
+Press down with both thumbs to seat the board.
+It should end up flush with the 4 nylon standoffs that you mounted previously.
+
+Once seated, the umod4 mounting holes should line up precisely with the holes in the standoffs.
+Use the four M3 6mm nylon screws to attach the umod4 to the standoffs.
+Again, lightly tighten the nylon screws with a screwdriver.
+It would not be a disaster to break off a mounting screw because the standoffs are replaceable, but there is no need to overtighten them!
+
+It should all look like this:
+
+![mounted](./doc/images/GETTING_STARTED/mounted.jpg)
+
+*The ECU lid will remain off, forever.
+The umod4 is too tall to fit under it.
+At some point in the future, it might be good to get someone to 3D print a new cover.*
+
+**Checkpoint:**
+
+* umod4 sits flush on all four nylon standoffs, holes aligned, screwed down with nylon screws
+
+## 5. Install the Pico2W
+
+Pico2W boards arrive as bare boards with no mounting pins.
+
+**Reminder: Umod4 SIP sockets require 0.020 round pins, not 0.025 square pins! Do NOT use Pico2W modules with pre-installed square pin headers!**
+
+To achieve perfect alignment between the Pico2W and the umod4 socket, the Pico module gets soldered in-place on top of the umod4:
+
+1) Plug a 20-pin male-male strip into each of the two Pico2W sockets on the umod4.
+    Verify that the conical side of each strip goes **down** into the socket on the umod4.
+    The flat side of the strip faces up.
+
+    ![male-male pins](./doc/images/GETTING_STARTED/male-male-strips.jpg)
+
+    *Male-male strips flat side (circled in green) versus conical side*
+
+1) Place the Pico2W module onto the two strips.
+    The flat side of each strip must sit flush against the underside of the Pico's PCB.
+    The USB connector on the Pico2W faces away from the SD card holder:
+
+    ![orientation](./doc/images/GETTING_STARTED/orientation.jpg)
+
+1) Solder one pin in the middle of the Pico pins.
+   Check that the Pico is level and both strips are flush, then solder the remaining pins.
+
+1) Do a visual inspection of every joint!
+
+The Pico2W stays plugged into the umod4 from here on.
+
+**Checkpoint:**
+
+* The Pico2W sits flush on both socket strips
+* All pins soldered
+* Pico2W USB connector faces away from the SD card holder
+
+## 6. Set up your PC
+
+The umod4 server is a program that runs on a PC on your home network.
+It is what downloads your ride logs automatically, and lets you update your umod4's firmware over WiFi.
+
+This setup process is a one-time job.
+If you have a PC at home that tends to be on all the time, that's a good choice.
+You could also install it on a laptop that you would bring to a track day, for example.
+
+This step does not involve the umod4 hardware at all.
+You can do it at any time, even before your parts arrive.
+
+**You need a Linux PC, or a Windows 11 PC (22H2 or later).**
+
+Windows 10 is not supported: the umod4 finds the server using UDP broadcasts, and that needs WSL's mirrored networking, which requires Windows 11 22H2 or later.
+
+An AI coding assistant can do most of this setup with you: see the AI assistant row in the [README](README.md#where-to-go).
+
+**On Windows**, first set up WSL (Windows Subsystem for Linux), the Linux environment that runs the server:
+
+* [Install WSL](./BUILDING.md#install-wsl2-and-your-ai-assistant)
+* [Set up WSL networking](./BUILDING.md#set-up-wsl-networking) and [add the Windows firewall rules](./BUILDING.md#add-windows-networking-firewall-rules), or the umod4 will not be able to find the server
+* [Install the Windows terminal app](./BUILDING.md#windows-terminal-app)
+
+**On Linux, or inside WSL**, open a bash terminal and:
+
+* [Create a local bin directory](./BUILDING.md#create-a-local-bin-directory)
+* Install uv, as described in [Python and uv](./BUILDING.md#python-and-uv)
+* Get the umod4 code:
+
+```bash
+mkdir -p ~/projects
+git clone https://github.com/mookiedog/umod4 ~/projects/umod4
+```
+
+* Start the server:
+
+```bash
+~/projects/umod4/tools/server/run_server.sh
+```
+
+The first time you start the server, it will need to download all the Python packages the server needs, which can take a few minutes.
+This only happens the very first time.
+Restarting the server subsequently will be instantaneous.
+
+Once the server starts, you will see a window of this general form:
+
+![server initial run](./doc/images/GETTING_STARTED/server-initial-run.jpg)
+
+**Checkpoint:**
+
+* Server window opens and shows an empty device list
+
+## 7. Install the WP software
+
+The software installation procedure described in this section can **always** be used to recover a umod4 in the extremely unlikely event that it loses its ability to be flashed via WiFi.
+The ability to flash a WP using a USB cable is built into the Pico2W boot ROM.
+This is what makes a umod4 "unbrickable".
+
+### Prep
+
+Installing umod4 software the first time must be done using a PC and a micro USB data cable that connects the WP to the PC.
+After the software is installed the first time, all subsequent updates can occur OTA (Over The Air) via WiFi.
+
+The first step is to obtain binary files for:
+
+1) WP_erase.uf2
+2) WP_partition.uf2
+3) WP.uf2
+4) EP.uf2
+
+The first 3 will be installed via USB cable.
+The EP.uf2 will be installed by the umod4 server application via WiFi (step 9).
+
+The ECU stays on your workbench for this step and the next two.
+It does not go back on the bike until step 10.
+
+For now, do not install the SD card.
+It is not harmful if you accidentally have one inserted, but the instructions below assume that it is not present.
+
+### Installation
+
+Installing software via USB cable is easy.
+Begin by making sure that the PC end of the cable is unplugged.
+Find the 'BOOTSEL' button on the Pico2W.
+It is the only button on the board, located near the USB connector:
+
+* press and hold the BOOTSEL button
+* while continuing to press BOOTSEL, plug the other end of the cable into your PC
+
+Within a couple of seconds, a new mass storage device named "RP2350" will appear with exactly two files on it:
+
+![USB-mass-storage](./doc/images/GETTING_STARTED/usb-mass-storage.jpg)
+
+If you do not see the RP2350 Mass Storage window, make sure that you are using a USB *data cable*, not just a USB power cable.
+Unplug the USB cable at the PC, then try again.
+
+The RP2350 Mass Storage mode is very special.
+If you drag a .uf2 file to an RP2350 in Mass Storage mode, the RP2350 chip does not copy the file, it programs the RP2350 flash memory with the *contents* of the .uf2 file.
+
+### Erase WP
+
+Using your PC's normal file explorer, drag the file "WP_erase.uf2" onto the RP2350 mass storage device.
+
+Copying this file to the RP2350 device serves to load and run a program on the Pico2W that completely erases its entire flash.
+
+On Windows, this may cause a pop-up saying that the file might be harmful.
+Click "OK".
+The mass storage window will close after about 1 second.
+It takes the flash eraser program about 10 seconds to run.
+When it finishes, a new RP2350 mass storage explorer window will open.
+
+### Partition WP flash
+
+Using the file explorer, drag the file "WP_partition.uf2" onto the RP2350 mass storage device.
+
+Copying this file to the RP2350 partitions its flash memory so that future WP firmware updates can be done safely via WiFi.
+
+Again, if there is a Windows warning about the program being harmful, just click "OK".
+
+The partition program loads and runs basically instantly, which seems to cause some issues with Windows.
+Sometimes, the explorer window closes and reopens just like the erase flash step, above.
+Other times, the explorer window will close, but not reopen.
+If it does not reopen, open a new explorer window and look at the "This PC" pane on the left.
+You should see the RP2350 mass storage device still sitting there.
+Click on it, and it will reopen a new RP2350 mass storage device explorer window.
+If for some reason, the RP2350 is not showing up under "This PC", unplug the USB cable from the PC, press and hold BOOTSEL like before while plugging the USB cable back in.
+
+### Install WP software
+
+Using the file explorer, drag the final file "WP.uf2" onto the RP2350 mass storage device.
+
+This time, the file is big enough that you will see the explorer open a copy progress window as the file gets flashed onto the RP2350.
+
+When this file transfer completes, the WP will reboot and start running umod4 software.
+
+### Initial state
+
+You will know that the umod4 is running because the LEDs on the board will light up or flash through color changes.
+There are two important LEDs to check, the WiFi status LED and the filesystem status LED.
+
+The WiFi status LED is the small green located near the WP's USB connector.
+At this point, it will be slowly blinking: 1 second on, 1 second off.
+This slow blinking indicates that WP does not know your home WiFi's name or password.
+
+You will also see the RGB LED located right beside the CN1 pins glowing red.
+This is the filesystem status LED.
+The red color tells you that there is no SD card mounted in the umod4.
+
+### SD card installation
+
+**WARNING: if your card was formatted for use on a PC, inserting it into a umod4 will cause the card to be reformatted without further warning, erasing all data on the card!**
+If the card was already formatted for use on a umod4, inserting it is completely harmless: all the old umod4 files will remain untouched.
+
+If you are OK to erase any Windows data from your card, you can insert the SD card now.
+
+The WP supports hot-plugging the SD card, so there is no need to unplug the WP from USB power.
+As the card latches in place, the WP will detect it.
+The led that had been red will cycle through a few colors as it prepares the card for use and formats a new filesystem.
+After about 1 second, the LED should end up glowing in a nice magenta color.
+Magenta indicates that everything is in order.
+Anytime you look at that LED from now on, you want to see magenta!
+
+Feel free to check the hotplug operation at this point: push the SD card in to eject it.
+The LED will immediately turn red indicating "no card detected".
+Reseat the card.
+You will see the LED color cycle end up at magenta again.
+
+**Checkpoint:**
+
+* Green WiFi status LED is slowly blinking (1 second on, 1 second off)
+* Micro SD card inserted
+* RGB filesystem status LED is glowing magenta
+
+## 8. Provisioning
+
+The umod4 software is installed, but the umod4 does not yet know your home WiFi, and it has no name of its own.
+Telling it these things is called "provisioning".
+In this step you will give your umod4 a name and a strong password for its own WiFi network, and you will tell it how to join your home WiFi.
+When you are done, you can reach your umod4 from any phone or PC on your home network, and the umod4 server will be able to find it.
+
+You can use a phone or a laptop with a wifi interface.
+The instructions here assume you use a phone, but they work the same for a laptop.
+
+If a umod4 cannot access your own home WiFi for any reason, it automatically creates its own WiFi network.
+This is called Access Point mode, or more simply, AP mode.
+The provisioning process uses the umod4's own WiFi network to tell it how to connect to your actual home WiFi network.
+
+Open your phone's wifi settings and scan for nearby WiFi networks.
+You will see one called "umod4_XXXX".
+The XXXX will match the last 4 digits of your umod4's MAC address.
+In the example below, the umod4 AP-mode network shows up as "umod4_1EA3":
+![network-scan](./doc/images/GETTING_STARTED/wifi-network-scan.jpg)
+
+Ask your phone to connect to that WiFi network.
+The default password is exactly the same as the WiFi name/SSID (case is important!).
+
+Your phone may complain that the new wifi connection has no internet access and discourage you from connecting to it.
+That's OK, connect to it anyway:
+
+![connected](./doc/images/GETTING_STARTED/wifi-connected.jpg)
+
+Once connected, open a web browser on your phone.
+In the address bar, navigate to the following IP address: ``192.168.4.1``.
+
+You will see the umod4's configuration page:
+
+![wifi-config](./doc/images/GETTING_STARTED/wifi-config.jpg)
+
+Pick a new name for your device.
+Keep the name simple: no unicode or emoji chars!
+
+The section titled "HOME NETWORK (STA MODE)" is where you enter the credentials for your home network.
+Enter your network name and its password in the proper boxes.
+Do NOT hit "Save & Reboot" yet.
+
+Next, you can change the umod4's AP network name to something more memorable if you want.
+But even if you do not change the AP network name, you **MUST** give it a new, **strong** password: **this network will get broadcast where ever your bike goes!**
+
+_FYI: it is easy to change the AP Network name and password later so don't freak out about picking the best name possible right now._
+
+Once you have entered all the configuration fields, click on "Save & Reboot" at the bottom of the page.
+
+You should see a new page on the phone saying that it is now connecting to the home network.
+The WP will reboot.
+This time, the WiFi LED should come solid (no more slow-flash) meaning that the WP is connected to home WiFi.
+
+At this point, your umod4 is on your home network.
+This means you can talk to it from any phone or PC on your home network.
+
+On your PC or phone, open a browser and type the following, replacing 'Tuono' with whatever you named your umod4:
+
+```text
+http://Tuono.local
+```
+
+*If your browser cannot find that name, you can always use the umod4's IP address assigned by your router instead.
+You can find it in your router's list of connected devices.*
+
+You will see your umod4's home webpage.
+It may look a bit different than this as the WP firmware has evolved since this screenshot was taken:
+
+![website-homepage](./doc/images/GETTING_STARTED/website-home.jpg)
+
+Feel free to click around a bit.
+
+**Checkpoint:**
+
+* The WiFi LED is solid (not slowly flashing) indicating it is connected to your home network
+* You can use a browser to access your umod4's home web page from a phone and/or a PC
+
+## 9. Install the EP software
+
+Now that the WP is on your home network, the umod4 server can install the EP firmware over WiFi.
+
+* If the server from step 6 is no longer running, start it from a terminal (on Windows, a WSL terminal):
+
+```bash
+~/projects/umod4/tools/server/run_server.sh
+```
+
+* Wait for your device to show up in the server's device list.
+The device's name is the one you chose during WiFi provisioning.
+* Click on your device's name to select it
+* Click the `Manage Device` tab, just below
+* Click `Reflash EP`.
+* Choose your `EP.uf2` file (the one you put in your home directory, or `~/projects/umod4/build/EP/EP.uf2` if you built it yourself).
+* Confirm the warning, and do not power off the device until the server reports success.
+
+The server uploads the firmware to the WP's SD card.
+The WP then reads the EP firmware file and flashes the EP using the EP's SWD connection: a hardware debugger port.
+Programming via SWD makes the EP "unbrickable": a WP can *always* reflash an EP using SWD.
+
+When it completes, the EP is running the new firmware and the umod4 is ready to go.
+
+You will know that the EP firmware is running because the BSY LED located at the far right corner of the umod4 will start flashing very brightly 2 times per second.
+This is the EP telling you that it is ready for action but the ECU is not powered.
+
+### Device management
+
+With your umod4 still selected on the `Manage Device` tab, try out the other buttons and see what they do.
+Specifically, check out the `Manage Files` button.
+It will show you the files in the filesystem on your device.
+You will see a file `EP.uf2` which is left over from reflashing the EP.
+You will also see at least one log file of the form `log_N.um4`, where N is a number.
+The log file will contain ECU and GPS data, if available.
+
+Every time the WP reboots, it creates a new log file where the `N` in its name will be 1 higher than the highest existing log file in the filesystem.
+If a umod4 is powered off, turning the ignition key ON or plugging the umod4 into a USB power supply will both create new logs.
+
+Files displayed in dim grey text are system files that you should leave alone unless you know what you are doing.
+
+To see how the interface works, you can select the `EP.uf2` file, then click `Delete Selected`, then click 'OK' when asked.
+The file list will refresh with EP.uf2 missing.
+In normal use, you don't actually have to delete the file.
+This is just a test to show how things work.
+
+**Checkpoint:**
+
+* The server shows your device in its device list with its proper name
+* The EP software update using the server completed successfully
+* The BSY LED is flashing 2 times per second
+* The server's `Manage Files` control lets you successfully delete the `EP.uf2` file
+* `Manage Files` shows you at least one `log_N.um4` file
+
+## 10. Install the ECU on the bike
+
+At this point, all further software updates will occur OTA via WiFi.
+You are done with the ECU on the bench!
+The final steps would be to attach an active antenna to the GPS and double-check that you have a micro SD card installed.
+It is possible to swap micro SD cards with the ECU on the bike, but it is not convenient!
+
+Reinstall the ECU in the motorbike and reconnect the two big wiring harness connectors.
+
+Even if you have not installed your own preferred .bin file, turning the ignition on will cause the built-in UM4 code to prime the fuel pump and shut off a couple seconds later, just like normal.
+
+That's your feel-good moment: it means that the EP booted, constructed a "limp-mode" ECU image for the ECU, then booted the ECU.
+If you hear your fuel pump cycle on then off like normal, it means that a few million ECU CPU cycles just executed properly using your new umod4 as its EPROM!
+
+**Checkpoint:**
+
+* ECU is installed back onto the bike
+* Turn ignition ON and listen for the normal fuel pump prime cycle
+
+## 11. Garage setup
+
+The final step is to prep your garage.
+The umod4 will need power and WiFi out in the garage.
+
+### Garage Power
+
+I recommend leaving your umod4 powered via USB cable at all times when the bike is in the garage.
+You don't actually _need_ to power the umod4 24x7, but without power, it will have no wifi connection, so no OTA updates, no automatic log file downloads, etc.
+
+My technique is to leave a 4-foot micro USB data cable permanently plugged into the WP's micro USB socket.
+
+When I go for a ride, I coil the cable under the seat.
+
+When I get home again, I put the Tuono on its battery maintainer, pop the rear seat, uncoil the umod4 USB cable and plug it into a USB supply near the bike.
+The umod4 will come to life.
+The EP will flash the BSY LED at 2Hz because the ECU has no power.
+The WP will mount the SD filesystem and turn the RGB LED to magenta.
+At the same time, the WP will ping the server, then get to work uploading the new ride logs.
+The disk activity LED will flicker as the logs get uploaded.
+
+### Garage WiFi
+
+This might be tricky for some.
+I am lucky to have a WiFi access point wired into an Ethernet cable that goes out to my garage.
+My WiFi is perfect out there.
+
+If you do not have good WiFi signal in your garage, other options might be:
+
+* Powerline adaptors to get Ethernet to the garage, then an access point plugged into the powerline adaptor
+* point-to-point WiFi bridge devices to get signal to the garage
+
+You do **not** need blazing fast WiFi: it just needs to be reliable.
+The umod4 only needs 2.4GHz 802.11N.
+
+**Checkpoint:**
+
+* With bike in garage, umod4 & ECU on bike, umod4 powered via USB power supply and cable, and umod4 within WiFi range of your home network: verify that the server can see the umod4 on the bike
+* Prove that the remote WiFi connection works by using the server to reflash the EP and the WP using the original WP.uf2 and EP.uf2 files
+
+## 12. Next Steps
+
+The next steps are all performed using the server program and wifi.
+You will set up what EPROM image you want the bike to run when you turn it on.
+The User Guide explains how: see [Choosing what the ECU runs](./USER_GUIDE.md#6-choosing-what-the-ecu-runs-eprom-images).
+Before you ride on a new image, read the [safety advice](./USER_GUIDE.md#7-safety).
+
+And finally, you can go riding again!
+The User Guide also describes [the routine of riding, collecting and looking at your logs](./USER_GUIDE.md#5-the-routine-ride-collect-look).
+
+## Appendix A: Building a board from scratch
 
 Depending on how many parts were installed at the PCB assembly house, you might need to install a few final parts on the umod4 board itself.
 
-An example of that work for the initial run of 4V1a boards follows in this section.
-
-### 4V1a PCB Prep
-
-This was the first shipment of boards received from JLCPCB.com:
-
-![PCB 4V1a as-received](./doc/images/GETTING_STARTED/as_received.jpg)
-
-For various reasons, not all the parts got installed at the factory.
-For example, the supplier was out of stock for the SD Card holder (J1), so the boards arrived without them.
-
-Other parts that are easily hand soldered, I do myself at home to save money.
-Those parts would cover things like the WS2812 RGB LED, all the 0.1 square pin headers, and the male-male round-pin SIP interconnect strips.
-
-Still other parts like the ground test points are not required unless the board is being used for hardware development purposes.
-
-The final class of parts to be added are called "bodge parts".
-These parts fix PCB bugs or add functionality to the PCB.
-The 4V1a board has a feature bodge to add a disk activity indicator LED.
-It is not required for correct system operation, but it is a really nice visual feature.
-
 #### SIP Sockets
 
-__Reminder: ALL SIP sockets on the umod4 are meant for 0.020 round pins, not 0.025 square pins!__
+**Reminder: ALL SIP sockets on the umod4 are meant for 0.020 round pins, not 0.025 square pins!**
 
 ##### Pico2W SIP Sockets
 
@@ -198,555 +787,47 @@ But if you do, I like using [Keystone 1035](https://www.digikey.com/en/products/
 
 If you don't feel like getting the specific Keystone parts, 0.025 square header pins work well too.
 
-#### SD Card Socket
+## Appendix B: Parts and sourcing
 
-_This part only needed to be soldered manually because the assembly house happened to be out of stock on the day that I ordered the boards._
+### Round-Pin SIP Sockets
 
-The socket is a Hirose DM3AT-SF-PEJ, available from DigiKey or LCSC.
+SIP sockets come in strip form.
+There are many choices out there.
+DigiKey part #[25-0513-10](https://www.digikey.com/en/products/detail/aries-electronics/25-0513-10/4298) are very high quality.
 
-Should you need to solder this part, it takes a bit of skill.
-I use solder paste in a syringe to apply solder to each pad, then place the socket on top of it all.
-It is the accurate placing of the socket onto the pads that is the hardest part of this job!
-If the placement goes badly, it is best to remove the socket, wipe off all the solder from the PCB with a Q-tip, and start over.
+Here is a detailed dimensional drawing of that part:
 
-Once it is placed accurately, I solder one data pin, then verify that nothing moved.
-If things look OK, I solder the rest of them.
+![details](./doc/images/GETTING_STARTED/SIP-socket-detail.jpg)
 
-After soldering, I use regular solder wire to add just a bit more solder to the mounting tabs at the board edge side for extra mechanical strength.
-I also add a bit of solder manually to the card detection contacts on the side.
-Bad detection connections can result in the system thinking that the card got removed and re-inserted which causes all kinds of issues.
+The key specs on the connector:
 
-I recommend using a jeweler's loupe or a microscope to check the solder job.
-Poor solder joints typically make themselves known by causing intermittent failures due to temperature changes or vibration effects.
+* height from PCB to top of socket 0.165 inch
+* 0.1 inch pin spacing
+* 0.020 pin diameter
+* gold plated contacts
 
-#### Unused Parts
+Do not get connectors that are much different in height!
+I would say no more than about +- 10 thousandths difference in height, max.
 
-__S1__: there really is no need to install S1, the 'bootsel' button for the EP.
-The SWD method of programming the EP via the WP has been so successful that the 4V2 PCB is going to retire the EP's BOOTSEL button and its USB connector J2.
+These ones come in strips of 25 pins and can be cut to length.
+Use good quality flush-cutters to cut them!
 
-I would not bother installing it at this point.
+You need two 20 pin strips for the Pico2W, one 12 pin strip for the CN1 connector, and a 5 pin strip for the GPS mount.
+That's 57 pins worth, or three of the 25-pin strips.
+I would get a couple spares though because sometimes when you trim them, the plastic fractures leaving the pin on the end without enough support.
 
-__J3__: this 8 pin connector is not used, and will not be used by future PCB versions.
-It has been removed from the 4V2 PCB design.
+### Round-Pin Male-Male Interconnect Strips
 
-#### Add Disk Activity LED
+The male-male interconnect strips that allow the umod4 to plug into the ECU sockets are harder to find.
 
-Early on, I decided to add a disk activity LED to the 4V1a PCBs.
-This addition is OPTIONAL, but recommended.
+The pins should be round, approximately 0.020 in diameter.
 
-As bodges go, this one is very simple.
-This is where it goes:
+These ones from DigiKey (ED6864-64-ND) are very high quality: [Mill-Max 350-10-164-00-006000](https://www.digikey.com/en/products/detail/mill-max-manufacturing-corp/350-10-164-00-006000/357045?s=N4IgTCBcDaIMwFYAMBaAjKtA2ALCpqBWBSIAugL5A).
 
-![disk activity bodge](./doc/images/GETTING_STARTED/disk-activity-bodge.jpg)
-The disk activity LED is mechanically soldered to the upper 2 of the 3 vias shown above.
-The middle via is connected to GND on the PCB.
-The upper and lower vias are not connected to anything.
+They come from DigiKey in strips of 64 pins and can be cut to length.
+One 64-pin strip is enough: the system needs 28 for the EPROM, 12 for CN1, and 5 for the GPS module for a total of 45 pins.
 
-This means that the LED cathode needs to go to the center GND via, and the positive anode goes to the upper via.
-In almost all cases, the LED anode is the longer of the two LED pins.
-Using pliers, bend the LED leads 90 degrees.
-As per the photo, leave enough horizontal length so the LED will not be visually obscured when the Pico2W module is mounted on top of it.
-
-Once the LED is soldered in place, add a current-limiting resistor from the via marked 'SP1' to the upper (anode) connection to the LED.
-The resistor should limit the current to about 5 mA.
-In my case, I used an emerald green LED with a Vf of 2.7V, so the resistor was calculated as (3.3V-2.7V)/.005A = 120 Ohms.
-
-If you use an LED with a Vf much different than 2.7V, calculate the resistor value accordingly.
-Do NOT attempt to drive the LED with more than 5 mA of current: the Pico GPIOs really should not drive more than that.
-
-If you are being super-serious about the bodge, you would put a dab of hot-melt glue, or some electronic-safe RTV to hold down that resistor and its leads.
-
-Here is a 4V1a with everything mounted, all ready to go:
-
-![PCB 4V1a all-parts-added](./doc/images/GETTING_STARTED/all-parts-added.jpg)
-
-### GPS Prep
-
-All of the GPS modules I have obtained from Ali Express arrive with 0.025" square pin headers already soldered into them.
-Since the umod4 board has a round-pin socket for the GPS, these headers need to be replaced.
-
-I do it destructively, using flush cutters to cut off excess pins, then break the plastic between each pin.
-This allows the old pins to be unsoldered and removed one at a time.
-Use a solder sucker to clean out the old holes.
-
-Trim off a strip of 5 of the [male-male interconnect](#round-pin-male-male-interconnect-strips) pins.
-
-The GPS module itself will be on the backside when you are done.
-Insert the male-male strip so that the side of the strip with the metal flush to the plastic is flush with the GPS board.
-The conical side of the pins should face away from the PCB, as shown below:
-
-![GPS pins](./doc/images/GETTING_STARTED/gps-pins.jpg)
-
-Solder the interconnect strip to the GPS.
-
-#### GPS Mount
-
-A mounted GPS is not required to install the software, but you __must__ screw it down before mounting the umod4 in an ECU.
-You need a retaining screw for the GPS.
-
-I use a nylon screw, spacer, and nut to mount the GPS to the umod4. A 12mm metric M3 screw or a 1/2 inch #4-40 machine screw will do.
-The spacer should be approximately 8mm tall.
-Make sure to use a plastic/nylon spacer to avoid causing potential electrical shorts on the GPS module pins.
-
-Before adding the mounting screw and spacer:
-
-![floating GPS](./doc/images/GETTING_STARTED/gps-floating.jpg)
-
-## Umod4 Initial Software Installation
-
-_The setup below should be enough to initially install software onto the umod4 board, and to run the server and visualizer tools afterwards. It is very experimental though - if you find issues let me know robin@island-underground.com_
-
-At the moment, the umod4 system is primarily aimed at usage by a software developer, meaning that they would have the entire [build system](./BUILDING.md) set up and running on their machine.
-If you have the full development system running, skip the next section for non-developers.
-
-### Non-Developer (EXPERIMENTAL!)
-
-It may be possible to get a umod4 running without a full development system.
-Certain bits of software do need to be installed though, as described below.
-
-__The umod4 requires a linux machine, or a Windows machine with WSL (Windows Subsystem for Linux) installed:__
-
-* Windows machines must [install WSL](./BUILDING.md#install-wsl2)
-
-* Windows machines must [install the terminal app](./BUILDING.md#windows-terminal-app)
-
-* Open a bash terminal window and make yourself a [local bin directory](./BUILDING.md#create-a-local-bin-directory)
-
-* Install a prebuilt 'picotool' utility. Prebuilt binaries can be found [here](https://github.com/raspberrypi/pico-sdk-tools/releases). There may be more recent versions available, but the following instructions will get you an X86 version that should work fine:
-
-```bash
-cd ~
-wget https://github.com/raspberrypi/pico-sdk-tools/releases/download/v2.2.0-2/picotool-2.2.0-a4-x86_64-lin.tar.gz
-mkdir -p ~/.local/bin/picotool
-tar -xzf ~/picotool-2.2.0-a4-x86_64-lin.tar.gz -C ~/.local/bin/picotool
-```
-
-Run the following commands to add the extracted picotool directory to your PATH variable:
-
-```bash
-echo 'export PATH=$PATH:~/.local/bin/picotool' >> ~/.bashrc
-source ~/.bashrc
-```
-
-* Make a projects directory
-
-```mkdir -p ~/projects```
-
-* Get the current umod4 codebase installed in your new projects directory.
-This is the easiest way to get all the files needed to run the server and visualizer tools:
-
-```bash
-git clone https://github.com/mookiedog/umod4 ~/projects/umod4
-```
-
-__T.B.D.__
-
-Obtain binary files for WP.uf2, EP.uf2, and partition_table.uf2.
-__For now, you will need to send me an email or something until I get a release process set up.__
-
-Put them in a directory together somewhere.
-Your home directory ~ is fine.
-
-Skip down to [Powering the Umod4](#powering-the-umod4).
-
-### Developer
-
-Start by making sure that you have built the most recent firmware.
-Sync your source tree with the github repository:
-
-```bash
-cd ~/projects/umod4
-git status
-```
-
-If the output says "nothing to commit, working tree clean", you are safe to proceed.
-The "git pull" will bring all updates from the remote repository into your tree:
-
-```bash
-git pull
-```
-
-To be totally sure that everything gets built properly after a remote update, you should completely rebuild the entire project:
-
-* Delete your 'build' directory: left click 'build' in the VS Code file explorer window and press the ``del`` key.
-  When it asks for confirmation, __double check__ that it is going to delete the 'build' directory and not something else!
-* Type ``F1``, then ``"cmake: clean rebuild"``
-* The rebuild must complete with "exit code 0" (no errors)
-
-The up-to-date firmware is now ready in your build directory.
-
-### Powering The Umod4
-
-The umod4 is designed to take power from the ECU (if the ignition is ON), or from the WP's micro USB connector.
-The USB power option allows the umod4 to be powered with the ignition turned OFF.
-This is what allows the wifi interface to remain active while the bike is parked in the garage.
-
-A side effect of this dual-power mechanism is that the umod4 runs just fine all by itself without being plugged into an ECU.
-This means that you can perform the initial software install on a bench instead of trying to do it mounted on your motorbike.
-
-__Again: Make sure to put the umod4 on a static-safe surface while working with it.
-The static-safe bubble wrap it came in is a good choice.__
-
-Leave the micro SD card out to begin with.
-
-Find a micro USB __data cable__.
-Some USB cables are power-only.
-__They will not work!__
-
-With the micro USB data cable detached from everything, connect the umod4 to your development system in the following sequence:
-
-* Insert the cable into a USB port on your development system PC
-* Hold down the BOOTSEL button on the WP (located near the micro USB connector)
-* While holding BOOTSEL down, insert the micro-USB cable end into the Pico2W (it's the red cable, below)
-* Once the USB cable is fully inserted, you can release BOOTSEL
-
-![power-cable](./doc/images/GETTING_STARTED/power-cable.jpg)
-
-With no software in the device, you will see the DBG_BSY LED glow dimly as soon as you plug it in (upper right, above).
-
-A Windows system will pop open a file explorer window showing a mass storage device called 'RP2350' with exactly two files on it:
-
-![USB-mass-storage](./doc/images/GETTING_STARTED/usb-mass-storage.jpg)
-
-If you do not see an RP2350 Mass Storage explorer window open up, it is quite possible that you are not using a USB _data cable_.
-Try different USB cables if you need to until you see the explorer window open up.
-
-### WSL2 Only: One-Time USB Setup
-
-_If you are on native Linux (not Windows/WSL2), skip this section._
-
-Before `flash_WP` can talk to the device, Windows must grant WSL permanent access to it.
-This is a one-time step per machine — once done, it survives unplugging and reboots.
-
-In your WSL bash terminal, run:
-
-```bash
-~/projects/umod4/tools/setup_usb_wsl
-```
-
-A UAC prompt will appear on the Windows desktop — click __Yes__ to allow it to run as Administrator.
-The script will print a summary showing which devices were successfully bound.
-
-You only need to run this again if you plug in a new type of USB device that wasn't connected the first time you ran it.
-For example, if you later add a Raspberry Pi Debug Probe for flashing and debugging, plug it in and run the script again to bind it.
-
-### Install WP Firmware
-
-If you are a non-developer and put the appropriate uf2 files in your home directory ~, cd to your home directory and type the following command:
-
-```bash
-~/projects/umod4/tools/flash_WP -e ~
-```
-
-If you have a full development system working, cd to your home directory, then type the following command:
-
-```bash
-~/projects/umod4/tools/flash_WP -e ~/projects/umod4/build/WP
-```
-
-Either way, the flash_WP script will start running.
-
-#### Flash_WP Output
-
-The flash_WP command is a bash script that partitions the WP's flash memory and then loads the initial WP firmware image.
-
-If you see an error message like this, it means that your WP was not in BOOTSEL mode:
-
-```txt
-Scanning for RP2350 Boot device via usbipd...
-Error: No 'RP2350 Boot' device found in usbipd list.
-Make sure WP is in BOOTSEL mode (press&hold BOOTSEL while powering up).
-```
-
-_If you get that error, unplug the micro USB cable from the WP, and repeat the BOOTSEL power-on sequence from the previous section until you see that RP2350 Mass Storage window open._
-
-Assuming that the script detected the WP properly, it will start running.
-Over the next minute or so, the script will completely erase the WP flash, repartition it, then verify that the rebuilt partitions are present.
-Once the partitions are in place, the script will load the WP image into the first image partition, verify the image, and reboot to start the new image running.
-The output of the script should look like this at the end:
-
-```txt
-<lots of snipped messages...>
-
-Loading WP image to slot 1...
-Downloading into partition 1:
-  00010000->00207000
-Loading into Flash:   [==============================]  100%
-Verifying Flash:      [==============================]  100%
-  OK
-
-Rebooting device...
-```
-
-After the reboot, the WP firmware will be running for the first time.
-You should see three LEDs in operation:
-
-* the big RGB LED will be glowing red, meaning "No Micro SD Card installed"
-* the small green WiFi indicator LED on the Pico2W near the USB connector will be flashing slowly (about once per 2 seconds)
-* the small LED1 in the upper right corner of the board will still be glowing dimly because the EP software is not loaded to drive it yet.
-
-Now that the WP is running, it is worth installing your micro SD card.
-
-__WARNING: if this card was previously formatted for use with some device other than a umod4, the umod4 is going to reformat it immediately after insertion. ALL DATA WILL BE DESTROYED!__ If the card was previously used in a umod4, it will NOT be reformatted and all data on the card will be retained.
-
-The umod4 is designed to hotplug SD cards, so you can do it with the power on.
-Insert the card with the electrical contacts facing down towards the PCB.
-The WP software will detect the card immediately.
-The RGB LED will go through a couple of color changes as WP sees the new card, tests it, and mounts the file system.
-When the file system is mounted and ready for use, the LED will turn magenta.
-Magenta is the color you always want to see on that LED!
-
-After mounting the filesystem, the disk activity LED will probably flicker a couple times as the WP gets to work and creates a new log file.
-
-![after-flashing](./doc/images/GETTING_STARTED/post-flashing.jpg)
-
-#### Slow-Flash WiFi LED
-
-The slow-flashing WiFi indicator LED (right beside the WP's micro USB connector) means that the WP is in "Access Point Mode", broadcasting its own network.
-This is because the umod4 does not know how to connect to your home network yet.
-
-### Connect umod4 To Home WiFi
-
-The next step involves getting the umod4 connected to your home wifi.
-This process is called "provisioning" the umod4.
-
-You can use a phone or a laptop with a wifi interface.
-The instructions here assume you use a phone.
-
-Open your phone's wifi settings and scan for WiFi networks to connect to.
-You will see one called "umod4_XXXX", where XXXX matches the last 4 digits of your umod4's MAC address.
-In the example below, the umod4 AP-mode network shows up as "umod4_1EA3":
-![network-scan](./doc/images/GETTING_STARTED/wifi-network-scan.jpg)
-
-Ask your phone to connect to that WiFi network.
-The default password is exactly the same as the WiFi name/SSID (case is important!).
-
-Your phone may complain that the new wifi connection has no internet access and discourage you from connecting to it.
-That's OK, connect to it anyway:
-
-![connected](./doc/images/GETTING_STARTED/wifi-connected.jpg)
-
-Once connected, open a web browser on your phone.
-In the address bar, navigate to the following IP address: ``192.168.4.1``.
-
-You will see the umod4's configuration page:
-
-![wifi-config](./doc/images/GETTING_STARTED/wifi-config.jpg)
-
-Pick a new name for your device.
-Keep the name simple: no unicode or emoji chars!
-
-The section titled "HOME NETWORK (STA MODE)" is where you enter the credentials for your home network.
-Enter your network name and its password in the proper boxes.
-Do NOT hit "Save and Reboot" yet.
-
-Next, you can change the umod4's AP network name to something more memorable if you want.
-But even if you do not change the AP network name, you __MUST__ give it a new, __strong__ password: __this network will get broadcast where ever your bike goes!__
-
-_FYI: it is easy to change the AP Network name and password later so don't freak out about picking the best name possible right now._
-
-Once you have entered all the configuration fields, click on "Save & Reboot" at the bottom of the page.
-
-You should see a new page on the phone saying that it is now connecting to the home network.
-The WP will reboot.
-This time, the WiFi LED should come solid (no more slow-flash) meaning that the WP is connected to home WiFi.
-
-At this point, your umod4 is on your home network.
-You can reach its website from any phone or PC on that network.
-Replace 'Tuono' with whatever you named your umod4:
-
-    http://Tuono.local
-
-If your browser cannot find that name, use the umod4's IP address instead.
-You can find it in your router's list of connected devices, or in the device list of the umod4 server.
-
-For fun, go to a browser and enter the address.
-Your umod4 actually hosts a small website with all kinds of fun things to do:
-
-![website-homepage](./doc/images/GETTING_STARTED/website-home.jpg)
-
-Your webpage won't have a cool background image yet - that's something you can customize on your own umod4.
-
-Feel free to click around a bit. But don't get too distracted though, the next step is to install EP firmware, below.
-
-#### Provisioning Without A Phone (Developers)
-
-If you have an ap_proxy Pico W attached to your PC, `tools/set_credentials` can perform the provisioning steps above for you, including setting a new AP password, without connecting a phone to the umod4's AP.
-See [Install WP WiFi Credentials](./Tools.md#install-wp-wifi-credentials) for usage.
-
-### EP Software Installation
-
-Now that the WP is on your home network, the umod4 server can install the EP firmware over WiFi.
-
-* Start the server:
-
-```bash
-~/projects/umod4/tools/server/run_server.sh
-```
-
-* Wait for your device to show up in the server's device list.
-The device's name is the one you chose during WiFi provisioning.
-* Select your device, then click __Reflash EP__.
-* Choose your `EP.uf2` file (the one you put in your home directory, or `~/projects/umod4/build/EP/EP.uf2` if you built it yourself).
-* Confirm the warning, and do not power off the device until the server reports success.
-
-The server uploads the firmware to the WP, which programs the EP over its SWD connection.
-When it completes, the EP is running the new firmware and the umod4 is fully installed.
-
-You will know that the EP firmware is running because the BSY LED will start flashing very brightly 2 times per second.
-This is the EP telling you that the ECU is not powered, or in this case, that the ECU is entirely missing!
-
-## Install umod4 Board in ECU
-
-With all the software installed, and server communication established, it is finally time to install it in the ECU.
-There are a few steps, but nothing very hard.
-The point of the soldering process described below is to ensure that your umod4 board ends up perfectly aligned with your ECU.
-
-1) __Install Round-Pin Male-Male Interconnect Strips Into ECU Sockets__
-
-    __Critical:__ The male-male interconnect pins have one side where the metal sticks out, and one side where the metal is flush to the plastic. The side with the metal flush to the plastic is the side that faces __up__ to mate flush with the umod4 board.
-
-    Here is a picture showing the male-male pins.
-    The strips are plugged into the static foam opposite to each other so you can see the difference between the two sides:
-
-    ![male-male pins](./doc/images/GETTING_STARTED/male-male-strips.jpg)
-
-    The side of the strips with the metal flush to the plastic is shown with one of the pins circled in green.
-    You can clearly see the conical part of the pin on the strip below.
-    The conical side of the strips will get inserted into the sockets on the ECU.
-
-    __AGAIN: the male-male pin strips should have their conical sides facing down to the ECU sockets. The flush metal side of the strip mounts flush against the umod4 board.__
-
-    This is what it should look like when the pins are installed in the sockets.
-    The metal-flush side of each strip is __UP__:
-
-    ![Ready-to-place-umod4](./doc/images/GETTING_STARTED/male-male-mounted.jpg)
-
-1) Place Umod4 onto ECU Male-Male pins
-
-    I find it best to hold the umod4 at a very slight angle so that the pins in the EPROM socket at the far left of the photo engage first, then tilt the board flat to engage the rest of the pins.
-    You might have to wiggle the board a tiny bit to get the CN1 pins to get started into their holes.
-
-    Once mated, visually inspect to make sure that:
-
-    * the male-male strip is flush to the umod4 PCB
-    * you have a pin sticking through __every__ hole as shown below:
-
-![mated](./doc/images/GETTING_STARTED/mated-with-highlight.jpg)
-
-If so, you are ready to solder. Pick a pin in the middle of the male-male strip to solder first. Apply a bit of pressure to the umod4 board for the first pin you solder to guarantee that strip is flush to the umod4.
-Inspect that your first solder joint has the connector flush to the umod4. If not, fix it with some pressure on the top of the umod4 while re-melting the joint. When you are happy, solder all the pins.
-
-Soldering the pins in this fashion means that your umod4 has perfect alignment with your ECU and its new CN1 strip socket.
-
-1) Carefully remove the umod4 board
-
-    __Never be in a hurry to remove the umod4 (or any chip, for that matter!).
-    Go slow and be careful. Bent pins can be repaired, but it is best to avoid bending them in the first place!!__
-
-    I find it works best to use a medium-sized flat blade screwdriver, but __not__ as a pry bar.
-    Insert the screwdriver blade between the board and the EPROM socket.
-    Then: do __not__ pry upwards but slowly rotate the screwdriver to apply the pressure that separates the board from the socket.
-    Rotational pressure is much easier to control than using the screwdriver like a prybar!
-
-    Once lifted off, put the board in a static bag.
-
-1) Replace ECU back into bottom carrier
-
-    Do NOT use the original steel screws for the 4 locations where the umod4 board mounts.
-    Instead, use the four 8mm nylon standoffs.
-    Screw them into the ECU by hand, finger tight.
-
-    __Do NOT overtighten the standoffs! They are nylon, not steel! Breaking off the threaded portion of a nylon standoff into the ECU mounting boss would be a big mistake! 'Snug' is fine!__
-
-    The standoffs should look like this when you are done:
-
-    ![standoffs](./doc/images/GETTING_STARTED/standoffs.jpg)
-
-1) Mount the GPS on the umod4
-
-    See [Mount GPS](#gps-mount).
-
-1) Reinstall the umod4/GPS onto the ECU PCB
-
-    This is not hard, but it is slightly trickier than installing a plain EPROM because now you need to line up three sets of pins.
-    In your favor: the pin alignment is perfect because that's how you soldered it!
-
-    __Carefully__ get all 3 rows of pins lined up with their socket holes on the ECU PCB.
-    Triple check that __all__ pins are correctly lined up and starting into their corresponding socket holes before applying the pressure to seat them all.
-
-    When the umod4 board is seated into the 3 socket strips, it will sit flush on the 4 nylon standoffs.
-
-    Once seated, use 4 nylon screws to attach the umod4 to the standoffs.
-    Again, lightly tighten the nylon screws with a screwdriver.
-    It would not be a disaster to break off a mounting screw because the standoffs are replaceable, but there is no need to overtighten them!
-
-    It should all look like this:
-
-    ![mounted](./doc/images/GETTING_STARTED/mounted.jpg)
-
-1) Screw the GPS antenna cable to the SMA connector on the GPS module (as in the picture, above).
-
-And that's it.
-
-The ECU cover will not fit over the umod4 board anymore, so don't bother with it.
-
-## Install ECU On Bike
-
-Reinstall the ECU in the motorbike and reconnect the two big wiring harness connectors.
-
-If you turn the ignition ON, you will hear the fuel pump come on, then shut off a few seconds later.
-
-That's your feel-good moment: it means that the EP booted, constructed a "limp-mode" ECU image for the ECU, then booted the ECU.
-If you hear your fuel pump cycle on then off like normal, it means that a few million ECU CPU cycles just executed properly using your new umod4 as its EPROM!
-
-## Garage Power
-
-I recommend leaving your umod4 powered via USB cable at all times when the bike is in the garage.
-You don't actually _need_ to power the umod4 24x7, but without power, it will have no wifi connection, so no OTA updates, no automatic log file downloads, etc.
-
-My technique is to leave a 4-foot micro USB data cable permanently plugged into the WP's micro USB socket.
-
-When I go for a ride, I coil the cable under the seat.
-
-When I get home again, I put the Tuono on its battery maintainer, pop the rear seat, uncoil the umod4 USB cable and plug it into a USB supply near the bike.
-The umod4 will come to life.
-The EP will flash the BSY LED at 2Hz because the ECU has no power.
-The WP will mount the SD filesystem and turn the RGB LED to magenta.
-At the same time, the WP will ping the server, then get to work uploading the new ride logs.
-The disk activity LED will flicker as the logs get uploaded.
-
-## Next Steps
-
-The next steps are all performed using the server program and wifi.
-You will set up what EPROM image you want the bike to run when you turn it on.
-And finally, you can go riding again!
-
-## Factory Reset
-
-Should you really want to do a "factory reset" on a umod4, it is possible.
-
-### WP
-
-Put the WP in bootsel mode by plugging it into your PC while holding down the BOOTSEL button.
-
-Run the following command to completely erase the WP:
-
-```bash
-picotool erase
-```
-
-This command erases everything to do with the WP: the device name, network credentials, firmware, everything.
-To get it working again, follow all the instructions related to [umod4 initial software installation](#umod4-initial-software-installation) in this document,
-
-### EP
-
-__T.B.D.__ At the moment, only the WP can get erased back to a true factory reset.
-
-For the moment, if you really wanted to flush everything out of your EP, it would be enough to use a browser to visit your bike's website, then:
-
-* erase all the images in your image library
-* delete all entries in your image selector
-
-That deletes any EP personalization from your device.
-Completely removing the EP firmware is not necessary.
+I have also used male-male interconnect strips from LCSC in Taiwan, part number [C2764600](https://www.lcsc.com/product-detail/C2764600.html?s_z=n_q_C2764600&globalKeyword=C2764600).
+These ones worked well, too.
+Note that these strips are only 20 pins long, so make sure to get enough.
+Again, get some spares in case something bad happens as you trim them to length.
