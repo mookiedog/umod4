@@ -52,7 +52,6 @@ What you do depends on the maintainer status line at the top of AGENTS.md.
   Tell them that in plain language.
 - Add a short note to the top of their copy's README saying it derives from the original, with a link.
 - Their copy has no outside reviewer. The safety rules in AGENTS.md section 4 apply even harder: nobody else will catch a bad ECU or EP change.
-- Encourage them to keep `doc/knowledge/` current in their copy as they learn things, so the lessons travel with the code.
 
 **ACTIVE:** real bugs and fixes are welcome upstream.
 Tell the person how to reach the owner by opening an issue at https://github.com/mookiedog/umod4/issues (the person needs a free GitHub account).
@@ -151,8 +150,10 @@ Keep commands small and single-purpose, say in plain language what each does bef
 
 ### 5e. Prerequisite checker
 
-`scripts/doctor` (prerequisite checker) is planned but may not exist yet. Check.
-When it exists, run it first and again after each stage.
+`scripts/doctor` does not exist yet.
+It should be a read-only checker that reports which prerequisites are installed (with versions), whether the build artifacts exist, and what is still missing, so that an agent can pick up a half-finished setup instead of starting over.
+Until it exists, do these checks by hand (section 3b of AGENTS.md).
+Check whether it exists before you start; when it does, run it first and again after each stage.
 
 ## 6. Keeping this skill current
 

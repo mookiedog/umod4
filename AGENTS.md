@@ -74,8 +74,6 @@ What you do depends on the maintainer status at the top of this file.
   with a link.
 - Their copy has no outside reviewer. The safety rules in section 4 apply even harder:
   nobody else will catch a bad ECU or EP change.
-- Encourage them to keep `doc/knowledge/` current in their copy as they learn things, so
-  the lessons travel with the code.
 
 **ACTIVE:** real bugs and fixes are welcome upstream. Tell the person how to reach the
 owner by opening an issue at https://github.com/mookiedog/umod4/issues (GitHub issues are
@@ -193,10 +191,11 @@ writes outside the project) into a long chain where it will not be noticed.
 
 ### 3e. Prerequisite checker
 
-`scripts/doctor` (prerequisite checker) is planned but may not exist yet. Check. When it
-exists, run it first and again after each stage. [OWNER: a deterministic, idempotent
-`scripts/setup` that does the non-HUMAN steps is better than having each agent session
-re-derive them from prose. Write it, and have this section call it.]
+`scripts/doctor` does not exist yet. It should be a read-only checker that reports which
+prerequisites are installed (with versions), whether the build artifacts exist, and what is
+still missing, so that an agent can pick up a half-finished setup instead of starting over.
+Until it exists, do these checks by hand (section 3b). Check whether it exists before you
+start; when it does, run it first and again after each stage.
 
 ## 4. Safety: this runs inside an engine's ECU
 
@@ -239,10 +238,13 @@ re-derive them from prose. Write it, and have this section call it.]
 
 | Need | Read |
 |------|------|
+| Overview, status, and a map of all the docs | README.md ("Where To Go" and Status tables) |
+| Why the project exists and who it is for | WHY_UMOD4.md |
+| How the hardware and software work | HOW_IT_WORKS.md |
+| What a rider does with a umod4, day to day | USER_GUIDE.md |
+| Where the project came from | HISTORY.md |
 | Build environment, toolchain | BUILDING.md |
 | Hardware assembly and install | GETTING_STARTED.md |
-| Hard-won lessons, resolved bugs | doc/knowledge/ (DRAFT, unreviewed; code is truth) |
-| Unresolved problems | doc/knowledge/open-issues.md |
 | Debugging | DEBUGGING.md |
 | Bench testing an ECU | BENCH_TESTING.md |
 | Automated hardware test harness | tests/README.md, tests/TEST_PLAN.md |
@@ -250,15 +252,13 @@ re-derive them from prose. Write it, and have this section call it.]
 
 ## 7. Honest status
 
-| Area | State |
-|------|-------|
-| PCB Status | 4V2 is most recent PCB actually fabricated. A 4V3 would serve 2 purposes: fix pad dimensions to better suit JLCPCB's manufacturability requirements, resolve noise issues (see below), no additional functional changes anticipated |
-| PCB Noise Issues | In progress: address noise appearing at VSYS that could possibly damage the Pico2W's regulator. Note that 4V2 boards can be bodged with a silicon diode to add 0.8V of noise headroom. It is not known if this is a complete solution for a future 4V3, or if additional filtering is required |
-| EP Firmware (general) | Functional. No showstopper issues |
-| WP Firmware (general) | Functional. No showstopper issues |
-| WP LittleFS | LittleFS's well-known problems dealing with large files on SD cards were resolved by adding the LogStore class |
-| Overall System Functionality | Working on author's bike and boards: WiFi control interface, umod4 logging, server operation, visualizer operation |
-| Visualizer ride-map display | Currently broken, but fix is known |
+The status of each part of the project is the Status table in [README.md](README.md#status).
+That table is the single source: do not copy it here, or the two will drift apart.
+
+One thing agents should know that the README does not say: the visualizer's ride-map
+display is currently broken. The fix is known. Do not start that work unless the owner
+asks. (Everything the README marks as working was verified only on the author's own bike
+and test bench; see section 4.)
 
 ## 8. Project overview
 

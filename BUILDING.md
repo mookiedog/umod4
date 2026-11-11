@@ -21,17 +21,17 @@ One reason is that the project requires building tools and executables for four 
 This guide is aimed at helping non-experts get it working.
 If you know what you are doing, you should have no problems.
 
-The goal: once everything is set up, rebuilding the entire system is as easy as pushing the `f7` key.
+The goal: once everything is set up, rebuilding the entire system is as easy as pushing the `F7` key.
 
 ## Troubleshooting
 
 If you hit a wall during this process, open an issue at [github.com/mookiedog/umod4/issues](https://github.com/mookiedog/umod4/issues).
 Use the issue reporting system to describe what step you're on, what problem you have encountered or what error you are seeing, and I'll try to help.
-Reporting the issues will help make the this setup process as simple and accurate as possible.
+Reporting the issues will help make this setup process as simple and accurate as possible.
 
 ## Development System Overview
 
-Linux is __required__ to build this project.
+Linux is **required** to build this project.
 The development system has been tested on two different OS/machine combinations:
 
 1) an x86-64 Windows machine running Ubuntu via Windows Subsystem for Linux (WSL2)
@@ -174,7 +174,7 @@ networkingMode=mirrored
 
 If there is no [wsl2] section in the file (or if the `.wslconfig` file does not exist), just add both the lines shown above.
 Write the file, then restart your WSL distribution by typing 'wsl --shutdown' in a PowerShell window.
-Open a new WSL bash terminal window to restart WLS, then type:
+Open a new WSL bash terminal window to restart WSL, then type:
 
 ```bash
 robin@Morty:~$ hostname -I
@@ -193,27 +193,27 @@ We need to adjust the Windows firewall settings so that the motorbike and the se
 
 Start by opening Windows Firewall, Advanced Settings:
 
-* Press the __Windows key__, type __Windows Defender Firewall__, click it
-* On the left, click __Advanced settings__: a new window opens
-* Click __Inbound Rules__ in the left panel
+* Press the **Windows key**, type **Windows Defender Firewall**, click it
+* On the left, click **Advanced settings**: a new window opens
+* Click **Inbound Rules** in the left panel
 
 #### Create Rule 1 — TCP port 8080 (to allow log file uploads)
 
-* Click __New Rule...__ (located in the right panel)
-* Select __Port__ → click __Next__
-* Select __TCP__, type `8080` in the port box → click __Next__
-* Select __Allow the connection__ → click __Next__
-* Leave all three boxes checked (Domain, Private, Public) → click __Next__
-* Name it `umod4_server` → click __Finish__
+* Click **New Rule...** (located in the right panel)
+* Select **Port** → click **Next**
+* Select **TCP**, type `8080` in the port box → click **Next**
+* Select **Allow the connection** → click **Next**
+* Leave all three boxes checked (Domain, Private, Public) → click **Next**
+* Name it `umod4_server` → click **Finish**
 
 #### Create Rule 2 — UDP port 54549 (to allow umod4 device check-ins)
 
-* Click __New Rule...__ (just like before)
-* Select __Port__ → click __Next__
-* Select __UDP__, type `54549` in the port box → click __Next__
-* Select __Allow the connection__ → click __Next__
-* Leave all three boxes checked → click __Next__
-* Name it `umod4 Server UDP Check-in` → click __Finish__
+* Click **New Rule...** (just like before)
+* Select **Port** → click **Next**
+* Select **UDP**, type `54549` in the port box → click **Next**
+* Select **Allow the connection** → click **Next**
+* Leave all three boxes checked → click **Next**
+* Name it `umod4 Server UDP Check-in` → click **Finish**
 
 No outbound firewall rules are needed.
 Windows allows all outbound connections by default, so the umod4 server can reach the umod4 device on the motorbike without any additional configuration.
@@ -224,7 +224,7 @@ Once WSL2/Ubuntu has been installed, go to the Microsoft store and download the 
 Terminal works great for interacting with WSL2.
 It supports multiple terminal windows using a tabbed interface which is nice.
 
-__Note:__ From this point on, any of the instructions in this document that are executed from a Linux command line will be using a Windows Terminal window that is running Ubuntu/WSL.
+**Note:** From this point on, any of the instructions in this document that are executed from a Linux command line will be using a Windows Terminal window that is running Ubuntu/WSL.
 
 * Open the terminal app by typing 'terminal' into the Windows search box.
 * On the title bar, click the small down-arrow to get a bunch of options.
@@ -269,7 +269,7 @@ You can even run a Windows Powershell or old-fashioned Windows Command Prompt, i
 ### WSL and Windows Filesystems
 
 WSL and Windows run simultaneously, but each has its own separate filesystem.
-Even so, WSL2 arranges for the two filesystems get cross-mounted so that each one is accessible from the other.
+Even so, WSL2 arranges for the two filesystems to get cross-mounted so that each one is accessible from the other.
 
 From Windows, the root of all the distros that may be installed is located at '\\\\wsl$' or '\\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
 
@@ -288,7 +288,7 @@ If you are a linux person, it's nice to be able to use linux commands like 'find
 
 ### WSL and Windows Executables
 
-WSL is set to to run any Windows executable that is on your Windows PATH environment variable.
+WSL is set to run any Windows executable that is on your Windows PATH environment variable.
 WSL automatically includes all the directories on your Windows PATH variable to the end of your WSL PATH.
 To execute any Windows command in a WSL window, just type its full name including the Windows `.exe` suffix.
 For example, if you type `explorer.exe .` in a WSL terminal window, it will open a standard Windows explorer window pointing at your current directory (the `.` means the current directory).
@@ -411,7 +411,7 @@ Install them as below:
 sudo apt install gcc g++ git curl unzip cmake jq ninja-build libncurses5-dev libncursesw5-dev
 ```
 
-The ``gcc`` and ``g++`` compilers installed above generate code for your Linux __host__ machine, not the ARM chips on the Pico boards. The Pico SDK expects to find the host g++ compiler using an environment variable called 'CXX'.
+The ``gcc`` and ``g++`` compilers installed above generate code for your Linux **host** machine, not the ARM chips on the Pico boards. The Pico SDK expects to find the host g++ compiler using an environment variable called 'CXX'.
 Run the following commands to add the appropriate CXX definition to your .bashrc file and update your environment:
 
 ```bash
@@ -474,7 +474,7 @@ git config --global core.autocrlf false
 
 The Gen 1 ECU's processor is a Motorola M68HC11.
 The C compiler for the HC11 has not been supported since GCC version 3.4.6, back in the early 2000's.
-Fortunately, for the purposes of the building the UM4 software, we don't need a full 68HC11 C compiler, we only need an assembler.
+Fortunately, for the purposes of building the UM4 software, we don't need a full 68HC11 C compiler, we only need an assembler.
 And amazingly enough, a modern GCC 'binutils' package still contains everything we need to target the ECU's 68HC11:
 
 * a 68HC11 assembler
@@ -567,13 +567,13 @@ It also means that old projects aren't forced to upgrade when a new release come
 
 Go to the [Arm GNU Toolchain download page](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
 
-* __x86 PC / WSL2:__ scroll to _x86_64 Linux hosted cross toolchains_ → _AArch32 bare-metal target (arm-none-eabi)_ → the `.tar.xz` file.
+* **x86 PC / WSL2:** scroll to _x86_64 Linux hosted cross toolchains_ → _AArch32 bare-metal target (arm-none-eabi)_ → the `.tar.xz` file.
 
 The download page looks like this:
 
 ![image](./doc/images/BUILDING/arm-tools.jpg)
 
-__Don't click the link to download it.__
+**Don't click the link to download it.**
 Instead: Right-click the link and choose "Copy link address."
 
 The filename tells you the version number — for example `arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz` means the version is `15.2.rel1`.
@@ -621,7 +621,7 @@ $ ./bin/arm-none-eabi-gdb --version
 GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git
 ```
 
-Do __not__ add the `bin` directory to your PATH.
+Do **not** add the `bin` directory to your PATH.
 The umod4 project's build system will locate it automatically from the `/opt/arm/arm-none-eabi` structure.
 
 ### Install OpenOCD
@@ -689,13 +689,13 @@ The project includes a script that does this binding for all the USB devices you
 
 There are two distinct usbipd operations:
 
-- __Bind__ (`usbipd bind`): a one-time, persistent grant that says "this VID:PID is allowed to be shared with WSL".
+- **Bind** (`usbipd bind`): a one-time, persistent grant that says "this VID:PID is allowed to be shared with WSL".
   Survives unplugging, rebooting, and re-plugging.
   Must be done by an Administrator.
-- __Attach__ (`usbipd attach`): per-session connection of a currently-plugged device to WSL.
+- **Attach** (`usbipd attach`): per-session connection of a currently-plugged device to WSL.
   Tools like `flash_WP` and the test runner handle this automatically.
 
-You only need to worry about __binding__.
+You only need to worry about **binding**.
 
 ### Running the Setup Script
 
@@ -705,7 +705,7 @@ With your umod4 hardware (or debug probe) plugged in, run from a WSL terminal:
 ~/projects/umod4/tools/setup_usb_wsl
 ```
 
-A UAC prompt will appear on the Windows desktop — click __Yes__ to allow it to run as Administrator.
+A UAC prompt will appear on the Windows desktop — click **Yes** to allow it to run as Administrator.
 The script binds all Raspberry Pi Pico-family PIDs (including the CMSIS-DAP debug probe and the RP2350 BOOTSEL mass-storage device) plus the ap_proxy device used by the automated test harness.
 
 Re-run the script any time you add a new physical device that wasn't plugged in the first time.
@@ -718,13 +718,13 @@ The script uses `usbipd bind --hardware-id` instead, which achieves the same per
 ## Project Development Setup
 
 The next step is to start filling out the project directory structure.
-There is a fair amount of software source that needs to be installed, and and some of it needs to know where other parts of it are located.
-By installing things as decribed in the sections that follows, the various bits of the system will be able to find each other.
+There is a fair amount of software source that needs to be installed, and some of it needs to know where other parts of it are located.
+By installing things as described in the sections that follow, the various bits of the system will be able to find each other.
 
 ### Development Directory Structure
 
-The main part of the project directory involves the Pico SDK (Software Development Kit) is quite large, at over 600 megabytes.
-The SDK could be installed by cmake as sub-piece of each of your Pico projects, but replicating the entire SDK for every project in your sytem that might need it is a giant waste of disk storage.
+The biggest part of the project directory is the Pico SDK (Software Development Kit), which is quite large, at over 600 megabytes.
+The SDK could be installed by cmake as sub-piece of each of your Pico projects, but replicating the entire SDK for every project in your system that might need it is a giant waste of disk storage.
 Instead, we will set things up so that all projects will share a single SDK installation.
 We do this by storing the SDK at a well-known location in the 'projects' directory.
 We then tell the individual Pico development projects where to find it.
@@ -741,7 +741,7 @@ Pictorially, we want to end up with a directory structure that has this general 
     │   ├── 1.5.1     (Supports Pico/RP2040 only)
     │   ├── 2.0.0     (first version that supports Pico/RP2040 and Pico2/RP2350)
     │   ├── 2.1.1     (bug fixes and improvements)
-    │   └── 2.2.0     (the most recent version, at time of writing)
+    │   └── 2.3.0     (the version this project currently builds with)
     └── umod4         (where the umod4 software project will be stored)
 ```
 
@@ -766,19 +766,20 @@ Next, we clone the 'master' branch of the pico-sdk into the new directory:
 git clone https://github.com/raspberrypi/pico-sdk
 ```
 
-Rename pico-sdk to reflect the SDK branch that we will be checking out.
-As of the time of writing, the most recent version is 2.2.0.
-If a newer version is available, use its version number:
+Rename pico-sdk to reflect the SDK version that we will be checking out.
+The version to use is set by `PICO_SDK_VERSION` in the top-level `CMakeLists.txt`, and it is currently 2.3.0.
+If that file says something different when you read this, use the number from the file in place of 2.3.0 in the commands below.
+Do not pick a newer version just because one exists: the project is only known to build with the version it asks for.
 
 ```bash
-mv pico-sdk 2.2.0
+mv pico-sdk 2.3.0
 ```
 
-Now we tell git that we actually want to lock this cloned branch to the "2.2.0" tag on the master branch:
+Now we tell git that we actually want to lock this cloned branch to the "2.3.0" tag on the master branch:
 
 ```bash
-cd 2.2.0
-git checkout 2.2.0
+cd 2.3.0
+git checkout 2.3.0
 ```
 
 Our new git tag now matches its directory name.
@@ -792,7 +793,7 @@ No environment variable is needed — the umod4 superbuild's top-level `CMakeLis
 
 #### FreeRTOS-Kernel
 
-FreeRTOS-Kernel is __not__ part of any official pico-sdk release — Raspberry Pi's own tooling expects it to be cloned as an entirely separate, independent checkout, as a sibling of `pico-sdk` (not nested inside a specific SDK version). This is deliberate: FreeRTOS-Kernel's release cadence has nothing to do with the SDK's, and pinning it inside a versioned SDK directory just means it has to be re-vendored by hand every time `PICO_SDK_VERSION` changes.
+FreeRTOS-Kernel is **not** part of any official pico-sdk release — Raspberry Pi's own tooling expects it to be cloned as an entirely separate, independent checkout, as a sibling of `pico-sdk` (not nested inside a specific SDK version). This is deliberate: FreeRTOS-Kernel's release cadence has nothing to do with the SDK's, and pinning it inside a versioned SDK directory just means it has to be re-vendored by hand every time `PICO_SDK_VERSION` changes.
 
 Clone it once, as a sibling of `pico-sdk`:
 
@@ -882,7 +883,7 @@ Specifically: VS Code should not be complaining about _anything_. To make absolu
 If you see thousands of changes, something is wrong: maybe you forgot to set the git line endings, as above?
 
 Your VS Code file viewer over on the left side of the window should show a bunch files.
-In fact, if you select the file "BUILDING.md' by clicking it, you will see the file that contains what you are reading right now.
+In fact, if you select the file "BUILDING.md" by clicking it, you will see the file that contains what you are reading right now.
 
 One last, important note.
 When you clone a repository onto your local machine, you are making a copy of the real, remote repository.
@@ -907,7 +908,7 @@ The configuration process runs a program called CMake, which analyzes the entire
 
 In your VS code window that you used to get the umod4 code from Github, hit 'F1' then type 'delete', but don't hit return.
 A bunch of selections related to the topic of 'deleting' will appear in a dropdown list.
-Click the list item called '__CMake: Delete Cache and Reconfigure__'.
+Click the list item called '**CMake: Delete Cache and Reconfigure**'.
 
 If a window pops up asking you to specify a toolkit, select 'unspecified'.
 The project will set up the toolkit by itself.
@@ -930,11 +931,11 @@ It should produce a bunch of messages in the VS Code 'output' window that look s
 [cmake] -- Build files have been written to: /home/robin/projects/umod4/build
 ```
 
-The important part is that the configuration messages end with "Build files have been written to: ..." which means __no errors__.
+The important part is that the configuration messages end with "Build files have been written to: ..." which means **no errors**.
 
 ### Building
 
-Assuming that the configuration process completed without errors, you __finally__ get to build the umod4 project.
+Assuming that the configuration process completed without errors, you **finally** get to build the umod4 project.
 The files created by the configuration process drive the build process.
 They tell the build system exactly what to create, how to create it, and where to put the outputs that get created.
 
@@ -959,7 +960,7 @@ If it all goes correctly, you will see these final messages in the VS Code OUTPU
 [build] Build finished with exit code 0
 ```
 
-The exit code of 0 means __"All Is Good"__.
+The exit code of 0 means **"All Is Good"**.
 
 A non-zero exit code means that some part of the build failed.
 If you get a non-zero exit code, scroll back to the top of the message output window, then scan down through all the output until you see the first error message appear.
@@ -981,8 +982,8 @@ It usually happens after making changes to one of the CMakeLists.txt files in th
 If things are acting weird, the first thing to try is the 'F1', then start typing 'CMake: delete cache and reconfigure'. As you type, a menu will appear based on what you have typed so far. As soon as you see the menu item "CMake: delete cache and reconfigure" appear, you can quit typing and just click that menu item.
 If that does not work, the nuclear option to get back on track is to:
 
-1) Delete the entire 'build' directory by right-clicking 'build' is the VS Code file viewer window, then selecting 'delete permanently' from the menu.
-__When the dialog box opens up warning you about permanently deleting 'build', make sure that it really does say 'build' and that you didn't accidentally select some other directory__.
+1) Delete the entire 'build' directory by right-clicking 'build' in the VS Code file viewer window, then selecting 'delete permanently' from the menu.
+**When the dialog box opens up warning you about permanently deleting 'build', make sure that it really does say 'build' and that you didn't accidentally select some other directory**.
 Hit the 'delete' button to finally delete build.
 1) Hit "F1", then start typing "CMake: delete cache and reconfigure", and select the menu item as mentioned as above.
 1) Hit "F7" to rebuild everything. Your build directory will reappear, full of binary goodness.
@@ -995,16 +996,20 @@ Remember: Never fear deleting the 'build' directory!
 As part of a successful build operation, the build system generates a number of output files.
 The most important ones are:
 
-* __build/EP/EP.uf2:__ the EP firmware image
-* __build/WP/WP.uf2:__ the WP firmware image
-* __build/ecu/UM4.bin:__ An ECU EPROM image containing the data-logging ECU codebase with default 549USA maps. A UM4.bin image is contained inside every EP.uf2 image where it acts as the default built-in EPROM image. If desired, UM4.bin can be uploaded to the EP's image library if you wanted to retain a specific version of it.
-* __build/ecu/sparky.bin:__ A bench-only ECU image built from the same source as UM4.bin with `BENCH_IGNITION_TEST` defined. It skips the real ECU mainloop and just fires both front and rear ignition coils as though the engine were idling at 1200 RPM. It is not included in EP.uf2; upload it to the EP's image library or flash it into an 29C256 if you want to use it.
+* **build/EP/EP.uf2:** the EP firmware image
+* **build/WP/WP.uf2:** the WP firmware image
+* **build/WP_erase/WP_erase.uf2:** a small program that runs from RAM and erases the whole flash of a WP.
+* **build/WP/WP_partition.uf2:** the flash partition table for a blank WP.
+* **build/ecu/UM4.bin:** An ECU EPROM image containing the data-logging ECU codebase with default 549USA maps. A UM4.bin image is contained inside every EP.uf2 image where it acts as the default built-in EPROM image. If desired, UM4.bin can be uploaded to the EP's image library if you wanted to retain a specific version of it.
+* **build/ecu/sparky.bin:** A bench-only ECU image built from the same source as UM4.bin with `BENCH_IGNITION_TEST` defined. It skips the real ECU mainloop and just fires both front and rear ignition coils as though the engine were idling at 1200 RPM. It is not included in EP.uf2; upload it to the EP's image library or flash it into a 29C256 if you want to use it.
+
+`WP_erase.uf2`, `WP_partition.uf2` and `WP.uf2` are the three files that get dragged onto a blank WP in BOOTSEL mode for the first install: see [Install the WP software](./GETTING_STARTED.md#install-the-wp-software).
 
 The server program will reflash the umod4 OTA (Over The Air) using the EP.uf2 and WP.uf2 files.
 
 ## Running Umod4
 
-The next step would be to flash the WP software onto onto a umod4 circuit board.
+The next step would be to flash the WP software onto a umod4 circuit board.
 If you have a umod4 board, check out [GETTING_STARTED.md](./GETTING_STARTED.md) to see how to prep your ECU and get the software installed onto it.
 
 If you do not have a board, there are still plenty of areas of the project to explore though.

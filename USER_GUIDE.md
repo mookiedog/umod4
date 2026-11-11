@@ -144,7 +144,7 @@ It also makes it easier to ensure that the umod4 will have access to a good home
 
 **What you need on your PC.**
 The server and visualizer run from a copy of the project's source code, on a Linux machine or on Windows 11 with WSL2.
-[GETTING_STARTED.md](GETTING_STARTED.md#6-set-up-your-pc) walks through setting that up.
+[GETTING_STARTED.md](GETTING_STARTED.md#set-up-your-pc) walks through setting that up.
 
 There is no installer or packaged release.
 Getting a machine ready to build and run the project is a long, fiddly job, and you do not have to do it alone: an AI coding agent such as Claude Code, working inside the cloned project, can check what is installed, install what is missing, and fix errors as they come up.

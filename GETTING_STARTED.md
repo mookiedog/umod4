@@ -9,18 +9,18 @@ Getting a umod4 installed is a case of "some assembly required", but it is not a
 Read [Before you start](#before-you-start) and check the [parts lists](#parts) first.
 The steps below will be covered in detail:
 
-1) [Modify the ECU](#1-modify-the-ecu)
-1) [Check umod4 board construction](#2-check-umod4-board-construction)
-1) [Prepare the GPS](#3-prepare-the-gps)
-1) [Mount the umod4 in the ECU](#4-mount-the-umod4-in-the-ecu)
-1) [Install the Pico2W](#5-install-the-pico2w)
-1) [Set up your PC](#6-set-up-your-pc)
-1) [Install the WP software](#7-install-the-wp-software)
-1) [Provisioning](#8-provisioning)
-1) [Install the EP software](#9-install-the-ep-software)
-1) [Install the ECU on the bike](#10-install-the-ecu-on-the-bike)
-1) [Garage setup](#11-garage-setup)
-1) [Installation complete!](#12-installation-complete)
+1) [Modify the ECU](#modify-the-ecu)
+1) [Check umod4 board construction](#check-umod4-board-construction)
+1) [Prepare the GPS](#prepare-the-gps)
+1) [Mount the umod4 in the ECU](#mount-the-umod4-in-the-ecu)
+1) [Install the Pico2W](#install-the-pico2w)
+1) [Set up your PC](#set-up-your-pc)
+1) [Install the WP software](#install-the-wp-software)
+1) [Provisioning](#provisioning)
+1) [Install the EP software](#install-the-ep-software)
+1) [Install the ECU on the bike](#install-the-ecu-on-the-bike)
+1) [Garage setup](#garage-setup)
+1) [Installation complete!](#installation-complete)
 
 Each step ends with a checkpoint: something you can see or test to confirm that the step worked before you go on.
 
@@ -30,7 +30,7 @@ Three decisions come before you buy any parts.
 In addition, check [Is it for you?](./WHY_UMOD4.md#is-it-for-you).
 
 **1. Are you willing to modify the ECU?**
-A umod4 needs a socket soldered into the ECU's circuit board (step 1).
+A umod4 needs a socket soldered into the ECU's circuit board (see [Modify the ECU](#modify-the-ecu)).
 Without that socket, a umod4 cannot work.
 The modification does not change how the ECU behaves, and you can always put an EPROM back in.
 If you do not want to do the soldering yourself, find someone who does.
@@ -70,7 +70,7 @@ They will be used in subsequent steps.
 
 ### Loose parts that ship with umod4
 
-* one 12-pin SIP socket strip (for the CN1 modification in step 1)
+* one 12-pin SIP socket strip (for the CN1 modification, see [Modify the ECU](#modify-the-ecu))
 * two 20-pin male-male round-pin strips (for the Pico2W)
 * one 5-pin male-male round-pin strip (for the GPS module)
 * four each of M3 nylon standoffs (8mm tall, thread length 6mm) and M3 nylon screws (thread length 6mm)
@@ -92,7 +92,7 @@ They will be used in subsequent steps.
 * A micro SD card. It is **not** worth spending money on a large capacity card.
     A 32G to 64G card is fine and will hold hundreds of ride logs.
 
-## 1. Modify the ECU
+## Modify the ECU
 
 An ECU *must* be modified to use a umod4.
 The modification is simple and backwards-compatible: a modified ECU will function completely normally if you replace the umod4 with an EPROM afterwards.
@@ -195,7 +195,7 @@ With the ECU on a workbench, perform the following steps:
 * you have inspected each joint
 * the ECU PCB is remounted with nylon standoffs in the proper location, finger tight!
 
-## 2. Check umod4 board construction
+## Check umod4 board construction
 
 It is possible that certain parts might not be present on a board you receive.
 This section makes sure that everything you need is installed.
@@ -222,7 +222,7 @@ The Pico2W socket is made from the two long 20-pin SIP socket strips:
 * Three male-male mounting strips are confirmed present on the rear of the board
 * Three female SIP socket strips for Pico2W and GPS are present on the front
 
-## 3. Prepare the GPS
+## Prepare the GPS
 
 All of the GPS modules I have obtained from Ali Express arrive with 0.025" square pin headers already soldered into them.
 Since the umod4 board has a round-pin socket for the GPS, these headers need to be replaced.
@@ -284,7 +284,7 @@ It would not hurt, but it would mainly be in the way during the next sections*
 * Mounting screw and spacer installed and screwed down
 * Verify GPS mounting hardware on the backside of the umod4 is no more than 6mm thick
 
-## 4. Mount the umod4 in the ECU
+## Mount the umod4 in the ECU
 
 With the GPS module installed and screwed down, it is time to install the umod4 in the ECU.
 
@@ -319,7 +319,7 @@ At some point in the future, it might be good to get someone to 3D print a new c
 
 * umod4 sits flush on all four nylon standoffs, holes aligned, screwed down with nylon screws
 
-## 5. Install the Pico2W
+## Install the Pico2W
 
 Pico2W boards arrive as bare boards with no mounting pins.
 
@@ -354,7 +354,7 @@ The Pico2W stays plugged into the umod4 from here on.
 * All pins soldered
 * Pico2W USB connector faces away from the SD card holder
 
-## 6. Set up your PC
+## Set up your PC
 
 The umod4 server is a program that runs on a PC on your home network.
 It is what downloads your ride logs automatically, and lets you update your umod4's firmware over WiFi.
@@ -407,7 +407,7 @@ Once the server starts, you will see a window of this general form:
 
 * Server window opens and shows an empty device list
 
-## 7. Install the WP software
+## Install the WP software
 
 The software installation procedure described in this section can **always** be used to recover a umod4 in the extremely unlikely event that it loses its ability to be flashed via WiFi.
 The ability to flash a WP using a USB cable is built into the Pico2W boot ROM.
@@ -426,10 +426,10 @@ The first step is to obtain binary files for:
 4) EP.uf2
 
 The first 3 will be installed via USB cable.
-The EP.uf2 will be installed by the umod4 server application via WiFi (step 9).
+The EP.uf2 will be installed by the umod4 server application via WiFi (see [Install the EP software](#install-the-ep-software)).
 
 The ECU stays on your workbench for this step and the next two.
-It does not go back on the bike until step 10.
+It does not go back on the bike until [Install the ECU on the bike](#install-the-ecu-on-the-bike).
 
 For now, do not install the SD card.
 It is not harmful if you accidentally have one inserted, but the instructions below assume that it is not present.
@@ -528,7 +528,7 @@ You will see the LED color cycle end up at magenta again.
 * Micro SD card inserted
 * RGB filesystem status LED is glowing magenta
 
-## 8. Provisioning
+## Provisioning
 
 The umod4 software is installed, but the umod4 does not yet know your home WiFi, and it has no name of its own.
 Telling it these things is called "provisioning".
@@ -609,11 +609,11 @@ Feel free to click around a bit.
 * The WiFi LED is solid (not slowly flashing) indicating it is connected to your home network
 * You can use a browser to access your umod4's home web page from a phone and/or a PC
 
-## 9. Install the EP software
+## Install the EP software
 
 Now that the WP is on your home network, the umod4 server can install the EP firmware over WiFi.
 
-* If the server from step 6 is no longer running, start it from a terminal (on Windows, a WSL terminal):
+* If the server from [Set up your PC](#set-up-your-pc) is no longer running, start it from a terminal (on Windows, a WSL terminal):
 
 ```bash
 ~/projects/umod4/tools/server/run_server.sh
@@ -663,7 +663,7 @@ This is just a test to show how things work.
 * The server's `Manage Files` control lets you successfully delete the `EP.uf2` file
 * `Manage Files` shows you at least one `log_N.um4` file
 
-## 10. Install the ECU on the bike
+## Install the ECU on the bike
 
 At this point, all further software updates will occur OTA via WiFi.
 You are done with the ECU on the bench!
@@ -685,7 +685,7 @@ If you hear your fuel pump cycle on then off like normal, it means that the ECU 
 * ECU is installed back onto the bike
 * Turn ignition ON and listen for the normal fuel pump prime cycle
 
-## 11. Garage setup
+## Garage setup
 
 The final step is to prep your garage.
 The umod4 will need power and WiFi out in the garage.
@@ -725,7 +725,7 @@ The umod4 only needs 2.4GHz 802.11N.
 * With bike in garage, umod4 & ECU on bike, umod4 powered via USB power supply and cable, and umod4 within WiFi range of your home network: verify that the server can see the umod4 on the bike
 * Prove that the remote WiFi connection works by using the server to reflash the EP and the WP using the original WP.uf2 and EP.uf2 files
 
-## 12. Installation complete!
+## Installation complete!
 
 At this point, installation is complete.
 Further interactions with the umod4 will be as a rider and a user.
