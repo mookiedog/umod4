@@ -122,7 +122,11 @@ def check_probe_not_busy(results):
         capture_output=True, text=True, timeout=10)
     output = r.stdout + r.stderr
     if r.returncode != 0:
-        if "CMSIS-DAP" in output and ("mismatch" in output or "cannot" in output.lower()
+        if "unable to find a matching CMSIS-DAP device" in output:
+            results.fatal("probe_not_busy",
+                "CMSIS-DAP probe not visible to WSL (listed by usbipd but not attached?). "
+                "Try: usbipd.exe attach --hardware-id 2e8a:000c --wsl")
+        elif "CMSIS-DAP" in output and ("mismatch" in output or "cannot" in output.lower()
                                        or "failed" in output.lower() or "error" in output.lower()):
             results.fatal("probe_not_busy",
                 "CMSIS-DAP probe appears busy — is a VS Code debug session active? "

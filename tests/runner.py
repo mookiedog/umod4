@@ -3,7 +3,7 @@
 umod4 automated test runner.
 
 Usage:
-    build/.venv/bin/python3 tests/runner.py [suite ...] [--ssid S --password P --device-name N]
+    uv run tests/runner.py [suite ...] [--sta-ssid S --sta-password P --device-name N]
 
     suite          One or more suite names (e.g. test_basic test_wifi).  Omit to run all.
     --sta-ssid     WiFi (STA) SSID  (or set UMOD4_STA_SSID env var)
@@ -13,8 +13,9 @@ Usage:
     --ap-password  AP password to write to device config  (or set UMOD4_AP_PASSWORD env var)
     --no-flash     Skip reflashing WP; run tests against already-loaded firmware
 
-The build venv is required because test_ota_ep imports DeviceClient which needs 'requests'.
-All other suites use only stdlib.
+Run it with 'uv run' so the project environment is used: test_ota_ep imports DeviceClient
+which needs 'requests', and the harness needs 'pyserial' (both are in the "test" dependency
+group in pyproject.toml). Other suites use only the standard library.
 
 The runner:
   1. Runs pre-flight checks (USB devices, tools, build artifacts, args)
