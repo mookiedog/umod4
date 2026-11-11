@@ -83,6 +83,7 @@ The Python environment is managed by uv. `pyproject.toml` lists the packages (in
 - ECU firmware: `build/ecu/`
 - EP firmware: `build/EP/EP.uf2`, `build/EP/EP.elf`
 - WP firmware: `build/WP/WP.uf2`, `build/WP/WP.elf`
+- WP first-install files (BOOTSEL drag-and-drop): `build/WP_erase/WP_erase.uf2`, `build/WP/WP_partition.uf2`
 - Tools: `build/tools/` (installed to `~/.local/bin`)
 - EPROM library: `build/eprom_lib/`
 
@@ -270,7 +271,7 @@ Subsequent crank events go from CRID1 through CRID11, when a CAM event will occu
 Cannot select debug targets normally due to ExternalProject_Add() preventing VS Code from finding executables. Workaround: Use F1 -> "Debug: Select And Start Debugging" and manually pick launch configuration.
 
 **"Clean Rebuild" does not actually clean EP/WP/etc.:**
-F1 -> "CMake: Clean Rebuild" only cleans files tracked by the top-level superbuild project (its own stamp/tracking files). Each `ExternalProject_Add()` subproject (EP, WP, ecu, tools, SwdReflash, WpUsbBoot, ap_proxy, picotool) is a fully independent nested CMake+Ninja project under `build/<name>/`, with its own `build.ninja` and `CMakeCache.txt` — the top-level `clean` target has no knowledge of what's inside those directories and cannot reach them. A "Clean Rebuild" can complete successfully while leaving every subproject's actual compiled artifacts (e.g. `build/EP/EP.uf2`) completely untouched, same file, same timestamp, as before.
+F1 -> "CMake: Clean Rebuild" only cleans files tracked by the top-level superbuild project (its own stamp/tracking files). Each `ExternalProject_Add()` subproject (EP, WP, WP_erase, ecu, tools, SwdReflash, WpUsbBoot, ap_proxy, picotool) is a fully independent nested CMake+Ninja project under `build/<name>/`, with its own `build.ninja` and `CMakeCache.txt` — the top-level `clean` target has no knowledge of what's inside those directories and cannot reach them. A "Clean Rebuild" can complete successfully while leaving every subproject's actual compiled artifacts (e.g. `build/EP/EP.uf2`) completely untouched, same file, same timestamp, as before.
 To force a genuine full rebuild of one subproject: `rm -rf build/<name>` and rebuild. For a fast, real (non-fake) rebuild that just needs to bump a stale artifact timestamp: touch one of that subproject's own source files and rebuild — this triggers a real incremental recompile+relink without recompiling everything.
 
 ## Coding Conventions
