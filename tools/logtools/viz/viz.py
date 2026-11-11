@@ -61,7 +61,7 @@ from stream_config import get_config_manager, StreamType
 from viz_components.config import AppConfig, UnitConverter, PerFileSettingsManager, PerFileSettings
 from viz_components.widgets import (ColorCheckbox, StreamCheckbox, DraggableStreamList,
                                      ZoomableGraphWidget, ResizableSplitter)
-from viz_components.utils import parse_color_to_rgba
+from viz_components.utils import parse_color_to_rgba, MapPageServer
 from viz_components.rendering import min_max_decimate, DataNormalizer
 from viz_components.data import HDF5DataLoader, DataManager
 from viz_components.navigation import ViewNavigationController, ViewHistory
@@ -90,6 +90,15 @@ except ImportError as e:
         DECODER_AVAILABLE = False
         decodelog = None
         DECODER_IMPORT_ERROR = f"Decoder path does not exist: {decoder_path}"
+
+# Map tiles for the GPS track page.  To use a different tile provider, change these three values.
+# OpenStreetMap's tile servers refuse requests that carry no Referer header, which is why the map page
+# is served from a local web server (see viz_components/utils/map_server.py).  Their usage policy is
+# at https://operations.osmfoundation.org/policies/tiles/ : light personal use like this is fine, and
+# the attribution below is required.
+MAP_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+MAP_TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+MAP_TILE_MAX_ZOOM = 19
 
 # Event visualization constants
 SPARK_LABEL_OFFSET = 0.025  # Vertical offset from RPM line for spark labels (2.5% of normalized range)
@@ -3477,7 +3486,6 @@ class DataVisualizationTool(QMainWindow):
         Note: Due to pyqtgraph design, this requires double-click"""
         import subprocess
         import shutil
-        import tempfile
         import os
         import json
 
@@ -3507,15 +3515,13 @@ class DataVisualizationTool(QMainWindow):
             })
 
         # Create HTML with Leaflet.js (open source map library)
-        temp_dir = tempfile.gettempdir()
-        html_file = os.path.join(temp_dir, 'umod4_gps_track.html')
-
         html_content = f"""<!DOCTYPE html>
 <html>
 <head>
     <title>UMOD4 GPS Track</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="origin">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
@@ -3542,11 +3548,10 @@ class DataVisualizationTool(QMainWindow):
         // Create map centered on clicked position
         const map = L.map('map').setView([clickedPos.lat, clickedPos.lon], 15);
 
-        // Add CartoDB Voyager tiles (no Referer header required, unlike OSM direct tiles)
-        L.tileLayer('https://{{s}}.basemaps.cartocdn.com/rastertiles/voyager/{{z}}/{{x}}/{{y}}{{r}}.png', {{
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: 'abcd',
-            maxZoom: 19
+        // Map tiles (the provider is set by the MAP_TILE_* constants at the top of viz.py)
+        L.tileLayer({json.dumps(MAP_TILE_URL)}, {{
+            attribution: {json.dumps(MAP_TILE_ATTRIBUTION)},
+            maxZoom: {MAP_TILE_MAX_ZOOM}
         }}).addTo(map);
 
         // Create polyline for the track
@@ -3599,41 +3604,34 @@ class DataVisualizationTool(QMainWindow):
 </body>
 </html>"""
 
-        with open(html_file, 'w') as f:
-            f.write(html_content)
+        # Serve the page from a tiny local web server and open that address.  Opening the file
+        # directly (file://) would send no Referer header with the tile requests, and
+        # OpenStreetMap answers those with a "403 Access blocked" tile.
+        if getattr(self, '_map_server', None) is None:
+            self._map_server = MapPageServer()
+        url = self._map_server.serve(html_content)
+        self.debug_print(f"Opening GPS track map: {url}")
 
         # Open the map in browser
         try:
             if shutil.which('wslview'):
-                subprocess.Popen(['wslview', html_file])
+                subprocess.Popen(['wslview', url])
             elif shutil.which('wslpath') and shutil.which('powershell.exe'):
                 # wslpath only exists inside WSL, so this branch (unlike a bare
                 # powershell.exe check) won't misfire on native Windows, where
                 # powershell.exe is on PATH but wslpath is not.
-                from pathlib import PureWindowsPath
-                result = subprocess.run(['wslpath', '-w', html_file],
-                                      capture_output=True, text=True)
-                windows_path = result.stdout.strip()
-                # Convert Windows path to file:// URL for better cross-browser compatibility
-                file_url = PureWindowsPath(windows_path).as_uri()
-                self.debug_print(f"Opening GPS track map: {file_url}")
-                subprocess.Popen(['powershell.exe', '-Command', 'Start-Process', f'"{file_url}"'])
+                subprocess.Popen(['powershell.exe', '-Command', 'Start-Process', f'"{url}"'])
             else:
                 import webbrowser
-                from pathlib import Path
-                # Use pathlib to convert to proper file URL (handles Windows paths correctly)
-                file_url = Path(html_file).as_uri()
-                self.debug_print(f"Opening GPS track map: {file_url}")
-                webbrowser.open(file_url, new=2)
+                webbrowser.open(url, new=2)
         except Exception as e:
             self.debug_print(f"Error opening browser: {e}")
-            self.debug_print(f"Map file: {html_file}")
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self,
                 "Could Not Open Map",
-                f"The GPS track was generated but could not be opened in a browser:\n\n{e}\n\n"
-                f"You can open it manually:\n{html_file}"
+                f"The GPS track map could not be opened in a browser:\n\n{e}\n\n"
+                f"While the visualizer is running, you can open it yourself at:\n{url}"
             )
 
     def _save_per_file_settings(self):
