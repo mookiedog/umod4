@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""
+Build the umod4 tools bundle: the server and the visualizer in one zip, for someone who does not
+have the umod4 source tree or its build tools.
+
+    uv run tools/make_tools_bundle
+
+The result is build/dist/umod4-tools-<date>-<git hash>[-dirty].zip (inside build/, like every other
+generated file, so it is untracked and safe to delete).  The zip keeps the repository's own layout,
+because the server's "launch visualizer" button finds the visualizer by relative path:
+
+  * tools/server/            the server's runtime .py files (no tests, no dead code, no dev docs)
+  * tools/logtools/decoder/  the log decoder, plus a freshly generated Logsyms.py (made here with
+                             h2py.py from lib/inc/log_ids.h, so no firmware build is needed)
+  * tools/logtools/viz/      the visualizer
+  * tools/logtools/test_data/log_3.um4   a sample log
+  * pyproject.toml and uv.lock, so that the recipient gets exactly the package versions tested
+  * run_server / run_viz launchers (.cmd for Windows, .sh for Linux), from tools/bundle/
+  * README.txt, from the template tools/bundle/README.txt
+
+The recipient needs only uv.  See tools/RELEASING.md for how this fits into a release.
+"""
+
+import datetime
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+LOGTOOLS_DIRS = ["tools/logtools/decoder", "tools/logtools/viz"]
+LOGTOOLS_SUFFIXES = {".py", ".yaml"}
+SERVER_DIR = "tools/server"
+SERVER_EXCLUDED_DIRS = ("tools/server/tests/",)
+SERVER_EXCLUDED_FILES = {"tools/server/http_server.py"}  # dead code: nothing imports it
+PROJECT_FILES = ["pyproject.toml", "uv.lock"]
+README_TEMPLATE = "tools/bundle/README.txt"
+LAUNCHERS = ["run_server.cmd", "run_viz.cmd", "run_server.sh", "run_viz.sh"]
+LAUNCHER_DIR = "tools/bundle"
+SAMPLE_LOG = "tools/logtools/test_data/log_3.um4"
+LOG_IDS = "lib/inc/log_ids.h"
+H2PY = "tools/src/h2py.py"
+
+
+def git(*args):
+    result = subprocess.run(["git", "-C", str(ROOT), *args],
+                            check=True, capture_output=True, text=True)
+    return result.stdout
+
+
+def code_files():
+    """Tracked decoder, visualizer and server files for the bundle, as repo-relative paths."""
+    files = []
+    for d in LOGTOOLS_DIRS:
+        for name in git("ls-files", "--", d).splitlines():
+            if Path(name).suffix in LOGTOOLS_SUFFIXES:
+                files.append(name)
+    for name in git("ls-files", "--", SERVER_DIR).splitlines():
+        if Path(name).suffix != ".py":
+            continue
+        if name in SERVER_EXCLUDED_FILES or name.startswith(SERVER_EXCLUDED_DIRS):
+            continue
+        if name == f"{SERVER_DIR}/run_server.sh":
+            continue
+        files.append(name)
+    return files
+
+
+def bundle_version(source_files):
+    """<date>-<short hash>, plus -dirty if any bundled file differs from the commit."""
+    short_hash = git("rev-parse", "--short", "HEAD").strip()
+    changed = git("status", "--porcelain", "--untracked-files=no", "--", *source_files).strip()
+    dirty = "-dirty" if changed else ""
+    return f"{datetime.date.today():%Y%m%d}-{short_hash}{dirty}"
+
+
+def generate_logsyms(out_path):
+    """Run h2py.py (relative paths, from the repo root) to produce Logsyms.py."""
+    subprocess.run([sys.executable, H2PY, "--class-name", "Logsyms", "-o", str(out_path), LOG_IDS],
+                   cwd=ROOT, check=True, capture_output=True, text=True)
+
+
+def add_text(z, arc_name, text, executable=False):
+    """Add a text file to the zip.
+
+    Windows .cmd files get CRLF line endings, which cmd.exe expects.  Shell scripts keep LF and
+    are marked executable, so that ./run_server.sh works straight after unzipping.
+    """
+    if arc_name.endswith(".cmd"):
+        text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+    info = zipfile.ZipInfo(arc_name, date_time=time.localtime()[:6])
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = (0o755 if executable else 0o644) << 16
+    z.writestr(info, text.encode("utf-8"))
+
+
+def main():
+    code = code_files()
+    launcher_files = [f"{LAUNCHER_DIR}/{name}" for name in LAUNCHERS]
+    source_files = code + PROJECT_FILES + launcher_files + [README_TEMPLATE, SAMPLE_LOG, LOG_IDS]
+    for name in source_files:
+        if not (ROOT / name).is_file():
+            sys.exit(f"ERROR: expected file is missing: {name}")
+
+    version = bundle_version(source_files)
+    top = f"umod4-tools-{version}"
+    readme = (ROOT / README_TEMPLATE).read_text(encoding="utf-8").replace("{VERSION}", version)
+
+    dist = ROOT / "build" / "dist"
+    dist.mkdir(parents=True, exist_ok=True)
+    zip_path = dist / f"{top}.zip"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        logsyms = Path(tmp) / "Logsyms.py"
+        generate_logsyms(logsyms)
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            add_text(z, f"{top}/README.txt", readme)
+            for name in LAUNCHERS:
+                text = (ROOT / LAUNCHER_DIR / name).read_text(encoding="utf-8")
+                add_text(z, f"{top}/{name}", text, executable=name.endswith(".sh"))
+            for name in PROJECT_FILES + [SAMPLE_LOG] + code:
+                z.write(ROOT / name, f"{top}/{name}")
+            z.write(logsyms, f"{top}/tools/logtools/decoder/Logsyms.py")
+
+    count = len(PROJECT_FILES) + len(LAUNCHERS) + len(code) + 3   # + sample log, README, Logsyms
+    print(f"Wrote {zip_path.relative_to(ROOT)}  ({zip_path.stat().st_size / 1e6:.1f} MB, {count} files)")
+    if version.endswith("-dirty"):
+        print("Note: some bundled files have uncommitted changes (the version is marked -dirty).")
+
+
+if __name__ == "__main__":
+    main()

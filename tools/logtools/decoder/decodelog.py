@@ -35,7 +35,7 @@ except ImportError:
     h5py = None
 
 # Logsyms: try to import it at module level.
-# In a release bundle (tools/make_viz_bundle) Logsyms.py sits next to this file, so it is found here.
+# In a release bundle (tools/make_tools_bundle) Logsyms.py sits next to this file, so it is found here.
 # In a development tree it is generated into build/python_packages, and main() looks for it there.
 try:
     import Logsyms

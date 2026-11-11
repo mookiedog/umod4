@@ -1,42 +1,46 @@
 # Release Process Guide
 
-This document describes how to create releases for the visualizer and firmware.
+This document describes how to create releases for the tools and the firmware.
 
 ## Overview
 
 The umod4 project uses **independent versioning** for different components:
-- **Visualizer releases**: Tagged as `viz-vX.Y.Z`
+- **Tools releases** (the server and the visualizer, in one bundle): Tagged as `tools-vX.Y.Z`
 - **Firmware releases**: Tagged as `firmware-vX.Y.Z`
 
 Both live in the same repository but follow separate release schedules.
 
-## Releasing the Visualizer
+## Releasing the Tools (server and visualizer)
 
-The visualizer is distributed as a **source bundle**: a zip file containing the visualizer and decoder code, the exact package versions it was tested with (`pyproject.toml` and `uv.lock`), a sample log, and instructions.
+The tools are distributed as one **source bundle**: a zip file containing the server, the visualizer and the decoder code, the exact package versions they were tested with (`pyproject.toml` and `uv.lock`), a sample log, launcher scripts and instructions.
+There is one bundle for both programs, so a user always has a matching set.
 The recipient only needs [uv](https://docs.astral.sh/uv/).
-On the first run uv downloads Python 3.12 (if the machine does not have it) and the packages, which are mostly Qt and amount to roughly 300 MB.
+On the first run of each program uv downloads Python 3.12 (if the machine does not have it) and that program's packages, which are mostly Qt and amount to roughly 300 MB.
 There are no per-platform executables and no GitHub Actions: the bundle is built by running a script by hand.
 
 ### Building a bundle
 
 ```bash
 cd ~/projects/umod4
-uv run tools/make_viz_bundle
+uv run tools/make_tools_bundle
 ```
 
-This writes `build/dist/umod4-viz-<date>-<git hash>.zip`.
+This writes `build/dist/umod4-tools-<date>-<git hash>.zip`.
 It lives inside `build/` like every other generated file, so git ignores it and deleting `build/` removes it (rebuilding takes a few seconds).
 The version is marked `-dirty` if any bundled file has uncommitted changes, so commit first when making a real release.
 
-The zip contains:
-- `logtools/viz` and `logtools/decoder`: the tracked `.py` and `.yaml` files
-- `logtools/decoder/Logsyms.py`, generated on the spot from `lib/inc/log_ids.h` (no firmware build is needed)
+The zip keeps the repository's own layout, because the server's "launch visualizer" button finds the visualizer by relative path.
+It contains:
+- `tools/server`: the server's runtime `.py` files (no tests, no dead code, no developer docs)
+- `tools/logtools/viz` and `tools/logtools/decoder`: the tracked `.py` and `.yaml` files
+- `tools/logtools/decoder/Logsyms.py`, generated on the spot from `lib/inc/log_ids.h` (no firmware build is needed)
+- `tools/logtools/test_data/log_3.um4`, the sample log
 - `pyproject.toml` and `uv.lock`
-- `log_3.um4`, the sample log
-- `README.txt`: the instructions for the recipient, taken from the template `tools/TRY_ME.txt`
+- `run_server.cmd`, `run_viz.cmd` (Windows, double-click) and `run_server.sh`, `run_viz.sh` (Linux), taken from `tools/bundle/`
+- `README.txt`: the instructions for the recipient, taken from the template `tools/bundle/README.txt`
 
-The recipient's command is `uv run --project . --only-group viz logtools/viz/viz.py log_3.um4`.
-The `--only-group viz` part installs just the visualizer's packages and leaves out the server and test packages.
+The launchers run `uv run --only-group server ...` and `uv run --only-group viz ...`.
+The `--only-group` part installs just that program's packages and leaves out the other group and the test packages.
 
 ### Release Steps
 
@@ -44,16 +48,17 @@ The `--only-group viz` part installs just the visualizer's packages and leaves o
 
    ```bash
    uv run tools/logtools/viz/viz.py tools/logtools/test_data/log_3.um4
-   git add tools/logtools/ && git commit -m "Add feature X, fix bug Y"
+   git add tools/ && git commit -m "Add feature X, fix bug Y"
    ```
 
 2. **Build the bundle** (see above). A release should not be marked `-dirty`.
 
-3. **Test the zip on a machine that has only uv**, ideally a Windows machine: unzip it, run the command in `README.txt`, answer yes to converting the sample log, and check that graphs appear.
+3. **Test the zip on a machine that has only uv**, ideally a Windows machine or a Windows Sandbox: unzip it, follow `README.txt`, start the server and check that its window opens with an empty device list, then start the visualizer on the sample log, answer yes to converting it, and check that graphs appear.
    The test does not mean much on a machine that has the umod4 source tree, because that hides missing files.
+   Note that only one server can run at a time: it needs UDP port 54549 and says so if another server already has it.
 
 4. **Hand it out.**
-   Either send the zip directly, or publish it: on GitHub go to Releases, draft a new release (optionally with a `viz-vX.Y.Z` tag), and attach the zip by hand.
+   Either send the zip directly, or publish it: on GitHub go to Releases, draft a new release (optionally with a `tools-vX.Y.Z` tag), and attach the zip by hand.
 
 
 ### Version Numbering
@@ -121,7 +126,8 @@ git push origin firmware-v1.6.0
 
 # Create GitHub Release
 # Go to: https://github.com/mookiedog/umod4/releases/new
-# Upload: build/EP/EP.uf2, build/WP/WP.uf2, build/ecu/ECU.bin
+# Upload: build/EP/EP.uf2, build/WP/WP.uf2, build/WP/WP_partition.uf2,
+# build/WP_erase/WP_erase.uf2 and build/ecu/UM4.bin
 # Note: May require visualizer update if log format changed
 ```
 
@@ -129,12 +135,12 @@ git push origin firmware-v1.6.0
 
 ## Troubleshooting
 
-**`tools/make_viz_bundle` fails:**
-- Run it from inside the repository, with uv: `uv run tools/make_viz_bundle` (the script asks git for its file list, so git must be installed)
+**`tools/make_tools_bundle` fails:**
+- Run it from inside the repository, with uv: `uv run tools/make_tools_bundle` (the script asks git for its file list, so git must be installed)
 - "expected file is missing" means a file the bundle needs was moved or deleted; the message names it
 
-**The recipient's first run is slow, or does not start:**
-- The first run downloads Python 3.12 (if the machine has none) and about 300 MB of packages, so it needs an internet connection
+**The recipient's first run of a program is slow, or does not start:**
+- The first run of each program downloads Python 3.12 (if the machine has none) and that program's packages (about 300 MB for the visualizer), so it needs an internet connection
 - uv itself must be installed first; `README.txt` in the bundle explains how
 
 **GitHub upload fails:**
