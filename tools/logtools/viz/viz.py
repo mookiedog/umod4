@@ -26,6 +26,11 @@ if sys.platform == 'win32':
         # Fallback for Python versions whose stdout has no reconfigure()
         sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, errors='replace')
         sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, errors='replace')
+# HDF5 takes a file lock whenever it opens or creates a file.  Windows cannot take that lock on a
+# network share or on a WSL folder (\\wsl.localhost\...), so opening or saving a log there fails
+# with "unable to lock file".  Nothing else uses these files, so turn the locking off.  This has
+# to happen before h5py is imported.
+os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 import argparse
 import numpy as np
 import pandas as pd
@@ -1067,14 +1072,23 @@ class DataVisualizationTool(QMainWindow):
         self.config.clear_recent_files()
         self.update_recent_files_menu()
 
+    def _file_dialog_start_dir(self):
+        """Folder where the file dialogs start: the last folder used, or the home folder if that
+        folder no longer exists (otherwise Qt would start in whatever the working directory is)."""
+        start = self.config.get("default_file_location")
+        return start if start and os.path.isdir(start) else os.path.expanduser("~")
+
+    def _remember_directory(self, filename):
+        """Remember the folder of a file the user picked, so the next dialog starts there."""
+        self.config.set("default_file_location", os.path.dirname(filename))
+
     def load_hdf5_file(self):
         """Load data from an HDF5 file with file picker."""
         if not HDF5_AVAILABLE:
             print("Error: h5py is not installed. Cannot load HDF5 files.")
             return
 
-        # Use last directory from config
-        start_dir = self.config.get("default_file_location")
+        start_dir = self._file_dialog_start_dir()
 
         filename, _ = QFileDialog.getOpenFileName(
             self,
@@ -1084,6 +1098,7 @@ class DataVisualizationTool(QMainWindow):
         )
 
         if filename:
+            self._remember_directory(filename)
             self.load_file_with_conversion(filename)
 
     def load_file_with_conversion(self, filename):
@@ -1187,7 +1202,10 @@ class DataVisualizationTool(QMainWindow):
 
                 try:
                     # Call the decoder's main function directly
-                    decodelog.main()
+                    status = decodelog.main()
+                    if status:
+                        raise RuntimeError(f"The decoder reported an error (exit status {status}). "
+                                           f"The details are in the console window.")
                     progress.setValue(100)
                     progress.close()
 
@@ -1230,12 +1248,13 @@ class DataVisualizationTool(QMainWindow):
         um4_filename, _ = QFileDialog.getOpenFileName(
             self,
             "Select UM4 File to Convert",
-            self.config.get("default_file_location"),
+            self._file_dialog_start_dir(),
             "Binary Log Files (*.um4);;All Files (*)"
         )
 
         if not um4_filename:
             return
+        self._remember_directory(um4_filename)
 
         # Check if file exists
         if not os.path.exists(um4_filename):
@@ -1292,7 +1311,10 @@ class DataVisualizationTool(QMainWindow):
 
             try:
                 # Call the decoder's main function directly
-                decodelog.main()
+                status = decodelog.main()
+                if status:
+                    raise RuntimeError(f"The decoder reported an error (exit status {status}). "
+                                       f"The details are in the console window.")
 
                 # Success
                 QMessageBox.information(
@@ -1322,12 +1344,13 @@ class DataVisualizationTool(QMainWindow):
         um4_filename, _ = QFileDialog.getOpenFileName(
             self,
             "Select UM4 File to Convert",
-            self.config.get("default_file_location"),
+            self._file_dialog_start_dir(),
             "Binary Log Files (*.um4);;All Files (*)"
         )
 
         if not um4_filename:
             return
+        self._remember_directory(um4_filename)
 
         # Check if file exists
         if not os.path.exists(um4_filename):
@@ -1384,7 +1407,10 @@ class DataVisualizationTool(QMainWindow):
 
             try:
                 # Call the decoder's main function directly
-                decodelog.main()
+                status = decodelog.main()
+                if status:
+                    raise RuntimeError(f"The decoder reported an error (exit status {status}). "
+                                       f"The details are in the console window.")
 
                 # Success
                 QMessageBox.information(

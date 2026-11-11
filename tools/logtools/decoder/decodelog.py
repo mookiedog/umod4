@@ -24,6 +24,12 @@ from log_convert import (
     convertApriliaTempSensorAdcToDegC, convertPressureSensorAdcToKpa,
 )
 
+# HDF5 takes a file lock whenever it opens or creates a file.  Windows cannot take that lock on a
+# network share or on a WSL folder (\\wsl.localhost\...), so opening or saving a log there fails
+# with "unable to lock file".  Nothing else uses these files, so turn the locking off.  This has
+# to happen before h5py is imported.
+os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
+
 # HDF5 support - only imported if needed
 try:
     import numpy as np
