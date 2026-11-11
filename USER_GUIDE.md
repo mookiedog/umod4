@@ -2,26 +2,30 @@
 
 This document is aimed at Aprilia riders who are interested in finding out what the umod4 project could do for them, and how they would use it on their bike.
 
-For lower-level project information aimed at software/hardware developers, see:
+For people who have a umod4 and want to get it up and running, see:
 
-* README.md
-* GETTING_STARTED.md
-* BUILDING.md
+* [GETTING_STARTED.md](GETTING_STARTED.md): umod4 installation and prep
 
-## 1. What the umod4 is
+For the project overview, and for lower-level information, see:
 
-The Gen1 fuel injection computer (Aka: Engine Control Unit, or 'ECU') was designed to run its program from an EPROM chip.
+* [README.md](README.md): the project overview
+* [HOW_IT_WORKS.md](HOW_IT_WORKS.md): how the hardware and software work
+* [BUILDING.md](BUILDING.md): setting up a development environment and building the software
+
+## What the umod4 is
+
+The Gen1 fuel injection computer (AKA: Engine Control Unit, or 'ECU') was designed to run its program from an EPROM chip.
 The umod4 physically replaces the EPROM chip with a circuit board containing a collection of new processors and memory.
 
 The umod4's most important job is to act just like an EPROM so that the ECU will run like normal when the ignition key turns on.
-The first improvement over a standard ECU is that a umod4 has space for hundreds of EPROM images, all stored in an on-board flash memory.
+The first improvement over a standard ECU is that a umod4 has space for over 100 EPROM images, all stored in an on-board flash memory.
 Flash memory means that EPROM image updates are trivial compared to erasing and burning EPROMs.
 
 The second big job the umod4 does is data logging.
 The point of the umod4 is to give a rider a window into exactly what the ECU was doing throughout an entire ride.
 The umod4 will record:
 
-* **what the rider is doing** during a ride. Throttle inputs are logged over 100 times a second.
+* **what the rider is doing** during a ride. For example, a rider's throttle inputs are logged over 100 times a second.
 * **how the ECU is responding to its inputs** while you ride. This includes engine sensor data and the results of ECU calculations.
 * **how the motorbike responds to it all**. The umod4 tracks the bike's 3D location and velocity 10 times per second via GPS.
 
@@ -29,21 +33,21 @@ The data logs are recorded to an on-board micro SD card.
 
 The last big improvement over a standard ECU is that the umod4 adds a WiFi connection to the system.
 A rider can use the WiFi connection to select a new EPROM image to run or see certain data streams 'live' in a running engine.
-The nicest feature though has to be automatic data log uploads after a ride.
-After coming home, a rider would park their bike in the garage, plug the umod4 into a USB power supply, and the ride logs will get automatically uploaded via WiFi to a server.
+The nicest feature though has to be automatic data log downloads after a ride.
+After coming home, a rider would park their bike in the garage, plug the umod4 into a USB power supply, and the server will automatically pull all new ride logs off the umod4 via WiFi.
 
 Once the server has pulled the latest ride logs, a rider can examine them graphically on their PC/laptop.
 The level of detail in a log is broad and deep: a ride log contains every rotation of the crankshaft, every change in throttle position, every spark event, every injection pulse event, every intake air and coolant temperature measurement, etc.
 For the most fun, all of these log events can be correlated to the bike's location and velocity on a map display of their ride.
 Think track day fun!
 
-## 2. The pieces
+## The pieces
 
 A rider interacts with the umod4 using a web browser and a WiFi interface.
 
-That said, the wifi connection is slightly different if you are at home or on the road.
+That said, the WiFi connection is slightly different if you are at home or on the road.
 
-**At home**, the bike is in your garage and the umod4 will connected to your home WiFi.
+**At home**, the bike is in your garage and the umod4 is connected to your home WiFi.
 Everything shares your router:
 
 ```text
@@ -64,7 +68,7 @@ Everything shares your router:
 
 **Away from home**, typically, there would be no router and no PC.
 If the umod4 can't see your home network, it automatically enables its own WiFi network hotspot.
-In this situationm, a rider could still interact with the umod4 by connecting their phone's wifi to the bike's own hotspot wifi network:
+In this situation, a rider could still interact with the umod4 by connecting their phone's WiFi to the bike's own hotspot WiFi network:
 
 ```text
  +-------------+      umod4's own hotspot      +-------------+
@@ -81,8 +85,7 @@ In either case, the control website that the umod4 serves to a phone's browser i
   It holds the EPROM images the ECU can run, and the logs of your rides.
   It serves a control web page via its WiFi interface.
   Logs are stored on a micro SD card.
-  EPROM images are stored in a special flash memory on the umod4 board.
-  This means that your engine will run even if there is no SD card present.
+  EPROM images are stored in a special flash memory on the umod4 board meaning that your engine will run even if there is no SD card present.
 * **The phone** (or tablet, or PC) needs only a web browser.
   There is no app to install.
   You use it to open the umod4's control web page, for example to select a different EPROM image.
@@ -99,10 +102,11 @@ In either case, the control website that the umod4 serves to a phone's browser i
   * automatically downloading new ride logs
   * performing umod4 firmware upgrades via WiFi
   * giving you a way into the umod4's control web page
+
   The server would typically be used at home.
   It is possible to use a laptop running a server in a remote location though, like at a track.
   There are many ways to do that.
-  One easy-ish way is to get the laptop to broadcast its own WiFi network where the SSID and password match you own home network.
+  One easy-ish way would be to set up your laptop to broadcast its own WiFi network where the SSID and password match your own home network.
   Under those circumstances, the umod4 would happily connect to the laptop's WiFi network, thinking that it was at home.
 
   The server is not a downloadable app.
@@ -123,73 +127,42 @@ The umod4 connects in one of two ways:
 * **Your home network**, if it is configured and in range.
 * **Its own hotspot**, if it cannot find your home network.
   Your phone or PC joins the umod4's network directly.
-  Its default password is the device name you gave it.
+  Its password is the one you gave it when you set up its AP WiFi credentials.
 
 Two things to know:
 
 * **A phone can sometimes connect where the umod4 cannot.**
   The umod4's antenna is smaller than a phone's, so a weak signal that works for your phone may not work for the umod4.
   If it will not connect, move the access point closer.
-* **The hotspot turns itself off when the bike is moving** (see section 5).
+* **The hotspot turns itself off when the bike is moving** (see [The routine: ride, collect, look](#the-routine-ride-collect-look)).
 
-## 3. One-time setup, on the bench
+## One-time setup, on the bench
 
 It is easiest to set up a umod4 for the first time on a workbench in the house before it gets installed on the bike.
 It makes for easier physical access to the micro SD card and the micro-USB connector used to power the umod4.
-It also makes it easier to ensure that the umod4 will have access to a good home wifi signal.
+It also makes it easier to ensure that the umod4 will have access to a good home WiFi signal.
 
 **What you need on your PC.**
-The server and visualizer are run from a copy of the project's source code, so you will need:
-
-* a Linux laptop, or a Windows machine with WSL2 (Windows Subsystem for Linux)
-* a clone of the project's git repository on that machine
+The server and visualizer run from a copy of the project's source code, on a Linux machine or on Windows 11 with WSL2.
+[GETTING_STARTED.md](GETTING_STARTED.md#6-set-up-your-pc) walks through setting that up.
 
 There is no installer or packaged release.
 Getting a machine ready to build and run the project is a long, fiddly job, and you do not have to do it alone: an AI coding agent such as Claude Code, working inside the cloned project, can check what is installed, install what is missing, and fix errors as they come up.
 Ask it to help you get set up.
 
-1. **Build and fit the hardware.**
-   See [GETTING_STARTED.md](GETTING_STARTED.md).
-   This guide does not repeat it.
-2. **Power it from USB** on the bench.
-   No bike is needed yet.
-3. **Connect it to your WiFi.**
-   GETTING_STARTED.md covers the first-time WiFi setup.
-4. **Give it a device name.**
-   It is required, and the server uses it to tell your umod4 apart from others.
-5. **Get the server running on your PC** and confirm it finds your umod4.
-   This needs a copy of the project on your PC, as described in section 2.
-   Start it with `tools/server/run_server.sh`.
-6. **Try the server's basic commands.**
-   (What worth listing here? See open questions.)
-7. **Do a firmware upgrade** through the server, to learn that it works while the umod4 is on the bench and easy to recover if something goes wrong.
-8. **Load an EPROM into the Image Library.**
-   See section 6.
-9. **Select the EPROM image to run at ignition-on.**
-   Also in section 6.
+Follow [GETTING_STARTED.md](GETTING_STARTED.md) for the one-time setup: building and fitting the hardware, installing the software, and getting the umod4 onto your WiFi and your server.
+This guide does not repeat it.
 
-At this point, the umod4 and ECU are ready to go.
+Once GETTING_STARTED is complete, the umod4 and ECU are mounted and ready to go.
+Choosing which EPROM image the ECU runs is described in [Choosing what the ECU runs](#choosing-what-the-ecu-runs-eprom-images).
 
-## 4. Installing on the bike
-
-1. **Get WiFi to your garage.**
-   Any setup that lets your phone connect in the garage works for the umod4: a mesh system, an extra access point, or an ethernet cable to an access point out there.
-   The only catch is the antenna difference described above.
-   If the umod4 will not connect, bring the access point closer before trying anything else.
-2. **Fit the umod4 in the bike's ECU** and put the ECU back on the bike.
-3. **Check the server can see the bike** from the garage.
-4. **Prove firmware upgrade works in the garage** by reloading the same firmware onto itself.
-   If that works, you have a reliable path for future updates.
-
-Before you ride a new setup for the first time, see section 7 on testing an image.
-
-## 5. The routine: ride, collect, look
+## The routine: ride, collect, look
 
 ### Before a ride
 
 1. Pick the EPROM image you want to run.
    Usually you already did, and it stays selected; changing it is uncommon.
-   See section 6.
+   See [Choosing what the ECU runs](#choosing-what-the-ecu-runs-eprom-images).
 2. If the umod4 is on USB power, unplug it.
 3. Ignition on, and go riding.
    Logging starts by itself.
@@ -197,11 +170,8 @@ Before you ride a new setup for the first time, see section 7 on testing an imag
 ### During a ride
 
 The WiFi hotspot **shuts off above 20 mph and stays off until you power-cycle the bike**.
-This was read from the code, not tested on a bike **(unverified)**:
 
-* The check applies when the umod4 is acting as its own hotspot, which is the normal case on the road.
-* If the umod4 is connected to your home network instead (for example, you ride past your garage within range), the code does not appear to shut the radio off by speed.
-  Whether that is deliberate is not known.
+The check applies when the umod4 is acting as its own hotspot, which is the normal case on the road.
 
 To use WiFi while out: stop, power-cycle the bike, join the umod4's hotspot, and open its control web page.
 From there you can, for example, select a different EPROM image.
@@ -229,17 +199,15 @@ Use the server's device files dialog:
 * The log the umod4 is writing right now cannot be deleted.
 * There are buttons to delete selected files or all logs.
 
-This is how the dialog is written.
-How it behaves when a download failed halfway has not been checked **(unverified)**.
-
 ### Looking at your rides
 
 The umod4 writes compact **raw logs** (`.um4`, binary, small).
-To graph one, it is **decoded** into an HDF5 file the visualizer can load quickly.
-Start the visualizer, open a log, and it decodes for you.
+To graph one, a .um4 file must be **decoded** into an HDF5 file that the visualizer can load quickly.
+If the visualizer needs to decode a log file, it will ask you for permission.
+The decoded HDF5 versions of the log files remain on the PC so that you can reopen a log without having to reconvert it.
 The details, and what each graph means, are in [Tools.md](Tools.md).
 
-## 6. Choosing what the ECU runs (EPROM images)
+## Choosing what the ECU runs (EPROM images)
 
 Three ideas to know:
 
@@ -258,7 +226,7 @@ Its controls are disabled while the engine is running.
 
 **UM4, the datalogging image.**
 This is the program that provides the logging.
-It is built from this project's source, which is one reason you need the cloned project and a working build environment (section 3).
+It is built from this project's source, which is one reason you need the cloned project and a working build environment (see [One-time setup, on the bench](#one-time-setup-on-the-bench)).
 The build writes it out as `UM4.bin`.
 UM4 comes with the 549USA maps, so you can run it as-is and get logging without bringing any EPROM image of your own.
 
@@ -296,7 +264,7 @@ What it means for you:
   Whoever made your chip likely worked from a normal, unscrambled image before it was scrambled.
   A tuner who sold you the chip may give you that file, but it's unlikely.
 * **Writing a decoder is possible but is real work.**
-  The umod4 source coce is set up to accept an appropriate descrambler routine (this is what the Protection setting on the upload form is for).
+  The umod4 source code is set up to accept an appropriate descrambler routine (this is what the Protection setting on the upload form is for).
 
   **This project does not include the descrambler source!**
   This keeps the umod4 project clean with respect to other peoples IP that they have protected with daughterboards.
@@ -411,22 +379,15 @@ When you are done, click **Save & Reboot EP**.
 The new selection takes effect when the EP restarts.
 You do not need to power-cycle the bike.
 
-What has and has not been checked:
-
-* The author's test selector combines UM4 code with the 8796539 maps.
-  Other combinations have not been tried **(unverified)**.
-* Before you ride on any new combination, bench-test it (section 7).
-
-## 7. Safety
+## Safety
 
 The umod4 runs inside your engine's ECU.
 A bad image can stall or damage a running engine or leave you stranded.
 
-* **Bench-test any new image** before it goes on the bike, and do not treat it as safe until it has run correctly there.
-* The author's testing was done only on the author's own bike and boards.
-  Anything else is untested.
+**Be extremely careful if you are editing ECU tables, or making changes to the UM4 code itself.**
+**Any changes you make can be life-threatening!**
 
-## 8. What the umod4 produces
+## What the umod4 produces
 
 Each log file contains:
 
@@ -447,6 +408,6 @@ This is the default location, and you can choose a different one.
 Storing logs per device lets you keep several umod4 units apart, for example two bikes, or one bike and a bench test unit.
 
 A log's file name does not contain the date, because the umod4 does not know the date when it creates the file.
-The `NN` number goes up each time the umod4 creates a new log.
+The `N` number goes up each time the umod4 creates a new log.
 As soon as the GPS gets a fix, the date and time are recorded inside the log.
 So every log can be traced back to a place and a time, even though its name does not say.

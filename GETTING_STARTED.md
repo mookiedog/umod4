@@ -20,7 +20,7 @@ The steps below will be covered in detail:
 1) [Install the EP software](#9-install-the-ep-software)
 1) [Install the ECU on the bike](#10-install-the-ecu-on-the-bike)
 1) [Garage setup](#11-garage-setup)
-1) [Next steps](#12-next-steps)
+1) [Installation complete!](#12-installation-complete)
 
 Each step ends with a checkpoint: something you can see or test to confirm that the step worked before you go on.
 
@@ -55,8 +55,8 @@ If your chip is protected and you cannot get an unscrambled file, you will need 
 You do **not** need a `.bin` file to verify umod4 operation.
 But before trying to start your bike's engine, if your bike requires anything other than built-in 549USA maps, you must install at least one compatible EPROM image.
 
-Installing images is described in section 6 of the [User Guide](./USER_GUIDE.md#6-choosing-what-the-ecu-runs-eprom-images).
-Before you ride on any new image, read the testing advice in the User Guide's safety section.
+Installing images is described in the User Guide: see [Choosing what the ECU runs](./USER_GUIDE.md#choosing-what-the-ecu-runs-eprom-images).
+Before you ride on any new image, read the testing advice in the User Guide's [Safety](./USER_GUIDE.md#safety) section.
 
 **3. Garage WiFi.**
 The umod4 really needs power and WiFi where the bike is parked.
@@ -546,6 +546,7 @@ Open your phone's wifi settings and scan for nearby WiFi networks.
 You will see one called "umod4_XXXX".
 The XXXX will match the last 4 digits of your umod4's MAC address.
 In the example below, the umod4 AP-mode network shows up as "umod4_1EA3":
+
 ![network-scan](./doc/images/GETTING_STARTED/wifi-network-scan.jpg)
 
 Ask your phone to connect to that WiFi network.
@@ -571,7 +572,7 @@ Enter your network name and its password in the proper boxes.
 Do NOT hit "Save & Reboot" yet.
 
 Next, you can change the umod4's AP network name to something more memorable if you want.
-But even if you do not change the AP network name, you **MUST** give it a new, **strong** password: **this network will get broadcast where ever your bike goes!**
+But even if you do not change the AP network name, you **MUST** give it a new, **strong** password: **this network will get broadcast wherever your bike goes!**
 
 _FYI: it is easy to change the AP Network name and password later so don't freak out about picking the best name possible right now._
 
@@ -580,6 +581,9 @@ Once you have entered all the configuration fields, click on "Save & Reboot" at 
 You should see a new page on the phone saying that it is now connecting to the home network.
 The WP will reboot.
 This time, the WiFi LED should come solid (no more slow-flash) meaning that the WP is connected to home WiFi.
+
+When the WP reboots, your phone will lose its connection.
+Most phones will automatically reconnect to your home network once the WP access point disappears at reboot, but you might need to make sure.
 
 At this point, your umod4 is on your home network.
 This means you can talk to it from any phone or PC on your home network.
@@ -667,14 +671,17 @@ The final steps would be to attach an active antenna to the GPS and double-check
 It is possible to swap micro SD cards with the ECU on the bike, but it is not convenient!
 
 Reinstall the ECU in the motorbike and reconnect the two big wiring harness connectors.
+Remember that the ECU top cover will not fit anymore due to the height of the WP on top of the umod4.
 
 Even if you have not installed your own preferred .bin file, turning the ignition on will cause the built-in UM4 code to prime the fuel pump and shut off a couple seconds later, just like normal.
 
-That's your feel-good moment: it means that the EP booted, constructed a "limp-mode" ECU image for the ECU, then booted the ECU.
-If you hear your fuel pump cycle on then off like normal, it means that a few million ECU CPU cycles just executed properly using your new umod4 as its EPROM!
+That's your feel-good moment: it means that the EP booted, constructed the built-in ECU image for the ECU, then booted the ECU.
+If you hear your fuel pump cycle on then off like normal, it means that the ECU correctly executed a few million CPU cycles using the umod4 as its EPROM!
 
 **Checkpoint:**
 
+* Verify that micro SD card is installed
+* Verify that the GPS antenna is attached
 * ECU is installed back onto the bike
 * Turn ignition ON and listen for the normal fuel pump prime cycle
 
@@ -696,14 +703,14 @@ When I get home again, I put the Tuono on its battery maintainer, pop the rear s
 The umod4 will come to life.
 The EP will flash the BSY LED at 2Hz because the ECU has no power.
 The WP will mount the SD filesystem and turn the RGB LED to magenta.
-At the same time, the WP will ping the server, then get to work uploading the new ride logs.
+At the same time, the WP will ping the server, telling it to work downloading the new ride logs.
 The disk activity LED will flicker as the logs get uploaded.
 
 ### Garage WiFi
 
 This might be tricky for some.
-I am lucky to have a WiFi access point wired into an Ethernet cable that goes out to my garage.
-My WiFi is perfect out there.
+I am lucky to have a WiFi access point mounted on my garage ceiling with an Ethernet cable that runs back to the router in my house.
+My WiFi is perfect out there!
 
 If you do not have good WiFi signal in your garage, other options might be:
 
@@ -718,37 +725,39 @@ The umod4 only needs 2.4GHz 802.11N.
 * With bike in garage, umod4 & ECU on bike, umod4 powered via USB power supply and cable, and umod4 within WiFi range of your home network: verify that the server can see the umod4 on the bike
 * Prove that the remote WiFi connection works by using the server to reflash the EP and the WP using the original WP.uf2 and EP.uf2 files
 
-## 12. Next Steps
+## 12. Installation complete!
 
-The next steps are all performed using the server program and wifi.
-You will set up what EPROM image you want the bike to run when you turn it on.
-The User Guide explains how: see [Choosing what the ECU runs](./USER_GUIDE.md#6-choosing-what-the-ecu-runs-eprom-images).
-Before you ride on a new image, read the [safety advice](./USER_GUIDE.md#7-safety).
+At this point, installation is complete.
+Further interactions with the umod4 will be as a rider and a user.
+
+For starters, you would need to define what EPROM image you want the bike to run when you turn it on.
+The User Guide explains how: see [Choosing what the ECU runs](./USER_GUIDE.md#choosing-what-the-ecu-runs-eprom-images).
+Before you ride on a new image, read the [safety advice](./USER_GUIDE.md#safety).
 
 And finally, you can go riding again!
-The User Guide also describes [the routine of riding, collecting and looking at your logs](./USER_GUIDE.md#5-the-routine-ride-collect-look).
+The User Guide also describes [the routine of riding, collecting and looking at your logs](./USER_GUIDE.md#the-routine-ride-collect-look).
 
 ## Appendix A: Building a board from scratch
 
-Depending on how many parts were installed at the PCB assembly house, you might need to install a few final parts on the umod4 board itself.
+If your umod4 is not "as shipped" (see [Parts](#parts)), then depending on how many parts were installed at the PCB assembly house, you might need to install a few final parts on the board yourself.
 
-#### SIP Sockets
+### SIP Sockets
 
 **Reminder: ALL SIP sockets on the umod4 are meant for 0.020 round pins, not 0.025 square pins!**
 
-##### Pico2W SIP Sockets
+#### Pico2W SIP Sockets
 
 The Pico2W module needs a pair of 20-pin strips.
-To ensure proper spacing and alignment of the two SIP sockets, use a spare socket strip inserted between the two strips as a spacer jig:
+To ensure proper spacing and alignment of the two SIP sockets, use a spare socket strip inserted between the two strips as a spacer jig, and a rubber band to hold the strips flush to the PCB:
 
 ![picoW-socket](./doc/images/GETTING_STARTED/pico-w-socket.jpg)
 
 The spacer that spans the two strips keeps the strips to be soldered perfectly spaced and perfectly vertical.
-The rubber band holds the SIP strips flush to the PCB.
+The rubber band holds them flush to the PCB.
 Turn the board over and solder them up.
 Do a visual inspection!
 
-##### GPS Socket
+#### GPS Socket
 
 Reuse the rubber band to attach the GPS socket:
 
@@ -760,7 +769,7 @@ If you need to adjust it, now is the time.
 Once you are happy, solder the rest of the pins.
 Do a visual inspection!
 
-#### Square Pin Headers
+### Square Pin Headers
 
 The square pin headers are only used for hardware test and software debugging purposes.
 There is no need to add them unless you want to get deep into the embedded SW/HW development world.
@@ -778,7 +787,7 @@ Also: if you ever want to connect a debugger to the WP, you should add a 3-pin r
 Before soldering, I mechanically wedge the connector with something squishy to get the horizontal pins to angle up slightly.
 I find that the slight upwards angle makes it easier to attach on the debugger's "squid pins" for a debug session.
 
-#### Test Points
+### Test Points
 
 Again, you really don't need to add the test points unless you will be doing hardware testing or development.
 But if you do, I like using [Keystone 1035](https://www.digikey.com/en/products/detail/keystone-electronics/1035/315151?s=N4IgTCBcDaINYFMCeBnALgewHYIAQEYAGAZgFYQBdAXyA) parts for GND test points, as seen below:
@@ -793,7 +802,7 @@ If you don't feel like getting the specific Keystone parts, 0.025 square header 
 
 SIP sockets come in strip form.
 There are many choices out there.
-DigiKey part #[25-0513-10](https://www.digikey.com/en/products/detail/aries-electronics/25-0513-10/4298) are very high quality.
+DigiKey part #[25-0513-10](https://www.digikey.com/en/products/detail/aries-electronics/25-0513-10/4298) is very high quality.
 
 Here is a detailed dimensional drawing of that part:
 
@@ -825,9 +834,9 @@ The pins should be round, approximately 0.020 in diameter.
 These ones from DigiKey (ED6864-64-ND) are very high quality: [Mill-Max 350-10-164-00-006000](https://www.digikey.com/en/products/detail/mill-max-manufacturing-corp/350-10-164-00-006000/357045?s=N4IgTCBcDaIMwFYAMBaAjKtA2ALCpqBWBSIAugL5A).
 
 They come from DigiKey in strips of 64 pins and can be cut to length.
-One 64-pin strip is enough: the system needs 28 for the EPROM, 12 for CN1, and 5 for the GPS module for a total of 45 pins.
+Two 64-pin strips are enough: the system needs 28 for the EPROM, 12 for CN1, 5 for the GPS module and 40 for the Pico2W, for a total of 85 pins.
 
-I have also used male-male interconnect strips from LCSC in Taiwan, part number [C2764600](https://www.lcsc.com/product-detail/C2764600.html?s_z=n_q_C2764600&globalKeyword=C2764600).
+I have also used male-male interconnect strips from LCSC, part number [C2764600](https://www.lcsc.com/product-detail/C2764600.html?s_z=n_q_C2764600&globalKeyword=C2764600).
 These ones worked well, too.
 Note that these strips are only 20 pins long, so make sure to get enough.
 Again, get some spares in case something bad happens as you trim them to length.
