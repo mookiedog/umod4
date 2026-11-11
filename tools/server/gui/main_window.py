@@ -10,7 +10,9 @@ from PySide6.QtGui import QAction, QFont
 from datetime import datetime
 import json
 import os
+import shutil
 import subprocess
+import sys
 from checkin_listener import CHECKIN_PORT
 
 
@@ -56,9 +58,13 @@ def _open_url(url):
 def _open_folder(path):
     """Open a filesystem folder in the native file manager.
 
-    Handles WSL2 where xdg-open is not available: converts the Linux path to a
-    Windows path and opens it with explorer.exe via PowerShell.
+    Handles native Windows (os.startfile) and WSL2, where xdg-open is not available:
+    on WSL2 it converts the Linux path to a Windows path and opens it with explorer.exe.
     """
+    if os.name == 'nt':
+        os.startfile(path)
+        return
+
     try:
         with open('/proc/version', 'r') as version_file:
             if 'microsoft' not in version_file.read().lower():
@@ -76,6 +82,23 @@ def _open_folder(path):
     if result.returncode == 0:
         win_path = result.stdout.strip()
         subprocess.Popen(['explorer.exe', win_path])
+
+
+def _viz_command(viz_path, log_path):
+    """Return the command line that runs viz.py on log_path.
+
+    The server runs from an environment that holds only the server's packages, so viz.py
+    cannot be started with the server's own Python: it needs the "viz" dependency group.
+    'uv run --only-group viz' provides it on Linux, WSL2 and Windows alike.  The project
+    root (the directory holding pyproject.toml) is three levels above this file, both in
+    the repository and in a release bundle.  If uv or pyproject.toml cannot be found, fall
+    back to the Python that is running the server.
+    """
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+    uv = shutil.which('uv')
+    if uv and os.path.exists(os.path.join(project_root, 'pyproject.toml')):
+        return [uv, 'run', '--project', project_root, '--only-group', 'viz', viz_path, log_path]
+    return [sys.executable, viz_path, log_path]
 
 
 def _normalize_bt(v: str) -> str:
@@ -941,7 +964,7 @@ class TransferHistoryWidget(QWidget):
             if os.path.exists(viz_full_path):
                 # Launch viz with log file
                 try:
-                    subprocess.Popen(['python3', viz_full_path, log_path])
+                    subprocess.Popen(_viz_command(viz_full_path, log_path))
                     return
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to launch viz: {e}")
