@@ -75,6 +75,7 @@ Keyboard shortcuts also work to zoom in and out, and to pan the whole main windo
 The arrow keys make it easy to pan the graph window left or right without changing the zoom level.
 
 Looking at that first graph in more detail:
+
 ![overview](images/viz-1a-annotated.jpg)
 
 The blue arrow shows the engine turning slowly as the starter cranks it over.
@@ -91,11 +92,13 @@ The green arrows clearly show the engine missing - slowing down for a rotation o
 
 And this is where the visualizer starts to prove its worth.
 Zooming in on that very first green arrow, we see this:
+
 ![detail](images/viz-detail-1.jpg)
 
 It can be seen that the rotation speed of the crank drops from nearly 2000 RPM to below 1000 RPM in the span of 2 rotations.
 
 To analyze why that is happening, here is a diagram from the Aprilia doc describing the sequence of events that occur as the engine goes through the first full two rotations of the crank (one complete 4-cycle sequence) when starting up:
+
 ![operation](../ecu/doc/OperationalSequencing.jpg)
 
 The graph line N (NNUM) in the Aprilia documentation is what I call the CRID, or **C**rankshaft **R**eference **ID**entifier.
@@ -107,7 +110,9 @@ For the rear, the power stroke starts on CR10 and runs through CR0.
 
 I'm proud of this next bit: one of the graphical ECU streams the log visualizer can display is the CRID.
 Not only that, the CRID is what I call a "marker" stream because it is used to mark up the instantaneous RPM with additional detail:
+
 ![crid-detail](./images/viz-detail-crid.jpg)
+
 Those markers on the RPM data indicate the start of each CR event, as per the Aprilia doc.
 
 So what does it all mean?
@@ -129,6 +134,7 @@ The takeaway is that when things are running properly at idle speeds, the cranks
 * CR11, when the rear cylinder fires
 
 Now check out the detail in the circled areas in the screenshot below:
+
 ![operation](./images/viz-detail-2-crid.jpg)
 
 There are a few things to note.
@@ -167,6 +173,7 @@ That allows the UM4 logging firmware to log the precise time of every single coi
 
 The visualizer can attach the "spark occurred" marker data stream to the instantaneous RPM graph.
 Enabling that stream yields some interesting observations:
+
 ![operation](./images/viz-detail-3.jpg)
 
 The tags marked 'S2' indicate when plug #2 fired.
@@ -243,14 +250,17 @@ As I started accelerating through the turn, the engine missed.
 I made a mental note of that.
 After getting home, I looked up my ride visualization.
 It was a longer trip, hence the frozen fingers.
+
 ![ride-2](images/ride-2-overview.jpg)
 
 I used Google Maps to zoom in and find that right turn by the grocery store:
+
 ![ride-2-safeways](images/ride-2-safeways.jpg)
 
 Clicking on any of the blue dots gives me the timestamp information for that dot.
 The map tag indicates that I was turning the corner approximately 1889.7 seconds into the ride.
 In the navigation view, I panned to that time area in the log, then zoomed in:
+
 ![ride-2-safeways](images/ride-2-safeways-detail.jpg)
 
 From there, it was not hard to eyeball the instantaneous RPM data and locate the engine miss I had felt.
@@ -258,6 +268,7 @@ Above, you can see me sitting at the corner, throttle closed (green graph line).
 Then you can see me feed in a bit of throttle, and accelerate through the corner.
 The engine clearly misbehaves pretty much exactly where the green throttle line intersects with the red RPM trace at 1888.4 seconds.
 Zooming in on that event makes things clear:
+
 ![ride-2-safeways](images/ride-2-safeways-detail-3.jpg)
 
 Check out CR6 in the circled area: that is where the crank would normally be speeding up during a front cyl power stroke.
@@ -297,9 +308,11 @@ I added a feature to display the fuel injector pulse widths.
 Here is the bike starting up.
 You can see the ECU give a little priming shot to both cylinders as soon as the ECU gets its first signal from the cam sensor.
 If you scroll back up on this page to the Aprilia diagram, you will see the ECU doing exactly what the diagram indicates:
+
 ![injectors-squirting](./images/viz-detail-injectors-1.jpg)
 
 This next screen shows the bike at a bit over 7K RPM with the throttle fairly wide open:
+
 ![injectors-squirting-even-more](./images/viz-detail-injectors-2.jpg)
 
 Hovering over an injector event will light up a tooltip telling you the pulse duration in microseconds.
@@ -317,6 +330,7 @@ One reason to _not_ decode .um4 log files into human readable logs is that they 
 
 To make things easier, the visualizer is now set up to show me the low-level binary data for every log item on the screen, on demand.
 You can see how it works, below:
+
 ![binry-data-viewer](images/viz-detail-log.jpg)
 
 I clicked on the first spark event in the graph display.
@@ -344,6 +358,7 @@ But to my secret delight, I was never the slowest person at the track.
 Just before I got the Tuono, I took my 15+ year old Yamaha V-Max to a Reg Pridmore Class Ride at Laguna Seca.
 It was a great day.
 The class photographer snapped me scraping the centerstand going through turn 3:
+
 ![vmax-at-laguna-seca](images/laguna-seca.jpg)
 
 Not that it is too hard to scrape the centerstand on a V-Max.

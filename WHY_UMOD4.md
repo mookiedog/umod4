@@ -79,6 +79,7 @@ Add one through a web page, give it a name and some notes, and pick which one th
 No pulling the ECU from under the seat, no swapping EPROMs!
 
 The image library, showing EPROM names and notes:
+
 <img src="doc/images/README/web-ctrl-eprom-library.png" width="250" alt="Image library">
 
 The `Boot Selector` control allows a rider to choose what image to run when the ignition key turns on next.
