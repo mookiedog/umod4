@@ -5,6 +5,7 @@ connect to WiFi. When a check-in is received, it triggers the auto-download
 process.
 """
 
+import errno
 import socket
 import json
 import threading
@@ -28,17 +29,30 @@ class CheckInListener:
         self.socket = None
         self.thread = None
         self.running = False
+        self.error = None          # Why start() failed, as text (None if it did not fail)
+        self.port_in_use = False   # True if start() failed because another program has the port
         self.on_device_checkin = None  # Callback: on_device_checkin(device_mac, device_ip)
 
     def start(self):
-        """Start the UDP listener in a background thread."""
-        if self.running:
-            return
+        """Start the UDP listener in a background thread.
 
+        Returns True if the listener is running.  Returns False if it could not start; then
+        self.error says why, and self.port_in_use is True if the cause is that another program
+        (most likely a second umod4 server) already has the port.
+        """
+        if self.running:
+            return True
+
+        self.error = None
+        self.port_in_use = False
         try:
-            # Create UDP socket
+            # Create UDP socket.  Do NOT set SO_REUSEADDR: for UDP it lets a second server bind
+            # the same port without any error, and two servers would then compete for the same
+            # check-ins.  UDP has no TIME_WAIT, so a restart never needs it.  On Windows, ask for
+            # exclusive use of the port as well.
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             self.socket.bind((self.host, self.port))
             self.socket.settimeout(1.0)  # 1 second timeout for clean shutdown
 
@@ -49,10 +63,23 @@ class CheckInListener:
             self.thread.start()
 
             print(f"CheckInListener: Listening for device check-ins on UDP port {self.port}")
+            return True
 
         except Exception as e:
-            print(f"CheckInListener: Failed to start: {e}")
             self.running = False
+            self.error = str(e)
+            # 10048 is WSAEADDRINUSE, the Windows spelling of "address already in use"
+            self.port_in_use = (getattr(e, 'errno', None) == errno.EADDRINUSE
+                                or getattr(e, 'winerror', None) == 10048)
+            if self.socket is not None:
+                self.socket.close()
+                self.socket = None
+            if self.port_in_use:
+                print(f"CheckInListener: UDP port {self.port} is already in use. "
+                      f"Another umod4 server is probably running: close it and start this one again.")
+            else:
+                print(f"CheckInListener: Failed to start: {e}")
+            return False
 
     def stop(self):
         """Stop the UDP listener."""

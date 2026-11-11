@@ -21,7 +21,7 @@ import argparse
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import QTimer
 
 # Add current directory to path for imports
@@ -33,6 +33,21 @@ from gui.main_window import MainWindow
 from checkin_listener import CheckInListener, CHECKIN_PORT
 from device_manager import DeviceManager
 from connectivity_checker import ConnectivityChecker
+
+
+def listener_failure_text(listener):
+    """Return (title, message, details) explaining why the check-in listener could not start."""
+    title = "umod4 Server cannot start"
+    if listener.port_in_use:
+        message = (f"Another program is already using UDP port {listener.port}, which this server "
+                   f"needs in order to hear your umod4.\n\n"
+                   f"Most likely another umod4 server is already running. Look for another "
+                   f"'umod4 Server' window, including one running under WSL, and close it. "
+                   f"Then start this server again.")
+    else:
+        message = (f"The server could not open UDP port {listener.port}, which it needs in order "
+                   f"to hear your umod4.")
+    return title, message, listener.error or ""
 
 
 # --- Event types (background threads put these on the queue) ---
@@ -279,7 +294,15 @@ def main():
         startup_session.close()
 
     print("Starting check-in listener...")
-    checkin_listener.start()
+    if not checkin_listener.start():
+        # Without the listener the server can never hear a umod4, so do not pretend to be ready.
+        title, message, details = listener_failure_text(checkin_listener)
+        window.hide()
+        box = QMessageBox(QMessageBox.Critical, title, message)
+        if details:
+            box.setDetailedText(details)
+        box.exec()
+        sys.exit(1)
 
     print("Starting connectivity checker...")
     connectivity_checker.start()
