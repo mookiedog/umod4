@@ -13,7 +13,7 @@ This directory contains sample log files for testing the decoder and visualizer.
 - `.log` or `.um4` files are raw binary logs from the umod4 hardware
 - These files can be converted to HDF5 format using `decodelog.py` (run from the umod4 directory):
   ```bash
-  uv run tools/logtools/decoder/decodelog.py tools/logtools/test_data/log_3.um4 --format h5 -o log_3.h5
+  uv run tools/logtools/decoder/decodelog.py tools/logtools/test_data/sample_ride.um4 --format h5 -o sample_ride.h5
   ```
 
 ## Adding Sample Logs
@@ -26,9 +26,21 @@ When adding sample logs to this directory:
 
 ## Sample Log Descriptions
 
+### sample_ride.um4
+
+A 23-minute ride, recorded on 2026-06-22 with firmware built on 2026-06-09.
+It covers about 16 km at up to 66 mph, with GPS fixes arriving three to five times a second and a few gaps of about 10 seconds.
+There are no impossible RPM jumps, because the firmware already had the timer-prescaler fix of 2026-03-26.
+This is the sample that the tools bundle ships.
+
+The log ends in the middle of a record, because the power went away with the ignition, so `decodelog.py` prints a warning about an incomplete last record.
+That is normal: the incomplete record is ignored and everything before it is decoded.
+
 ### log_3.um4
 
 This is the original logfile that incorporates GPS data during a ride.
+It was recorded on 2025-11-28, before the timer-prescaler fix of 2026-03-26, so its RPM and event timing are not reliable: the decoded RPM has tens of thousands of impossible jumps.
+The GPS data in it is fine.
 It was just a short ride around town.
 The only point was to collect GPS data so that the vizualizer map display functions could be tested.
 The bike was warmed up for about 10 minutes, then a short 10-ish minute ride, immortalized for posterity.

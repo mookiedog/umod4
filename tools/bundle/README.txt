@@ -56,10 +56,10 @@ STEP 3 - Try the visualizer on the sample log
 -----------------------------------------------
 
 Windows:  double-click  run_viz.cmd  (then open the sample log with the File menu),
-          or drag  tools\logtools\test_data\log_3.um4  onto run_viz.cmd
-Linux:    ./run_viz.sh tools/logtools/test_data/log_3.um4
+          or drag  tools\logtools\test_data\sample_ride.um4  onto run_viz.cmd
+Linux:    ./run_viz.sh tools/logtools/test_data/sample_ride.um4
 
-(log_3.um4 is a sample motorcycle log.)
+(sample_ride.um4 is a 23-minute motorcycle ride with GPS.)
 
 The first run downloads the visualizer's packages (mostly Qt/PySide6,
 roughly 250-300MB). This only happens once.

@@ -34,7 +34,7 @@ It contains:
 - `tools/server`: the server's runtime `.py` files (no tests, no dead code, no developer docs)
 - `tools/logtools/viz` and `tools/logtools/decoder`: the tracked `.py` and `.yaml` files
 - `tools/logtools/decoder/Logsyms.py`, generated on the spot from `lib/inc/log_ids.h` (no firmware build is needed)
-- `tools/logtools/test_data/log_3.um4`, the sample log
+- `tools/logtools/test_data/sample_ride.um4`, the sample log
 - `pyproject.toml` and `uv.lock`
 - `run_server.cmd`, `run_viz.cmd` (Windows, double-click) and `run_server.sh`, `run_viz.sh` (Linux), taken from `tools/bundle/`
 - `README.txt`: the instructions for the recipient, taken from the template `tools/bundle/README.txt`
@@ -47,7 +47,7 @@ The `--only-group` part installs just that program's packages and leaves out the
 1. **Make and test changes**, then commit them:
 
    ```bash
-   uv run tools/logtools/viz/viz.py tools/logtools/test_data/log_3.um4
+   uv run tools/logtools/viz/viz.py tools/logtools/test_data/sample_ride.um4
    git add tools/ && git commit -m "Add feature X, fix bug Y"
    ```
 

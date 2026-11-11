@@ -13,7 +13,7 @@ because the server's "launch visualizer" button finds the visualizer by relative
   * tools/logtools/decoder/  the log decoder, plus a freshly generated Logsyms.py (made here with
                              h2py.py from lib/inc/log_ids.h, so no firmware build is needed)
   * tools/logtools/viz/      the visualizer
-  * tools/logtools/test_data/log_3.um4   a sample log
+  * tools/logtools/test_data/sample_ride.um4   a sample ride log
   * pyproject.toml and uv.lock, so that the recipient gets exactly the package versions tested
   * run_server / run_viz launchers (.cmd for Windows, .sh for Linux), from tools/bundle/
   * README.txt, from the template tools/bundle/README.txt
@@ -40,7 +40,7 @@ PROJECT_FILES = ["pyproject.toml", "uv.lock"]
 README_TEMPLATE = "tools/bundle/README.txt"
 LAUNCHERS = ["run_server.cmd", "run_viz.cmd", "run_server.sh", "run_viz.sh"]
 LAUNCHER_DIR = "tools/bundle"
-SAMPLE_LOG = "tools/logtools/test_data/log_3.um4"
+SAMPLE_LOG = "tools/logtools/test_data/sample_ride.um4"
 LOG_IDS = "lib/inc/log_ids.h"
 H2PY = "tools/src/h2py.py"
 
