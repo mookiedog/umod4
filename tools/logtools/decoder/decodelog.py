@@ -1428,6 +1428,19 @@ def decodeL000D(byte):
 # Sensor conversion functions are in log_convert.py (imported at the top of this file).
 
 
+class TruncatedRecord(Exception):
+    """The file ended in the middle of a record.
+
+    The umod4 writes its log in 4 KB blocks, and nothing makes the last block end on a record
+    boundary: when the ignition goes off the power goes with it, wherever the log happens to be.
+    That is normal.  The decoder keeps everything before the incomplete record and ignores it.
+    """
+    def __init__(self, got, wanted):
+        super().__init__(f"{got} of {wanted} data bytes present")
+        self.got = got
+        self.wanted = wanted
+
+
 def read(f, readCount, showAddress=False, newLine=True):
     global address
     global showBinData
@@ -1441,6 +1454,11 @@ def read(f, readCount, showAddress=False, newLine=True):
         import traceback
         traceback.print_exc(file=sys.stderr)
         exit(1)
+
+    # The type byte of a new record is the only read made with showAddress=True, and finding no
+    # more data there is the normal end of the file.  Any other short read is a record that was cut off.
+    if len(bytes) < readCount and not showAddress:
+        raise TruncatedRecord(len(bytes), readCount)
 
     if (showBinData):
         if (showAddress):
@@ -1575,6 +1593,17 @@ def _process_single_file(logfile_path, output_path, args, L):
         h5_writer = HDF5Writer(output_path, L, timekeeper)
         h5_writer.open()
         print(f"# Writing HDF5 output to {output_path}")
+
+    def report_end_of_file(bytes_read):
+        """Report a final 100% and print the summary."""
+        if PROGRESS_CALLBACK is not None and total_input_bytes > 0:
+            PROGRESS_CALLBACK(total_input_bytes, total_input_bytes)
+
+        final_time_sec = timekeeper.get_time_ns() / 1e9
+        summary_msg = f"\n# Decoding complete: {recordCnt} records processed, {bytes_read} bytes read, {final_time_sec:.2f} seconds of data"
+        if max_data_rate_bytes_per_sec > 0:
+            summary_msg += f", max data rate: {max_data_rate_bytes_per_sec:.1f} B/s"
+        print(summary_msg, file=sys.stderr)
 
     try:
         recordCnt = 0
@@ -2594,17 +2623,16 @@ def _process_single_file(logfile_path, output_path, args, L):
                     print(f"{fmt_record(recordCnt, timekeeper)} ERR:    Unknown LOGID 0x{byte:02X}")
                     #read(f, 1)
 
-            # End of file reached - report a final 100% and print summary
-            if PROGRESS_CALLBACK is not None and total_input_bytes > 0:
-                PROGRESS_CALLBACK(total_input_bytes, total_input_bytes)
+            # End of file reached
+            report_end_of_file(f.tell())
 
-            final_time_sec = timekeeper.get_time_ns() / 1e9
-            file_size = f.tell()
-            summary_msg = f"\n# Decoding complete: {recordCnt} records processed, {file_size} bytes read, {final_time_sec:.2f} seconds of data"
-            if max_data_rate_bytes_per_sec > 0:
-                summary_msg += f", max data rate: {max_data_rate_bytes_per_sec:.1f} B/s"
-            print(summary_msg, file=sys.stderr)
-
+    except TruncatedRecord as e:
+        # The log ends in the middle of a record (see TruncatedRecord).  Everything before it was
+        # decoded, so finish normally and say what was ignored.
+        print(f"Warning: the log ends in the middle of a record ({e}). The record starts at byte "
+              f"{record_offset:#x}; it is incomplete and was ignored.", file=sys.stderr)
+        report_end_of_file(address + e.got)
+        return 0
     except FileNotFoundError:
         print(f"Error: File '{logfile_path}' not found.")
         return 1
