@@ -10,6 +10,7 @@ debug probe and one ap_proxy are connected at a time.
 """
 
 import re
+import shutil
 import subprocess
 import sys
 import os
@@ -27,6 +28,20 @@ def _is_wsl():
 IS_WSL = _is_wsl()
 
 
+class UsbipdUnavailable(RuntimeError):
+    """usbipd.exe cannot be run from this WSL."""
+
+
+def _usbipd(*args):
+    """Run usbipd.exe with args and return the completed process (text output captured)."""
+    try:
+        return subprocess.run(["usbipd.exe", *args], capture_output=True, text=True)
+    except FileNotFoundError:
+        raise UsbipdUnavailable(
+            "usbipd.exe cannot be run: is usbipd-win installed on Windows, and are the Windows "
+            "folders on PATH inside this WSL (WSL interop enabled)?") from None
+
+
 def usbipd_state(hardware_id):
     """
     Return the usbipd state string for the first device matching hardware_id,
@@ -36,10 +51,7 @@ def usbipd_state(hardware_id):
     """
     if not IS_WSL:
         return None
-    result = subprocess.run(
-        ["usbipd.exe", "list"],
-        capture_output=True, text=True
-    )
+    result = _usbipd("list")
     for line in result.stdout.splitlines():
         if hardware_id.lower() in line.lower():
             m = re.search(r"(Not shared|Shared|Attached)", line, re.IGNORECASE)
@@ -80,16 +92,15 @@ def ensure_attached(hardware_id, linux_enum_timeout=10.0):
     """
     if not IS_WSL:
         return
+    if shutil.which("usbipd.exe") is None and _linux_has_usb(hardware_id):
+        return   # there is no usbipd to ask, but Linux can see the device: nothing to attach
     state = usbipd_state(hardware_id)
     if state == "Attached":
         if _linux_has_usb(hardware_id):
             return   # genuinely attached and visible in Linux
         # usbipd says Attached but Linux can't see it (stale after
         # sleep/resume or WSL kernel hiccup). Detach and reattach.
-        subprocess.run(
-            ["usbipd.exe", "detach", "--hardware-id", hardware_id],
-            capture_output=True, text=True
-        )
+        _usbipd("detach", "--hardware-id", hardware_id)
         time.sleep(1.0)
         state = usbipd_state(hardware_id)
     if state is None:
@@ -112,10 +123,7 @@ def ensure_attached(hardware_id, linux_enum_timeout=10.0):
     # hold a newly-enumerated device and cause the first attach attempt to fail.
     last_result = None
     for attempt in range(4):
-        last_result = subprocess.run(
-            ["usbipd.exe", "attach", "--hardware-id", hardware_id, "--wsl"],
-            capture_output=True, text=True
-        )
+        last_result = _usbipd("attach", "--hardware-id", hardware_id, "--wsl")
         if last_result.returncode == 0:
             break
         time.sleep(2.0)
@@ -150,12 +158,12 @@ def ensure_detached(hardware_id):
     """
     if not IS_WSL:
         return
-    if usbipd_state(hardware_id) != "Attached":
-        return
-    result = subprocess.run(
-        ["usbipd.exe", "detach", "--hardware-id", hardware_id],
-        capture_output=True, text=True
-    )
+    try:
+        if usbipd_state(hardware_id) != "Attached":
+            return
+        result = _usbipd("detach", "--hardware-id", hardware_id)
+    except UsbipdUnavailable:
+        return   # nothing to detach with
     if result.returncode != 0:
         print(f"  warn: usbipd detach {hardware_id} failed: {result.stderr.strip()}",
               file=sys.stderr)

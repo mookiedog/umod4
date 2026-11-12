@@ -17,7 +17,7 @@ import os
 import shutil
 import subprocess
 
-from harness.usbipd import IS_WSL, usbipd_state
+from harness.usbipd import IS_WSL, usbipd_state, UsbipdUnavailable
 from harness.usb_ids import AP_PROXY_HW_ID
 
 
@@ -48,7 +48,17 @@ def _linux_has_usb(vid_pid):
 
 def _check_device_wsl(results, name, vid_pid, label):
     """Verify device is visible in usbipd list (any state).  Does not attach."""
-    state = usbipd_state(vid_pid)
+    try:
+        state = usbipd_state(vid_pid)
+    except UsbipdUnavailable as e:
+        # Without usbipd, the one thing left to check is whether Linux can already see the device.
+        if _linux_has_usb(vid_pid):
+            results.passed(name,
+                f"{label} ({vid_pid}) found on the Linux side (usbipd.exe is not available, "
+                f"so its state was not checked)")
+        else:
+            results.fatal(name, f"{label} ({vid_pid}) not found on the Linux side, and {e}")
+        return
     if state is None:
         results.fatal(name,
             f"{label} ({vid_pid}) not found — is it plugged in and bound?")
