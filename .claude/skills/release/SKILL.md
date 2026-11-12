@@ -63,6 +63,41 @@ After publishing:
 - Check whether GETTING_STARTED.md (or any other document) points riders at download names or places that changed, and say so.
 - Check that the published release has every file in the folder, and that the downloaded checksums match `SHA256SUMS`.
 
+## Writing "What changed"
+
+The reader is a rider or tinkerer asking "should I update, and do I have to do anything?".
+They do not care about our internal commits.
+Write the draft yourself, show it, and let Robin edit it; never publish text he has not seen.
+
+**Inputs** (read all three):
+
+1. The commits since the previous release: the previous release's `release.json` names its commit, so use `git log <that commit>..HEAD`. Our commit messages have category headers (`WP:`, `Tools:`, `Docs:`) and a `Verified:` line that says what was and was not exercised.
+2. The changed/unchanged table in `RELEASE_NOTES.md`, which says whether a rider has to reflash the EP or the WP at all.
+3. For every firmware file marked "changed", `git diff --stat <previous commit> HEAD -- <its input folders>`, so you can say what actually changed in it. A file can be "changed" only because a build script or path changed; say so plainly, and do not suggest a rider needs it.
+
+**How to write it:**
+
+- Lead with what a rider must do: "reflash the WP", "nothing to do for the EP", "old logs still open".
+- Group by what the reader cares about: firmware (EP, WP), tools (server, visualizer, decoder), documents. Leave out purely internal work (test harness, refactors, build scripts) unless a rider would notice it.
+- Plain sentences, one thing per line, no commit hashes, no jargon without a few words of explanation.
+- Do not invent. Every line must trace to a commit or to the table. If a commit message is unclear, ask Robin instead of guessing.
+- Say what was tested, taken from the `Verified:` lines and from what Robin told you in this session (for example "bench-tested on a BenchECU, not ridden with this build"). Say plainly what was not tested. Never write that firmware is safe for the bike.
+- If the log format changed, say which firmware and tools versions go together.
+
+**Every release after the first** starts its "What you need to do" with this block, unchanged, when the tools zip changed (it is the same text as "UPGRADING" in `tools/bundle/README.txt`; keep the two in step):
+
+> **Upgrading the tools**
+>
+> 1. Close the umod4 server and the visualizer if they are running.
+> 2. Unzip the new zip. It makes a new folder with the version in its name, next to your old one. Do not unzip it over the old folder.
+> 3. Start the server from the new folder (`run_server.cmd` on Windows).
+> 4. When you are happy with it, delete the old folder. Your device list and logs are not stored there, so nothing is lost.
+>
+> You do not need to install uv again.
+
+**The first release has no previous release.** Do not list the history.
+Write instead: what this release is, what is in it, how to start (link GETTING_STARTED.md), what was tested and not tested, and the known limits.
+
 ## Rules that apply throughout
 
 - Never push, tag, publish or delete anything on GitHub without Robin's explicit go-ahead for that specific action.

@@ -84,6 +84,20 @@ For more on using the visualizer, see:
 Project home: https://github.com/mookiedog/umod4
 
 
+UPGRADING TO A NEWER VERSION
+------------------------------
+
+1. Close the umod4 server and the visualizer if they are running.
+   (Only one server can run at a time, so an old one would block the new one.)
+2. Unzip the new zip. It makes a new folder with the version in its name,
+   next to your old one. Do not unzip it over the old folder.
+3. Start the server from the new folder (run_server.cmd or run_server.sh).
+4. When you are happy with it, delete the old folder. Your device list and
+   logs are not stored there (see STEP 2), so nothing is lost.
+
+You do not need to install uv again.
+
+
 CLEANING UP / REMOVING THIS LATER
 ------------------------------------
 
