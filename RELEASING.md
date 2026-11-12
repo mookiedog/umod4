@@ -16,7 +16,7 @@ The sections below explain each item.
 - [ ] Run `uv run tools/make_release --version v0.2.0 --previous <the previous release's folder>` (leave out `--previous` for the first release). The output must not say REHEARSAL.
 - [ ] Read the table in `RELEASE_NOTES.md`: a firmware file must say "unchanged" only if you changed nothing that feeds it.
 - [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill). It tests the source, using the build in `build/`. If it complains that a file is older than a `CMakeLists.txt`, see Troubleshooting.
-- [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash `EP.uf2` and `WP.uf2` **from the release folder** to the bike, check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
+- [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash **from the release folder**, in the order WP, EP, WP (see "Flash order" in step 4), check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
 - [ ] Test the tools zip on a clean Windows profile: the server window opens, the visualizer opens the sample ride, and the map shows. A throwaway Windows user account does it (see "Testing the tools zip"). Do the full test for the first release and whenever the launchers, `pyproject.toml`, `uv.lock` or the tools `README.txt` changed; otherwise unzip it into a new folder on your own PC and check that both programs start.
 - [ ] Write "What changed" in `RELEASE_NOTES.md`.
 - [ ] Copy the release folder to a safe place outside the repository (for example `~/umod4-releases/`): it is the `--previous` for the next release.
@@ -112,8 +112,16 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
    If it stops with "is N s older than CMakeLists.txt", see Troubleshooting.
 
 4. **Test the firmware, from the release folder.**
-   If a firmware file is marked "changed", or this is the first release, flash `EP.uf2` and `WP.uf2` from the release folder to the bike, using the server's Reflash EP and Reflash WP buttons.
+   If a firmware file is marked "changed", or this is the first release, flash `EP.uf2` and `WP.uf2` from the release folder, using the server's Reflash EP and Reflash WP buttons.
    The server's device panel should then show the EP and WP builds that are listed in `release.json`.
+
+   **Flash order: WP, then EP, then WP again.**
+   The WP does the EP's reflash, so this order tests three things in turn: the WP updates itself over the air, the newly installed WP can reflash the EP, and the new WP can update itself.
+   After each flash wait for the device to come back, and check its builds in the server's device panel (or `/api/info`) against `release.json`.
+
+   **What this does not prove:** when the device already runs the release's files, the first WP flash replaces identical bytes, so it is not an upgrade from the previous release.
+   Say in the notes what the OTA update was tested from, for example "new over identical" or "from the previous release's builds".
+
    Then bench-test, and ride.
    Files marked "unchanged" are the earlier files that were already tested, so there is nothing to flash for them.
 
