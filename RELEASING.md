@@ -19,7 +19,7 @@ The sections below explain each item.
 - [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash **from the release folder**, in the order WP, EP, WP (see "Flash order" in step 4), check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
 - [ ] Test the tools zip on a clean Windows profile: the server window opens, the visualizer opens the sample ride, and the map shows. A throwaway Windows user account does it (see "Testing the tools zip"). Do the full test for the first release and whenever the launchers, `pyproject.toml`, `uv.lock` or the tools `README.txt` changed; otherwise unzip it into a new folder on your own PC and check that both programs start.
 - [ ] Write "What changed" in `RELEASE_NOTES.md`.
-- [ ] Copy the release folder to a safe place outside the repository (for example `~/umod4-releases/`): it is the `--previous` for the next release.
+- [ ] Copy the finished release folder (with the final notes) to `~/umod4-releases/umod4-release-<version>`, always that place, before you publish: it is the `--previous` for the next release, and `build/` can be deleted at any time.
 - [ ] Tag the commit and publish by hand: `git tag v0.2.0`, `git push origin v0.2.0`, then GitHub, Releases, draft from that tag, paste the notes and attach every file in the folder. Read the draft once as a visitor would before publishing.
 - [ ] If the download names or places changed, update the documents that point riders at the release (GETTING_STARTED.md).
 
@@ -100,7 +100,7 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
 
    The script runs the build first (`ninja` in `build/`), refuses to continue on a tree with uncommitted changes, refuses an ECU image that was built from an uncommitted tree (`-dirty`), and checks that the firmware files agree with each other.
    The result is `build/dist/umod4-release-<version>/`.
-   Copy that folder somewhere that survives deleting `build/`: you need it as `--previous` next time.
+   You will copy that folder to `~/umod4-releases/` once the notes are final (see the checklist): you need it as `--previous` next time.
    Read the file table in its `RELEASE_NOTES.md`.
 
    Run the script **before** the bike test, not after.

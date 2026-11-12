@@ -24,7 +24,7 @@ Say back what you understood ("test release v0.1.0-test1") and wait for a yes.
 ## What is the same for both
 
 - `git status` must be clean and the branch must be `main`, pushed. Check it.
-- Run `uv run tools/make_release --version <version>`, adding `--previous <folder>` when an earlier real release exists (ask where it is kept; never guess).
+- Run `uv run tools/make_release --version <version>`, adding `--previous ~/umod4-releases/umod4-release-<previous version>` when an earlier real release exists (check that the folder is there; if not, ask where it is, never guess).
 - Read the changed/unchanged table in `RELEASE_NOTES.md` and compare it with `git diff --name-only <previous commit> HEAD`, not just with what the script says.
 - Check the zip contents against the list in RELEASING.md.
 - Check `release.json` and `SHA256SUMS` agree with the files.
@@ -55,11 +55,11 @@ You never decide any of them, and you never report one as done unless Robin has 
 3. **The bike gate.** If any firmware file is "changed" (every file is in a first release), the exact `EP.uf2` and `WP.uf2` from the release folder must be flashed and bench- and bike-tested by Robin. Never say a firmware file is safe for the bike (AGENTS.md section 4); say what was and was not tested. Flash in the order WP, EP, WP (RELEASING.md, step 4, explains why) and check the server or `/api/info` against `release.json` after each flash. Ask what the device ran before (identical files, or the previous release's builds) and say so in the notes.
 4. **The tools zip on a clean Windows profile** (a throwaway user account; RELEASING.md, "Testing the tools zip", says how and what it cannot prove): the server window opens, the visualizer opens the sample ride, the map shows. Ask whether the launchers, `pyproject.toml`, `uv.lock` or the tools README changed since the last release (`git diff --name-only <previous commit> HEAD -- tools/bundle pyproject.toml uv.lock`); if none did, an unzip-and-start check on Robin's own PC is enough. Windows Sandbox does not work for this on current Windows 11.
 5. **The release notes.** Draft "What changed" from `git log` since the previous release, in plain language for riders, say plainly if a rider has to do something, then let Robin edit it.
-6. **Publishing.** Before anything is pushed or published, show the exact commands (`git tag`, `git push origin <tag>`, `gh release create ... --draft`) and get an explicit go-ahead for each. Prefer creating a **draft** and letting Robin read it as a visitor would, then publish only on his word.
+6. **Keep a copy of the release folder** (you do this yourself, no need to wait for Robin, but tell him): after the notes are final and before anything is published, copy it with `cp -r build/dist/umod4-release-<version> ~/umod4-releases/` (create `~/umod4-releases/` if it is missing; if the target exists, stop and ask, never overwrite), then check the copy with `sha256sum -c SHA256SUMS`. It is `--previous` for the next release, and `build/` can be deleted at any time. A test release does not need this.
+7. **Publishing.** Before anything is pushed or published, show the exact commands (`git tag`, `git push origin <tag>`, `gh release create ... --draft`) and get an explicit go-ahead for each. Prefer creating a **draft** and letting Robin read it as a visitor would, then publish only on his word.
 
 After publishing:
 
-- Remind Robin to copy the release folder to a safe place outside the repository; it is `--previous` next time.
 - Check whether GETTING_STARTED.md (or any other document) points riders at download names or places that changed, and say so.
 - Check that the published release has every file in the folder, and that the downloaded checksums match `SHA256SUMS`.
 
@@ -81,7 +81,7 @@ Write the draft yourself, show it, and let Robin edit it; never publish text he 
 - Group by what the reader cares about: firmware (EP, WP), tools (server, visualizer, decoder), documents. Leave out purely internal work (test harness, refactors, build scripts) unless a rider would notice it.
 - Plain sentences, one thing per line, no commit hashes, no jargon without a few words of explanation.
 - Do not invent. Every line must trace to a commit or to the table. If a commit message is unclear, ask Robin instead of guessing.
-- Say what was tested, taken from the `Verified:` lines and from what Robin told you in this session (for example "bench-tested on a BenchECU, not ridden with this build"). Say plainly what was not tested. Never write that firmware is safe for the bike.
+- Keep the "Tested" part short: one line for what passed (hardware test suite, platform), one line for what the claims are limited to (Robin's own bike and board), and, when it applies, one line "Not yet ridden with this build". That last line is the one that matters for safety; never write that firmware is safe for the bike. Do not list every thing that was not tested: only Robin needs that, so put the detailed list in your report to him, not in the notes.
 - If the log format changed, say which firmware and tools versions go together.
 
 **Every release after the first** starts its "What you need to do" with this block, unchanged, when the tools zip changed (it is the same text as "UPGRADING" in `tools/bundle/README.txt`; keep the two in step):
@@ -96,7 +96,7 @@ Write the draft yourself, show it, and let Robin edit it; never publish text he 
 > You do not need to install uv again.
 
 **The first release has no previous release.** Do not list the history.
-Write instead: what this release is, what is in it, how to start (link GETTING_STARTED.md), what was tested and not tested, and the known limits.
+Write instead: what this release is, what is in it, how to start (link GETTING_STARTED.md), a short "Tested" part (see above) and nothing more.
 
 ## Rules that apply throughout
 
