@@ -17,7 +17,7 @@ The sections below explain each item.
 - [ ] Read the table in `RELEASE_NOTES.md`: a firmware file must say "unchanged" only if you changed nothing that feeds it.
 - [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill). It tests the source, using the build in `build/`. If it complains that a file is older than a `CMakeLists.txt`, see Troubleshooting.
 - [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash `EP.uf2` and `WP.uf2` **from the release folder** to the bike, check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
-- [ ] Test the tools zip on a machine that has only uv (a Windows Sandbox will do): the server window opens, the visualizer opens the sample ride, and the map shows.
+- [ ] Test the tools zip on a clean Windows profile: the server window opens, the visualizer opens the sample ride, and the map shows. A throwaway Windows user account does it (see "Testing the tools zip"). Do the full test for the first release and whenever the launchers, `pyproject.toml`, `uv.lock` or the tools `README.txt` changed; otherwise unzip it into a new folder on your own PC and check that both programs start.
 - [ ] Write "What changed" in `RELEASE_NOTES.md`.
 - [ ] Copy the release folder to a safe place outside the repository (for example `~/umod4-releases/`): it is the `--previous` for the next release.
 - [ ] Tag the commit and publish by hand: `git tag v0.2.0`, `git push origin v0.2.0`, then GitHub, Releases, draft from that tag, paste the notes and attach every file in the folder. Read the draft once as a visitor would before publishing.
@@ -117,9 +117,10 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
    Then bench-test, and ride.
    Files marked "unchanged" are the earlier files that were already tested, so there is nothing to flash for them.
 
-5. **Test the tools zip on a machine that has only uv**, ideally a Windows machine or a Windows Sandbox.
-   Unzip it, follow `README.txt`, start the server and check that its window opens with an empty device list, then start the visualizer on the sample ride and check that graphs and the map appear.
-   The test does not mean much on a machine that has the umod4 source tree, because that hides missing files.
+5. **Test the tools zip on a clean Windows profile.**
+   See "Testing the tools zip" below for how.
+   Unzip it, follow `README.txt` from STEP 1, start the server and check that its window opens, then start the visualizer on the sample ride and check that graphs and the map appear.
+   The test does not mean much in a profile that already has uv or the umod4 source tree, because that hides missing files.
    Only one server can run at a time: it needs UDP port 54549 and says so if another server already has it.
 
 6. **Write the release notes.**
@@ -168,6 +169,23 @@ It contains:
 
 The launchers run `uv run --only-group server ...` and `uv run --only-group viz ...`.
 The `--only-group` part installs just that program's packages and leaves out the other group and the test packages.
+
+## Testing the tools zip
+
+Use a throwaway Windows user account on your own PC: its profile has no uv, no environment variables and no leftovers, which is what a rider's PC looks like.
+
+1. Close any running umod4 server.
+2. In Settings, Accounts, Other users, add a local account (no Microsoft account) and make it an Administrator, as most riders are.
+3. Sign in to it, extract the zip, and follow `README.txt` from STEP 1.
+4. Afterwards, sign out and delete the account with "Delete account and data". That removes everything the test created, including uv and its downloads.
+
+**What this does not prove:**
+
+- The Windows Firewall popup. A machine that has the rule `umod4 Server UDP Check-in` (UDP 54549, any program) never shows it, so the account test cannot either. Whether a rider's default choice in the popup is enough is untested.
+- Machine-wide security settings such as Smart App Control, which may block the Python that uv downloads.
+- A machine that has never run the umod4.
+
+Windows Sandbox is not a good substitute on current Windows 11: it has no Notepad, and on 2026-11-12 its Application Control policy blocked uv's downloaded Python (`os error 4551`).
 
 ## Troubleshooting
 

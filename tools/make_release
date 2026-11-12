@@ -66,8 +66,8 @@ TOOLS_ROOTS = ["tools/server", "tools/logtools", "tools/bundle", "tools/make_too
 FIRMWARE = [
     ("EP.uf2",           "ep_firmware",  "EP firmware (EPROM emulator, with the UM4 ECU image built in)", "EP/EP.uf2",                EP_ROOTS),
     ("WP.uf2",           "wp_firmware",  "WP firmware (WiFi, GPS, SD card, logging)",                     "WP/WP.uf2",                WP_ROOTS),
-    ("WP_partition.uf2", "wp_partition", "flash partition table for a blank WP (first install, step 2)",  "WP/WP_partition.uf2",      PARTITION_ROOTS),
-    ("WP_erase.uf2",     "wp_erase",     "erases a WP's flash (first install, step 1)",                   "WP_erase/WP_erase.uf2",    ERASE_ROOTS),
+    ("WP_partition.uf2", "wp_partition", "flash partition table for a blank WP (first install: use second)",  "WP/WP_partition.uf2",      PARTITION_ROOTS),
+    ("WP_erase.uf2",     "wp_erase",     "erases a WP's flash (first install: use first)",                   "WP_erase/WP_erase.uf2",    ERASE_ROOTS),
     ("UM4.bin",          "ecu_image",    "UM4 data-logging ECU image, for the image library",             "ecu/UM4.bin",              ECU_ROOTS),
 ]
 
@@ -266,13 +266,11 @@ def main():
         bypassed.append(f"UM4.bin was built from an uncommitted tree ({um4_gh})")
 
     # ---- the tools zip ------------------------------------------------------------------------
-    before = set((BUILD / "dist").glob("umod4-tools-*.zip")) if (BUILD / "dist").is_dir() else set()
-    subprocess.run([sys.executable, str(ROOT / "tools" / "make_tools_bundle")], cwd=ROOT, check=True,
-                   capture_output=True, text=True)
-    made = sorted(set((BUILD / "dist").glob("umod4-tools-*.zip")) - before, key=lambda p: p.stat().st_mtime) \
-        or sorted((BUILD / "dist").glob("umod4-tools-*.zip"), key=lambda p: p.stat().st_mtime)
+    # --version names the zip and its top folder after the release, so a rider who unzips it sees the version.
     tools_name = f"umod4-tools-{args.version}.zip"
-    shutil.copy2(made[-1], out / tools_name)
+    subprocess.run([sys.executable, str(ROOT / "tools" / "make_tools_bundle"), "--version", args.version],
+                   cwd=ROOT, check=True, capture_output=True, text=True)
+    shutil.copy2(BUILD / "dist" / tools_name, out / tools_name)
     tools = {"name": tools_name, "kind": "tools",
              "description": "server, visualizer and decoder (needs only uv; see README.txt inside)",
              "size": (out / tools_name).stat().st_size, "sha256": sha256_of(out / tools_name),
@@ -311,7 +309,6 @@ def main():
 
 Released {manifest['date']} from commit `{describe}`.
 {rehearsal_banner}
-
 ## What changed
 
 _(Write this by hand: what is new or fixed, and anything a rider must do.)_
@@ -323,8 +320,8 @@ _(Write this by hand: what is new or fixed, and anything a rider must do.)_
 """ + "\n".join(rows) + """
 
 Checksums are in `SHA256SUMS` and, with the build times, in `release.json`.
-A firmware file marked **unchanged** is the very same file as in the previous release: if that release is already on
-your umod4, there is nothing to reflash for that part.
+A firmware file marked **unchanged** is the very same file as in the previous release.
+If that release is already on your umod4, there is nothing to reflash for that part.
 
 ## Installing
 

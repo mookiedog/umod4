@@ -5,7 +5,7 @@ have the umod4 source tree or its build tools.
 
     uv run tools/make_tools_bundle
 
-The result is build/dist/umod4-tools-<date>-<git hash>[-dirty].zip (inside build/, like every other
+The result is build/dist/umod4-tools-<date>-<git hash>[-dirty].zip (or umod4-tools-<version>.zip with --version) (inside build/, like every other
 generated file, so it is untracked and safe to delete).  The zip keeps the repository's own layout,
 because the server's "launch visualizer" button finds the visualizer by relative path:
 
@@ -21,6 +21,7 @@ because the server's "launch visualizer" button finds the visualizer by relative
 The recipient needs only uv.  See RELEASING.md for how this fits into a release.
 """
 
+import argparse
 import datetime
 import subprocess
 import sys
@@ -98,6 +99,10 @@ def add_text(z, arc_name, text, executable=False):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Build the tools zip.")
+    parser.add_argument("--version", help="name the zip and its top folder umod4-tools-<version> "
+                        "(default: <date>-<git hash>, for a quick test bundle)")
+    args = parser.parse_args()
     code = code_files()
     launcher_files = [f"{LAUNCHER_DIR}/{name}" for name in LAUNCHERS]
     source_files = code + PROJECT_FILES + launcher_files + [README_TEMPLATE, SAMPLE_LOG, LOG_IDS]
@@ -105,7 +110,7 @@ def main():
         if not (ROOT / name).is_file():
             sys.exit(f"ERROR: expected file is missing: {name}")
 
-    version = bundle_version(source_files)
+    version = args.version or bundle_version(source_files)
     top = f"umod4-tools-{version}"
     readme = (ROOT / README_TEMPLATE).read_text(encoding="utf-8").replace("{VERSION}", version)
 
