@@ -115,6 +115,9 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
    If a firmware file is marked "changed", or this is the first release, flash `EP.uf2` and `WP.uf2` from the release folder, using the server's Reflash EP and Reflash WP buttons.
    The server's device panel should then show the EP and WP builds that are listed in `release.json`.
 
+   This step only checks that over-the-air update is not broken: the new WP can reflash an EP as well as itself.
+   It does not test the server, so the server from the development tree (`uv run tools/server/umod4_server.py`) is fine; the tools zip has its own test in step 5.
+
    **Flash order: WP, then EP, then WP again.**
    The WP does the EP's reflash, so this order tests three things in turn: the WP updates itself over the air, the newly installed WP can reflash the EP, and the new WP can update itself.
    After each flash wait for the device to come back, and check its builds in the server's device panel (or `/api/info`) against `release.json`.
