@@ -253,8 +253,9 @@ def main():
         fail("the UM4 image built into EP.uf2 is not the UM4.bin that is being released: rebuild everything")
     # What the device reports about itself once a file is installed, shaped like its /api/info.  The EP's
     # own build time does not change when only the ECU image inside it changes, and the device reports
-    # the ECU build separately ("ecu_build"), so the EP is identified by both.  The WP's time is stored
-    # in ISO form: the device sends the compiler's "Nov 10 2026 09:47:12", which a reader must normalise.
+    # the ECU build separately ("ecu_build"), so the EP is identified by both.  The EP's and WP's times are
+    # stored in ISO form: the device sends both in the compiler's "Nov 10 2026 09:47:12" form (the WP
+    # reformats the EP's time to match its own), which a reader must normalise.
     ecu_build = {"GH": um4_gh, "BT": um4_bt}
     by_name["EP.uf2"]["device_reports"] = {"ep_version": {"BT": ep_bt}, "ecu_build": dict(ecu_build)}
     by_name["WP.uf2"]["device_reports"] = {"wp_version": {"BT": wp_bt}}

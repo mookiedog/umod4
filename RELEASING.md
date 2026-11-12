@@ -12,11 +12,11 @@ Tick these off in order.
 The sections below explain each item.
 
 - [ ] On `main`, with everything committed and pushed: `git status` shows nothing.
-- [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill).
-- [ ] If any firmware changed since the last release: build it, flash the exact `EP.uf2` and `WP.uf2` to the bike, and bench- and bike-test them.
 - [ ] Choose the version (one number for the tools and the firmware, for example `v0.2.0`).
 - [ ] Run `uv run tools/make_release --version v0.2.0 --previous <the previous release's folder>` (leave out `--previous` for the first release). The output must not say REHEARSAL.
 - [ ] Read the table in `RELEASE_NOTES.md`: a firmware file must say "unchanged" only if you changed nothing that feeds it.
+- [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill). It tests the source, using the build in `build/`. If it complains that a file is older than a `CMakeLists.txt`, see Troubleshooting.
+- [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash `EP.uf2` and `WP.uf2` **from the release folder** to the bike, check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
 - [ ] Test the tools zip on a machine that has only uv (a Windows Sandbox will do): the server window opens, the visualizer opens the sample ride, and the map shows.
 - [ ] Write "What changed" in `RELEASE_NOTES.md`.
 - [ ] Copy the release folder to a safe place outside the repository (for example `~/umod4-releases/`): it is the `--previous` for the next release.
@@ -74,7 +74,7 @@ For example, the EP is identified by two things, because its own build time does
 Every key in the manifest's object must equal what the device reports for that key.
 Keys that the manifest does not have are ignored, and a key that the device does not report means "unknown", not "no match".
 So if the firmware later reports more (a version number, a git hash), a new key in the manifest is enough, and older readers keep matching on the keys they know.
-The WP reports its build time in the compiler's format ("Nov 10 2026 09:47:12"), while the manifest stores it in ISO form ("2026-11-10 09:47:12"), so a reader must normalise before comparing.
+A device reports the EP's and the WP's build times in the compiler's format ("Nov 10 2026 09:47:12": the WP reformats the EP's time to match its own), while the manifest stores them in ISO form ("2026-11-10 09:47:12"), so a reader must normalise every build time before comparing.
 
 **How the format may change.**
 Adding a new optional key does not change `"schema": 1`, and a reader must ignore keys it does not know.
@@ -83,8 +83,6 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
 ## Making a release
 
 1. **Finish and commit the changes**, on `main`, with a clean tree.
-   Firmware changes need the usual bench test and a bike test.
-   The firmware files in a release must be the ones that were tested: build, flash them to the bike, test, and only then continue.
 
 2. **Run the script.**
    For the first release:
@@ -103,18 +101,33 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
    The script runs the build first (`ninja` in `build/`), refuses to continue on a tree with uncommitted changes, refuses an ECU image that was built from an uncommitted tree (`-dirty`), and checks that the firmware files agree with each other.
    The result is `build/dist/umod4-release-<version>/`.
    Copy that folder somewhere that survives deleting `build/`: you need it as `--previous` next time.
+   Read the file table in its `RELEASE_NOTES.md`.
 
-3. **Test the tools zip on a machine that has only uv**, ideally a Windows machine or a Windows Sandbox.
+   Run the script **before** the bike test, not after.
+   Every build stamps a new build time into `WP.uf2`, even when no source changed, so a `WP.uf2` taken from `build/` before the script ran is not the file the script publishes.
+   The files to test are the ones in the release folder.
+
+3. **Run the hardware test runner**: `uv run tests/runner.py`.
+   It tests the source, using the build in `build/`, and it flashes the WP on the bench board itself.
+   If it stops with "is N s older than CMakeLists.txt", see Troubleshooting.
+
+4. **Test the firmware, from the release folder.**
+   If a firmware file is marked "changed", or this is the first release, flash `EP.uf2` and `WP.uf2` from the release folder to the bike, using the server's Reflash EP and Reflash WP buttons.
+   The server's device panel should then show the EP and WP builds that are listed in `release.json`.
+   Then bench-test, and ride.
+   Files marked "unchanged" are the earlier files that were already tested, so there is nothing to flash for them.
+
+5. **Test the tools zip on a machine that has only uv**, ideally a Windows machine or a Windows Sandbox.
    Unzip it, follow `README.txt`, start the server and check that its window opens with an empty device list, then start the visualizer on the sample ride and check that graphs and the map appear.
    The test does not mean much on a machine that has the umod4 source tree, because that hides missing files.
    Only one server can run at a time: it needs UDP port 54549 and says so if another server already has it.
 
-4. **Write the release notes.**
+6. **Write the release notes.**
    Open `RELEASE_NOTES.md` and fill in "What changed".
    Say plainly if a rider has to do something.
    If the log format changed, say which firmware and tools versions go together; the tools in a release always read logs from that release's firmware and from older firmware.
 
-5. **Publish, by hand.**
+7. **Publish, by hand.**
    Tag the commit (`git tag v0.1.0` and `git push origin v0.1.0`), then on GitHub go to Releases, draft a new release for that tag, paste in the notes, and attach every file in the release folder.
 
 A run that bypasses a safety check (for a rehearsal, with `--allow-dirty` or `--no-build`) marks `release.json` and the notes with `"rehearsal"`.
@@ -157,6 +170,12 @@ The launchers run `uv run --only-group server ...` and `uv run --only-group viz 
 The `--only-group` part installs just that program's packages and leaves out the other group and the test packages.
 
 ## Troubleshooting
+
+**The test runner stops with "X is N s older than CMakeLists.txt, rebuild before trusting results":**
+
+- The runner compares file times, and git changes them (switching branches, merging), so it can complain about a file that is really up to date, and `ninja` will not rebuild it because nothing changed.
+- Touch one of that sub-project's own source files and rebuild: for example `touch WpUsbBoot/main.c`, then `ninja` in `build/`.
+- This changes only a file time, not the contents, so `git status` stays clean.
 
 **`tools/make_release` says the build failed:**
 
