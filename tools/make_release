@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""
+Assemble a umod4 release: the tools zip, the firmware files, SHA256SUMS, release.json and release notes.
+
+    uv run tools/make_release --version v0.1.0 [--previous DIR_OR_RELEASE_JSON]
+
+Run it on a clean, committed tree.  It first runs the build (`ninja` in build/) so the firmware is up to
+date: ninja's own dependency graph is the authority on that, which a file-timestamp comparison is not
+(git rewrites timestamps when branches are switched).  The result is the folder
+build/dist/umod4-release-<version>/, ready to attach, file by file, to a GitHub release.  This script
+publishes nothing.
+
+What goes into the release:
+
+  umod4-tools-<version>.zip    the server, visualizer and decoder (built by tools/make_tools_bundle)
+  EP.uf2                       the EP firmware (the ECU image is built into it)
+  WP.uf2                       the WP firmware
+  WP_partition.uf2, WP_erase.uf2   the two files for a first install of a blank WP (BOOTSEL drag-and-drop)
+  UM4.bin                      the data-logging ECU image, for the image library
+  SHA256SUMS                   a checksum for every file above
+  release.json                 the same information in machine-readable form (see below)
+  RELEASE_NOTES.md             a draft: the file table is filled in, "what changed" is for a person to write
+
+"Changed" means changed, not "built again".  Every build stamps a new build time into EP.uf2 and
+WP.uf2, so rebuilding identical source gives a different file.  With --previous, the script therefore
+asks git whether any input of a file changed between the previous release's commit and now:
+  * if not, the previous release's file is reused byte for byte (the very file that was tested and
+    flashed before) and is marked "unchanged";
+  * if so, the freshly built file is used and is marked "changed".
+The input lists below are deliberately generous: they can wrongly say "changed", never "unchanged".
+
+release.json has one entry per file.  Every entry has the file's size and sha256, "built_from_commit"
+(the commit its source came from: for a reused file that is an earlier commit than this release's) and
+"first_released_in" (the release in which these exact bytes first appeared).  With --previous it also
+has "changed".  Firmware entries have "build_time" for people and "device_reports" for programs: the
+values the device reports about itself once this file is installed, in the same shape as the device's
+own /api/info ("wp_version", "ep_version", "ecu_build").  The EP is identified by two of them, because
+its own build time does not change when only the ECU image inside it does.  See tools/RELEASING.md
+for how the format may change.  Schema 1.
+"""
+
+import argparse
+import datetime
+import hashlib
+import json
+import re
+import shutil
+import struct
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BUILD = ROOT / "build"
+
+# Inputs of each file, as git paths.  A change to any of them means the file changed.
+EP_ROOTS = ["EP", "lib", "cmake", "CMakeLists.txt", "ecu", "eprom_lib", "tools/src"]
+WP_ROOTS = EP_ROOTS + ["WP", "SwdReflash"]          # in the superbuild WP depends on EP: be generous
+ECU_ROOTS = ["ecu", "lib/inc/log_ids.h", "cmake", "CMakeLists.txt"]
+PARTITION_ROOTS = ["WP/partition_table.json", "cmake", "CMakeLists.txt"]
+ERASE_ROOTS = ["WP_erase", "cmake", "CMakeLists.txt"]
+TOOLS_ROOTS = ["tools/server", "tools/logtools", "tools/bundle", "tools/make_tools_bundle",
+               "tools/src/h2py.py", "lib/inc/log_ids.h", "pyproject.toml", "uv.lock"]
+
+# (name in the release, kind, what it is, path of the built file, input roots)
+FIRMWARE = [
+    ("EP.uf2",           "ep_firmware",  "EP firmware (EPROM emulator, with the UM4 ECU image built in)", "EP/EP.uf2",                EP_ROOTS),
+    ("WP.uf2",           "wp_firmware",  "WP firmware (WiFi, GPS, SD card, logging)",                     "WP/WP.uf2",                WP_ROOTS),
+    ("WP_partition.uf2", "wp_partition", "flash partition table for a blank WP (first install, step 2)",  "WP/WP_partition.uf2",      PARTITION_ROOTS),
+    ("WP_erase.uf2",     "wp_erase",     "erases a WP's flash (first install, step 1)",                   "WP_erase/WP_erase.uf2",    ERASE_ROOTS),
+    ("UM4.bin",          "ecu_image",    "UM4 data-logging ECU image, for the image library",             "ecu/UM4.bin",              ECU_ROOTS),
+]
+
+
+def fail(message):
+    sys.exit(f"ERROR: {message}")
+
+
+def git(*args, check=True):
+    result = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
+    if check and result.returncode != 0:
+        fail(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+    return result
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def uf2_payload(path):
+    """The data bytes of a .uf2 file, in address order (so strings that span blocks stay whole)."""
+    raw = Path(path).read_bytes()
+    if len(raw) % 512 != 0:
+        fail(f"{path} is not a valid .uf2 file (size is not a multiple of 512)")
+    blocks = []
+    for i in range(0, len(raw), 512):
+        block = raw[i:i + 512]
+        target_addr, payload_size = struct.unpack_from("<II", block, 12)
+        blocks.append((target_addr, block[32:32 + payload_size]))
+    blocks.sort(key=lambda b: b[0])
+    return b"".join(data for _, data in blocks)
+
+
+def iso_from_compiler_time(text):
+    """'Nov 10 2026 09:47:12' (the compiler's __DATE__ __TIME__) -> '2026-11-10 09:47:12'."""
+    return datetime.datetime.strptime(" ".join(text.split()), "%b %d %Y %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+
+
+def ep_build_time(ep_uf2):
+    """The EP's build time, from the generated build_info.c, checked against the firmware itself."""
+    info = (BUILD / "EP" / "build_info.c").read_text()
+    m = re.search(r'return\s+"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)"', info)
+    if not m:
+        fail("cannot read the EP build time from build/EP/build_info.c")
+    if m.group(1).encode() not in uf2_payload(ep_uf2):
+        fail(f"the EP build time in build/EP/build_info.c ({m.group(1)}) is not in EP.uf2: "
+             f"build/EP is inconsistent, rebuild")
+    return m.group(1)
+
+
+def wp_build_time(wp_uf2):
+    found = re.findall(rb'\{"BT":"([A-Z][a-z]{2} [ 0-9]\d \d{4} \d\d:\d\d:\d\d)"\}', uf2_payload(wp_uf2))
+    if len(found) != 1:
+        fail(f"expected exactly one build time inside WP.uf2, found {len(found)}")
+    return iso_from_compiler_time(found[0].decode())
+
+
+def ecu_metadata(data):
+    """(git describe, build time) from the {"GH":...,"BT":...} string inside an ECU image or EP.uf2."""
+    found = re.findall(rb'\{"GH":"([^"]*)","BT":"([^"]*)"\}', data)
+    if len(found) != 1:
+        fail(f"expected exactly one ECU metadata string, found {len(found)}")
+    return found[0][0].decode(), found[0][1].decode()
+
+
+def read_previous(arg):
+    """Return (manifest dict, folder holding the previous release's files)."""
+    p = Path(arg).resolve()
+    if p.is_dir():
+        p = p / "release.json"
+    if not p.is_file():
+        fail(f"no release.json at {p}")
+    return json.loads(p.read_text()), p.parent
+
+
+def changed_inputs(previous_commit, roots):
+    """Tracked files under roots that differ between the previous release's commit and HEAD."""
+    return git("diff", "--name-only", previous_commit, "HEAD", "--", *roots).stdout.split()
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Assemble a umod4 release folder.")
+    ap.add_argument("--version", required=True, help="release version, for example v0.1.0")
+    ap.add_argument("--previous", help="the previous release (its folder, or its release.json)")
+    ap.add_argument("--out", help="output folder (default: build/dist/umod4-release-<version>)")
+    ap.add_argument("--allow-dirty", action="store_true", help="allow uncommitted changes (for rehearsals only)")
+    ap.add_argument("--no-build", action="store_true", help="do not run the build first (rehearsals only: the firmware may be out of date)")
+    args = ap.parse_args()
+
+    if not re.fullmatch(r"v?\d+(\.\d+)*[A-Za-z0-9._-]*", args.version):
+        fail(f"strange version {args.version!r}; use something like v0.1.0")
+
+    # ---- the tree ----------------------------------------------------------------------------
+    commit = git("rev-parse", "HEAD").stdout.strip()
+    describe = git("describe", "--tags", "--always").stdout.strip()
+    dirty = bool(git("status", "--porcelain", "--untracked-files=no").stdout.strip())
+    if dirty and not args.allow_dirty:
+        fail("there are uncommitted changes to tracked files: commit them first (--allow-dirty is for rehearsals)")
+
+    # ---- the previous release ----------------------------------------------------------------
+    prev_manifest = prev_dir = None
+    if args.previous:
+        prev_manifest, prev_dir = read_previous(args.previous)
+        prev_commit = prev_manifest["git"]["commit"]
+        if git("cat-file", "-e", f"{prev_commit}^{{commit}}", check=False).returncode != 0:
+            fail(f"the previous release's commit {prev_commit[:10]} is not in this repository")
+    prev_files = {f["name"]: f for f in prev_manifest["files"]} if prev_manifest else {}
+
+    out = Path(args.out) if args.out else ROOT / "build" / "dist" / f"umod4-release-{args.version}"
+    if out.exists():
+        fail(f"{out} already exists: remove it first")
+
+    bypassed = []      # guards that were switched off; any entry here makes this a rehearsal
+    if dirty:
+        bypassed.append("uncommitted changes")
+
+    # ---- build, so that the firmware is up to date --------------------------------------------
+    if args.no_build:
+        bypassed.append("the build was not run, so the firmware may be out of date")
+    else:
+        print("Building (ninja in build/) ...", flush=True)
+        built_ok = subprocess.run(["ninja"], cwd=BUILD, capture_output=True, text=True)
+        if built_ok.returncode != 0:
+            fail("the build failed:\n" + "\n".join((built_ok.stdout + built_ok.stderr).splitlines()[-25:]))
+
+    out.mkdir(parents=True)
+    entries = []
+
+    # ---- the firmware files ------------------------------------------------------------------
+    for name, kind, what, built, roots in FIRMWARE:
+        src = BUILD / built
+        status, note = None, ""
+        reused = False
+        if prev_manifest:
+            changed_files = changed_inputs(prev_commit, roots)
+            old = prev_files.get(name)
+            if not changed_files and old and (prev_dir / name).is_file() and sha256_of(prev_dir / name) == old["sha256"]:
+                src, reused, status = prev_dir / name, True, False
+                note = f"same file as {prev_manifest['version']}"
+            elif not changed_files and old:
+                fail(f"{name}: unchanged since {prev_manifest['version']}, but that release's file is missing or "
+                     f"does not match its checksum in {prev_dir}")
+            else:
+                status = True
+                note = f"changed since {prev_manifest['version']}"
+                if changed_files:
+                    note += f" ({len(changed_files)} input file(s), for example {changed_files[0]})"
+        if not reused:
+            if not src.is_file():
+                fail(f"{src} does not exist: run a full build (cd build && ninja) first")
+        shutil.copy2(src, out / name)
+        entry = {"name": name, "kind": kind, "description": what, "size": (out / name).stat().st_size,
+                 "sha256": sha256_of(out / name)}
+        if reused:
+            old = prev_files[name]
+            entry["built_from_commit"] = old.get("built_from_commit", prev_commit)
+            entry["first_released_in"] = old.get("first_released_in", prev_manifest["version"])
+        else:
+            entry["built_from_commit"] = commit
+            entry["first_released_in"] = args.version
+        if status is not None:
+            entry["changed"] = status
+        if note:
+            entry["note"] = note
+        entries.append(entry)
+
+    by_name = {e["name"]: e for e in entries}
+
+    # ---- build times, and checks that the files agree with each other ---------------------------
+    ep_path = out / "EP.uf2"
+    ep_bt = ep_build_time(ep_path)
+    wp_bt = wp_build_time(out / "WP.uf2")
+    um4_gh, um4_bt = ecu_metadata((out / "UM4.bin").read_bytes())
+    by_name["EP.uf2"]["build_time"] = ep_bt
+    by_name["WP.uf2"]["build_time"] = wp_bt
+    by_name["UM4.bin"]["build_time"] = um4_bt
+    by_name["UM4.bin"]["git_describe"] = um4_gh
+    if ecu_metadata(uf2_payload(ep_path)) != (um4_gh, um4_bt):
+        fail("the UM4 image built into EP.uf2 is not the UM4.bin that is being released: rebuild everything")
+    # What the device reports about itself once a file is installed, shaped like its /api/info.  The EP's
+    # own build time does not change when only the ECU image inside it changes, and the device reports
+    # the ECU build separately ("ecu_build"), so the EP is identified by both.  The WP's time is stored
+    # in ISO form: the device sends the compiler's "Nov 10 2026 09:47:12", which a reader must normalise.
+    ecu_build = {"GH": um4_gh, "BT": um4_bt}
+    by_name["EP.uf2"]["device_reports"] = {"ep_version": {"BT": ep_bt}, "ecu_build": dict(ecu_build)}
+    by_name["WP.uf2"]["device_reports"] = {"wp_version": {"BT": wp_bt}}
+    by_name["UM4.bin"]["device_reports"] = {"ecu_build": dict(ecu_build)}
+    if um4_gh.endswith("-dirty"):
+        if not args.allow_dirty:
+            fail(f"UM4.bin was built from an uncommitted tree ({um4_gh}): rebuild from the clean, committed tree")
+        bypassed.append(f"UM4.bin was built from an uncommitted tree ({um4_gh})")
+
+    # ---- the tools zip ------------------------------------------------------------------------
+    before = set((BUILD / "dist").glob("umod4-tools-*.zip")) if (BUILD / "dist").is_dir() else set()
+    subprocess.run([sys.executable, str(ROOT / "tools" / "make_tools_bundle")], cwd=ROOT, check=True,
+                   capture_output=True, text=True)
+    made = sorted(set((BUILD / "dist").glob("umod4-tools-*.zip")) - before, key=lambda p: p.stat().st_mtime) \
+        or sorted((BUILD / "dist").glob("umod4-tools-*.zip"), key=lambda p: p.stat().st_mtime)
+    tools_name = f"umod4-tools-{args.version}.zip"
+    shutil.copy2(made[-1], out / tools_name)
+    tools = {"name": tools_name, "kind": "tools",
+             "description": "server, visualizer and decoder (needs only uv; see README.txt inside)",
+             "size": (out / tools_name).stat().st_size, "sha256": sha256_of(out / tools_name),
+             "built_from_commit": commit, "first_released_in": args.version}
+    if prev_manifest:
+        old_tools = next((f for f in prev_manifest["files"] if f["kind"] == "tools"), None)
+        tools_changed = bool(changed_inputs(prev_commit, TOOLS_ROOTS)) or old_tools is None
+        tools["changed"] = tools_changed
+        tools["note"] = (f"changed since {prev_manifest['version']}" if tools_changed
+                         else f"no input changed since {prev_manifest['version']} (rebuilt, so the zip itself differs)")
+    entries.insert(0, tools)
+
+    # ---- release.json, SHA256SUMS, release notes ------------------------------------------------
+    manifest = {
+        "schema": 1,
+        "name": "umod4",
+        "version": args.version,
+        "date": datetime.date.today().isoformat(),
+        "git": {"commit": commit, "describe": describe, "dirty": dirty},
+        "rehearsal": bypassed or False,
+        "previous": ({"version": prev_manifest["version"], "commit": prev_commit} if prev_manifest else None),
+        "files": entries,
+    }
+    (out / "release.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (out / "SHA256SUMS").write_text("".join(f"{e['sha256']}  {e['name']}\n" for e in entries))
+
+    rows = []
+    for e in entries:
+        if "changed" not in e:
+            state = "new"
+        else:
+            state = "changed" if e["changed"] else f"unchanged since {prev_manifest['version']}"
+        rows.append(f"| `{e['name']}` | {e['description']} | {e['size'] / 1e6:.2f} MB | {e.get('build_time', '')} | {state} |")
+    rehearsal_banner = ("\n**REHEARSAL: do not publish.** Guards that were switched off: " + "; ".join(bypassed) + ".\n") if bypassed else ""
+    notes = f"""# umod4 {args.version}
+
+Released {manifest['date']} from commit `{describe}`.
+{rehearsal_banner}
+
+## What changed
+
+_(Write this by hand: what is new or fixed, and anything a rider must do.)_
+
+## Files
+
+| File | What it is | Size | Build time | Compared with {prev_manifest['version'] if prev_manifest else 'the previous release'} |
+| --- | --- | --- | --- | --- |
+""" + "\n".join(rows) + """
+
+Checksums are in `SHA256SUMS` and, with the build times, in `release.json`.
+A firmware file marked **unchanged** is the very same file as in the previous release: if that release is already on
+your umod4, there is nothing to reflash for that part.
+
+## Installing
+
+See GETTING_STARTED.md in the project for the whole procedure.
+"""
+    (out / "RELEASE_NOTES.md").write_text(notes)
+
+    try:
+        shown = out.relative_to(ROOT)
+    except ValueError:
+        shown = out
+    print(f"Release folder: {shown}")
+    for e in entries:
+        flag = "" if "changed" not in e else ("  [changed]" if e["changed"] else "  [unchanged]")
+        print(f"  {e['name']:34} {e['size']:>9,} bytes  {e.get('build_time', ''):20}{flag}")
+    if bypassed:
+        print("REHEARSAL, do not publish. Guards switched off: " + "; ".join(bypassed))
+
+
+if __name__ == "__main__":
+    main()

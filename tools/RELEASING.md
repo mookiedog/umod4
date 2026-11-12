@@ -1,40 +1,137 @@
 # Release Process Guide
 
-This document describes how to create releases for the tools and the firmware.
+A umod4 release is **one** release containing everything a person needs: the tools (server, visualizer and decoder in one zip) and the firmware files.
+There is one version number for the whole thing, such as `v0.1.0`, which is also the git tag and the GitHub release name.
 
-## Overview
+Nothing in this process publishes anything by itself.
+The script assembles a folder, and a person decides whether to attach its files to a GitHub release.
 
-The umod4 project uses **independent versioning** for different components:
-- **Tools releases** (the server and the visualizer, in one bundle): Tagged as `tools-vX.Y.Z`
-- **Firmware releases**: Tagged as `firmware-vX.Y.Z`
+## What a release contains
 
-Both live in the same repository but follow separate release schedules.
+| File | What it is |
+| --- | --- |
+| `umod4-tools-<version>.zip` | the server, the visualizer and the decoder, plus launchers and a sample ride; the recipient needs only [uv](https://docs.astral.sh/uv/) |
+| `EP.uf2` | the EP firmware (the UM4 ECU image is built into it); installed by the server over WiFi |
+| `WP.uf2` | the WP firmware; installed by the server over WiFi, or by BOOTSEL drag-and-drop on a blank WP |
+| `WP_partition.uf2`, `WP_erase.uf2` | the two extra files for the first install of a blank WP (BOOTSEL drag-and-drop) |
+| `UM4.bin` | the data-logging ECU image, for the image library (it is also built into `EP.uf2`) |
+| `SHA256SUMS` | a checksum for every file above |
+| `release.json` | the same information for programs to read: per file the checksum, the build time, and whether it changed |
+| `RELEASE_NOTES.md` | a draft of the release notes; the file table is filled in, "what changed" is for a person to write |
 
-## Releasing the Tools (server and visualizer)
+## "Changed" means changed, not "built again"
 
-The tools are distributed as one **source bundle**: a zip file containing the server, the visualizer and the decoder code, the exact package versions they were tested with (`pyproject.toml` and `uv.lock`), a sample log, launcher scripts and instructions.
-There is one bundle for both programs, so a user always has a matching set.
-The recipient only needs [uv](https://docs.astral.sh/uv/).
-On the first run of each program uv downloads Python 3.12 (if the machine does not have it) and that program's packages, which are mostly Qt and amount to roughly 300 MB.
-There are no per-platform executables and no GitHub Actions: the bundle is built by running a script by hand.
+Every build stamps a new build time into `EP.uf2` and `WP.uf2`, so rebuilding identical source gives a different file.
+A checksum comparison would therefore call everything changed.
+Instead, when you give the script the previous release, it asks git whether any *input* of each file changed between the previous release's commit and now:
 
-### Building a bundle
+- If nothing changed, the previous release's file is reused byte for byte (the very file that was already tested and flashed) and is marked **unchanged**.
+- If something changed, the freshly built file is used and is marked **changed**.
+
+The input lists in `tools/make_release` are deliberately generous, so the worst mistake the script can make is to say "changed" when it did not matter, never the reverse.
+For a rider this is real information: when the EP (which runs the engine) is unchanged, there is nothing to reflash.
+
+## release.json
+
+`release.json` describes the release for programs, such as a future "which of my devices need updating" check in the server.
+It has the release's `version`, `date`, the `git` commit it was assembled from, the `previous` release if there was one, and a `files` list.
+Each file has:
+
+- `name`, `kind`, `description`, `size` and `sha256`
+- `built_from_commit`: the commit its source came from (for a reused file this is an earlier commit than the release's)
+- `first_released_in`: the release in which these exact bytes first appeared
+- `changed`: whether it changed since the previous release (present only when a previous release was given)
+- `build_time` (firmware and `UM4.bin` only): the build time, for people
+- `device_reports` (firmware and `UM4.bin` only): what a device reports about itself once this file is installed, in the same shape as the device's own `/api/info`
+
+For example, the EP is identified by two things, because its own build time does not change when only the ECU image inside it changes, and the device reports the two separately:
+
+```json
+"device_reports": {
+  "ep_version": {"BT": "2026-11-10 09:48:17"},
+  "ecu_build": {"GH": "pre-uv-30-g45d4bdd", "BT": "2026-11-11 16:03:07"}
+}
+```
+
+**How to match a file against a device.**
+Every key in the manifest's object must equal what the device reports for that key.
+Keys that the manifest does not have are ignored, and a key that the device does not report means "unknown", not "no match".
+So if the firmware later reports more (a version number, a git hash), a new key in the manifest is enough, and older readers keep matching on the keys they know.
+The WP reports its build time in the compiler's format ("Nov 10 2026 09:47:12"), while the manifest stores it in ISO form ("2026-11-10 09:47:12"), so a reader must normalise before comparing.
+
+**How the format may change.**
+Adding a new optional key does not change `"schema": 1`, and a reader must ignore keys it does not know.
+Removing or renaming a key, or changing what one means, increases `schema`, and a reader that does not know that number must refuse the file and say so.
+
+## Making a release
+
+1. **Finish and commit the changes**, on `main`, with a clean tree.
+   Firmware changes need the usual bench test and a bike test.
+   The firmware files in a release must be the ones that were tested: build, flash them to the bike, test, and only then continue.
+
+2. **Run the script.**
+   For the first release:
+
+   ```bash
+   cd ~/projects/umod4
+   uv run tools/make_release --version v0.1.0
+   ```
+
+   For later releases, point it at the previous release's folder so that it can mark and reuse unchanged files:
+
+   ```bash
+   uv run tools/make_release --version v0.2.0 --previous ~/umod4-releases/umod4-release-v0.1.0
+   ```
+
+   The script runs the build first (`ninja` in `build/`), refuses to continue on a tree with uncommitted changes, refuses an ECU image that was built from an uncommitted tree (`-dirty`), and checks that the firmware files agree with each other.
+   The result is `build/dist/umod4-release-<version>/`.
+   Copy that folder somewhere that survives deleting `build/`: you need it as `--previous` next time.
+
+3. **Test the tools zip on a machine that has only uv**, ideally a Windows machine or a Windows Sandbox.
+   Unzip it, follow `README.txt`, start the server and check that its window opens with an empty device list, then start the visualizer on the sample ride and check that graphs and the map appear.
+   The test does not mean much on a machine that has the umod4 source tree, because that hides missing files.
+   Only one server can run at a time: it needs UDP port 54549 and says so if another server already has it.
+
+4. **Write the release notes.**
+   Open `RELEASE_NOTES.md` and fill in "What changed".
+   Say plainly if a rider has to do something.
+   If the log format changed, say which firmware and tools versions go together; the tools in a release always read logs from that release's firmware and from older firmware.
+
+5. **Publish, by hand.**
+   Tag the commit (`git tag v0.1.0` and `git push origin v0.1.0`), then on GitHub go to Releases, draft a new release for that tag, paste in the notes, and attach every file in the release folder.
+
+A run that bypasses a safety check (for a rehearsal, with `--allow-dirty` or `--no-build`) marks `release.json` and the notes with `"rehearsal"`.
+Never publish a rehearsal.
+
+### Version numbering
+
+Use semantic versioning (MAJOR.MINOR.PATCH):
+
+- **MAJOR**: breaking changes, for example logs that old tools cannot read
+- **MINOR**: new features, backward compatible
+- **PATCH**: bug fixes only
+
+Because tools and firmware share one version, a fix to the visualizer alone is still a new release.
+The "changed / unchanged" column in the notes is what tells a rider that the firmware files are the same as before.
+
+## The tools zip
+
+`tools/make_tools_bundle` builds the tools zip, and `tools/make_release` calls it.
+You can also run it alone, for a quick test bundle:
 
 ```bash
-cd ~/projects/umod4
 uv run tools/make_tools_bundle
 ```
 
-This writes `build/dist/umod4-tools-<date>-<git hash>.zip`.
-It lives inside `build/` like every other generated file, so git ignores it and deleting `build/` removes it (rebuilding takes a few seconds).
-The version is marked `-dirty` if any bundled file has uncommitted changes, so commit first when making a real release.
+This writes `build/dist/umod4-tools-<date>-<git hash>.zip`, marked `-dirty` if any bundled file has uncommitted changes.
 
 The zip keeps the repository's own layout, because the server's "launch visualizer" button finds the visualizer by relative path.
 It contains:
+
 - `tools/server`: the server's runtime `.py` files (no tests, no dead code, no developer docs)
 - `tools/logtools/viz` and `tools/logtools/decoder`: the tracked `.py` and `.yaml` files
 - `tools/logtools/decoder/Logsyms.py`, generated on the spot from `lib/inc/log_ids.h` (no firmware build is needed)
-- `tools/logtools/test_data/sample_ride.um4`, the sample log
+- `tools/logtools/test_data/sample_ride.um4`, the sample ride
 - `pyproject.toml` and `uv.lock`
 - `run_server.cmd`, `run_viz.cmd` (Windows, double-click) and `run_server.sh`, `run_viz.sh` (Linux), taken from `tools/bundle/`
 - `README.txt`: the instructions for the recipient, taken from the template `tools/bundle/README.txt`
@@ -42,107 +139,32 @@ It contains:
 The launchers run `uv run --only-group server ...` and `uv run --only-group viz ...`.
 The `--only-group` part installs just that program's packages and leaves out the other group and the test packages.
 
-### Release Steps
-
-1. **Make and test changes**, then commit them:
-
-   ```bash
-   uv run tools/logtools/viz/viz.py tools/logtools/test_data/sample_ride.um4
-   git add tools/ && git commit -m "Add feature X, fix bug Y"
-   ```
-
-2. **Build the bundle** (see above). A release should not be marked `-dirty`.
-
-3. **Test the zip on a machine that has only uv**, ideally a Windows machine or a Windows Sandbox: unzip it, follow `README.txt`, start the server and check that its window opens with an empty device list, then start the visualizer on the sample log, answer yes to converting it, and check that graphs appear.
-   The test does not mean much on a machine that has the umod4 source tree, because that hides missing files.
-   Note that only one server can run at a time: it needs UDP port 54549 and says so if another server already has it.
-
-4. **Hand it out.**
-   Either send the zip directly, or publish it: on GitHub go to Releases, draft a new release (optionally with a `tools-vX.Y.Z` tag), and attach the zip by hand.
-
-
-### Version Numbering
-
-Use semantic versioning (MAJOR.MINOR.PATCH):
-- **MAJOR** (v3.0.0): Breaking changes, incompatible with old log formats
-- **MINOR** (v2.1.0): New features, backward compatible
-- **PATCH** (v2.0.1): Bug fixes only
-
-### Release Frequency
-
-- **Patch releases**: As needed for critical bugs (hours to days)
-- **Minor releases**: When features accumulate (weeks)
-- **Major releases**: Major redesigns or log format changes (months)
-
----
-
-## Releasing Firmware
-
-Firmware releases are less frequent and follow a different process since they require the full build toolchain.
-
-### Prerequisites
-
-1. ARM toolchain installed
-2. m68hc11 toolchain installed
-3. Pico SDK configured
-4. Hardware available for testing
-
-### Release Steps
-
-#### 1. Make and Test Changes
-
-```bash
-# Make firmware changes
-vim ecu/src/UM4.S
-vim EP/src/epromEmulator.h
-vim WP/src/main.cpp
-
-# Build
-cd build
-ninja
-
-# Flash to hardware and test thoroughly
-# (See main BUILDING.md for flashing instructions)
-
-# Commit when testing passes
-git add ecu/ EP/ WP/
-git commit -m "Add oil pressure sensor support"
-git push origin main
-```
-
-#### 2. Update Compatibility Notes
-
-If log format changed, update:
-- `lib/inc/log_ids.h`
-- `tools/logtools/decoder/decodelog.py` decoder logic
-- Compatibility notes in release description
-
-#### 3. Create Release
-
-```bash
-# Tag firmware release
-git tag firmware-v1.6.0
-git push origin firmware-v1.6.0
-
-# Create GitHub Release
-# Go to: https://github.com/mookiedog/umod4/releases/new
-# Upload: build/EP/EP.uf2, build/WP/WP.uf2, build/WP/WP_partition.uf2,
-# build/WP_erase/WP_erase.uf2 and build/ecu/UM4.bin
-# Note: May require visualizer update if log format changed
-```
-
----
-
 ## Troubleshooting
 
+**`tools/make_release` says the build failed:**
+
+- The last lines of the build output are shown; fix the error and run it again.
+
+**`tools/make_release` says UM4.bin was built from an uncommitted tree:**
+
+- The ECU image carries the `git describe` of the tree it was built from, and `-dirty` means that tree had uncommitted changes.
+- Commit, then rebuild the ECU image (`touch ecu/src/UM4.S`, then `ninja` in `build/`) and run the script again.
+
+**`tools/make_release` says a file is unchanged but that release's file is missing:**
+
+- `--previous` must be the folder of the previous release, including the firmware files, not only its `release.json`.
+
 **`tools/make_tools_bundle` fails:**
+
 - Run it from inside the repository, with uv: `uv run tools/make_tools_bundle` (the script asks git for its file list, so git must be installed)
 - "expected file is missing" means a file the bundle needs was moved or deleted; the message names it
 
 **The recipient's first run of a program is slow, or does not start:**
+
 - The first run of each program downloads Python 3.12 (if the machine has none) and that program's packages (about 300 MB for the visualizer), so it needs an internet connection
 - uv itself must be installed first; `README.txt` in the bundle explains how
 
 **GitHub upload fails:**
-- Check the file size is under 2 GB (it should be about 2 MB)
+
+- Check the file size is under 2 GB (the largest file is `WP.uf2`, about 3.4 MB)
 - Try uploading through the web interface instead
