@@ -463,6 +463,10 @@ def main():
     ocd     = OpenOCD(verbose=False)
     ch0     = RttCapture(RTT_PORT_BASE + 0)   # WP printf; reconnects automatically
 
+    # Assigned for real just before the suites run.  The finally block below reads it, and a
+    # successful --preflight-only never gets that far.
+    context = {}
+
     try:
         if args.skip_preflight:
             try:
