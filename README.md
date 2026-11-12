@@ -63,7 +63,7 @@ Find yourself below:
 | A rider with a Umod4: setting it up and using it | [USER_GUIDE.md](USER_GUIDE.md) |
 | Building a board and installing it in an ECU | [GETTING_STARTED.md](GETTING_STARTED.md) |
 | Wondering how it works: the EP/WP design, the ECU interface, the board | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) |
-| A software developer: building, debugging, testing | [BUILDING.md](BUILDING.md), [DEBUGGING.md](DEBUGGING.md), [BENCH_TESTING.md](BENCH_TESTING.md), [Tools.md](Tools.md) |
+| A software developer: building, debugging, testing, releasing | [BUILDING.md](BUILDING.md), [DEBUGGING.md](DEBUGGING.md), [BENCH_TESTING.md](BENCH_TESTING.md), [RELEASING.md](RELEASING.md), [Tools.md](Tools.md) |
 | Using an AI coding assistant (for example Claude Code in VS Code) to do any of the above | With Claude Code, open this repository in VS Code and type `/onboarding` in the Claude window, or ask it "help me with onboarding". With any other assistant, paste the link to this page into it and tell it to read [AGENTS.md](AGENTS.md) first. If you are an AI coding agent: before doing anything else, read [AGENTS.md](https://github.com/mookiedog/umod4/blob/main/AGENTS.md). It explains who you are probably working with, what to ask them, and how to help them |
 | Curious where this project came from | [HISTORY.md](HISTORY.md) |
 | Looking at one piece of the project | The README in that directory: [EP](EP/README.md), [WP](WP/README.md), [ECU](ecu/README.md), [log decoder](tools/README_LogDecoder.md), [visualizer](tools/README_Visualizer.md) |

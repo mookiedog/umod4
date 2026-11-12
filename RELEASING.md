@@ -6,6 +6,23 @@ There is one version number for the whole thing, such as `v0.1.0`, which is also
 Nothing in this process publishes anything by itself.
 The script assembles a folder, and a person decides whether to attach its files to a GitHub release.
 
+## Release checklist
+
+Tick these off in order.
+The sections below explain each item.
+
+- [ ] On `main`, with everything committed and pushed: `git status` shows nothing.
+- [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill).
+- [ ] If any firmware changed since the last release: build it, flash the exact `EP.uf2` and `WP.uf2` to the bike, and bench- and bike-test them.
+- [ ] Choose the version (one number for the tools and the firmware, for example `v0.2.0`).
+- [ ] Run `uv run tools/make_release --version v0.2.0 --previous <the previous release's folder>` (leave out `--previous` for the first release). The output must not say REHEARSAL.
+- [ ] Read the table in `RELEASE_NOTES.md`: a firmware file must say "unchanged" only if you changed nothing that feeds it.
+- [ ] Test the tools zip on a machine that has only uv (a Windows Sandbox will do): the server window opens, the visualizer opens the sample ride, and the map shows.
+- [ ] Write "What changed" in `RELEASE_NOTES.md`.
+- [ ] Copy the release folder to a safe place outside the repository (for example `~/umod4-releases/`): it is the `--previous` for the next release.
+- [ ] Tag the commit and publish by hand: `git tag v0.2.0`, `git push origin v0.2.0`, then GitHub, Releases, draft from that tag, paste the notes and attach every file in the folder. Read the draft once as a visitor would before publishing.
+- [ ] If the download names or places changed, update the documents that point riders at the release (GETTING_STARTED.md).
+
 ## What a release contains
 
 | File | What it is |

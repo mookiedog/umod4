@@ -247,6 +247,7 @@ start; when it does, run it first and again after each stage.
 | Hardware assembly and install | GETTING_STARTED.md |
 | Debugging | DEBUGGING.md |
 | Bench testing an ECU | BENCH_TESTING.md |
+| Making a release | RELEASING.md |
 | Automated hardware test harness | tests/README.md, tests/TEST_PLAN.md |
 | Log format and tools | Tools.md, tools/logtools/ |
 

@@ -35,7 +35,7 @@ release.json has one entry per file.  Every entry has the file's size and sha256
 has "changed".  Firmware entries have "build_time" for people and "device_reports" for programs: the
 values the device reports about itself once this file is installed, in the same shape as the device's
 own /api/info ("wp_version", "ep_version", "ecu_build").  The EP is identified by two of them, because
-its own build time does not change when only the ECU image inside it does.  See tools/RELEASING.md
+its own build time does not change when only the ECU image inside it does.  See RELEASING.md
 for how the format may change.  Schema 1.
 """
 

@@ -18,7 +18,7 @@ because the server's "launch visualizer" button finds the visualizer by relative
   * run_server / run_viz launchers (.cmd for Windows, .sh for Linux), from tools/bundle/
   * README.txt, from the template tools/bundle/README.txt
 
-The recipient needs only uv.  See tools/RELEASING.md for how this fits into a release.
+The recipient needs only uv.  See RELEASING.md for how this fits into a release.
 """
 
 import datetime
