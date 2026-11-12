@@ -18,9 +18,9 @@ The sections below explain each item.
 - [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill). It tests the source, using the build in `build/`. If it complains that a file is older than a `CMakeLists.txt`, see Troubleshooting.
 - [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash **from the release folder**, in the order WP, EP, WP (see "Flash order" in step 4), check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
 - [ ] Test the tools zip on a clean Windows profile: the server window opens, the visualizer opens the sample ride, and the map shows. A throwaway Windows user account does it (see "Testing the tools zip"). Do the full test for the first release and whenever the launchers, `pyproject.toml`, `uv.lock` or the tools `README.txt` changed; otherwise unzip it into a new folder on your own PC and check that both programs start.
-- [ ] Write "What changed" in `RELEASE_NOTES.md`.
+- [ ] Write "What changed" and "Tested" in `RELEASE_NOTES.md`. The rest of that file is generated from `tools/release_notes_template.md`: change standard wording there, not in the output. No "Write this by hand" line may be left in it.
 - [ ] Copy the finished release folder (with the final notes) to `~/umod4-releases/umod4-release-<version>`, always that place, before you publish: it is the `--previous` for the next release, and `build/` can be deleted at any time.
-- [ ] Tag the commit and publish by hand: `git tag v0.2.0`, `git push origin v0.2.0`, then GitHub, Releases, draft from that tag, paste the notes and attach every file in the folder. Read the draft once as a visitor would before publishing.
+- [ ] Tag the commit and publish by hand: `git tag v0.2.0`, `git push origin v0.2.0`, then GitHub, Releases, draft from that tag, use the text of `RELEASE_NOTES.md` as the description and attach every other file in the folder (not `RELEASE_NOTES.md` itself: its text is the description). Read the draft once as a visitor would before publishing.
 - [ ] If the download names or places changed, update the documents that point riders at the release (GETTING_STARTED.md).
 
 ## What a release contains
@@ -34,7 +34,7 @@ The sections below explain each item.
 | `UM4.bin` | the data-logging ECU image, for the image library (it is also built into `EP.uf2`) |
 | `SHA256SUMS` | a checksum for every file above |
 | `release.json` | the same information for programs to read: per file the checksum, the build time, and whether it changed |
-| `RELEASE_NOTES.md` | a draft of the release notes; the file table is filled in, "what changed" is for a person to write |
+| `RELEASE_NOTES.md` | a draft of the release notes, made from `tools/release_notes_template.md`; the file table is filled in, "What changed" and "Tested" are for a person to write. Its text becomes the release page's description, so it is not attached as a file |
 
 ## "Changed" means changed, not "built again"
 
@@ -135,12 +135,13 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
    Only one server can run at a time: it needs UDP port 54549 and says so if another server already has it.
 
 6. **Write the release notes.**
-   Open `RELEASE_NOTES.md` and fill in "What changed".
+   Open `RELEASE_NOTES.md` and fill in "What changed" and "Tested".
+   The standard text (install steps, links) comes from `tools/release_notes_template.md`; edit that file, not the output, so that the next release gets the change too.
    Say plainly if a rider has to do something.
    If the log format changed, say which firmware and tools versions go together; the tools in a release always read logs from that release's firmware and from older firmware.
 
 7. **Publish, by hand.**
-   Tag the commit (`git tag v0.1.0` and `git push origin v0.1.0`), then on GitHub go to Releases, draft a new release for that tag, paste in the notes, and attach every file in the release folder.
+   Tag the commit (`git tag v0.1.0` and `git push origin v0.1.0`), then on GitHub go to Releases, draft a new release for that tag, use the text of `RELEASE_NOTES.md` as the description, and attach every other file in the release folder (not `RELEASE_NOTES.md` itself: its text is the description).
 
 A run that bypasses a safety check (for a rehearsal, with `--allow-dirty` or `--no-build`) marks `release.json` and the notes with `"rehearsal"`.
 Never publish a rehearsal.
@@ -213,7 +214,8 @@ Windows Sandbox is not a good substitute on current Windows 11: it has no Notepa
 **`tools/make_release` says UM4.bin was built from an uncommitted tree:**
 
 - The ECU image carries the `git describe` of the tree it was built from, and `-dirty` means that tree had uncommitted changes.
-- Commit, then rebuild the ECU image (`touch ecu/src/UM4.S`, then `ninja` in `build/`) and run the script again.
+- Commit, then run `cmake .` in `build/` and `ninja`, and run the script again.
+- `cmake .` is what refreshes the git identity baked into the firmware: it is generated when CMake configures, so touching `ecu/src/UM4.S` and running `ninja` alone leaves the old `-dirty` identity in place.
 
 **`tools/make_release` says a file is unchanged but that release's file is missing:**
 

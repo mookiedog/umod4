@@ -40,6 +40,7 @@ for how the format may change.  Schema 1.
 """
 
 import argparse
+import atexit
 import datetime
 import hashlib
 import json
@@ -198,6 +199,9 @@ def main():
             fail("the build failed:\n" + "\n".join((built_ok.stdout + built_ok.stderr).splitlines()[-25:]))
 
     out.mkdir(parents=True)
+    # If a check below stops the script, do not leave a half-finished release folder behind.
+    finished = []
+    atexit.register(lambda: shutil.rmtree(out, ignore_errors=True) if not finished else None)
     entries = []
 
     # ---- the firmware files ------------------------------------------------------------------
@@ -272,7 +276,7 @@ def main():
                    cwd=ROOT, check=True, capture_output=True, text=True)
     shutil.copy2(BUILD / "dist" / tools_name, out / tools_name)
     tools = {"name": tools_name, "kind": "tools",
-             "description": "server, visualizer and decoder (needs only uv; see README.txt inside)",
+             "description": "server, visualizer and decoder (see README.txt inside)",
              "size": (out / tools_name).stat().st_size, "sha256": sha256_of(out / tools_name),
              "built_from_commit": commit, "first_released_in": args.version}
     if prev_manifest:
@@ -303,31 +307,23 @@ def main():
             state = "new"
         else:
             state = "changed" if e["changed"] else f"unchanged since {prev_manifest['version']}"
-        rows.append(f"| `{e['name']}` | {e['description']} | {e['size'] / 1e6:.2f} MB | {e.get('build_time', '')} | {state} |")
+        size = f"{e['size'] / 1e6:.2f} MB" if e["size"] >= 1_000_000 else f"{e['size'] / 1e3:.1f} KB"
+        rows.append(f"| `{e['name']}` | {e['description']} | {size} | {e.get('build_time', '')} | {state} |")
     rehearsal_banner = ("\n**REHEARSAL: do not publish.** Guards that were switched off: " + "; ".join(bypassed) + ".\n") if bypassed else ""
-    notes = f"""# umod4 {args.version}
-
-Released {manifest['date']} from commit `{describe}`.
-{rehearsal_banner}
-## What changed
-
-_(Write this by hand: what is new or fixed, and anything a rider must do.)_
-
-## Files
-
-| File | What it is | Size | Build time | Compared with {prev_manifest['version'] if prev_manifest else 'the previous release'} |
-| --- | --- | --- | --- | --- |
-""" + "\n".join(rows) + """
-
-Checksums are in `SHA256SUMS` and, with the build times, in `release.json`.
-A firmware file marked **unchanged** is the very same file as in the previous release.
-If that release is already on your umod4, there is nothing to reflash for that part.
-
-## Installing
-
-See GETTING_STARTED.md in the project for the whole procedure.
-"""
+    # The fixed text of the notes lives in tools/release_notes_template.md, a plain Markdown file anyone can edit.
+    # The {MARKERS} in it are filled in here.
+    notes = (ROOT / "tools" / "release_notes_template.md").read_text(encoding="utf-8")
+    for marker, value in {
+        "{VERSION}": args.version,
+        "{DATE}": manifest["date"],
+        "{COMMIT}": commit[:7],
+        "{REHEARSAL_BANNER}": rehearsal_banner,
+        "{PREVIOUS_VERSION}": prev_manifest["version"] if prev_manifest else "the previous release",
+        "{FILES_TABLE_ROWS}": "\n".join(rows),
+    }.items():
+        notes = notes.replace(marker, value)
     (out / "RELEASE_NOTES.md").write_text(notes)
+    finished.append(True)
 
     try:
         shown = out.relative_to(ROOT)
