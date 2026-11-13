@@ -137,11 +137,13 @@ Run `uname -a` (or check `$WSL_DISTRO_NAME`) before anything else.
      File > Open Folder on the clone.
   4. Start a new Claude session in that window and resume from 3b. Your old session does
      not carry over.
-  Windows 11 22H2 or later is required (check with `winver`). Windows 10 is unsupported:
-  the device finds the server by UDP broadcast, which needs WSL's mirrored networking
-  (see BUILDING.md). Tell a Windows 10 user plainly; do not try to work around it.
-  A person who only wants the visualizer or decoder can skip WSL: `uv` runs natively on
-  Windows. Ask which goal they have (section 2) before sending them through WSL.
+  Windows 11 22H2 or later is required for this WSL route (check with `winver`). Windows 10
+  is untested: say so plainly, and do not claim it works or try to work around it.
+  **A person who only wants to run the server, visualizer or decoder does not need WSL.**
+  They download the release zip (https://github.com/mookiedog/umod4/releases/latest), follow
+  its release notes to unzip it into `C:\umod4\releases`, then follow its `README.txt`
+  (install uv, run `run_server.cmd` or `run_viz.cmd`). The server and tools were tested on
+  Windows 11 only. Ask which goal they have (section 2) before sending them through WSL.
 
 ### 3b. Install what the goal needs
 

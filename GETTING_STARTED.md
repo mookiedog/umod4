@@ -366,38 +366,21 @@ You could also install it on a laptop that you would bring to a track day, for e
 This step does not involve the umod4 hardware at all.
 You can do it at any time, even before your parts arrive.
 
-**You need a Linux PC, or a Windows 11 PC (22H2 or later).**
-
-Windows 10 is not supported: the umod4 finds the server using UDP broadcasts, and that needs WSL's mirrored networking, which requires Windows 11 22H2 or later.
+**You need a Windows 11 PC or a Linux PC.**
+The server and tools have been tested on Windows 11 (version 25H2).
+Nothing is claimed for Windows 10.
 
 An AI coding assistant can do most of this setup with you: see the AI assistant row in the [README](README.md#where-to-go).
 
-**On Windows**, first set up WSL (Windows Subsystem for Linux), the Linux environment that runs the server:
+1. Download `umod4-vX.Y.Z.zip` from the [latest release](https://github.com/mookiedog/umod4/releases/latest).
+1. Follow the **Installing** steps in that release's notes.
+   They tell you where to unzip it, and where not to.
+1. Read `README.txt` in the unzipped folder, and follow it to install uv and start the server.
+   The first time you start the server, it downloads the Python packages it needs, which can take a few minutes.
+   This only happens the very first time.
 
-* [Install WSL](./BUILDING.md#install-wsl2-and-your-ai-assistant)
-* [Set up WSL networking](./BUILDING.md#set-up-wsl-networking) and [add the Windows firewall rules](./BUILDING.md#add-windows-networking-firewall-rules), or the umod4 will not be able to find the server
-* [Install the Windows terminal app](./BUILDING.md#windows-terminal-app)
-
-**On Linux, or inside WSL**, open a bash terminal and:
-
-* [Create a local bin directory](./BUILDING.md#create-a-local-bin-directory)
-* Install uv, as described in [Python and uv](./BUILDING.md#python-and-uv)
-* Get the umod4 code:
-
-```bash
-mkdir -p ~/projects
-git clone https://github.com/mookiedog/umod4 ~/projects/umod4
-```
-
-* Start the server:
-
-```bash
-~/projects/umod4/tools/server/run_server.sh
-```
-
-The first time you start the server, it will need to download all the Python packages the server needs, which can take a few minutes.
-This only happens the very first time.
-Restarting the server subsequently will be instantaneous.
+Keep the unzipped folder handy.
+Its `firmware` folder holds the files you need for the next steps.
 
 Once the server starts, you will see a window of this general form:
 
@@ -418,7 +401,8 @@ This is what makes a umod4 "unbrickable".
 Installing umod4 software the first time must be done using a PC and a micro USB data cable that connects the WP to the PC.
 After the software is installed the first time, all subsequent updates can occur OTA (Over The Air) via WiFi.
 
-The first step is to obtain binary files for:
+The files are in the `firmware` folder of the release you unzipped in [Set up your PC](#set-up-your-pc).
+You need:
 
 1) WP_erase.uf2
 2) WP_partition.uf2
@@ -613,18 +597,14 @@ Feel free to click around a bit.
 
 Now that the WP is on your home network, the umod4 server can install the EP firmware over WiFi.
 
-* If the server from [Set up your PC](#set-up-your-pc) is no longer running, start it from a terminal (on Windows, a WSL terminal):
-
-```bash
-~/projects/umod4/tools/server/run_server.sh
-```
+* If the server from [Set up your PC](#set-up-your-pc) is no longer running, start it again as described in `README.txt` (on Windows, double-click `run_server.cmd`).
 
 * Wait for your device to show up in the server's device list.
 The device's name is the one you chose during WiFi provisioning.
 * Click on your device's name to select it
 * Click the `Manage Device` tab, just below
 * Click `Reflash EP`.
-* Choose your `EP.uf2` file (the one you put in your home directory, or `~/projects/umod4/build/EP/EP.uf2` if you built it yourself).
+* Choose `EP.uf2` from the `firmware` folder of the release (or `build/EP/EP.uf2` if you built it yourself).
 * Confirm the warning, and do not power off the device until the server reports success.
 
 The server uploads the firmware to the WP's SD card.

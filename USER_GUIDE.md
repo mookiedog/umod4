@@ -109,11 +109,9 @@ In either case, the control website that the umod4 serves to a phone's browser i
   One easy-ish way would be to set up your laptop to broadcast its own WiFi network where the SSID and password match your own home network.
   Under those circumstances, the umod4 would happily connect to the laptop's WiFi network, thinking that it was at home.
 
-  The server is not a downloadable app.
-  To run it, your PC needs a copy of the umod4 project (a git "clone" of the repository) and a Linux environment: a Linux machine, or Windows with WSL.
-  Windows also needs a networking setup and firewall rules so the umod4 can find the server.
-  [GETTING_STARTED.md](GETTING_STARTED.md) walks through all of this.
-  The same copy of the project also provides the visualizer.
+  The server comes in the release zip, together with the visualizer and the firmware files.
+  It runs natively on Windows 11 or on Linux: unzip the release and follow its `README.txt`.
+  [GETTING_STARTED.md](GETTING_STARTED.md#set-up-your-pc) says where to get the zip.
 * **The visualizer** is a separate program that turns a downloaded ride log into graphs and a map.
   See [Tools.md](Tools.md) for how it works; this guide only says when to use it.
 
@@ -143,11 +141,11 @@ It makes for easier physical access to the micro SD card and the micro-USB conne
 It also makes it easier to ensure that the umod4 will have access to a good home WiFi signal.
 
 **What you need on your PC.**
-The server and visualizer run from a copy of the project's source code, on a Linux machine or on Windows 11 with WSL2.
+The server and visualizer come in the release zip and run natively on Windows 11 or on Linux.
 [GETTING_STARTED.md](GETTING_STARTED.md#set-up-your-pc) walks through setting that up.
 
-There is no installer or packaged release.
-Getting a machine ready to build and run the project is a long, fiddly job, and you do not have to do it alone: an AI coding agent such as Claude Code, working inside the cloned project, can check what is installed, install what is missing, and fix errors as they come up.
+Building the firmware yourself is a different matter: it needs a full development environment.
+Getting a machine ready to build the project is a long, fiddly job, but you do not have to do it alone: an AI coding agent such as Claude Code, working inside the cloned project, can check what is installed, install what is missing, and fix errors as they come up.
 Ask it to help you get set up.
 
 Follow [GETTING_STARTED.md](GETTING_STARTED.md) for the one-time setup: building and fitting the hardware, installing the software, and getting the umod4 onto your WiFi and your server.
