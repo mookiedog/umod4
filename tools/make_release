@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Assemble a umod4 release: the tools zip, the firmware files, SHA256SUMS, release.json and release notes.
+Assemble a umod4 release: the release zip, the firmware files, SHA256SUMS, release.json and release notes.
 
     uv run tools/make_release --version v0.1.0 [--previous DIR_OR_RELEASE_JSON]
 
@@ -12,7 +12,8 @@ publishes nothing.
 
 What goes into the release:
 
-  umod4-tools-<version>.zip    the server, visualizer and decoder (built by tools/make_tools_bundle)
+  umod4-<version>.zip          the server, visualizer and decoder, plus the firmware files below in its
+                               firmware/ folder (built by tools/make_tools_bundle): the one download most people need
   EP.uf2                       the EP firmware (the ECU image is built into it)
   WP.uf2                       the WP firmware
   WP_partition.uf2, WP_erase.uf2   the two files for a first install of a blank WP (BOOTSEL drag-and-drop)
@@ -269,19 +270,23 @@ def main():
             fail(f"UM4.bin was built from an uncommitted tree ({um4_gh}): rebuild from the clean, committed tree")
         bypassed.append(f"UM4.bin was built from an uncommitted tree ({um4_gh})")
 
-    # ---- the tools zip ------------------------------------------------------------------------
+    # ---- the release zip: the tools plus the firmware files --------------------------------------
     # --version names the zip and its top folder after the release, so a rider who unzips it sees the version.
-    tools_name = f"umod4-tools-{args.version}.zip"
-    subprocess.run([sys.executable, str(ROOT / "tools" / "make_tools_bundle"), "--version", args.version],
+    # The firmware files are taken from the release folder, so the zip holds the very files that are published.
+    tools_name = f"umod4-{args.version}.zip"
+    subprocess.run([sys.executable, str(ROOT / "tools" / "make_tools_bundle"), "--prefix", "umod4",
+                    "--version", args.version, "--firmware", *[str(out / f[0]) for f in FIRMWARE]],
                    cwd=ROOT, check=True, capture_output=True, text=True)
     shutil.copy2(BUILD / "dist" / tools_name, out / tools_name)
     tools = {"name": tools_name, "kind": "tools",
-             "description": "server, visualizer and decoder (see README.txt inside)",
+             "description": "server, visualizer and decoder, and the firmware files (start with README.txt inside)",
              "size": (out / tools_name).stat().st_size, "sha256": sha256_of(out / tools_name),
              "built_from_commit": commit, "first_released_in": args.version}
     if prev_manifest:
         old_tools = next((f for f in prev_manifest["files"] if f["kind"] == "tools"), None)
-        tools_changed = bool(changed_inputs(prev_commit, TOOLS_ROOTS)) or old_tools is None
+        # The zip also holds the firmware files, so it is "changed" whenever any of them is.
+        tools_changed = (bool(changed_inputs(prev_commit, TOOLS_ROOTS)) or old_tools is None
+                         or any(e.get("changed") for e in entries))
         tools["changed"] = tools_changed
         tools["note"] = (f"changed since {prev_manifest['version']}" if tools_changed
                          else f"no input changed since {prev_manifest['version']} (rebuilt, so the zip itself differs)")

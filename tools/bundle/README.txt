@@ -2,7 +2,8 @@ umod4 tools: the server and the data visualizer
 ================================================
 Bundle: {VERSION}
 
-This folder holds the two programs that run on your PC:
+This folder holds the two programs that run on your PC (and, in the
+"firmware" folder, the firmware files for the umod4 itself):
 
   * the SERVER finds your umod4 on your home network, downloads its ride logs,
     and installs new firmware on it over WiFi
@@ -43,9 +44,12 @@ other Python you may have.
 A window titled "umod4 Server" opens with a list of devices. Power up your
 umod4 with WiFi in range, and it appears in the list within a few seconds.
 
-On Windows, the first time the server runs, Windows asks whether to allow it
-to use the network. Choose Allow. If your umod4 never shows up in the list, a
-firewall blocking UDP port 54549 is a likely cause.
+On Windows, expect two warnings the first time:
+  * "The publisher could not be verified": Windows says this about any program
+    downloaded from the internet. Click Run. (It appears again for run_viz.cmd.)
+  * Windows may ask whether to allow the server to use the network. Choose
+    Allow. If your umod4 never shows up in the list, a firewall blocking UDP
+    port 54549 is a likely cause.
 
 The server keeps its database and the logs it downloads here:
     Windows:  %APPDATA%\umod4_server
@@ -81,7 +85,14 @@ For more on using the visualizer, see:
   https://github.com/mookiedog/umod4/blob/main/tools/README_Visualizer_User_Guide.md
   https://github.com/mookiedog/umod4/blob/main/tools/README_Visualizer.md
 
+
 Project home: https://github.com/mookiedog/umod4
+
+
+STEP 4 - Update the firmware on your umod4 (only when you need to)
+--------------------------------------------------------------------
+
+{FIRMWARE_SECTION}
 
 
 UPGRADING TO A NEWER VERSION

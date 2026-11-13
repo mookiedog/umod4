@@ -17,7 +17,7 @@ The sections below explain each item.
 - [ ] Read the table in `RELEASE_NOTES.md`: a firmware file must say "unchanged" only if you changed nothing that feeds it.
 - [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill). It tests the source, using the build in `build/`. If it complains that a file is older than a `CMakeLists.txt`, see Troubleshooting.
 - [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash **from the release folder**, in the order WP, EP, WP (see "Flash order" in step 4), check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
-- [ ] Test the tools zip on a clean Windows profile: the server window opens, the visualizer opens the sample ride, and the map shows. A throwaway Windows user account does it (see "Testing the tools zip"). Do the full test for the first release and whenever the launchers, `pyproject.toml`, `uv.lock` or the tools `README.txt` changed; otherwise unzip it into a new folder on your own PC and check that both programs start.
+- [ ] Test the release zip on a clean Windows profile: the server window opens, the visualizer opens the sample ride, and the map shows. A throwaway Windows user account does it (see "Testing the release zip"). Do the full test for the first release and whenever the launchers, `pyproject.toml`, `uv.lock` or the tools `README.txt` changed; otherwise unzip it into a new folder on your own PC and check that both programs start.
 - [ ] Write "What changed" and "Tested" in `RELEASE_NOTES.md`. The rest of that file is generated from `tools/release_notes_template.md`: change standard wording there, not in the output. No "Write this by hand" line may be left in it.
 - [ ] Copy the finished release folder (with the final notes) to `~/umod4-releases/umod4-release-<version>`, always that place, before you publish: it is the `--previous` for the next release, and `build/` can be deleted at any time.
 - [ ] Tag the commit and publish by hand: `git tag v0.2.0`, `git push origin v0.2.0`, then GitHub, Releases, draft from that tag, use the text of `RELEASE_NOTES.md` as the description and attach every other file in the folder (not `RELEASE_NOTES.md` itself: its text is the description). Read the draft once as a visitor would before publishing.
@@ -27,7 +27,7 @@ The sections below explain each item.
 
 | File | What it is |
 | --- | --- |
-| `umod4-tools-<version>.zip` | the server, the visualizer and the decoder, plus launchers and a sample ride; the recipient needs only [uv](https://docs.astral.sh/uv/) |
+| `umod4-<version>.zip` | the one download most people need: the server, the visualizer and the decoder, plus launchers and a sample ride, plus the firmware files below in its `firmware` folder; the recipient needs only [uv](https://docs.astral.sh/uv/) |
 | `EP.uf2` | the EP firmware (the UM4 ECU image is built into it); installed by the server over WiFi |
 | `WP.uf2` | the WP firmware; installed by the server over WiFi, or by BOOTSEL drag-and-drop on a blank WP |
 | `WP_partition.uf2`, `WP_erase.uf2` | the two extra files for the first install of a blank WP (BOOTSEL drag-and-drop) |
@@ -116,7 +116,7 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
    The server's device panel should then show the EP and WP builds that are listed in `release.json`.
 
    This step only checks that over-the-air update is not broken: the new WP can reflash an EP as well as itself.
-   It does not test the server, so the server from the development tree (`uv run tools/server/umod4_server.py`) is fine; the tools zip has its own test in step 5.
+   It does not test the server, so the server from the development tree (`uv run tools/server/umod4_server.py`) is fine; the release zip has its own test in step 5.
 
    **Flash order: WP, then EP, then WP again.**
    The WP does the EP's reflash, so this order tests three things in turn: the WP updates itself over the air, the newly installed WP can reflash the EP, and the new WP can update itself.
@@ -128,8 +128,8 @@ Removing or renaming a key, or changing what one means, increases `schema`, and 
    Then bench-test, and ride.
    Files marked "unchanged" are the earlier files that were already tested, so there is nothing to flash for them.
 
-5. **Test the tools zip on a clean Windows profile.**
-   See "Testing the tools zip" below for how.
+5. **Test the release zip on a clean Windows profile.**
+   See "Testing the release zip" below for how.
    Unzip it, follow `README.txt` from STEP 1, start the server and check that its window opens, then start the visualizer on the sample ride and check that graphs and the map appear.
    The test does not mean much in a profile that already has uv or the umod4 source tree, because that hides missing files.
    Only one server can run at a time: it needs UDP port 54549 and says so if another server already has it.
@@ -157,10 +157,10 @@ Use semantic versioning (MAJOR.MINOR.PATCH):
 Because tools and firmware share one version, a fix to the visualizer alone is still a new release.
 The "changed / unchanged" column in the notes is what tells a rider that the firmware files are the same as before.
 
-## The tools zip
+## The release zip
 
-`tools/make_tools_bundle` builds the tools zip, and `tools/make_release` calls it.
-You can also run it alone, for a quick test bundle:
+`tools/make_tools_bundle` builds the zip, and `tools/make_release` calls it, naming it `umod4-<version>.zip` and adding the firmware files.
+You can also run it alone, for a quick test bundle (tools only, no firmware):
 
 ```bash
 uv run tools/make_tools_bundle
@@ -178,17 +178,20 @@ It contains:
 - `pyproject.toml` and `uv.lock`
 - `run_server.cmd`, `run_viz.cmd` (Windows, double-click) and `run_server.sh`, `run_viz.sh` (Linux), taken from `tools/bundle/`
 - `README.txt`: the instructions for the recipient, taken from the template `tools/bundle/README.txt`
+- `firmware/`: `EP.uf2`, `WP.uf2`, `WP_partition.uf2`, `WP_erase.uf2` and `UM4.bin`, copied from the release folder, so the zip holds the very files that are published (a release only; a quick test bundle has none)
+
+`SHA256SUMS` and `release.json` are not inside the zip: they list the zip's own checksum.
 
 The launchers run `uv run --only-group server ...` and `uv run --only-group viz ...`.
 The `--only-group` part installs just that program's packages and leaves out the other group and the test packages.
 
-## Testing the tools zip
+## Testing the release zip
 
 Use a throwaway Windows user account on your own PC: its profile has no uv, no environment variables and no leftovers, which is what a rider's PC looks like.
 
 1. Close any running umod4 server.
 2. In Settings, Accounts, Other users, add a local account (no Microsoft account) and make it an Administrator, as most riders are.
-3. Sign in to it, extract the zip, and follow `README.txt` from STEP 1.
+3. Sign in to it, extract the zip as the release notes say (into `C:\umod4\releases`, replacing the destination Windows suggests), and follow `README.txt` from STEP 1. Windows will show a "publisher could not be verified" popup for `run_server.cmd`: that is expected.
 4. Afterwards, sign out and delete the account with "Delete account and data". That removes everything the test created, including uv and its downloads.
 
 **What this does not prove:**

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Build the umod4 tools bundle: the server and the visualizer in one zip, for someone who does not
-have the umod4 source tree or its build tools.
+Build the umod4 zip: the server and the visualizer, plus (for a release) the firmware files, in one
+zip, for someone who does not have the umod4 source tree or its build tools.
 
     uv run tools/make_tools_bundle
 
-The result is build/dist/umod4-tools-<date>-<git hash>[-dirty].zip (or umod4-tools-<version>.zip with --version) (inside build/, like every other
-generated file, so it is untracked and safe to delete).  The zip keeps the repository's own layout,
+The result is build/dist/umod4-tools-<date>-<git hash>[-dirty].zip (inside build/, like every other
+generated file, so it is untracked and safe to delete).  tools/make_release names it umod4-<version>.zip
+instead (--prefix umod4 --version <version>) and adds the firmware files (--firmware).  The zip keeps the repository's own layout,
 because the server's "launch visualizer" button finds the visualizer by relative path:
 
   * tools/server/            the server's runtime .py files (no tests, no dead code, no dev docs)
@@ -17,6 +18,7 @@ because the server's "launch visualizer" button finds the visualizer by relative
   * pyproject.toml and uv.lock, so that the recipient gets exactly the package versions tested
   * run_server / run_viz launchers (.cmd for Windows, .sh for Linux), from tools/bundle/
   * README.txt, from the template tools/bundle/README.txt
+  * firmware/                the firmware files given with --firmware (a release only)
 
 The recipient needs only uv.  See RELEASING.md for how this fits into a release.
 """
@@ -44,6 +46,19 @@ LAUNCHER_DIR = "tools/bundle"
 SAMPLE_LOG = "tools/logtools/test_data/sample_ride.um4"
 LOG_IDS = "lib/inc/log_ids.h"
 H2PY = "tools/src/h2py.py"
+
+# Goes into README.txt where the template says {FIRMWARE_SECTION}.
+FIRMWARE_TEXT = """The firmware files are in the "firmware" folder next to this README:
+
+  EP.uf2, WP.uf2                 the firmware for the umod4's two processors
+  WP_erase.uf2, WP_partition.uf2 needed only to install the WP on a blank board
+                                 (see GETTING_STARTED.md in the project)
+  UM4.bin                        the data-logging ECU program, for the server's
+                                 image library
+
+To update a umod4 you already have: start the server, select the device, open
+the "Manage Device" tab, click "Reflash WP" or "Reflash EP", and choose the
+file from the firmware folder."""
 
 
 def git(*args):
@@ -99,9 +114,12 @@ def add_text(z, arc_name, text, executable=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build the tools zip.")
-    parser.add_argument("--version", help="name the zip and its top folder umod4-tools-<version> "
+    parser = argparse.ArgumentParser(description="Build the umod4 zip.")
+    parser.add_argument("--version", help="name the zip and its top folder <prefix>-<version> "
                         "(default: <date>-<git hash>, for a quick test bundle)")
+    parser.add_argument("--prefix", default="umod4-tools", help="start of the zip and top folder name (default: umod4-tools)")
+    parser.add_argument("--firmware", nargs="*", default=[], metavar="FILE",
+                        help="firmware files to put in the zip's firmware/ folder (a release)")
     args = parser.parse_args()
     code = code_files()
     launcher_files = [f"{LAUNCHER_DIR}/{name}" for name in LAUNCHERS]
@@ -111,8 +129,14 @@ def main():
             sys.exit(f"ERROR: expected file is missing: {name}")
 
     version = args.version or bundle_version(source_files)
-    top = f"umod4-tools-{version}"
-    readme = (ROOT / README_TEMPLATE).read_text(encoding="utf-8").replace("{VERSION}", version)
+    top = f"{args.prefix}-{version}"
+    firmware = [Path(f) for f in args.firmware]
+    for f in firmware:
+        if not f.is_file():
+            sys.exit(f"ERROR: firmware file is missing: {f}")
+    firmware_text = FIRMWARE_TEXT if firmware else "(This test bundle has no firmware folder.)"
+    readme = ((ROOT / README_TEMPLATE).read_text(encoding="utf-8")
+              .replace("{VERSION}", version).replace("{FIRMWARE_SECTION}", firmware_text))
 
     dist = ROOT / "build" / "dist"
     dist.mkdir(parents=True, exist_ok=True)
@@ -130,8 +154,10 @@ def main():
             for name in PROJECT_FILES + [SAMPLE_LOG] + code:
                 z.write(ROOT / name, f"{top}/{name}")
             z.write(logsyms, f"{top}/tools/logtools/decoder/Logsyms.py")
+            for f in firmware:
+                z.write(f, f"{top}/firmware/{f.name}")
 
-    count = len(PROJECT_FILES) + len(LAUNCHERS) + len(code) + 3   # + sample log, README, Logsyms
+    count = len(PROJECT_FILES) + len(LAUNCHERS) + len(code) + len(firmware) + 3   # + sample log, README, Logsyms
     print(f"Wrote {zip_path.relative_to(ROOT)}  ({zip_path.stat().st_size / 1e6:.1f} MB, {count} files)")
     if version.endswith("-dirty"):
         print("Note: some bundled files have uncommitted changes (the version is marked -dirty).")

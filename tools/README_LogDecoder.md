@@ -27,7 +27,7 @@ Both come from building the umod4 project once (see [BUILDING.md](../BUILDING.md
 There is no virtual environment to activate: `uv run` finds the project's environment by itself.
 
 If you only want to look at logs, you do not need to build the project.
-`tools/make_tools_bundle` packages the server, the visualizer and the decoder into a small zip that needs only uv (see [RELEASING.md](../RELEASING.md)).
+`tools/make_tools_bundle` packages the server, the visualizer and the decoder (and, in a release, the firmware files) into a zip that needs only uv (see [RELEASING.md](../RELEASING.md)).
 
 ## DecodeLog: Human Readable
 
