@@ -49,7 +49,7 @@ _(Write this by hand: what passed, and "Not yet ridden with this build." if that
 | --- | --- | --- | --- | --- |
 {FILES_TABLE_ROWS}
 
-Most people need only `umod4-{VERSION}.zip`: the firmware files are inside it, in the `firmware` folder.
+**Most people need only `umod4-{VERSION}.zip`: the firmware files are inside it, in the `firmware` folder.**
 The other files are the same files, listed separately for anyone who needs just one of them.
 
 Checksums are in `SHA256SUMS` and, with the build times, in `release.json`.
