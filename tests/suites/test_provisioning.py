@@ -209,6 +209,16 @@ def _run(ocd, results, context):
             results.passed("prov_set_wifi",
                 f"POST response lost ({e}) — verifying reboot in prov_wait_reboot")
 
+        # Let go of the WP's setup network.  The proxy otherwise stays joined and
+        # re-joins whenever the AP reappears, and a client on the AP makes the WP skip
+        # its retry of the home network (WiFiManager, AUTH_RETRY_*), which can leave a
+        # later suite stuck with the WP in AP mode.  Best effort: the next run's
+        # find_and_connect() reconnects it, and nothing else uses the proxy.
+        try:
+            proxy.disconnect()
+        except Exception:
+            pass
+
     # ----------------------------------------------------------------
     # prov_wait_reboot — wait for WP to reboot after config save.
     # Detect the reboot by polling the VFY channel until it stops responding
