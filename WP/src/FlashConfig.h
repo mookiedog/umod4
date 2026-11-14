@@ -18,20 +18,52 @@ extern "C" {
 #define FLASH_CONFIG_MAGIC   0x55CF0000U
 #define FLASH_CONFIG_VERSION 0
 
+// THE CONFIG IS 512 BYTES, ALWAYS, AND ITS UNUSED BYTES ARE ALWAYS ZERO.
+//
+// The struct below is a union of two views of the same 508 payload bytes (the
+// last 4 bytes are the CRC):
+//   - the named fields, and
+//   - raw[], which is how the CRC is computed and how the whole payload is copied.
+// Whatever the named fields do not use is the "reserved" tail. There is no
+// _reserved[] array to resize: to add a field, append it at the END of the named
+// struct. The static_asserts at the bottom of this file refuse to compile if the
+// named fields ever outgrow the payload or if an existing field moves.
+//
+// Rules for adding a field (they are what make the config extensible without a
+// version bump, and without wiping the saved WiFi credentials on a downgrade):
+//   1. A value of 0 MUST mean "old behaviour, this feature is not present".
+//      Old configs have zeros there, so they keep working unchanged.
+//   2. The CRC covers the whole payload, reserved tail included, so every writer
+//      must write zeros into bytes that no field uses. Writers today: the
+//      firmware (it zero-fills the defaults, then every save copies the loaded
+//      struct) and tests/harness/flash_config_blobs.py (writes zeros).
+//      Any new tool that writes a config must do the same.
+//   3. Do NOT change FLASH_CONFIG_MAGIC or FLASH_CONFIG_VERSION for an added field.
+//      Older firmware ignores bytes it does not know about, and preserves them
+//      when it saves.
+//
 // All string fields are null-terminated; an empty first byte means "not configured".
 // All members are sized as a multiple of one word (4 bytes).
-// __attribute__((packed)) ensures no compiler padding — flash layout must be deterministic.
+// __attribute__((packed)) ensures no compiler padding - flash layout must be deterministic.
+#define FLASH_CONFIG_SIZE          512U
+#define FLASH_CONFIG_PAYLOAD_SIZE  (FLASH_CONFIG_SIZE - 4U)
+
 typedef struct __attribute__((packed)) {
-    uint32_t magic;             // FLASH_CONFIG_MAGIC — detects blank/corrupt flash
-    uint32_t version;           // Struct version (FLASH_CONFIG_VERSION)
-    char     device_name[64];   // Human-readable device name, e.g. "Robin's Tuono"
-    char     wifi_ssid[64];     // Home network SSID
-    char     wifi_password[64]; // Home network password
-    char     ap_ssid[32];       // AP mode SSID; empty = use "umod4-XXYY" from MAC
-    char     ap_password[64];   // AP mode password; empty = use "umod4-XXYY" from MAC
-    uint32_t _reserved[53];     // Pad to 512 bytes
-    uint32_t crc32;             // CRC32 of all preceding bytes in this struct
-} flash_config_v0_t;            // Total: 4+4+64+64+64+32+64+212+4=512
+    __extension__ union {
+        struct __attribute__((packed)) {
+            uint32_t magic;             // FLASH_CONFIG_MAGIC - detects blank/corrupt flash
+            uint32_t version;           // Struct version (FLASH_CONFIG_VERSION)
+            char     device_name[64];   // Human-readable device name, e.g. "Robin's Tuono"
+            char     wifi_ssid[64];     // Home network SSID
+            char     wifi_password[64]; // Home network password
+            char     ap_ssid[32];       // AP mode SSID; empty = use "umod4-XXYY" from MAC
+            char     ap_password[64];   // AP mode password; empty = use "umod4-XXYY" from MAC
+            // New fields go here, at the end. 0 must mean "feature not present".
+        };
+        uint8_t raw[FLASH_CONFIG_PAYLOAD_SIZE];   // the whole payload: covered by the CRC
+    };
+    uint32_t crc32;                 // CRC32 of all preceding bytes in this struct
+} flash_config_v0_t;
 
 typedef flash_config_v0_t flash_config_t;
 
@@ -64,8 +96,22 @@ void flash_config_defaults(flash_config_t *out);
 
 #ifdef __cplusplus
 }
-// Compile-time check that the struct is exactly 512 bytes (C++ form)
-static_assert(sizeof(flash_config_t) == 512, "flash_config_t must be exactly 512 bytes");
-#else
-_Static_assert(sizeof(flash_config_t) == 512, "flash_config_t must be exactly 512 bytes");
 #endif
+
+// Compile-time layout checks. These pin the on-flash layout: if one fails, an edit
+// has changed what older firmware and the test harness expect to find in flash.
+#ifdef __cplusplus
+#include <cstddef>
+#define FLASH_CONFIG_ASSERT(cond, msg) static_assert(cond, msg)
+#else
+#include <stddef.h>
+#define FLASH_CONFIG_ASSERT(cond, msg) _Static_assert(cond, msg)
+#endif
+
+FLASH_CONFIG_ASSERT(sizeof(flash_config_t) == FLASH_CONFIG_SIZE, "flash_config_t must be exactly 512 bytes (named fields outgrew the payload?)");
+FLASH_CONFIG_ASSERT(offsetof(flash_config_t, crc32) == FLASH_CONFIG_PAYLOAD_SIZE, "crc32 must be the last word");
+FLASH_CONFIG_ASSERT(offsetof(flash_config_t, device_name)   == 8,   "device_name moved");
+FLASH_CONFIG_ASSERT(offsetof(flash_config_t, wifi_ssid)     == 72,  "wifi_ssid moved");
+FLASH_CONFIG_ASSERT(offsetof(flash_config_t, wifi_password) == 136, "wifi_password moved");
+FLASH_CONFIG_ASSERT(offsetof(flash_config_t, ap_ssid)       == 200, "ap_ssid moved");
+FLASH_CONFIG_ASSERT(offsetof(flash_config_t, ap_password)   == 232, "ap_password moved");

@@ -31,6 +31,10 @@ _V0_FIELDS = [
 ]
 assert sum(s for _, s in _V0_FIELDS) == FLASH_CONFIG_SIZE
 
+# Where the unused tail of the payload sits inside the 512-byte blob.
+TAIL_SIZE   = 212
+TAIL_OFFSET = FLASH_CONFIG_SIZE - 4 - TAIL_SIZE   # 296
+
 
 def _crc32(data: bytes) -> int:
     """CRC32 using the Ethernet/zlib polynomial — matches firmware crc32_compute()."""
@@ -45,15 +49,21 @@ def _pack_str(s: str, size: int) -> bytes:
 
 def _body_v0(magic: int, version: int,
              device_name: str, wifi_ssid: str, wifi_password: str,
-             ap_ssid: str, ap_password: str) -> bytes:
-    """Pack v0 fields without the trailing crc32."""
+             ap_ssid: str, ap_password: str, tail: bytes = b'') -> bytes:
+    """Pack v0 fields without the trailing crc32.
+
+    tail: optional bytes for the unused tail of the payload (normally empty, so the
+    tail is all zeros).  Only the reserved-bytes test passes a non-zero tail."""
     body  = struct.pack('<II', magic, version)
     body += _pack_str(device_name,   64)
     body += _pack_str(wifi_ssid,     64)
     body += _pack_str(wifi_password, 64)
     body += _pack_str(ap_ssid,       32)
     body += _pack_str(ap_password,   64)
-    body += b'\x00' * 212   # _reserved[53]
+    # Unused tail of the payload: MUST stay zero unless a test deliberately says
+    # otherwise (see WP/src/FlashConfig.h for the rule).
+    assert len(tail) <= TAIL_SIZE
+    body += tail + b'\x00' * (TAIL_SIZE - len(tail))
     assert len(body) == _CRC_DATA_LEN
     return body
 
@@ -95,12 +105,13 @@ def make_bad_crc(wifi_ssid: str = '', wifi_password: str = '',
 
 def make_valid_v0(wifi_ssid: str = '', wifi_password: str = '',
                   device_name: str = '', ap_ssid: str = '',
-                  ap_password: str = '') -> bytes:
+                  ap_password: str = '', tail: bytes = b'') -> bytes:
     """
     Fully valid v0 config blob with correct magic, version, and CRC.
     Firmware must load it without modification.
+    tail: optional non-zero bytes for the unused tail (reserved-bytes test only).
     """
     body = _body_v0(FLASH_CONFIG_MAGIC, FLASH_CONFIG_VERSION,
                     device_name, wifi_ssid, wifi_password,
-                    ap_ssid, ap_password)
+                    ap_ssid, ap_password, tail)
     return body + struct.pack('<I', _crc32(body))

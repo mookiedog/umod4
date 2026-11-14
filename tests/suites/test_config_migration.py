@@ -5,7 +5,9 @@ Verifies that the WP firmware handles all flash config states correctly:
 
   1. cfg_invalid_magic  — wrong magic → clean defaults → valid AP SSID
   2. cfg_bad_crc        — correct magic, bad CRC → clean defaults → valid AP SSID
-  3. cfg_valid_v0       — valid v0 config with WiFi credentials → device connects
+  3. cfg_reserved_kept  — non-zero bytes in the unused tail of the config survive
+                          the firmware's own save (see WP/src/FlashConfig.h)
+  4. cfg_valid_v0       — valid v0 config with WiFi credentials → device connects
 
 Each test injects a synthetic config blob via OpenOCD, reboots the device,
 and verifies the outcome via RTT.  The firmware is flashed once at the start
@@ -25,12 +27,15 @@ Adding a migration test for a new config version (e.g. v1):
 import json
 import os
 import re
+import struct
 import tempfile
 import time
+import zlib
 
 from harness.rtt import RttChannel, RttError
 from harness.flash_ops import Record, PROC_WP, WP_FLASH_BASE, WP_CONFIG_OFFSET, restore_wp_config
-from harness.flash_config_blobs import make_blank, make_invalid_magic, make_bad_crc, make_valid_v0
+from harness.flash_config_blobs import (make_blank, make_invalid_magic, make_bad_crc, make_valid_v0,
+                                        TAIL_OFFSET, TAIL_SIZE)
 from harness.openocd import OpenOCDError
 
 WP_VFY_CHANNEL  = 1
@@ -43,7 +48,11 @@ FLASH_WP           = os.path.join(_PROJ_ROOT, "tools", "flash_WP")
 WP_BUILD_DIR       = os.path.join(_PROJ_ROOT, "build", "WP")
 
 POST_FLASH_SETTLE  = 10.0   # seconds after flashing before RTT is live
-WIFI_CONNECT_TIMEOUT = 30.0 # seconds to wait for STA connect in cfg_valid_v0
+# Seconds to wait for a STA connect.  This used to be 30.  Some access points (seen
+# with UniFi U6-IW firmware 8.8.14) ignore the first join attempt when the device
+# re-joins within a few minutes of a previous association, and the WP then needs
+# its retry (about 20 s after boot) to get on.  45 s leaves room for that.
+WIFI_CONNECT_TIMEOUT = 45.0
 
 
 def _inject_config(ocd, blob: bytes) -> None:
@@ -70,6 +79,21 @@ def _inject_config(ocd, blob: bytes) -> None:
         ocd.reset_and_wait()
     finally:
         os.unlink(tmp_path)
+
+
+def _read_config_swd(ocd) -> bytes:
+    """Read the 512-byte WP config straight from flash over SWD.
+
+    Reads through the RP2350's XIP no-cache alias (0x1C000000), which is the alias the
+    firmware itself uses to load the config.  The HTTP backup endpoint was tried first
+    and returned a stale CRC word right after a save, so it is not used for this check.
+    """
+    addr = 0x1C000000 + WP_CONFIG_OFFSET
+    reply = ocd.tcl_command(f"read_memory 0x{addr:08X} 32 128")
+    words = [int(w, 16) for w in re.findall(r"0x[0-9a-fA-F]+", reply)]
+    if len(words) != 128:
+        raise RuntimeError(f"expected 128 words from read_memory, got {len(words)}")
+    return b"".join(struct.pack("<I", w) for w in words)
 
 
 def _wifi_state(ocd, timeout: float = 15.0) -> dict:
@@ -191,7 +215,55 @@ def run(ocd, results, context):
         results.failed("cfg_bad_crc", str(e))
 
     # ----------------------------------------------------------------
-    # Test 3: valid v0 config with real WiFi credentials
+    # Test 3: the unused tail of the config survives a firmware save.
+    # The rule in WP/src/FlashConfig.h says unused bytes are zero and that a
+    # save preserves whatever is in them, so a future field in that area is not
+    # wiped by firmware that does not know about it.  To check it, inject a
+    # config with marker bytes in the tail and an EMPTY device name.  The
+    # firmware fills in the device name from the MAC and saves the config.  Read
+    # the config back from flash over SWD and check the markers are still there
+    # and the CRC is valid.
+    # ----------------------------------------------------------------
+
+    results.start("cfg_reserved_kept")
+    ssid     = context.get("ssid", "")
+    password = context.get("password", "")
+    tail = bytearray(TAIL_SIZE)
+    tail[0:4]     = b'\xA5\x5A\xC3\x3C'     # first word of the tail
+    tail[-4:]     = b'\xDE\xAD\xBE\xEF'     # last word of the tail
+    print("  Injecting config with marker bytes in the unused tail and no device name...")
+    try:
+        _inject_config(ocd, make_valid_v0(
+            wifi_ssid=ssid, wifi_password=password, device_name="", tail=bytes(tail)))
+        # Wait for the firmware to fill in the device name and save the config.
+        # Reading flash over SWD means this test does not depend on WiFi at all.
+        deadline = time.monotonic() + 30.0
+        blob = _read_config_swd(ocd)
+        while blob[8] == 0 and time.monotonic() < deadline:
+            time.sleep(1.0)
+            blob = _read_config_swd(ocd)
+        crc_stored = struct.unpack('<I', blob[-4:])[0]
+        crc_calc   = zlib.crc32(blob[:-4]) & 0xFFFFFFFF
+        name = blob[8:72].split(b'\x00')[0].decode('utf-8', 'replace')
+        if not AP_SSID_PATTERN.match(name):
+            results.failed("cfg_reserved_kept",
+                f"device name is '{name}', so the firmware did not save the config; "
+                f"the test would prove nothing")
+        elif crc_stored != crc_calc:
+            results.failed("cfg_reserved_kept",
+                f"CRC invalid after save (stored {crc_stored:08X}, calculated {crc_calc:08X})")
+        elif blob[TAIL_OFFSET:TAIL_OFFSET + TAIL_SIZE] != bytes(tail):
+            results.failed("cfg_reserved_kept",
+                "the unused tail changed during the save: "
+                f"{blob[TAIL_OFFSET:TAIL_OFFSET + 8].hex()} ... {blob[-12:-4].hex()}")
+        else:
+            results.passed("cfg_reserved_kept",
+                f"device name set to {name}, tail bytes and CRC intact")
+    except Exception as e:
+        results.failed("cfg_reserved_kept", str(e))
+
+    # ----------------------------------------------------------------
+    # Test 4: valid v0 config with real WiFi credentials
     # Inject a correctly formed v0 config.  Firmware must load it and
     # connect to the home network.
     # ----------------------------------------------------------------
