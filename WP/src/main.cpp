@@ -694,6 +694,10 @@ void boot_system(void* args)
                 return false;
             }
             ecu_live_config_load();
+            // Saved trace settings live on the filesystem, so they can only be applied
+            // once it is mounted.  (They used to be loaded at the end of boot_system,
+            // before the SD card had mounted, so a saved setting was never applied.)
+            Trace::loadConfig();
             return true;
         },
         []() {
@@ -762,8 +766,6 @@ void boot_system(void* args)
 
     // Enable this to debug lwip memory usage as program runs
     //debug_lwip_stats();
-
-    Trace::loadConfig();
 
     printf("%s: Complete\n", __FUNCTION__);
     // A bit more accurate now that we have mostly booted:
