@@ -32,6 +32,7 @@ NetworkManager::NetworkManager(WiFiManager* wifiMgr)
     , state_(State::WAITING_FOR_WIFI)
     , httpd_running_(false)
     , mdns_running_(false)
+    , mdns_netif_(nullptr)
     , lwip_services_initialized_(false)
 {
     Trace::reg("network", &dbg);
@@ -127,6 +128,10 @@ void NetworkManager::start_mdns()
     // Here we only add the netif to the already-initialized mDNS responder
     mdns_resp_add_netif(netif, hostname);
 
+    // Remember which netif we added.  WiFiManager::getNetif() answers for the CURRENT
+    // state (AP netif in AP states, STA netif otherwise), which can differ by the time
+    // we stop: removing "whatever getNetif() says now" removed the wrong netif.
+    mdns_netif_ = netif;
     mdns_running_ = true;
     if (dbg) printf("NetworkMgr: mDNS responder running (%s.local)\n", hostname);
 }
@@ -136,9 +141,10 @@ void NetworkManager::stop_mdns()
     if (!mdns_running_) return;
 
     if (dbg) printf("NetworkMgr: Stopping mDNS responder\n");
-    struct netif* netif = wifiMgr_->getNetif();
-    if (netif) {
-        mdns_resp_remove_netif(netif);
+    // Remove exactly the netif that start_mdns() added, not whatever getNetif() says now.
+    if (mdns_netif_) {
+        mdns_resp_remove_netif(mdns_netif_);
+        mdns_netif_ = nullptr;
     }
     mdns_running_ = false;
 }

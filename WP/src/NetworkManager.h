@@ -34,6 +34,7 @@ private:
     State state_;
     bool httpd_running_;
     bool mdns_running_;
+    struct netif* mdns_netif_;      // the netif mDNS was added to; stop_mdns() must remove exactly this one
     bool lwip_services_initialized_;
 
     void init_lwip_services();
