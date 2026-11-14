@@ -736,7 +736,8 @@ Pictorially, we want to end up with a directory structure that has this general 
 /home/<your-user-name>/
 └── projects/
     ├── openocd       (a special version for debugging RP2xxx chips)
-    ├── pico-examples (sample code for SDK applications)
+    ├── pico-examples (files that WP and WP_erase build; one checkout per SDK version, like pico-sdk)
+    │   └── 2.3.0     (git tag sdk-2.3.0: the examples that go with SDK 2.3.0)
     ├── pico-sdk      (may contain multiple versions of the SDK over time)
     │   ├── 1.5.1     (Supports Pico/RP2040 only)
     │   ├── 2.0.0     (first version that supports Pico/RP2040 and Pico2/RP2350)
@@ -791,6 +792,34 @@ git submodule update --init --recursive
 
 No environment variable is needed — the umod4 superbuild's top-level `CMakeLists.txt` computes the SDK path itself from its `PICO_SDK_VERSION` setting (see the next section), and passes it down to every subproject.
 
+#### pico-examples
+
+The `pico-examples` repository is **required**, not optional sample code.
+The WP firmware builds `ws2812.pio` from it, and the `WP_erase` tool builds `nuke.c` from it.
+Like the SDK, it needs one checkout per SDK version.
+The umod4 superbuild computes the location itself: `~/projects/pico-examples/<PICO_SDK_VERSION>`.
+Clone the tag that matches the SDK.
+The tag is `sdk-` plus the same number as `PICO_SDK_VERSION` (currently 2.3.0):
+
+```bash
+mkdir -p ~/projects/pico-examples
+git clone --branch sdk-2.3.0 --depth 1 https://github.com/raspberrypi/pico-examples.git ~/projects/pico-examples/2.3.0
+```
+
+Check it:
+
+```bash
+git -C ~/projects/pico-examples/2.3.0 describe --tags
+```
+
+That should print `sdk-2.3.0`.
+
+The match matters because `nuke.c` differs between SDK releases.
+If the directory is missing, CMake stops and prints the clone command to use.
+If the checkout is on a different tag than the SDK, CMake warns and prints the command that fixes it.
+Anything else on your machine that points at the same checkout is affected if you change its tag.
+To keep the checkout somewhere else, pass `-DPICO_EXAMPLES_PATH=<dir>` to cmake.
+
 #### FreeRTOS-Kernel
 
 FreeRTOS-Kernel is **not** part of any official pico-sdk release — Raspberry Pi's own tooling expects it to be cloned as an entirely separate, independent checkout, as a sibling of `pico-sdk` (not nested inside a specific SDK version). This is deliberate: FreeRTOS-Kernel's release cadence has nothing to do with the SDK's, and pinning it inside a versioned SDK directory just means it has to be re-vendored by hand every time `PICO_SDK_VERSION` changes.
@@ -822,7 +851,7 @@ In fact, there are benefits to leaving old versions around:
 
 By following the instructions above to load new SDK versions 'beside' the old ones, your system can contain multiple versions of the SDK and each project can use the version that it needs.
 
-Note that if you ever upgrade the SDK at some point, you only need to change `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` — everything else (including VS Code's debug SVD file lookup) follows automatically from that one setting.
+Note that if you ever upgrade the SDK at some point, you change `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` and clone the matching `pico-examples` tag (see above) — everything else (including VS Code's debug SVD file lookup) follows automatically from that one setting.
 
 ## Getting the Umod4 Source Code
 

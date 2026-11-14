@@ -220,7 +220,7 @@ The build system expects this specific structure:
 ```
 ~/projects/
 ├── pico-sdk/2.3.0/    - Pico SDK (version configurable in CMakeLists.txt)
-├── pico-examples/     - Optional SDK examples
+├── pico-examples/     - REQUIRED: one checkout per SDK version, e.g. pico-examples/2.3.0 (tag sdk-2.3.0)
 ├── picotool/          - Picotool (built and installed to ~/.local/bin)
 ├── openocd/           - OpenOCD from raspberrypi GitHub
 └── umod4/             - This project
