@@ -201,7 +201,9 @@ private:
     Gps* gps_;
     int scan_countdown_;        // seconds until next background AP scan
     bool home_ssid_found_;      // set by scanResultCallback
-    bool auth_failed_;          // set on PICO_ERROR_BADAUTH; suppresses AP→STA until new credentials saved
+    bool auth_failed_;          // set on PICO_ERROR_BADAUTH; cleared on a successful join or new credentials
+    int auth_retries_;          // retries of the home network made from AP mode since the last failure
+    uint32_t auth_next_retry_ms_;   // tick time (ms) before which no retry is made
 
     // WiFi station credentials
     char wifiSsid_[64];

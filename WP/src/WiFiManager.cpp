@@ -28,6 +28,33 @@ static uint8_t dbg = 0;
 
 #define WIFI_PRINTF(fmt, ...) do { if (dbg) printf(fmt, ##__VA_ARGS__); } while(0)
 
+// Retrying the home network from AP mode after a failed join.
+//
+// A join can fail with "bad auth" for reasons other than a wrong password.  Seen with
+// UniFi U6-IW firmware 8.8.14: a device that re-joins within a few minutes of its
+// previous association gets no answer to its first authentication request, and the
+// driver reports PICO_ERROR_BADAUTH.  The same credentials then work on the next try,
+// typically about 15 s later.
+//
+// The first failure still drops to AP mode at once, so first-time setup with a wrong
+// password stays quick.  From AP mode the home network is retried, but only when:
+//   - the home SSID is visible (away from home there is nothing to retry),
+//   - nobody is connected to our AP (a retry takes the AP down for a few seconds),
+//   - AUTH_RETRY_DELAY_MS has passed since the last failure.
+// After AUTH_RETRY_MAX retries the WP stays in AP mode until the next reboot.
+static const uint32_t AUTH_RETRY_DELAY_MS   = 15000;
+static const int      AUTH_RETRY_MAX        = 40;     // about 10 minutes
+static const int      AUTH_RETRY_SCAN_S     = 5;      // scan interval while a retry is pending
+
+// Number of stations currently connected to our AP.
+static int apClientCount()
+{
+    uint8_t macs[6 * 4];
+    int n = 4;                              // in: room for 4 MACs.  out: number connected
+    cyw43_wifi_ap_get_stas(&cyw43_state, &n, macs);
+    return n;
+}
+
 // Device name and config globals owned by main.cpp
 extern flash_config_t g_flash_config;
 extern char g_device_name[64];
@@ -61,6 +88,8 @@ WiFiManager::WiFiManager()
     scan_countdown_ = 60;
     home_ssid_found_ = false;
     auth_failed_ = false;
+    auth_retries_ = 0;
+    auth_next_retry_ms_ = 0;
     discovery_pcb_ = NULL;
     discovery_countdown_ = 0;  // broadcast on first CONNECTED tick
     server_discovered_ = false;
@@ -293,9 +322,12 @@ void WiFiManager::WiFiManager_task()
                         WIFI_PRINTF("WiFiMgr: SSID not found (%d) - falling back to AP mode\n", err);
                         state_ = State::AP_STARTING;
                     } else if (err == PICO_ERROR_BADAUTH) {
-                        // Wrong password - no point retrying, go straight to AP mode
+                        // Probably a wrong password, but possibly an AP that refused a quick
+                        // re-join.  Go straight to AP mode so setup stays quick; the AP_SCANNING
+                        // state retries the home network later (see AUTH_RETRY_* above).
                         WIFI_PRINTF("WiFiMgr: Bad credentials (%d) - falling back to AP mode\n", err);
                         auth_failed_ = true;
+                        auth_next_retry_ms_ = pdTICKS_TO_MS(xTaskGetTickCount()) + AUTH_RETRY_DELAY_MS;
                         state_ = State::AP_STARTING;
                     } else {
                         // Transient failure (timeout, general error) - retry up to 3 times
@@ -318,6 +350,12 @@ void WiFiManager::WiFiManager_task()
 
                     if (addr && addr->addr != 0) {
                         WIFI_PRINTF("WiFiMgr: Connected! IP: %s\n", ip4addr_ntoa(addr));
+
+                        // The credentials work, so forget any earlier failure.  Leaving
+                        // auth_failed_ set would stop a later fall-back-to-AP from ever
+                        // returning to STA on its own.
+                        auth_failed_ = false;
+                        auth_retries_ = 0;
 
                         // Reset server address so discovery runs on every connect
                         hasServerAddress_ = false;
@@ -510,12 +548,35 @@ void WiFiManager::WiFiManager_task()
                 if (home_ssid_found_ && !auth_failed_) {
                     WIFI_PRINTF("WiFiMgr: Home network found - switching to STA\n");
                     state_ = State::DISCONNECTING;
-                } else {
-                    if (home_ssid_found_ && auth_failed_) {
-                        WIFI_PRINTF("WiFiMgr: Home network visible but credentials failed - staying in AP mode\n");
+                } else if (home_ssid_found_ && auth_failed_) {
+                    // Home network is visible but the last join failed.  Retry if allowed.
+                    const bool retries_left = (auth_retries_ < AUTH_RETRY_MAX);
+                    const int  clients      = apClientCount();
+                    const uint32_t now_ms   = pdTICKS_TO_MS(xTaskGetTickCount());
+                    const bool due          = ((int32_t)(now_ms - auth_next_retry_ms_) >= 0);
+
+                    if (retries_left && due && clients == 0) {
+                        auth_retries_++;
+                        WIFI_PRINTF("WiFiMgr: Retrying home network (retry %d of %d)\n",
+                                    auth_retries_, AUTH_RETRY_MAX);
+                        state_ = State::DISCONNECTING;
                     } else {
-                        WIFI_PRINTF("WiFiMgr: Home network not found\n");
+                        if (!retries_left) {
+                            WIFI_PRINTF("WiFiMgr: Home network visible but %d retries failed - staying in AP mode\n",
+                                        AUTH_RETRY_MAX);
+                        } else if (clients > 0) {
+                            WIFI_PRINTF("WiFiMgr: Home network visible, %d client(s) on our AP - not retrying\n", clients);
+                        } else {
+                            WIFI_PRINTF("WiFiMgr: Home network visible, retry not due yet\n");
+                        }
+                        // Scan often only while a retry is actually waiting for its turn;
+                        // with a client connected (or retries used up) use the normal
+                        // interval so we do not keep disturbing the AP.
+                        scan_countdown_ = (retries_left && clients == 0) ? AUTH_RETRY_SCAN_S : 60;
+                        state_ = State::AP_ACTIVE;
                     }
+                } else {
+                    WIFI_PRINTF("WiFiMgr: Home network not found\n");
                     scan_countdown_ = 60;
                     state_ = State::AP_ACTIVE;
                 }
@@ -674,6 +735,7 @@ void WiFiManager::setCredentials(const char* ssid, const char* password)
         wifiPassword_[sizeof(wifiPassword_) - 1] = '\0';
     }
     auth_failed_ = false;  // new credentials — allow STA reconnect attempt
+    auth_retries_ = 0;
     WIFI_PRINTF("WiFiMgr: Credentials set (SSID='%s')\n", wifiSsid_);
 }
 
