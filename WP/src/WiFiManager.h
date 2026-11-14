@@ -204,6 +204,7 @@ private:
     bool auth_failed_;          // set on PICO_ERROR_BADAUTH; cleared on a successful join or new credentials
     int auth_retries_;          // retries of the home network made from AP mode since the last failure
     uint32_t auth_next_retry_ms_;   // tick time (ms) before which no retry is made
+    uint32_t auth_last_fail_ms_;    // tick time (ms) of the last failed join (bad auth)
 
     // WiFi station credentials
     char wifiSsid_[64];

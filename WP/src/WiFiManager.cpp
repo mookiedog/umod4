@@ -39,10 +39,15 @@ static uint8_t dbg = 0;
 // The first failure still drops to AP mode at once, so first-time setup with a wrong
 // password stays quick.  From AP mode the home network is retried, but only when:
 //   - the home SSID is visible (away from home there is nothing to retry),
-//   - nobody is connected to our AP (a retry takes the AP down for a few seconds),
-//   - AUTH_RETRY_DELAY_MS has passed since the last failure.
+//   - AUTH_RETRY_DELAY_MS has passed since the last failure, and
+//   - nobody is connected to our AP (a retry takes the AP down for a few seconds, which
+//     would kick someone who is fixing a wrong password) -- UNLESS a client has been
+//     there for AUTH_RETRY_CLIENT_GRACE_MS since the last failure.  Without that limit a
+//     device that lingers on our AP (a phone that auto-joins it, or the test harness's
+//     ap_proxy) would stop the retry for good.
 // After AUTH_RETRY_MAX retries the WP stays in AP mode until the next reboot.
-static const uint32_t AUTH_RETRY_DELAY_MS   = 15000;
+static const uint32_t AUTH_RETRY_DELAY_MS        = 15000;
+static const uint32_t AUTH_RETRY_CLIENT_GRACE_MS = 5 * 60 * 1000;   // retry anyway after this long
 static const int      AUTH_RETRY_MAX        = 40;     // about 10 minutes
 static const int      AUTH_RETRY_SCAN_S     = 5;      // scan interval while a retry is pending
 
@@ -90,6 +95,7 @@ WiFiManager::WiFiManager()
     auth_failed_ = false;
     auth_retries_ = 0;
     auth_next_retry_ms_ = 0;
+    auth_last_fail_ms_ = 0;
     discovery_pcb_ = NULL;
     discovery_countdown_ = 0;  // broadcast on first CONNECTED tick
     server_discovered_ = false;
@@ -327,7 +333,8 @@ void WiFiManager::WiFiManager_task()
                         // state retries the home network later (see AUTH_RETRY_* above).
                         WIFI_PRINTF("WiFiMgr: Bad credentials (%d) - falling back to AP mode\n", err);
                         auth_failed_ = true;
-                        auth_next_retry_ms_ = pdTICKS_TO_MS(xTaskGetTickCount()) + AUTH_RETRY_DELAY_MS;
+                        auth_last_fail_ms_  = pdTICKS_TO_MS(xTaskGetTickCount());
+                        auth_next_retry_ms_ = auth_last_fail_ms_ + AUTH_RETRY_DELAY_MS;
                         state_ = State::AP_STARTING;
                     } else {
                         // Transient failure (timeout, general error) - retry up to 3 times
@@ -554,18 +561,19 @@ void WiFiManager::WiFiManager_task()
                     const int  clients      = apClientCount();
                     const uint32_t now_ms   = pdTICKS_TO_MS(xTaskGetTickCount());
                     const bool due          = ((int32_t)(now_ms - auth_next_retry_ms_) >= 0);
+                    const bool grace_over   = ((int32_t)(now_ms - (auth_last_fail_ms_ + AUTH_RETRY_CLIENT_GRACE_MS)) >= 0);
 
-                    if (retries_left && due && clients == 0) {
+                    if (retries_left && due && (clients == 0 || grace_over)) {
                         auth_retries_++;
-                        WIFI_PRINTF("WiFiMgr: Retrying home network (retry %d of %d)\n",
-                                    auth_retries_, AUTH_RETRY_MAX);
+                        WIFI_PRINTF("WiFiMgr: Retrying home network (retry %d of %d, %d client(s) on our AP)\n",
+                                    auth_retries_, AUTH_RETRY_MAX, clients);
                         state_ = State::DISCONNECTING;
                     } else {
                         if (!retries_left) {
                             WIFI_PRINTF("WiFiMgr: Home network visible but %d retries failed - staying in AP mode\n",
                                         AUTH_RETRY_MAX);
                         } else if (clients > 0) {
-                            WIFI_PRINTF("WiFiMgr: Home network visible, %d client(s) on our AP - not retrying\n", clients);
+                            WIFI_PRINTF("WiFiMgr: Home network visible, %d client(s) on our AP - not retrying yet\n", clients);
                         } else {
                             WIFI_PRINTF("WiFiMgr: Home network visible, retry not due yet\n");
                         }
