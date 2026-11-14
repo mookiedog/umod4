@@ -27,7 +27,6 @@ include(ExternalProject)
 #   └── umod4
 
 get_filename_component(PROJECTS_PATH "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
-set(PICO_EXAMPLES_PATH ${PROJECTS_PATH}/pico-examples)
 
 # The Pico SDK is too big to download for every project on this machine that might want to use it.
 # Instead, it is assumed that a user has downloaded a single, sharable copy to a known location.
@@ -45,6 +44,45 @@ set(PICO_EXAMPLES_PATH ${PROJECTS_PATH}/pico-examples)
 # *** WARNING: changing the SDK version requires deleting the build directory!!
 set(PICO_SDK_VERSION 2.3.0)
 set(PICO_SDK_PATH ${PROJECTS_PATH}/pico-sdk/${PICO_SDK_VERSION})
+
+# pico-examples: one checkout per SDK version, laid out the same way as the SDK:
+#   projects/
+#   └── pico-examples
+#       ├── 2.2.0       (git tag sdk-2.2.0)
+#       └── 2.3.0       (git tag sdk-2.3.0)
+# WP and WP_erase build files from it (ws2812.pio, nuke.c), and nuke.c differs between SDK
+# releases, so the directory is derived from PICO_SDK_VERSION and the two cannot drift apart.
+# To use a different location, pass -DPICO_EXAMPLES_PATH=<dir> to cmake.  (A cmake variable,
+# not an environment variable: an exported variable goes stale, see the note on the SDK path.)
+if(NOT PICO_EXAMPLES_PATH)
+    set(PICO_EXAMPLES_PATH ${PROJECTS_PATH}/pico-examples/${PICO_SDK_VERSION})
+endif()
+
+if(NOT EXISTS "${PICO_EXAMPLES_PATH}")
+    message(FATAL_ERROR "pico-examples not found at ${PICO_EXAMPLES_PATH}\n"
+        "WP and WP_erase build files from it.  To get it:\n"
+        "  git clone --branch sdk-${PICO_SDK_VERSION} --depth 1 "
+        "https://github.com/raspberrypi/pico-examples.git ${PICO_EXAMPLES_PATH}")
+endif()
+
+# Sanity check: the checkout should be on the tag that matches the SDK.  Only a warning:
+# a mismatch rarely breaks the build, and whoever sees it is a developer who can fix it.
+if(EXISTS "${PICO_EXAMPLES_PATH}/.git")
+    execute_process(
+        COMMAND git -C "${PICO_EXAMPLES_PATH}" describe --tags --exact-match
+        OUTPUT_VARIABLE PICO_EXAMPLES_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE PICO_EXAMPLES_TAG_RESULT
+        ERROR_QUIET)
+    set(PICO_EXAMPLES_FIX "git -C ${PICO_EXAMPLES_PATH} checkout sdk-${PICO_SDK_VERSION}")
+    if(NOT PICO_EXAMPLES_TAG_RESULT EQUAL 0)
+        message(WARNING "Could not tell which release pico-examples is on (not on a release tag?). "
+                        "It should be sdk-${PICO_SDK_VERSION}.  To fix:  ${PICO_EXAMPLES_FIX}")
+    elseif(NOT PICO_EXAMPLES_TAG STREQUAL "sdk-${PICO_SDK_VERSION}")
+        message(WARNING "pico-examples is on ${PICO_EXAMPLES_TAG} but PICO_SDK_VERSION is ${PICO_SDK_VERSION}.  "
+                        "To fix:  ${PICO_EXAMPLES_FIX}")
+    endif()
+endif()
 
 # FreeRTOS-Kernel lives as its own sibling checkout, independent of the pico-sdk version --
 # it is not part of any official pico-sdk release, and pinning it inside a versioned SDK
