@@ -146,7 +146,7 @@ class Results:
         overall  = "PASS" if self.all_passed else "FAIL"
         summary  = f"{passed}/{total} passed"
         if warned:
-            summary += f"  •  {warned} stale (--allow-stale)"
+            summary += f"  •  {warned} warning(s)"
         if aborted:
             summary += f"  •  {aborted} aborted"
 
@@ -594,7 +594,7 @@ def main():
     passed, total, aborted, warned = results.counts
     summary = f"{passed}/{total} passed ({results.retries} retries)"
     if warned:
-        summary += f"  •  {warned} stale (--allow-stale)"
+        summary += f"  •  {warned} warning(s)"
     if aborted:
         summary += f"  •  {aborted} aborted"
     print(f"{'OK' if results.all_passed else 'FAILED'}  {summary}")

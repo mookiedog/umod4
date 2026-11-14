@@ -107,6 +107,7 @@ def run(ocd, results, context):
         try:
             reply = vfy.wait_for('{"wp_ota":"FLASH_START"', timeout=30.0)
             results.passed("wp_ota_flash_start", reply)
+            t_flash_start = time.monotonic()
         except RttError as e:
             results.abort("wp_ota_flash_start", str(e))
 
@@ -121,14 +122,18 @@ def run(ocd, results, context):
         rtt_alive = True
         try:
             reply = vfy.wait_for('{"wp_ota":"FLASH_', timeout=20.0)
+            # Seconds from FLASH_START to this line: shows how close a slow
+            # flash comes to the timeout, so a later WARN can be explained.
+            elapsed = f"{time.monotonic() - t_flash_start:.1f}s after FLASH_START"
             if "FLASH_DONE" in reply:
-                results.passed("wp_ota_flash_done", reply)
+                results.passed("wp_ota_flash_done", f"{reply} ({elapsed})")
             elif "FLASH_FAILED" in reply:
-                results.abort("wp_ota_flash_done", reply)
+                results.abort("wp_ota_flash_done", f"{reply} ({elapsed})")
             else:
-                results.warn("wp_ota_flash_done", reply)
+                results.warn("wp_ota_flash_done", f"{reply} ({elapsed})")
         except RttError as e:
-            results.warn("wp_ota_flash_done", f"not observed (RTT): {e}")
+            elapsed = f"{time.monotonic() - t_flash_start:.1f}s after FLASH_START"
+            results.warn("wp_ota_flash_done", f"not observed (RTT), {elapsed}: {e}")
             rtt_alive = False
 
         # Wait for WP's "about to reboot" RTT signal — informational only.
