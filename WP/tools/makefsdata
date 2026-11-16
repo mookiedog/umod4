@@ -16,6 +16,10 @@ while($file = <FILES>) {
     if($file =~ /\/__/) {
     	next;
     }
+    # Our own output file lives in the same directory: never embed it in itself.
+    if($file =~ /\/fsdata\.c\s*$/) {
+        next;
+    }
 
     chop($file);
 
