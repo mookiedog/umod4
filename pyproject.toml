@@ -16,7 +16,7 @@ dependencies = []
 build  = ["pymongo", "mmh3"]
 decode = ["numpy", "h5py", "PyYAML"]
 viz    = [{ include-group = "decode" }, "PySide6-Essentials", "pyqtgraph", "pandas"]
-server = ["PySide6-Essentials", "flask", "sqlalchemy", "requests"]
+server = ["PySide6-Essentials", "sqlalchemy", "requests"]
 test   = ["pyserial", "requests"]
 
 [tool.uv]
