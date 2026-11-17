@@ -447,12 +447,27 @@ def _parse_args():
                    help="Skip reflashing WP and run tests against the already-loaded firmware")
     p.add_argument("--allow-stale", action="store_true", dest="allow_stale",
                    help="Warn instead of abort when build artifacts are older than their sources")
+    p.add_argument("--list", action="store_true", dest="list_suites",
+                   help="List the available suites, then exit (no hardware needed)")
     return p.parse_args()
+
+
+def list_suites():
+    """Print each registered suite's name and the first line of its docstring."""
+    mods  = load_suites()
+    names = [m.__name__.removeprefix("suites.") for m in mods]
+    width = max(len(n) for n in names)
+    for name, mod in zip(names, mods):
+        doc = (mod.__doc__ or "").strip().splitlines()
+        print(f"{name:<{width}}  {doc[0] if doc else ''}")
 
 
 def main():
     import datetime
     args    = _parse_args()
+    if args.list_suites:
+        list_suites()
+        return
     suites  = load_suites(args.suites if args.suites else None)
 
     run_ts      = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

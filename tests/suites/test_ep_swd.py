@@ -1,6 +1,5 @@
 """
-EP SWD test suite — verifies the WP↔EP SWD communication path and flash
-programming mechanism.
+EP SWD test suite — verifies the WP↔EP SWD path and flash programming mechanism.
 
 swd             — cached boot-time connectivity state (set at WP startup).
 swd_test_connect — live round-trip: write/read test pattern to EP SRAM.
