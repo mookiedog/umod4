@@ -120,6 +120,7 @@ Running it again with a new `-Time` or `-Distro` updates the existing task in pl
 
 These tools are described in the documents that cover the jobs they do:
 
+* `scripts/check_build_env`: a read-only check that your machine is ready to build umod4, which names the BUILDING.md section for anything that is missing. The test runner runs it first. See [Troubleshooting](BUILDING.md#troubleshooting) in BUILDING.md.
 * `tools/make_release` and `tools/make_tools_bundle`: build a release and its tools zip. See [RELEASING.md](RELEASING.md).
 * `tools/setup_usb_wsl` (and `setup_usb_wsl.ps1`): make the debug probe and the ap_proxy usable from WSL. See [WSL2: USB Device Sharing](BUILDING.md#wsl2-usb-device-sharing) in BUILDING.md and [tests/README.md](tests/README.md).
 * The log decoder and visualizer in `tools/logtools`: see [README_LogDecoder.md](tools/README_LogDecoder.md), [README_Visualizer_User_Guide.md](tools/README_Visualizer_User_Guide.md) and [README_Visualizer.md](tools/README_Visualizer.md).

@@ -56,6 +56,10 @@ A newer release of the compiler or of binutils should work, but has not been tes
 
 ## Troubleshooting
 
+Once you have the repository, run `scripts/check_build_env` from its folder.
+It is a read-only check that lists what is missing or wrong on your machine (tools, toolchains, source checkouts), and for each problem it names the section of this page that explains the fix.
+By default it prints only the problems; add `-v` to see everything it checked, with the installed versions.
+
 If you hit a wall during this process, open an issue at [github.com/mookiedog/umod4/issues](https://github.com/mookiedog/umod4/issues).
 Use the issue reporting system to describe what step you're on, what problem you have encountered or what error you are seeing, and I'll try to help.
 Reporting the issues will help make this setup process as simple and accurate as possible.
@@ -721,6 +725,7 @@ rm -rf ~/projects/umod4
 
 Configuring runs CMake, which analyzes the whole project and generates the files that tell the build system how to create the outputs.
 Configuring needs internet access: it downloads several small libraries and picotool from GitHub.
+Run `scripts/check_build_env` first: it reports any missing tool or checkout, and the section of this page that explains the fix.
 In VS Code, press F1, type `delete`, and choose **CMake: Delete Cache and Reconfigure**.
 If a window asks you to select a kit (a toolchain), choose "unspecified": the project sets up its own toolchains.
 From a terminal, the equivalent is:
