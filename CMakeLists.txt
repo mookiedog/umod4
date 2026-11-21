@@ -45,6 +45,16 @@ get_filename_component(PROJECTS_PATH "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
 set(PICO_SDK_VERSION 2.3.1)
 set(PICO_SDK_PATH ${PROJECTS_PATH}/pico-sdk/${PICO_SDK_VERSION})
 
+# Without this check, a missing SDK only shows up later, inside EP or WP, as the confusing
+# "Unknown CMake command 'pico_sdk_init'".
+if(NOT EXISTS "${PICO_SDK_PATH}/pico_sdk_init.cmake")
+    message(FATAL_ERROR "pico-sdk not found at ${PICO_SDK_PATH}\n"
+        "EP and WP build against it.  To get it (about 800 MB):\n"
+        "  git clone --branch ${PICO_SDK_VERSION} --recurse-submodules "
+        "https://github.com/raspberrypi/pico-sdk ${PICO_SDK_PATH}\n"
+        "See BUILDING.md, \"RPi SDK\".")
+endif()
+
 # pico-examples: one checkout per SDK version, laid out the same way as the SDK:
 #   projects/
 #   └── pico-examples
@@ -89,7 +99,44 @@ endif()
 # it is not part of any official pico-sdk release, and pinning it inside a versioned SDK
 # directory means it has to be re-vendored by hand every time PICO_SDK_VERSION changes.
 # See BUILDING.md for how this checkout was set up and which commit it is pinned to.
+# The version is pinned on purpose: it is the one the WP has been built and tested against.
+# Do not move to a newer release without re-testing a full WP build on real hardware.
+set(FREERTOS_KERNEL_VERSION V11.3.0)
 set(FREERTOS_KERNEL_PATH ${PROJECTS_PATH}/FreeRTOS-Kernel)
+
+if(NOT EXISTS "${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")
+    message(FATAL_ERROR "FreeRTOS-Kernel not found at ${FREERTOS_KERNEL_PATH}\n"
+        "The WP builds against it, pinned to ${FREERTOS_KERNEL_VERSION}.  To get it:\n"
+        "  git clone --branch ${FREERTOS_KERNEL_VERSION} --recurse-submodules "
+        "https://github.com/FreeRTOS/FreeRTOS-Kernel ${FREERTOS_KERNEL_PATH}\n"
+        "See BUILDING.md, \"FreeRTOS-Kernel\".")
+endif()
+
+# The RP2350 port comes from a submodule, which a clone without --recurse-submodules lacks.
+if(NOT EXISTS "${FREERTOS_KERNEL_PATH}/portable/ThirdParty/Community-Supported-Ports/GCC/RP2350_ARM_NTZ")
+    message(FATAL_ERROR "FreeRTOS-Kernel at ${FREERTOS_KERNEL_PATH} has no RP2350 port: "
+        "its submodules were not fetched.  To fix:\n"
+        "  git -C ${FREERTOS_KERNEL_PATH} submodule update --init --recursive\n"
+        "See BUILDING.md, \"FreeRTOS-Kernel\".")
+endif()
+
+# Sanity check, as for pico-examples: only a warning.
+if(EXISTS "${FREERTOS_KERNEL_PATH}/.git")
+    execute_process(
+        COMMAND git -C "${FREERTOS_KERNEL_PATH}" describe --tags --exact-match
+        OUTPUT_VARIABLE FREERTOS_KERNEL_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE FREERTOS_KERNEL_TAG_RESULT
+        ERROR_QUIET)
+    if(NOT FREERTOS_KERNEL_TAG_RESULT EQUAL 0)
+        message(WARNING "Could not tell which release FreeRTOS-Kernel is on (not on a release tag?).  "
+                        "The project is pinned to ${FREERTOS_KERNEL_VERSION}.")
+    elseif(NOT FREERTOS_KERNEL_TAG STREQUAL FREERTOS_KERNEL_VERSION)
+        message(WARNING "FreeRTOS-Kernel is on ${FREERTOS_KERNEL_TAG} but the project is pinned to "
+                        "${FREERTOS_KERNEL_VERSION}.  To fix:  git -C ${FREERTOS_KERNEL_PATH} checkout "
+                        "${FREERTOS_KERNEL_VERSION} && git -C ${FREERTOS_KERNEL_PATH} submodule update --init --recursive")
+    endif()
+endif()
 
 # .vscode/launch.json needs to know PICO_SDK_PATH too (for its svdFile entries), but
 # launch.json is static JSON with no way to ask CMake for the value directly. Rather than

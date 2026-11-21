@@ -45,7 +45,7 @@ Once everything is set up, rebuilding the entire system is as easy as pushing th
 | Host OS, native Linux | Linux Mint 22.2 (based on Ubuntu 24.04) | tested by the author |
 | Raspberry Pi Pico SDK | 2.3.1 | `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` |
 | pico-examples | the tag `sdk-` plus the SDK version | derived from the SDK version by CMake |
-| FreeRTOS-Kernel | V11.3.0 | this document: pinned on purpose, see "FreeRTOS-Kernel" below |
+| FreeRTOS-Kernel | V11.3.0 | `FREERTOS_KERNEL_VERSION` in the top-level `CMakeLists.txt`: pinned on purpose, see "FreeRTOS-Kernel" below |
 | Arm GNU Toolchain (`arm-none-eabi`) | 15.2.rel1 (every release from 12 through 15 has built this project) | this document: the build uses the newest version installed under `/opt/arm/arm-none-eabi`, unless `ARM_NONE_EABI_VERSION` is set in `cmake/toolchains/arm-none-eabi.cmake` |
 | GNU binutils for the 68HC11 | 2.42 | this document |
 | OpenOCD | `raspberrypi/openocd` tag `sdk-2.2.0` (commit 04ae2c3) | this document |

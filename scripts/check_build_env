@@ -19,19 +19,18 @@
 # Versions:
 #   * The Pico SDK version is read from PICO_SDK_VERSION in the top-level CMakeLists.txt, and
 #     pico-examples follows from it.
-#   * FreeRTOS-Kernel is pinned on purpose, so its version is the one hard-coded value below.
-#     If it changes, see the "Versions known to work" table in BUILDING.md.
+#   * FreeRTOS-Kernel is pinned on purpose: its version is FREERTOS_KERNEL_VERSION in the
+#     top-level CMakeLists.txt, read from there like the SDK version.
 #   * The toolchains (ARM, 68HC11 binutils, OpenOCD) are only reported: BUILDING.md says newer
 #     versions should work, so a different version is not an error.
 #
 # This script is for developers.  Someone who only wants to run the server or the visualizer
 # needs just uv, and the release zip's README.txt covers that.
 
-FREERTOS_VERSION="V11.3.0"
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECTS="$(dirname "$ROOT")"
 ARM_BASE="/opt/arm/arm-none-eabi"
+FREERTOS_VERSION="$(sed -n 's/^set(FREERTOS_KERNEL_VERSION *\([^ )]*\)).*/\1/p' "$ROOT/CMakeLists.txt" | head -1)"
 
 VERBOSE=0
 for arg in "$@"; do
@@ -259,7 +258,9 @@ fi
 
 FR_DIR="$PROJECTS/FreeRTOS-Kernel"
 FR_PORT="$FR_DIR/portable/ThirdParty/Community-Supported-Ports/GCC/RP2350_ARM_NTZ"
-if [ -d "$FR_DIR" ]; then
+if [ -z "$FREERTOS_VERSION" ]; then
+    bad "WRONG" "FreeRTOS-Kernel" "could not read FREERTOS_KERNEL_VERSION from CMakeLists.txt" ""
+elif [ -d "$FR_DIR" ]; then
     tag="$(git -C "$FR_DIR" describe --tags 2>/dev/null)"
     if [ "$tag" != "$FREERTOS_VERSION" ]; then
         bad "WRONG" "FreeRTOS-Kernel" "on '${tag:-no tag}', the project is pinned to $FREERTOS_VERSION" "FreeRTOS-Kernel"
