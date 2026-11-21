@@ -56,7 +56,10 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 
 # Inputs of each file, as git paths.  A change to any of them means the file changed.
-EP_ROOTS = ["EP", "lib", "cmake", "CMakeLists.txt", "ecu", "eprom_lib", "tools/src"]
+# eprom_lib is not an input: git tracks only documentation there.  The one thing that feeds the
+# firmware from that directory, the file that the LIMP_MODE_MAPS link points at, is ignored by
+# git, so this list cannot see it (see the limp mode item in the RELEASING.md checklist).
+EP_ROOTS = ["EP", "lib", "cmake", "CMakeLists.txt", "ecu", "tools/src"]
 WP_ROOTS = EP_ROOTS + ["WP", "SwdReflash"]          # in the superbuild WP depends on EP: be generous
 ECU_ROOTS = ["ecu", "lib/inc/log_ids.h", "cmake", "CMakeLists.txt"]
 PARTITION_ROOTS = ["WP/partition_table.json", "cmake", "CMakeLists.txt"]
