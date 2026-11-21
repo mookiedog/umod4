@@ -42,14 +42,15 @@ get_filename_component(PROJECTS_PATH "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
 
 # Select the SDK version. This variable gets passed into the WP and EP external projects.
 # *** WARNING: changing the SDK version requires deleting the build directory!!
-set(PICO_SDK_VERSION 2.3.0)
+set(PICO_SDK_VERSION 2.3.1)
 set(PICO_SDK_PATH ${PROJECTS_PATH}/pico-sdk/${PICO_SDK_VERSION})
 
 # pico-examples: one checkout per SDK version, laid out the same way as the SDK:
 #   projects/
 #   └── pico-examples
 #       ├── 2.2.0       (git tag sdk-2.2.0)
-#       └── 2.3.0       (git tag sdk-2.3.0)
+#       ├── 2.3.0       (git tag sdk-2.3.0)
+#       └── 2.3.1       (git tag sdk-2.3.1)
 # WP and WP_erase build files from it (ws2812.pio, nuke.c), and nuke.c differs between SDK
 # releases, so the directory is derived from PICO_SDK_VERSION and the two cannot drift apart.
 # To use a different location, pass -DPICO_EXAMPLES_PATH=<dir> to cmake.  (A cmake variable,

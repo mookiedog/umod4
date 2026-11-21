@@ -307,7 +307,7 @@ static uint16_t dedup_prev_vm  = 0xFFFF;
 static uint16_t dedup_prev_tha = 0xFFFF;
 static uint16_t dedup_prev_thw = 0xFFFF;
 
-void __time_critical_func(isr_rx32)()
+void __no_inline_time_critical_func(isr_rx32)()
 {
     gpio_put(SPARE3_PIN, 0);   // yellow LED on for the duration of this ISR (active-low)
 

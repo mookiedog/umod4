@@ -52,6 +52,12 @@ State what was and was not tested.
   The EP's EPROM emulation has hard timing limits, so follow the ecu-ep-safety skill.
   I expect a new compiler to leave the hand-written assembly in `epromEmulator.S` alone, but I have not verified that, and the surrounding C code and the PIO code could differ.
   Comparing `objdump -d` output before and after is a cheap first check; the scope procedure in the ecu-ep-safety skill is the real one.
+  Compare the builds before and after instead of trusting a clean build:
+  * Before the change, save `EP/EP`, `WP/WP.elf`, `ecu/UM4.bin`, the link maps (`EP/EP.map`, `WP/WP.elf.map`) and `objdump -d` of both ELFs.
+  * After the rebuild, compare the set of `.time_critical.*` sections in each map (a section that disappears means that function was inlined into flash code), compare the disassembly function by function with addresses stripped, and confirm `epromTask` has the same address and the same bytes.
+  * Expect the ECU image to differ only in its embedded build-info string (git description and build time), and expect SDK-internal functions to differ when the SDK changes.
+  * This is how the SDK 2.3.1 change was found: it removed `__noinline` from `__time_critical_func`, and `logMapblob` was inlined into `main` and moved from RAM to flash.
+    A plain objdump comparison with addresses left in shows a hundred false differences, so strip addresses and `@` comments first, and check the comparison tool by confirming it finds instructions in a function you know changed.
 * **FreeRTOS-Kernel:** BUILDING.md says not to move to a newer release without re-testing a full WP build on real hardware.
   It is pinned on purpose, and the `RP2350_ARM_NTZ` port must still exist in the new release.
 * **68HC11 binutils:** rebuild the ECU image and compare `build/ecu/UM4.bin` byte for byte with the one from the old toolchain.

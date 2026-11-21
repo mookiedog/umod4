@@ -263,7 +263,7 @@ void hello(uint32_t flickerCount)
 }
 
 // --------------------------------------------------------------------------------------------
-void __time_critical_func(enqueue)(uint8_t id, uint8_t data)
+void __no_inline_time_critical_func(enqueue)(uint8_t id, uint8_t data)
 {
     if (inUse < (int32_t)(sizeof(streamBuffer)/sizeof(streamBuffer[0]))-4) {
         uint16_t event = (data << 8) | id;
@@ -285,7 +285,7 @@ void __time_critical_func(enqueue)(uint8_t id, uint8_t data)
 // --------------------------------------------------------------------------------------------
 // Send the entire mapblop from the currently loaded EPROM image to the WP.
 // This ensures that the log knows precisely what data was used to generate the log events.
-static inline void __time_critical_func(logMapblob)()
+static inline void __no_inline_time_critical_func(logMapblob)()
 {
     // Hmmm. We don't actually know if this is an RP58-comaptible image or not.
     // For the moment, we will assume that it is.
@@ -351,7 +351,7 @@ void prepImage()
 // SysTick counts down from reload value at 125 MHz. 24-bit counter wraps every ~134 ms.
 const uint32_t tx_delay_ticks = 50 * 125;   // 50 uS * 125 ticks/uS = 6250 ticks
 
-static inline void __time_critical_func(processOutgoing)(void)
+static inline void __no_inline_time_critical_func(processOutgoing)(void)
 {
     static uint32_t lastTx_tick = 0;
     static uint32_t tx32data;
@@ -413,7 +413,7 @@ static inline bool wpReady()
 }
 
 // --------------------------------------------------------------------------------------------
-static inline void __time_critical_func(processIncoming)(void)
+static inline void __no_inline_time_critical_func(processIncoming)(void)
 {
     if (multicore_fifo_rvalid()) {
         uint32_t busSigs = sio_hw->fifo_rd;
@@ -488,7 +488,7 @@ void startCore1(void)
 //
 // Note: do not make this function static because the -Os optimizer will inline it back into
 // its caller main() causing it to get run from flash.
-void __time_critical_func(core0Mainloop)(void) __attribute__((noreturn));
+void __no_inline_time_critical_func(core0Mainloop)(void) __attribute__((noreturn));
 void core0Mainloop(void)
 {
     const char* fname = "c0";

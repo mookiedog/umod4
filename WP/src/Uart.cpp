@@ -117,7 +117,7 @@ volatile uint32_t t0_isr, t1_isr, t0, t1, t2, d_isr, dt1, dt2;
 // We the FIFO to receive bunches of characters at a time as well as
 // the RX timeout mechanism to detect when a UART burst ends.
 // In either case, we notify the task that is waiting for serial data.
-void __time_critical_func(Uart::isr)()
+void __no_inline_time_critical_func(Uart::isr)()
 {
   bool notify = false;
   t0_isr = time_us_32();

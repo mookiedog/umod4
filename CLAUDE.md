@@ -101,7 +101,7 @@ The Python environment is managed by uv. `pyproject.toml` lists the packages (in
 
 ### EP (EPROM Processor)
 * **Processor:** RP2040 (Cortex-M0+)
-* **SDK:** Raspberry Pi Pico SDK 2.3.0 (configurable in top-level CMakeLists.txt)
+* **SDK:** Raspberry Pi Pico SDK 2.3.1 (configurable in top-level CMakeLists.txt)
 * **Toolchain:** arm-none-eabi-gcc 15.2.rel1 (at `/opt/arm/arm-none-eabi/15.2.rel1`)
 * **Source:** `EP/src/`
 
@@ -214,15 +214,15 @@ F1 -> "Debug: Select And Start Debugging" -> "*** EP: Launch CMSIS-DAP"
 * m68hc11-elf toolchain (built from binutils source, installed to ~/.local/bin)
 * arm-none-eabi-gcc 15.2.rel1 (installed to /opt/arm/arm-none-eabi/15.2.rel1)
 * OpenOCD (built from raspberrypi fork for RP2xxx support)
-* Raspberry Pi Pico SDK 2.3.0 (at ~/projects/pico-sdk/2.3.0)
+* Raspberry Pi Pico SDK 2.3.1 (at ~/projects/pico-sdk/2.3.1)
 * uv (installs and manages the Python environment, Python 3.12; see BUILDING.md)
 
 **Directory Layout Assumption:**
 The build system expects this specific structure:
 ```
 ~/projects/
-├── pico-sdk/2.3.0/    - Pico SDK (version configurable in CMakeLists.txt)
-├── pico-examples/     - REQUIRED: one checkout per SDK version, e.g. pico-examples/2.3.0 (tag sdk-2.3.0)
+├── pico-sdk/2.3.1/    - Pico SDK (version configurable in CMakeLists.txt)
+├── pico-examples/     - REQUIRED: one checkout per SDK version, e.g. pico-examples/2.3.1 (tag sdk-2.3.1)
 ├── FreeRTOS-Kernel/   - FreeRTOS, a separate sibling checkout (tag V11.3.0, see BUILDING.md)
 ├── openocd/           - OpenOCD from raspberrypi GitHub
 └── umod4/             - This project
@@ -292,6 +292,7 @@ To force a genuine full rebuild of one subproject: `rm -rf build/<name>` and reb
 * Pico SDK conventions
 * Dual-core aware: Use appropriate core for timing-critical vs. background tasks
 * No panic() calls in EP (log errors instead to reach WP logfile)
+* Functions that must run from RAM use `__no_inline_time_critical_func`, not `__time_critical_func`. SDK 2.3.1 stopped adding `__noinline` to `__time_critical_func`, so the compiler may inline such a function into flash code, which silently moves it out of RAM
 
 **Python (Tools):**
 * Run with `uv run <script>` (the project environment is `.venv`, managed by uv)

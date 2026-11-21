@@ -128,7 +128,7 @@ bool Logger::openNewLog()
 // temporary error counters for debugging
 uint32_t isr1_err_cnt, isr2_err_cnt, isr3_err_cnt, g_total_received;
 
-bool __time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
+bool __no_inline_time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
 {
     // Validate length before acquiring the lock - only depends on dataWord
     uint32_t len = dataWord & 0xFF;
@@ -184,7 +184,7 @@ bool __time_critical_func(Logger::logData_fromISR)(uint32_t dataWord)
 
 // ----------------------------------------------------------------------------------
 // For WP use ONLY!
-bool __time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* data)
+bool __no_inline_time_critical_func(Logger::logData)(uint8_t logId, uint8_t len, uint8_t* data)
 {
     bool rVal = true;
 

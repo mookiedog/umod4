@@ -43,7 +43,7 @@ Once everything is set up, rebuilding the entire system is as easy as pushing th
 |-----------|---------|------------------------------|
 | Host OS, reference setup | Windows 11 with WSL2 Ubuntu 24.04 | tested by the author |
 | Host OS, native Linux | Linux Mint 22.2 (based on Ubuntu 24.04) | tested by the author |
-| Raspberry Pi Pico SDK | 2.3.0 | `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` |
+| Raspberry Pi Pico SDK | 2.3.1 | `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` |
 | pico-examples | the tag `sdk-` plus the SDK version | derived from the SDK version by CMake |
 | FreeRTOS-Kernel | V11.3.0 | this document: pinned on purpose, see "FreeRTOS-Kernel" below |
 | Arm GNU Toolchain (`arm-none-eabi`) | 15.2.rel1 (every release from 12 through 15 has built this project) | this document: the build uses the newest version installed under `/opt/arm/arm-none-eabi`, unless `ARM_NONE_EABI_VERSION` is set in `cmake/toolchains/arm-none-eabi.cmake` |
@@ -588,9 +588,9 @@ No environment variables are needed.
     ├── FreeRTOS-Kernel   (one checkout, pinned to V11.3.0)
     ├── openocd           (the Raspberry Pi fork, built earlier)
     ├── pico-examples
-    │   └── 2.3.0         (git tag sdk-2.3.0)
+    │   └── 2.3.1         (git tag sdk-2.3.1)
     ├── pico-sdk
-    │   └── 2.3.0         (git tag 2.3.0: the version this project builds with)
+    │   └── 2.3.1         (git tag 2.3.1: the version this project builds with)
     └── umod4             (this repository)
 ```
 
@@ -599,17 +599,17 @@ Each SDK version lives in its own subdirectory, so older projects can keep using
 
 ### RPi SDK
 
-The version to use is `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` (currently 2.3.0).
+The version to use is `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` (currently 2.3.1).
 Do not pick a newer version just because one exists: the project is only known to build with the version it asks for.
 The SDK's submodules supply the WiFi and Bluetooth code.
 
 ```bash
-SDK_VERSION=2.3.0
+SDK_VERSION=2.3.1
 mkdir -p ~/projects/pico-sdk
 git clone --branch "$SDK_VERSION" --recurse-submodules https://github.com/raspberrypi/pico-sdk ~/projects/pico-sdk/"$SDK_VERSION"
 ```
 
-**Verify:** the first command should print `2.3.0`, and the second should print `0` (the number of submodules that were not fetched):
+**Verify:** the first command should print `2.3.1`, and the second should print `0` (the number of submodules that were not fetched):
 
 ```bash
 git -C ~/projects/pico-sdk/"$SDK_VERSION" describe --tags
@@ -624,12 +624,12 @@ Like the SDK, it needs one checkout per SDK version, and the tag is `sdk-` plus 
 The match matters because `nuke.c` differs between SDK releases.
 
 ```bash
-SDK_VERSION=2.3.0
+SDK_VERSION=2.3.1
 mkdir -p ~/projects/pico-examples
 git clone --branch "sdk-$SDK_VERSION" --depth 1 https://github.com/raspberrypi/pico-examples.git ~/projects/pico-examples/"$SDK_VERSION"
 ```
 
-**Verify:** this should print `sdk-2.3.0`:
+**Verify:** this should print `sdk-2.3.1`:
 
 ```bash
 git -C ~/projects/pico-examples/"$SDK_VERSION" describe --tags
@@ -661,7 +661,7 @@ ls -d ~/projects/FreeRTOS-Kernel/portable/ThirdParty/Community-Supported-Ports/G
 ### Changing the SDK Version
 
 Old SDK versions can stay where they are: another project may still need one.
-With 2.3.1 added beside 2.3.0, the layout looks like this.
+After moving from 2.3.0 to 2.3.1, for example, the layout looks like this.
 The build uses whichever version `PICO_SDK_VERSION` names:
 
 ```text
@@ -681,6 +681,7 @@ The build uses whichever version `PICO_SDK_VERSION` names:
 To move this project to a new version, clone the new SDK beside the old one as above and clone the matching `pico-examples` tag.
 Then change `PICO_SDK_VERSION` in the top-level `CMakeLists.txt`, and delete the `build` directory: the comment next to `PICO_SDK_VERSION` warns that a version change requires it.
 Everything else, including VS Code's debug SVD file lookup, follows from that one setting.
+An SDK change can alter the machine code of the EP and the WP, so treat it like any other EP change: run the test runner and the bench checks ([BENCH_TESTING.md](BENCH_TESTING.md)) before the new build goes near a bike.
 
 The SDK also decides which picotool it needs, and it refuses to continue if the picotool installed in `~/.local` is a different version.
 The superbuild builds the matching picotool, but a build can stop on an older one before that happens, with the message `Incompatible picotool installation found`.
