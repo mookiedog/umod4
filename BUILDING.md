@@ -515,7 +515,24 @@ openocd -c "find target/rp2040.cfg" -c "find target/rp2350.cfg" -c shutdown
 id -nG | grep -w plugdev
 ```
 
-If the third command prints nothing, add yourself to the group with `sudo usermod -aG plugdev $USER`, then run `wsl --shutdown` in PowerShell and reopen WSL.
+If the third command prints nothing, add yourself to the group with `sudo usermod -aG plugdev $USER`.
+A new group only reaches terminals that are started afterwards.
+A new tab in an ordinary terminal window is enough.
+A terminal that was already open inside VS Code is not: restart VS Code, which takes you straight back to where you were.
+Running `wsl --shutdown` in PowerShell and reopening WSL also works, and covers every case.
+On native Linux, log out and back in instead.
+
+The automated test harness (see [tests/README.md](tests/README.md)) also talks to a small Raspberry Pi Pico W, the ap_proxy, over a USB serial port.
+Opening that port needs membership in a second group, `dialout`.
+You only need this if you will run the test harness.
+
+**Verify:** this should print `dialout`:
+
+```bash
+id -nG | grep -w dialout
+```
+
+If it prints nothing, add yourself to the group with `sudo usermod -aG dialout $USER`, then start a fresh terminal as described for `plugdev`, above.
 
 ## WSL2: USB Device Sharing
 

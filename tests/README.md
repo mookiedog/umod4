@@ -33,7 +33,11 @@ Add your user to the `dialout` group so Python can open serial ports (`/dev/ttyA
 sudo usermod -aG dialout $USER
 ```
 
-Then **log out and back in** (or open a new WSL terminal) for the group membership to take effect.
+A new group only reaches terminals that are started afterwards.
+A new tab in an ordinary terminal window is enough.
+A terminal that was already open inside VS Code is not: restart VS Code, which takes you straight back to where you were.
+Running `wsl --shutdown` in PowerShell and reopening WSL also works, and covers every case.
+On native Linux, log out and back in instead.
 
 ### One-time Windows/WSL2 USB setup
 

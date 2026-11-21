@@ -65,7 +65,7 @@ Probe and ap_proxy are forwarded from Windows with usbipd. The runner attaches t
 * `usbipd: warning: The device appears to be used by Windows`: Windows Search Indexer is holding the BOOTSEL drive.
   The fix is to exclude removable drives from Windows Search indexing, not `bind --force`.
 * `VBoxUSBMon` in the Windows event log is usbipd-win's own driver. Never stop it.
-* Serial port permission errors: the user must be in the `dialout` group (one-time `sudo usermod -aG dialout $USER`, then a new terminal). You cannot type the sudo password; have the user run it.
+* Serial port permission errors: the user must be in the `dialout` group (one-time `sudo usermod -aG dialout $USER`, then a fresh terminal: a new tab in an ordinary terminal window works, but a terminal already open inside VS Code needs VS Code restarted). You cannot type the sudo password; have the user run it.
 
 If none of these fit, say so plainly. Do not guess at hardware causes.
 
