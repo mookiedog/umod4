@@ -16,6 +16,8 @@ Search again before relying on it (`git grep -n -I -e '<version>'`), because pla
 2. Check what is installed with `scripts/check_build_env -v`.
    It reports the installed versions and flags a checkout that is not on the expected tag.
 3. Some changes touch dangerous areas (AGENTS.md section 4): see "What to re-test", below.
+4. A version change means deleting `build` (the comment next to `PICO_SDK_VERSION` requires it for an SDK change).
+   First check that every folder in `build/dist` is already saved in `~/umod4-releases` (see the release skill), or move `build` aside instead of deleting it.
 
 ## Where each version is named
 
