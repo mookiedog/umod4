@@ -31,6 +31,10 @@ The bench setup adds the following sensors as external components to the ECU:
 * THA (Air Temperature)
 * TPS (Throttle Position)
 
+The automated ECU test suite, [tests/suites/test_ecu.py](tests/suites/test_ecu.py), checks the ECU's readings against these components.
+It holds the resistor values as constants (`BENCH_THW_OHMS`, `BENCH_THA_OHMS`), so if the bench hardware changes, change them there as well as here.
+See the [test harness README](tests/README.md) for how to run it.
+
 ### THW
 
 Coolant temperature is simulated with a 470 Ohm resistor to GND.
@@ -68,7 +72,7 @@ The wiring of the pot is such that a knob on the pot should be rotated in the sa
 
 ## Wiring
 
-Note: the easiest way to power everything is to obtain an original mating connecter from a scrapped wiring harness.
+**Note: the easiest way to power everything is to obtain an original mating connecter from a scrapped wiring harness.**
 
 Failing that, the ECU can be powered via an AC adapter socket using a home-made bracket on the circuit board, as shown below:
 
@@ -96,7 +100,7 @@ This means that the single black wire in the picture above is actually connectin
 For bench purposes, E03 needs its own GND connection.
 In the picture above, you can see a tiny wire stub that connects E01 to E03.
 
-__Warning: An ECU wired up like this should not be placed in service on a motorbike!__
+**Warning: An ECU wired up like this should not be placed in service on a motorbike!**
 
 ## Current Consumption
 

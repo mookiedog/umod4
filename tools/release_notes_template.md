@@ -4,7 +4,7 @@ Released {DATE} from commit `{COMMIT}`.
 {REHEARSAL_BANNER}
 ## What changed
 
-_(Write this by hand: what is new or fixed, and anything a rider must do.)_
+*(Write this by hand: what is new or fixed, and anything a rider must do.)*
 
 ## Installing
 
@@ -37,11 +37,11 @@ Everything inside `umod4\releases` can be downloaded again at any time.
 The firmware files are in the `firmware` folder of the unzipped release.
 To update the firmware on a umod4 you already have, use the server's **Reflash WP** and **Reflash EP** buttons, located under the **Manage Device** tab, and choose the file from that `firmware` folder.
 
-A completely blank WP needs its firmware installed differently: see GETTING_STARTED.md below.
+A completely blank WP needs its firmware installed differently: see [GETTING_STARTED.md](https://github.com/mookiedog/umod4/blob/main/GETTING_STARTED.md).
 
 ## Tested
 
-_(Write this by hand: what passed, and "Not yet ridden with this build." if that is still true. Keep it short.)_
+*(Write this by hand: what passed, and "Not yet ridden with this build." if that is still true. Keep it short.)*
 
 ## Files
 

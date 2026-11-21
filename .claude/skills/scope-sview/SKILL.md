@@ -13,19 +13,19 @@ I have NOT run any of it against hardware in this session.
 
 The owner has two scopes:
 
-- **Agilent 54622D.** It does NOT work with sview. Nothing in this skill applies to it.
+* **Agilent 54622D.** It does NOT work with sview. Nothing in this skill applies to it.
   I assume (not verified) that this is the scope where the infinite-persistence procedure is done by hand, and I do not know whether it can be driven remotely.
-- **The scope module in the HP 16702A** (the sview README names it as a 16534A). This is the only scope that works with sview.
+* **The scope module in the HP 16702A** (the sview README names it as a 16534A). This is the only scope that works with sview.
 
 Ask which scope the user means before assuming this skill applies.
 
 ## What sview is
 
-- It speaks RPI, the instrument's ASCII/binary protocol over TCP port 6500.
+* It speaks RPI, the instrument's ASCII/binary protocol over TCP port 6500.
   RPI has **no authentication**: anyone who can reach the port can drive the instrument.
-- Tested by its author against a 16702A with a 16534A 2-channel scope module.
-- Run everything from `~/projects/sview` with `uv run`. Do not cd elsewhere and guess.
-- The vendor programmer's guide is `~/projects/sview/doc/RPI-9018-40680.pdf`. `pdftotext` is installed, so it can be searched.
+* Tested by its author against a 16702A with a 16534A 2-channel scope module.
+* Run everything from `~/projects/sview` with `uv run`. Do not cd elsewhere and guess.
+* The vendor programmer's guide is `~/projects/sview/doc/RPI-9018-40680.pdf`. `pdftotext` is installed, so it can be searched.
   It documents the scope commands, for example `-tgsource`, `-tglevel`, `-tgslope` and `-tgmode`.
 
 ## Commands
@@ -46,17 +46,17 @@ They need numpy or scipy, which the core package does not carry.
 
 ## Rules
 
-- **Ask before touching the instrument.**
+* **Ask before touching the instrument.**
   Get the scope's address from the user. The `192.168.1.173` in the sview README is the author's own bench setup, not a default.
-- **Never run `activate` or `deactivate` without explicit permission.**
+* **Never run `activate` or `deactivate` without explicit permission.**
   Both change or erase the instrument's workspace.
-- A direct Ethernet cable to the scope needs the PC's adapter put on the scope's subnet.
+* A direct Ethernet cable to the scope needs the PC's adapter put on the scope's subnet.
   `scripts/connect_scope_ethernet.sh` does that and needs sudo, so the user must run it.
   Say exactly what it does first.
-- Save captures from an investigation into that investigation's own directory with `--out-dir`.
+* Save captures from an investigation into that investigation's own directory with `--out-dir`.
   sview's own `captures/` folder is gitignored scratch.
   Lab notes in this repo under `doc/__investigations/` stay untracked, so do not commit captures there.
-- Report voltages and timings as the instrument's numbers.
+* Report voltages and timings as the instrument's numbers.
   The README records a small known bias (about +0.18% gain and +2.9 mV offset on the channel that was DMM-tested), and says other channels and more than two channels are uncharacterized.
 
 ## Using it for EPROM timing verification
@@ -65,13 +65,13 @@ The owner's scope procedure for the emulator mainloop is in the ecu-ep-safety sk
 
 What is established and what is not:
 
-- **Not established: infinite persistence over RPI.**
+* **Not established: infinite persistence over RPI.**
   The vendor RPI guide contains no mention of persistence, so I cannot claim that the display mode can be set remotely.
   It may be a front-panel setting on this instrument.
-- **Not established: an equivalent method with sview.**
+* **Not established: an equivalent method with sview.**
   Repeated single captures, then event finding across them, is a plausible substitute for a persistent display.
   It has not been tried, and whether the 16534A's sample rate and memory resolve the DBG_BSY pulse against E is unchecked.
-- **Not established: how a human-judged "one clean pulse, no smear" maps to a numeric pass/fail.**
+* **Not established: how a human-judged "one clean pulse, no smear" maps to a numeric pass/fail.**
 
 So: do not tell the user a timing change is verified on the strength of this skill.
 Propose a concrete capture-and-analysis plan, say which parts are untried, and let the user decide whether to run it.

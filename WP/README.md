@@ -1,32 +1,26 @@
 # WP: Wireless Processor
 
-### _Note: As of now, a lot of the WP functionality is still speculative: The code is under active development!_
+The **W**ireless **P**rocessor (**WP** for short) is a Raspberry Pi Pico 2 W (an RP2350) running FreeRTOS.
+It is the umod4's logger and its network interface.
 
-The **W**ireless **P**rocessor (**WP** for short) has a few jobs.
-It is resonsible for receiving two separate data streams: the ECU data stream forwarded by the EP, and a GPS position and velocity data stream from a GPS module.
-The WP merges the two data streams in a time-correlated fashion, and writes the resulting log to a micro SD card.
+Its jobs:
 
-In the future, the WP will finally add wireless capabilities to the system.
-Wireless would be used to do things like:
+* **Logging.**
+  It receives the ECU data stream forwarded by the EP, and a GPS position and velocity stream from a uBlox GPS module.
+  It merges the two streams in a time-correlated fashion and writes the log to a micro SD card.
+* **WiFi.**
+  It serves the umod4's web pages and lets the PC server download new logs after a ride.
+  It joins your home network, or provides its own hotspot if it cannot find yours.
+* **Reflashing.**
+  It can update its own firmware over WiFi, and it reflashes the EP over the EP's SWD interface.
+  All firmware updates go through the WP for that reason.
 
-* automatic upload of ride logs
-* OTA (Over The Air) software updates for all the processors in the system
+How it all fits together is in [HOW_IT_WORKS.md](../HOW_IT_WORKS.md#wp-operation).
+What a rider does with it is in the [User Guide](../USER_GUIDE.md).
 
-It is anticipated that there will be two distinct wireless interfaces, WiFi and Bluetooth:
+## Source layout
 
-* Bluetooth: Used for a user interface for system control
-  * System configuration and settings
-    * Choose default ECU code image selection
-    * Set up WiFi credentials
-  * ECU code image management
-    * Select what image to run before a ride
-    * Add/Delete ECU code images to an on-board library
-* WiFi: for large scale data movement
-  * Dumping data logs to a local server
-  * Installing OTA firmware updates
-
-The data logs could be dumped via Bluetooth, but the WiFi interface would be much faster.
-
-## Risks
-
-The current design uses a Raspberry Pi Pico 2 W board as the hardware basis to implement WP functionality. It remains to be seen if that solution will have enough horsepower to get the job done.
+* `src/` has the firmware.
+* `www/` has the web pages the WP serves.
+  The build turns them into C data with `tools/makefsdata`.
+* `partition_table.json` describes the layout of the WP's flash.

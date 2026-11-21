@@ -26,32 +26,33 @@ The two hand-written ones are the ones that get forgotten.
 ## Steps
 
 1. **Pick the ID.**
-   - Stay inside the subsystem's range: GEN `0x00-0x0F`, ECU `0x10-0xCF`, EP `0xD0-0xDF`, WP `0xE0-0xFF`.
-   - Grep the header to confirm the offset is unused. Ranges and IDs must not overlap.
-   - **Backwards-incompatible changes are discouraged.** Prefer adding a new ID over renumbering an existing one or changing its payload size or meaning, because old `.um4` logs would then decode wrongly.
-   - If an incompatible change truly must happen, the log version of the AFFECTED component would have to be bumped.
+   * Stay inside the subsystem's range: GEN `0x00-0x0F`, ECU `0x10-0xCF`, EP `0xD0-0xDF`, WP `0xE0-0xFF`.
+   * Grep the header to confirm the offset is unused. Ranges and IDs must not overlap.
+   * **Backwards-incompatible changes are discouraged.** Prefer adding a new ID over renumbering an existing one or changing its payload size or meaning, because old `.um4` logs would then decode wrongly.
+   * If an incompatible change truly must happen, the log version of the AFFECTED component would have to be bumped.
      The mechanism for that is incomplete (see "Version bumps" below), so stop and discuss it with the user before changing anything.
 2. **Define it in `log_ids.h`.**
-   - `LOGID_<sub>_<name>_TYPE_<type>` with `((LOGID_<sub>_BASE) + 0x..)`, and a matching `LOGID_<sub>_<name>_DLEN` giving the payload byte count.
-   - Optional value or mask constants: `..._VAL`, `..._MASK`.
-   - Optional display metadata: `..._NAME` and `..._UNITS`.
-   - The file may contain ONLY `#define`s, because assembly and Python scripts parse it.
-   - Do not rename the `_TYPE_` token or the type suffixes (`_U8`, `_TS`, ...) without also editing `generate_encoder.py`.
+   * `LOGID_<sub>_<name>_TYPE_<type>` with `((LOGID_<sub>_BASE) + 0x..)`, and a matching `LOGID_<sub>_<name>_DLEN` giving the payload byte count.
+   * Optional value or mask constants: `..._VAL`, `..._MASK`.
+   * Optional display metadata: `..._NAME` and `..._UNITS`.
+   * The file may contain ONLY `#define`s, because assembly and Python scripts parse it.
+   * Do not rename the `_TYPE_` token or the type suffixes (`_U8`, `_TS`, ...) without also editing `generate_encoder.py`.
+   * The type suffixes are listed in the comment block at the top of `log_ids.h`. `_TYPE_TS` is only for true timestamps (the crank and camshaft events). A 16-bit value that the ECU merely sampled is `_TYPE_U16`.
 3. **Emit the event** from the right place (ECU assembly, EP or WP code).
    Changes to `UM4.S` or EP timing are in the dangerous areas of AGENTS.md section 4: say that bench testing is required, and what was not tested.
 4. **Update the decoder.**
-   - Add an `elif byte == L.LOGID_...` branch in `decodelog.py` that reads exactly `L.LOGID_..._DLEN` bytes.
-   - Add the `.hr` output line, and the HDF5 dataset if the event should appear in `.h5` files.
-   - An ID the decoder does not know falls into the final `else`, which prints `ERR: Unknown LOGID` and reads no payload.
+   * Add an `elif byte == L.LOGID_...` branch in `decodelog.py` that reads exactly `L.LOGID_..._DLEN` bytes.
+   * Add the `.hr` output line, and the HDF5 dataset if the event should appear in `.h5` files.
+   * An ID the decoder does not know falls into the final `else`, which prints `ERR: Unknown LOGID` and reads no payload.
      The payload bytes are then misread as IDs, so everything after that point in the log can be wrong.
 5. **Update `lib/src/log_meta.c`** if the WP live display should know the event: `META_DISP(name, units)` or `META_HIDE(name)`.
 6. **Rebuild** so the generated files are refreshed: `cd ~/projects/umod4/build && ninja`.
    To refresh only the Python modules: `cd ~/projects/umod4/build/tools && ninja update_log_symbols`.
 7. **Verify.**
-   - Confirm the symbols exist: `grep LOGID_<name> build/python_packages/Logsyms.py`.
-   - Decode a real log: `uv run tools/logtools/decoder/decodelog.py <log.um4> --format h5 -o <out.h5>`.
-   - Search the text output for `Unknown LOGID`. Compare the count with the same log decoded before the change.
-   - A log containing the NEW event can only come from firmware that emits it. If none exists yet, say so: the new branch is untested.
+   * Confirm the symbols exist: `grep LOGID_<name> build/python_packages/Logsyms.py`.
+   * Decode a real log: `uv run tools/logtools/decoder/decodelog.py <log.um4> --format h5 -o <out.h5>`.
+   * Search the text output for `Unknown LOGID`. Compare the count with the same log decoded before the change.
+   * A log containing the NEW event can only come from firmware that emits it. If none exists yet, say so: the new branch is untested.
 
 ## Version bumps (an incomplete mechanism: do not improvise)
 
@@ -72,10 +73,10 @@ Supporting a genuinely incompatible format would need something new, such as `#i
 
 So the rules are:
 
-- Treat the existing IDs, their payload sizes and their meanings as frozen.
-- Adding a NEW ID is the safe kind of change. A current decoder still reads old logs. (An OLD decoder reading a log that contains the new ID would print `Unknown LOGID` and lose sync.)
-- If a change would break old logs, STOP. Do not bump a version or restructure the header on your own. Describe the change and why it is incompatible, and discuss it with the user.
-- The decoder currently only RECORDS the version bytes (into the `.h5` attributes `log_version_ecu`, `log_version_ep`, `log_version_wp`). It does not branch on them.
+* Treat the existing IDs, their payload sizes and their meanings as frozen.
+* Adding a NEW ID is the safe kind of change. A current decoder still reads old logs. (An OLD decoder reading a log that contains the new ID would print `Unknown LOGID` and lose sync.)
+* If a change would break old logs, STOP. Do not bump a version or restructure the header on your own. Describe the change and why it is incompatible, and discuss it with the user.
+* The decoder currently only RECORDS the version bytes (into the `.h5` attributes `log_version_ecu`, `log_version_ep`, `log_version_wp`). It does not branch on them.
 
 If the owner later decides on a versioning scheme, record it here.
 

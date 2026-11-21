@@ -55,14 +55,18 @@
 //
 //    _I16  int16   Signed 16-bit int
 //    _U16  uint16  Unsigned 16-bit int
-//    _TS   uint16  A Timestamp marker.
+//                  Some _U16 events carry a value of the ECU's free-running timer instead of a measurement:
+//                  the timer overflow (OFLO) and half-overflow (HOFLO) events, and the injector, coil and spark times.
+//                  Unlike a _TS event, none of these places the log on the clock.
+//                  Their time can be in the future (an injector pulse that is scheduled to begin)
+//                  or in the past (the time at which a spark was actually observed).
+//                  OFLO and HOFLO exist so that a decoder can see every timer rollover:
+//                  a decoder treats them as changes of state, and uses their values only as coarse clock readings.
+//    _TS   uint16  A true timestamp: the value of the ECU's free-running timer, captured by hardware when a crankshaft or camshaft event occurred.
 //                  Timestamps are derived from a free-running 16-bit counter in the ECU with a precision of 2 uSec per tick.
 //                  All untimestamped events in the log before this _TS event must have occurred before this time.
 //                  All untimestamped events in the log after this _TS event must have occurred after this time
 //                  It is the responsibility of a log decoder to properly track 16-bit rollover events
-//    _PTS  uint16  A 'prescriptive' timestamp associated with an event.
-//                  Prescriptive timestamps can describe events that will occur in the future (like when an injector pulse is scheduled to begin)
-//                  or things in the past (like reporting the time at which a spark detect event was actually observed)
 //    _I8   int8    Signed 8-bit int
 //    _U8   uint8   Unsigned 8-bit int
 //    _B    bool    (0 means false, and non-zero means true)
@@ -175,52 +179,52 @@
 #define   LOGID_ECU_METADATA_TYPE_CS                ((LOGID_ECU_BASE) + 0x01)       // The build metadata string
 #define   LOGID_ECU_METADATA_DLEN                   1
 
-#define   LOGID_ECU_T1_OFLO_TYPE_TS                 ((LOGID_ECU_BASE) + 0x02)       // Emitted just after time T1 overflows (every 131072 uSec, or ~7.6Hz )
+#define   LOGID_ECU_T1_OFLO_TYPE_U16                ((LOGID_ECU_BASE) + 0x02)       // Emitted just after time T1 overflows (every 131072 uSec, or ~7.6Hz )
 #define   LOGID_ECU_T1_OFLO_DLEN                    2
 
 #define   LOGID_ECU_L4000_EVENT_TYPE_U8             ((LOGID_ECU_BASE) + 0x08)
 #define   LOGID_ECU_L4000_EVENT_DLEN                1
 
-#define   LOGID_ECU_T1_HOFLO_TYPE_TS                ((LOGID_ECU_BASE) + 0x0E)       // Marks when the ECU has observed a 'half overflow',
-#define   LOGID_ECU_T1_HOFLO_TYPE_DLEN              2                               // meaning the timer has advanced into the upper 15 bits of the timer count
+#define   LOGID_ECU_T1_HOFLO_TYPE_U16               ((LOGID_ECU_BASE) + 0x0E)       // Marks when the ECU has observed a 'half overflow',
+#define   LOGID_ECU_T1_HOFLO_DLEN                   2                               // meaning the timer has advanced into the upper 15 bits of the timer count
 
 
 // Injector events, front and rear
-#define   LOGID_ECU_F_INJ_ON_TYPE_PTS               ((LOGID_ECU_BASE) + 0x10)       // timestamp of injector on time in ticks
+#define   LOGID_ECU_F_INJ_ON_TYPE_U16               ((LOGID_ECU_BASE) + 0x10)       // timestamp of injector on time in ticks
 #define   LOGID_ECU_F_INJ_ON_DLEN                   2
 
 #define   LOGID_ECU_F_INJ_DUR_TYPE_U16              ((LOGID_ECU_BASE) + 0x12)       // duration of injector pulse in ticks
 #define   LOGID_ECU_F_INJ_DUR_DLEN                  2
 
-#define   LOGID_ECU_R_INJ_ON_TYPE_PTS               ((LOGID_ECU_BASE) + 0x14)       // timestamp of injector on time in ticks
+#define   LOGID_ECU_R_INJ_ON_TYPE_U16               ((LOGID_ECU_BASE) + 0x14)       // timestamp of injector on time in ticks
 #define   LOGID_ECU_R_INJ_ON_DLEN                   2
 
 #define   LOGID_ECU_R_INJ_DUR_TYPE_U16              ((LOGID_ECU_BASE) + 0x16)       // duration of injector pulse in ticks
 #define   LOGID_ECU_R_INJ_DUR_DLEN                  2
 
 // Ignition coil events, front and rear
-#define   LOGID_ECU_F_COIL_ON_TYPE_PTS              ((LOGID_ECU_BASE) + 0x20)
+#define   LOGID_ECU_F_COIL_ON_TYPE_U16              ((LOGID_ECU_BASE) + 0x20)
 #define   LOGID_ECU_F_COIL_ON_DLEN                  2
 
-#define   LOGID_ECU_F_COIL_OFF_TYPE_PTS             ((LOGID_ECU_BASE) + 0x22)
+#define   LOGID_ECU_F_COIL_OFF_TYPE_U16             ((LOGID_ECU_BASE) + 0x22)
 #define   LOGID_ECU_F_COIL_OFF_DLEN                 2
 
-#define   LOGID_ECU_R_COIL_ON_TYPE_PTS              ((LOGID_ECU_BASE) + 0x24)
+#define   LOGID_ECU_R_COIL_ON_TYPE_U16              ((LOGID_ECU_BASE) + 0x24)
 #define   LOGID_ECU_R_COIL_ON_DLEN                  2
 
-#define   LOGID_ECU_R_COIL_OFF_TYPE_PTS             ((LOGID_ECU_BASE) + 0x26)
+#define   LOGID_ECU_R_COIL_OFF_TYPE_U16             ((LOGID_ECU_BASE) + 0x26)
 #define   LOGID_ECU_R_COIL_OFF_DLEN                 2
 
-#define   LOGID_ECU_F_COIL_MAN_ON_TYPE_PTS          ((LOGID_ECU_BASE) + 0x28)
+#define   LOGID_ECU_F_COIL_MAN_ON_TYPE_U16          ((LOGID_ECU_BASE) + 0x28)
 #define   LOGID_ECU_F_COIL_MAN_ON_DLEN              2
 
-#define   LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS         ((LOGID_ECU_BASE) + 0x2A)
+#define   LOGID_ECU_F_COIL_MAN_OFF_TYPE_U16         ((LOGID_ECU_BASE) + 0x2A)
 #define   LOGID_ECU_F_COIL_MAN_OFF_DLEN             2
 
-#define   LOGID_ECU_R_COIL_MAN_ON_TYPE_PTS          ((LOGID_ECU_BASE) + 0x2C)
+#define   LOGID_ECU_R_COIL_MAN_ON_TYPE_U16          ((LOGID_ECU_BASE) + 0x2C)
 #define   LOGID_ECU_R_COIL_MAN_ON_DLEN              2
 
-#define   LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS         ((LOGID_ECU_BASE) + 0x2E)
+#define   LOGID_ECU_R_COIL_MAN_OFF_TYPE_U16         ((LOGID_ECU_BASE) + 0x2E)
 #define   LOGID_ECU_R_COIL_MAN_OFF_DLEN             2
 
 #define   LOGID_ECU_F_IGN_DLY_TYPE_0P8              ((LOGID_ECU_BASE) + 0x30)           // 0.8 fraction of 90 degrees (the value of L00DC during CR3)
@@ -338,10 +342,10 @@
 #define   LOGID_ECU_CAMSHAFT_TYPE_TS                ((LOGID_ECU_BASE) + 0x64)           // Timestamp of most recent camshaft sensor falling-edge event
 #define   LOGID_ECU_CAMSHAFT_DLEN                   2
 
-#define   LOGID_ECU_SPRK_X1_TYPE_PTS                ((LOGID_ECU_BASE) + 0x70)           // The time when front OR rear coil #1 fired
+#define   LOGID_ECU_SPRK_X1_TYPE_U16                ((LOGID_ECU_BASE) + 0x70)           // The time when front OR rear coil #1 fired
 #define   LOGID_ECU_SPRK_X1_DLEN                    2                                   // By design, this is reported during the CR period AFTER it occurred
 
-#define   LOGID_ECU_SPRK_X2_TYPE_PTS                ((LOGID_ECU_BASE) + 0x72)           // The time when front OR rear coil #2 fired
+#define   LOGID_ECU_SPRK_X2_TYPE_U16                ((LOGID_ECU_BASE) + 0x72)           // The time when front OR rear coil #2 fired
 #define   LOGID_ECU_SPRK_X2_DLEN                    2                                   // By design, this is reported during the CR period AFTER it occurred
 
 #define   LOGID_ECU_NOSPARK_TYPE_U8                 ((LOGID_ECU_BASE) + 0x74)           // U8 value indicates the coil that did not spark: 0x11, 0x12, 0x21, 0x22

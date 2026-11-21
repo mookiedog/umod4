@@ -2802,7 +2802,7 @@ LC46F:  ldaA    ADCTL
                                                 ; Next time through, we will try again.
 
 ; All is clear: no pending IC ISR, so we are free to log our half-overflow event
-        stX     LW+LOGID_ECU_T1_HOFLO_TYPE_TS
+        stX     LW+LOGID_ECU_T1_HOFLO_TYPE_U16
         clrA
         staA    half_overflow
 98:     cli                             ; end critical section
@@ -8190,7 +8190,7 @@ IC2F_ISR_2:
         addD    #0x0010                 ;which will fire the Front coil
         stD     TOC1
 
-        stD     LW+LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS
+        stD     LW+LOGID_ECU_F_COIL_MAN_OFF_TYPE_U16
 
         ldaA    #0x80                   ;writing B7 clears the OC1I interrupt request bit
         staA    TFLG1
@@ -8223,7 +8223,7 @@ IC2F_ISR_3:
         addD    #0x0010
         stD     TOC2
 
-        stD     LW+LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS
+        stD     LW+LOGID_ECU_R_COIL_MAN_OFF_TYPE_U16
 
         ldaA    #0x40                   ;setting B6 clears the OC2 interrupt request flag
         staA    TFLG1
@@ -8659,7 +8659,7 @@ IC2F_ISR_35:
 IC2F_ISR_36:
 #if !defined SPARK_ISR
          ldD    TIC3                    ; log the timestamp when coil #1 fired
-         stD    LW+LOGID_ECU_SPRK_X1_TYPE_PTS
+         stD    LW+LOGID_ECU_SPRK_X1_TYPE_U16
 #endif
         ldaA    L0147                   ;had we seen an error previously?
         bne     IC2F_ISR_37             ;if so, then don't clear the error indicator just yet
@@ -8703,7 +8703,7 @@ IC2F_ISR_38:
 IC2F_ISR_39:
 #if !defined SPARK_ISR
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
-         stD    LW+LOGID_ECU_SPRK_X2_TYPE_PTS
+         stD    LW+LOGID_ECU_SPRK_X2_TYPE_U16
 #endif
         ldaA    L0148                   ;had we seen an error previously?
         bne     IC2F_ISR_40             ;if so, then don't clear the error indicator just yet
@@ -8757,7 +8757,7 @@ IC2F_ISR_42:
 IC2F_ISR_43:
 #if !defined SPARK_ISR
          ldD    TIC3                    ; log the timestamp when coil #1 fired
-         stD    LW+LOGID_ECU_SPRK_X1_TYPE_PTS
+         stD    LW+LOGID_ECU_SPRK_X1_TYPE_U16
 #endif
         ldaA    L0149                   ;had we seen an error previously?
         bne     IC2F_ISR_44             ;if so, then don't clear the error indicator just yet
@@ -8799,7 +8799,7 @@ IC2F_ISR_45:
 IC2F_ISR_46:
 #if !defined SPARK_ISR
          ldD    TO5I4                   ; log the timestamp when coil #2 fired
-         stD    LW+LOGID_ECU_SPRK_X2_TYPE_PTS
+         stD    LW+LOGID_ECU_SPRK_X2_TYPE_U16
 #endif
         ldaA    L014A                   ;had we seen an error previously?
         bne     IC2F_ISR_47             ;if so, then don't clear the error indicator just yet
@@ -10415,7 +10415,7 @@ OC1F_ISR:
 ;some time during this crankref period.
 
         ldD     *L00FF                  ;get the precalculated time from start of CR4 event to spark fire
-        stD     LW+LOGID_ECU_F_COIL_OFF_TYPE_PTS
+        stD     LW+LOGID_ECU_F_COIL_OFF_TYPE_U16
 
 4:
         stD     TOC1                    ;use that time to fire the spark
@@ -10470,7 +10470,7 @@ OC2F_ISR:
 3:
         brset   *L000B #0b00000100 2b   ;branch if a spark is NOT armed?
         ldD     L0101
-        stD     LW+LOGID_ECU_R_COIL_OFF_TYPE_PTS
+        stD     LW+LOGID_ECU_R_COIL_OFF_TYPE_U16
 
 4:
         stD     TOC2
@@ -10988,7 +10988,7 @@ LF48C:  ldaA    TCTL1
         addD    #0x0005
         stD     TOC3
 
-        stD     LW+LOGID_ECU_F_INJ_ON_TYPE_PTS ; 5E [14]  +7.0 uSec: log the injector ON timestamp
+        stD     LW+LOGID_ECU_F_INJ_ON_TYPE_U16 ; 5E [14]  +7.0 uSec: log the injector ON timestamp
         addD    TOC3                    ;6E [20] +10.0 uSec: pointless, except as a NOP
 #else
         ldD     TCNT
@@ -11038,7 +11038,7 @@ LF4D1:  ldaA    TCTL1
         stD     TOC4                    ; 5E [ 9]  +4.5 uSec: ...that that enables the REAR fuel injector
 
 ; D contains the injector ON timestamp:
-        stD     LW+LOGID_ECU_R_INJ_ON_TYPE_PTS ; 5E [14]  +7.0 uSec: log it
+        stD     LW+LOGID_ECU_R_INJ_ON_TYPE_U16 ; 5E [14]  +7.0 uSec: log it
         addD    TOC4                    ; 6E [20] +10.0 uSec: a NOP, since D is not used
 #else
         ldD     TCNT                    ; mark time T0
@@ -11669,7 +11669,7 @@ _ic3:   ldaA    #LOGID_ECU_CPU_EVENT_IC3_VAL
 ; IC4: Coil #2 event
 _oc5ic4f:
         ldD     TO5I4
-        stD     LW+LOGID_ECU_SPRK_X2_TYPE_PTS   ; log when coil #2 spark occurred
+        stD     LW+LOGID_ECU_SPRK_X2_TYPE_U16   ; log when coil #2 spark occurred
         ldaA    #0x08                           ; clear interrupt request for bit O5I4
         staA    TFLG1
         oraA    FAKE_TFLG1                      ; crankshaft processing needs to see this bit
@@ -11679,7 +11679,7 @@ _oc5ic4f:
 ; IC3: Coil #1 event
 _ic3:
         ldD     TIC3
-        stD     LW+LOGID_ECU_SPRK_X1_TYPE_PTS   ; log when coil #1 spark occurred
+        stD     LW+LOGID_ECU_SPRK_X1_TYPE_U16   ; log when coil #1 spark occurred
         ldaA    #0x01                           ; clear interrupt request for bit IC3
         staA    TFLG1
         oraA    FAKE_TFLG1                      ; crankshaft processing needs to see this bit
@@ -11748,7 +11748,7 @@ T1_OFLO_ISR:
 
         clrA
         clrB
-        stD     LW+LOGID_ECU_T1_OFLO_TYPE_TS            ; The overflow event must have occurred at timer count 0x0000
+        stD     LW+LOGID_ECU_T1_OFLO_TYPE_U16            ; The overflow event must have occurred at timer count 0x0000
         rti
 
 #ifdef BENCH_IGNITION_TEST

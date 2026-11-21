@@ -11,17 +11,17 @@ The script assembles a folder, and a person decides whether to attach its files 
 Tick these off in order.
 The sections below explain each item.
 
-- [ ] On `main`, with everything committed and pushed: `git status` shows nothing.
-- [ ] Choose the version (one number for the tools and the firmware, for example `v0.2.0`).
-- [ ] Run `uv run tools/make_release --version v0.2.0 --previous <the previous release's folder>` (leave out `--previous` for the first release). The output must not say REHEARSAL.
-- [ ] Read the table in `RELEASE_NOTES.md`: a firmware file must say "unchanged" only if you changed nothing that feeds it.
-- [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill). It tests the source, using the build in `build/`. If it complains that a file is older than a `CMakeLists.txt`, see Troubleshooting.
-- [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash **from the release folder**, in the order WP, EP, WP (see "Flash order" in step 4), check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
-- [ ] Test the release zip on a clean Windows profile: the server window opens, the visualizer opens the sample ride, and the map shows. A throwaway Windows user account does it (see "Testing the release zip"). Do the full test for the first release and whenever the launchers, `pyproject.toml`, `uv.lock` or the tools `README.txt` changed; otherwise unzip it into a new folder on your own PC and check that both programs start.
-- [ ] Write "What changed" and "Tested" in `RELEASE_NOTES.md`. The rest of that file is generated from `tools/release_notes_template.md`: change standard wording there, not in the output. No "Write this by hand" line may be left in it.
-- [ ] Copy the finished release folder (with the final notes) to `~/umod4-releases/umod4-release-<version>`, always that place, before you publish: it is the `--previous` for the next release, and `build/` can be deleted at any time.
-- [ ] Tag the commit and publish by hand: `git tag v0.2.0`, `git push origin v0.2.0`, then GitHub, Releases, draft from that tag, use the text of `RELEASE_NOTES.md` as the description and attach every other file in the folder (not `RELEASE_NOTES.md` itself: its text is the description). Read the draft once as a visitor would before publishing.
-- [ ] If the download names or places changed, update the documents that point riders at the release (GETTING_STARTED.md).
+* [ ] On `main`, with everything committed and pushed: `git status` shows nothing.
+* [ ] Choose the version (one number for the tools and the firmware, for example `v0.2.0`).
+* [ ] Run `uv run tools/make_release --version v0.2.0 --previous <the previous release's folder>` (leave out `--previous` for the first release). The output must not say REHEARSAL.
+* [ ] Read the table in `RELEASE_NOTES.md`: a firmware file must say "unchanged" only if you changed nothing that feeds it.
+* [ ] The hardware test runner passes: `uv run tests/runner.py` (see the hardware-test-run skill). It tests the source, using the build in `build/`. If it complains that a file is older than a `CMakeLists.txt`, see Troubleshooting.
+* [ ] If any firmware file is marked "changed" (every file is "new" in a first release): flash **from the release folder**, in the order WP, EP, WP (see "Flash order" in step 4), check that the server shows the builds listed in `release.json`, then bench- and bike-test. Never flash from `build/` for this: every build re-stamps the WP, so a file from `build/` is not the file that will be published.
+* [ ] Test the release zip on a clean Windows profile: the server window opens, the visualizer opens the sample ride, and the map shows. A throwaway Windows user account does it (see "Testing the release zip"). Do the full test for the first release and whenever the launchers, `pyproject.toml`, `uv.lock` or the tools `README.txt` changed; otherwise unzip it into a new folder on your own PC and check that both programs start.
+* [ ] Write "What changed" and "Tested" in `RELEASE_NOTES.md`. The rest of that file is generated from `tools/release_notes_template.md`: change standard wording there, not in the output. No "Write this by hand" line may be left in it.
+* [ ] Copy the finished release folder (with the final notes) to `~/umod4-releases/umod4-release-<version>`, always that place, before you publish: it is the `--previous` for the next release, and `build/` can be deleted at any time.
+* [ ] Tag the commit and publish by hand: `git tag v0.2.0`, `git push origin v0.2.0`, then GitHub, Releases, draft from that tag, use the text of `RELEASE_NOTES.md` as the description and attach every other file in the folder (not `RELEASE_NOTES.md` itself: its text is the description). Read the draft once as a visitor would before publishing.
+* [ ] If the download names or places changed, update the documents that point riders at the release (GETTING_STARTED.md).
 
 ## What a release contains
 
@@ -42,8 +42,8 @@ Every build stamps a new build time into `EP.uf2` and `WP.uf2`, so rebuilding id
 A checksum comparison would therefore call everything changed.
 Instead, when you give the script the previous release, it asks git whether any *input* of each file changed between the previous release's commit and now:
 
-- If nothing changed, the previous release's file is reused byte for byte (the very file that was already tested and flashed) and is marked **unchanged**.
-- If something changed, the freshly built file is used and is marked **changed**.
+* If nothing changed, the previous release's file is reused byte for byte (the very file that was already tested and flashed) and is marked **unchanged**.
+* If something changed, the freshly built file is used and is marked **changed**.
 
 The input lists in `tools/make_release` are deliberately generous, so the worst mistake the script can make is to say "changed" when it did not matter, never the reverse.
 For a rider this is real information: when the EP (which runs the engine) is unchanged, there is nothing to reflash.
@@ -54,12 +54,12 @@ For a rider this is real information: when the EP (which runs the engine) is unc
 It has the release's `version`, `date`, the `git` commit it was assembled from, the `previous` release if there was one, and a `files` list.
 Each file has:
 
-- `name`, `kind`, `description`, `size` and `sha256`
-- `built_from_commit`: the commit its source came from (for a reused file this is an earlier commit than the release's)
-- `first_released_in`: the release in which these exact bytes first appeared
-- `changed`: whether it changed since the previous release (present only when a previous release was given)
-- `build_time` (firmware and `UM4.bin` only): the build time, for people
-- `device_reports` (firmware and `UM4.bin` only): what a device reports about itself once this file is installed, in the same shape as the device's own `/api/info`
+* `name`, `kind`, `description`, `size` and `sha256`
+* `built_from_commit`: the commit its source came from (for a reused file this is an earlier commit than the release's)
+* `first_released_in`: the release in which these exact bytes first appeared
+* `changed`: whether it changed since the previous release (present only when a previous release was given)
+* `build_time` (firmware and `UM4.bin` only): the build time, for people
+* `device_reports` (firmware and `UM4.bin` only): what a device reports about itself once this file is installed, in the same shape as the device's own `/api/info`
 
 For example, the EP is identified by two things, because its own build time does not change when only the ECU image inside it changes, and the device reports the two separately:
 
@@ -150,9 +150,9 @@ Never publish a rehearsal.
 
 Use semantic versioning (MAJOR.MINOR.PATCH):
 
-- **MAJOR**: breaking changes, for example logs that old tools cannot read
-- **MINOR**: new features, backward compatible
-- **PATCH**: bug fixes only
+* **MAJOR**: breaking changes, for example logs that old tools cannot read
+* **MINOR**: new features, backward compatible
+* **PATCH**: bug fixes only
 
 Because tools and firmware share one version, a fix to the visualizer alone is still a new release.
 The "changed / unchanged" column in the notes is what tells a rider that the firmware files are the same as before.
@@ -171,14 +171,14 @@ This writes `build/dist/umod4-tools-<date>-<git hash>.zip`, marked `-dirty` if a
 The zip keeps the repository's own layout, because the server's "launch visualizer" button finds the visualizer by relative path.
 It contains:
 
-- `tools/server`: the server's runtime `.py` files (no tests, no dead code, no developer docs)
-- `tools/logtools/viz` and `tools/logtools/decoder`: the tracked `.py` and `.yaml` files
-- `tools/logtools/decoder/Logsyms.py`, generated on the spot from `lib/inc/log_ids.h` (no firmware build is needed)
-- `tools/logtools/test_data/sample_ride.um4`, the sample ride
-- `pyproject.toml` and `uv.lock`
-- `run_server.cmd`, `run_viz.cmd` (Windows, double-click) and `run_server.sh`, `run_viz.sh` (Linux), taken from `tools/bundle/`
-- `README.txt`: the instructions for the recipient, taken from the template `tools/bundle/README.txt`
-- `firmware/`: `EP.uf2`, `WP.uf2`, `WP_partition.uf2`, `WP_erase.uf2` and `UM4.bin`, copied from the release folder, so the zip holds the very files that are published (a release only; a quick test bundle has none)
+* `tools/server`: the server's runtime `.py` files (no tests, no dead code, no developer docs)
+* `tools/logtools/viz` and `tools/logtools/decoder`: the tracked `.py` and `.yaml` files
+* `tools/logtools/decoder/Logsyms.py`, generated on the spot from `lib/inc/log_ids.h` (no firmware build is needed)
+* `tools/logtools/test_data/sample_ride.um4`, the sample ride
+* `pyproject.toml` and `uv.lock`
+* `run_server.cmd`, `run_viz.cmd` (Windows, double-click) and `run_server.sh`, `run_viz.sh` (Linux), taken from `tools/bundle/`
+* `README.txt`: the instructions for the recipient, taken from the template `tools/bundle/README.txt`
+* `firmware/`: `EP.uf2`, `WP.uf2`, `WP_partition.uf2`, `WP_erase.uf2` and `UM4.bin`, copied from the release folder, so the zip holds the very files that are published (a release only; a quick test bundle has none)
 
 `SHA256SUMS` and `release.json` are not inside the zip: they list the zip's own checksum.
 
@@ -196,9 +196,9 @@ Use a throwaway Windows user account on your own PC: its profile has no uv, no e
 
 **What this does not prove:**
 
-- The Windows Firewall popup. A machine that has the rule `umod4 Server UDP Check-in` (UDP 54549, any program) never shows it, so the account test cannot either. Whether a rider's default choice in the popup is enough is untested.
-- Machine-wide security settings such as Smart App Control, which may block the Python that uv downloads.
-- A machine that has never run the umod4.
+* The Windows Firewall popup. A machine that has the rule `umod4 Server UDP Check-in` (UDP 54549, any program) never shows it, so the account test cannot either. Whether a rider's default choice in the popup is enough is untested.
+* Machine-wide security settings such as Smart App Control, which may block the Python that uv downloads.
+* A machine that has never run the umod4.
 
 Windows Sandbox is not a good substitute on current Windows 11: it has no Notepad, and on 2026-11-12 its Application Control policy blocked uv's downloaded Python (`os error 4551`).
 
@@ -206,35 +206,35 @@ Windows Sandbox is not a good substitute on current Windows 11: it has no Notepa
 
 **The test runner stops with "X is N s older than CMakeLists.txt, rebuild before trusting results":**
 
-- The runner compares file times, and git changes them (switching branches, merging), so it can complain about a file that is really up to date, and `ninja` will not rebuild it because nothing changed.
-- Touch one of that sub-project's own source files and rebuild: for example `touch WpUsbBoot/main.c`, then `ninja` in `build/`.
-- This changes only a file time, not the contents, so `git status` stays clean.
+* The runner compares file times, and git changes them (switching branches, merging), so it can complain about a file that is really up to date, and `ninja` will not rebuild it because nothing changed.
+* Touch one of that sub-project's own source files and rebuild: for example `touch WpUsbBoot/main.c`, then `ninja` in `build/`.
+* This changes only a file time, not the contents, so `git status` stays clean.
 
 **`tools/make_release` says the build failed:**
 
-- The last lines of the build output are shown; fix the error and run it again.
+* The last lines of the build output are shown; fix the error and run it again.
 
 **`tools/make_release` says UM4.bin was built from an uncommitted tree:**
 
-- The ECU image carries the `git describe` of the tree it was built from, and `-dirty` means that tree had uncommitted changes.
-- Commit, then run `cmake .` in `build/` and `ninja`, and run the script again.
-- `cmake .` is what refreshes the git identity baked into the firmware: it is generated when CMake configures, so touching `ecu/src/UM4.S` and running `ninja` alone leaves the old `-dirty` identity in place.
+* The ECU image carries the `git describe` of the tree it was built from, and `-dirty` means that tree had uncommitted changes.
+* Commit, then run `cmake .` in `build/` and `ninja`, and run the script again.
+* `cmake .` is what refreshes the git identity baked into the firmware: it is generated when CMake configures, so touching `ecu/src/UM4.S` and running `ninja` alone leaves the old `-dirty` identity in place.
 
 **`tools/make_release` says a file is unchanged but that release's file is missing:**
 
-- `--previous` must be the folder of the previous release, including the firmware files, not only its `release.json`.
+* `--previous` must be the folder of the previous release, including the firmware files, not only its `release.json`.
 
 **`tools/make_tools_bundle` fails:**
 
-- Run it from inside the repository, with uv: `uv run tools/make_tools_bundle` (the script asks git for its file list, so git must be installed)
-- "expected file is missing" means a file the bundle needs was moved or deleted; the message names it
+* Run it from inside the repository, with uv: `uv run tools/make_tools_bundle` (the script asks git for its file list, so git must be installed)
+* "expected file is missing" means a file the bundle needs was moved or deleted; the message names it
 
 **The recipient's first run of a program is slow, or does not start:**
 
-- The first run of each program downloads Python 3.12 (if the machine has none) and that program's packages (about 300 MB for the visualizer), so it needs an internet connection
-- uv itself must be installed first; `README.txt` in the bundle explains how
+* The first run of each program downloads Python 3.12 (if the machine has none) and that program's packages (about 300 MB for the visualizer), so it needs an internet connection
+* uv itself must be installed first; `README.txt` in the bundle explains how
 
 **GitHub upload fails:**
 
-- Check the file size is under 2 GB (the largest file is `WP.uf2`, about 3.4 MB)
-- Try uploading through the web interface instead
+* Check the file sizes against GitHub's per-file limit (2 GB): even the largest file, `WP.uf2`, is only a few megabytes, nowhere near it
+* Try uploading through the web interface instead

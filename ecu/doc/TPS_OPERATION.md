@@ -125,7 +125,9 @@ Inaccuracies in the supply voltage will not matter.
 
 To convert a throttle opening from ADC to percent:
 
-    percent_open = (ADC - 128) / (799 - 128) * 100
+```text
+percent_open = (ADC - 128) / (799 - 128) * 100
+```
 
 This formula makes an assumption that the minimum value reported by the ADC will be 128 counts.
 If the ADC reading were to go over 799, this formula would return a value slightly over 100%.

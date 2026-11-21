@@ -1715,7 +1715,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                         print(f"{fmt_record(recordCnt, timekeeper)} BUILD_INFO: \"{ecuMetadataString}\"")
                         ecuMetadataString = ""
 
-                elif byte == L.LOGID_ECU_T1_OFLO_TYPE_TS:
+                elif byte == L.LOGID_ECU_T1_OFLO_TYPE_U16:
                     oflo_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_OFLO_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
                     # This is a timer overflow event, so mark it specially for wraparound handling
@@ -1729,15 +1729,15 @@ def _process_single_file(logfile_path, output_path, args, L):
                     if h5_writer:
                         h5_writer.append_data('ecu_l4000_event', [timekeeper.get_time_ns(), rd[0]])
 
-                elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_TS:
-                    marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_TYPE_DLEN), byteorder='little', signed=False)
+                elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_U16:
+                    marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - event HAS occurred (b15 went 0→1)
                     # This is a time anchor event, marks ~65536 ticks from previous anchor
                     timekeeper.process_ts_event(marker_ts, is_hoflo=True)
                     print(f"{fmt_record(recordCnt, timekeeper)} HOF_TS: {marker_ts}")
                     # HOFLO not written to HDF5 - used only for time tracking
 
-                elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_PTS:
+                elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_U16:
                     fi_on = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
                     # Do not advance time_ns based on this value
@@ -1756,7 +1756,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                         # Pair with pending ON event to create combined bar
                         h5_writer.append_injector_duration('front', fi_dur)
 
-                elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_PTS:
+                elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_U16:
                     ri_on = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
                     timekeeper.advance_time_by_ns(1)
@@ -1774,7 +1774,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                         # Pair with pending ON event to create combined bar
                         h5_writer.append_injector_duration('rear', ri_dur)
 
-                elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_PTS:
+                elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_U16:
                     fc_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
                     print(f"{fmt_record(recordCnt, timekeeper)} FC_ON:  {fc_on:04X}")
@@ -1787,7 +1787,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                             # Record as pending for combined bar dataset
                             h5_writer.append_coil_on('front_coil', actual_time_ns, fc_on)
 
-                elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_PTS:
+                elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_U16:
                     fc_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
                     print(f"{fmt_record(recordCnt, timekeeper)} FC_OFF: {fc_off:04X}")
@@ -1800,7 +1800,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                             # Pair with pending ON event to create combined bar
                             h5_writer.append_coil_off('front_coil', actual_time_ns)
 
-                elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_PTS:
+                elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_U16:
                     rc_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
                     print(f"{fmt_record(recordCnt, timekeeper)} RC_ON:  {rc_on:04X}")
@@ -1813,7 +1813,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                             # Record as pending for combined bar dataset
                             h5_writer.append_coil_on('rear_coil', actual_time_ns, rc_on)
 
-                elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_PTS:
+                elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_U16:
                     rc_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
                     print(f"{fmt_record(recordCnt, timekeeper)} RC_OFF: {rc_off:04X}")
@@ -1826,7 +1826,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                             # Pair with pending ON event to create combined bar
                             h5_writer.append_coil_off('rear_coil', actual_time_ns)
 
-                elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_PTS:
+                elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_U16:
                     fcm_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
                     print(f"{fmt_record(recordCnt, timekeeper)} FC_MON: {fcm_on:04X}")
@@ -1839,7 +1839,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                             # Record as pending for combined bar dataset
                             h5_writer.append_coil_on('front_coil_manual', actual_time_ns, fcm_on)
 
-                elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_PTS:
+                elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_U16:
                     fcm_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
                     print(f"{fmt_record(recordCnt, timekeeper)} FC_MOF: {fcm_off:04X}")
@@ -1852,7 +1852,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                             # Pair with pending ON event to create combined bar
                             h5_writer.append_coil_off('front_coil_manual', actual_time_ns)
 
-                elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_PTS:
+                elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_U16:
                     rcm_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
                     print(f"{fmt_record(recordCnt, timekeeper)} RC_MON: {rcm_on:04X}")
@@ -1865,7 +1865,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                             # Record as pending for combined bar dataset
                             h5_writer.append_coil_on('rear_coil_manual', actual_time_ns, rcm_on)
 
-                elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_PTS:
+                elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_U16:
                     rcm_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
                     # PROSPECTIVE timestamp - scheduled future event
                     print(f"{fmt_record(recordCnt, timekeeper)} RC_MOF: {rcm_off:04X}")
@@ -2161,8 +2161,8 @@ def _process_single_file(logfile_path, output_path, args, L):
                     # Update previous CRID for next comparison
                     cridPrev = crid
 
-                elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_TS:
-                    time_marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_TYPE_DLEN), byteorder='little', signed=False)
+                elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_U16:
+                    time_marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_DLEN), byteorder='little', signed=False)
                     # RETROSPECTIVE timestamp - tracks time when engine not rotating
                     timekeeper.process_ts_event(time_marker_ts, is_hoflo=True)
                     print(f"{fmt_record(recordCnt, timekeeper)} TIME_MKR: {time_marker_ts}")
@@ -2190,7 +2190,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     if h5_writer:
                         h5_writer.append_data('ecu_cam_error', [timekeeper.get_time_ns(), camErr])
 
-                elif byte == L.LOGID_ECU_SPRK_X1_TYPE_PTS:
+                elif byte == L.LOGID_ECU_SPRK_X1_TYPE_U16:
                     spx1_ts_raw = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
 
                     # Apply spark delay correction
@@ -2229,7 +2229,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                         if h5_writer:
                             h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_ts_raw])
 
-                elif byte == L.LOGID_ECU_SPRK_X2_TYPE_PTS:
+                elif byte == L.LOGID_ECU_SPRK_X2_TYPE_U16:
                     spx2_ts_raw = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
 
                     # Apply spark delay correction

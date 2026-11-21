@@ -65,26 +65,24 @@ WiFi might be trickier though for some locations: see [Garage WiFi](#garage-wifi
 
 ## Parts
 
+This list assumes you have a fabricated PCB, not a complete kit of everything.
 Check your parts before you start.
 They will be used in subsequent steps.
 
-### Loose parts that ship with umod4
+### Parts you need
 
 * one 12-pin SIP socket strip (for the CN1 modification, see [Modify the ECU](#modify-the-ecu))
 * two 20-pin male-male round-pin strips (for the Pico2W)
 * one 5-pin male-male round-pin strip (for the GPS module)
 * four each of M3 nylon standoffs (8mm tall, thread length 6mm) and M3 nylon screws (thread length 6mm)
-
-### Parts a user must supply
-
 * A Pico2W module. Do **not** get a module with headers already soldered: they are square pin headers and they will **not** work with the umod4's round pin sockets!
 * A USB power supply: 5V at 1A is fine.
 * A micro USB data cable for initial software install, plus powering the umod4 when mounted on the bike.
     I use a 1 meter cable.
-* A "double sided" uBlox NEO8M module.
+* A "double sided" uBlox NEO8 module.
     These are available on Ali Express.
-    Contact me if you are not sure what to get.
-    The Ali Express modules almost all arrive with square-pin headers preinstalled.
+    See [the appendix](#double-sided-neo8-gps) for details on what module to order.
+    The Ali Express modules arrive with square-pin headers preinstalled.
     These will need to be removed, then replaced with a 5 pin male-male round pin strip.
 * An amplified antenna for the GPS module (also from Ali Express).
 * M3 (metric) nylon hardware: screw, nut, and spacer to mount the GPS module to the umod4.
@@ -197,7 +195,7 @@ With the ECU on a workbench, perform the following steps:
 
 ## Check umod4 board construction
 
-It is possible that certain parts might not be present on a board you receive.
+It is possible that certain parts might not be present on a board you have fabricated.
 This section makes sure that everything you need is installed.
 If your board is missing any of these parts, you will need to obtain them and solder them on yourself.
 See [Appendix A: Building a board from scratch](#appendix-a-building-a-board-from-scratch) and [Appendix B: Parts and sourcing](#appendix-b-parts-and-sourcing) for help in that regard.
@@ -558,7 +556,7 @@ Do NOT hit "Save & Reboot" yet.
 Next, you can change the umod4's AP network name to something more memorable if you want.
 But even if you do not change the AP network name, you **MUST** give it a new, **strong** password: **this network will get broadcast wherever your bike goes!**
 
-_FYI: it is easy to change the AP Network name and password later so don't freak out about picking the best name possible right now._
+*FYI: it is easy to change the AP Network name and password later so don't freak out about picking the best name possible right now.*
 
 Once you have entered all the configuration fields, click on "Save & Reboot" at the bottom of the page.
 
@@ -673,7 +671,7 @@ The umod4 will need power and WiFi out in the garage.
 ### Garage Power
 
 I recommend leaving your umod4 powered via USB cable at all times when the bike is in the garage.
-You don't actually _need_ to power the umod4 24x7, but without power, it will have no wifi connection, so no OTA updates, no automatic log file downloads, etc.
+You don't actually *need* to power the umod4 24x7, but without power, it will have no wifi connection, so no OTA updates, no automatic log file downloads, etc.
 
 My technique is to leave a 4-foot micro USB data cable permanently plugged into the WP's micro USB socket.
 
@@ -719,7 +717,7 @@ The User Guide also describes [the routine of riding, collecting and looking at 
 
 ## Appendix A: Building a board from scratch
 
-If your umod4 is not "as shipped" (see [Parts](#parts)), then depending on how many parts were installed at the PCB assembly house, you might need to install a few final parts on the board yourself.
+Depending on how many parts were installed at the PCB assembly house, you might need to install a few final parts on the board yourself.
 
 ### SIP Sockets
 
@@ -820,3 +818,31 @@ I have also used male-male interconnect strips from LCSC, part number [C2764600]
 These ones worked well, too.
 Note that these strips are only 20 pins long, so make sure to get enough.
 Again, get some spares in case something bad happens as you trim them to length.
+
+### Double-Sided NEO8 GPS
+
+The umod4 needs what is sold on Ali Express as a "NEO8 Double-Sided GPS".
+
+**The NEO8 version is required!**
+Most sellers sell this board in NEO6, NEO7, and NEO8 versions.
+
+* NEO6 versions do not support a specific uBlox GPS message type required by the umod4
+* NEO7 is lower performance than NEO8 and has not been tested
+
+#### Dimensions
+
+The board should have nominal dimensions of 22.5mm by 16.8mm with an SMA antenna connector and a single mounting hole as shown:
+
+![double-sided GPS](./doc/images/GETTING_STARTED/GPS-dimensions.jpg)
+
+#### Pinout
+
+The pin order on the module must match the photo, above.
+
+| Pin | Name | Function |
+| --- | --- | --- |
+| 1 (square pad) | PPS | Pulse Per Second |
+| 2 | RXD | GPS receives data on this pin |
+| 3 | TXD | GPS transmits data on this pin |
+| 4 | GND | Ground |
+| 5 | VCC | 3.3V from umod4 |

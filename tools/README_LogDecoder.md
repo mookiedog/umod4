@@ -13,11 +13,15 @@ This tool can do 2 things to a raw umod4 logfile:
 * Convert it into 'human readable' form
 * Convert it into HDF5 form, suitable for display by '[viz](logtools/viz/viz.py)', a graphics visualizer program
 
+The format of the log, and how the decoder reconstructs event times from it, is described in [Log File Format and Timing](README_LogFormat.md).
+
 ## Running the Decoder
 
 From inside the umod4 directory, type:
 
-    uv run tools/logtools/decoder/decodelog.py --format hr <path-to-log-file>
+```bash
+uv run tools/logtools/decoder/decodelog.py --format hr <path-to-log-file>
+```
 
 The format 'hr' says to make a Human-Readable version of the log.
 The format 'h5' would tell the decoder to produce an HDF5 version of the log, suitable for the visualizer to display.
@@ -36,17 +40,19 @@ It is unlikely that a rider would want to be digging into the raw log at that le
 
 Here is an example of some "human readable" log output:
 
-    0x00000078: D0 00        [    58 @     0.0000s]: LOAD:   UM4
-    0x0000007A: D2 00 00     [    59 @     0.0000s]: ADDR:   0x0000
-    0x0000007D: D4 00 80     [    60 @     0.0000s]: LEN:    0x8000
-    0x00000080: D6 00        [    61 @     0.0000s]: STAT:   ERR_NOERR
-    0x00000082: 01 00        [    62 @     0.0000s]: ECU_VR: 0
-    0x00000084: 10 07        [    63 @     0.0000s]: CPU:    7
-    0x00000086: 60 85 00     [    64 @     0.0000s]: VTA:    133
-    0x00000089: 65 96        [    65 @     0.0000s]: THA:    9.2C
-    0x0000008B: 64 97        [    66 @     0.0000s]: THW:    8.8C
-    0x0000008D: 63 BB        [    67 @     0.0000s]: AAP:    187
-    0x0000008F: 4A 01        [    68 @     0.0000s]: FP:     1
+```text
+0x00000078: D0 00        [    58 @     0.0000s]: LOAD:   UM4
+0x0000007A: D2 00 00     [    59 @     0.0000s]: ADDR:   0x0000
+0x0000007D: D4 00 80     [    60 @     0.0000s]: LEN:    0x8000
+0x00000080: D6 00        [    61 @     0.0000s]: STAT:   ERR_NOERR
+0x00000082: 01 00        [    62 @     0.0000s]: ECU_VR: 0
+0x00000084: 10 07        [    63 @     0.0000s]: CPU:    7
+0x00000086: 60 85 00     [    64 @     0.0000s]: VTA:    133
+0x00000089: 65 96        [    65 @     0.0000s]: THA:    9.2C
+0x0000008B: 64 97        [    66 @     0.0000s]: THW:    8.8C
+0x0000008D: 63 BB        [    67 @     0.0000s]: AAP:    187
+0x0000008F: 4A 01        [    68 @     0.0000s]: FP:     1
+```
 
 This log snippet shows the EP processor reporting that it is loading a UM4 data-logging EPROM image, preparing it for the ECU to use.
 The loader code logs that it has loaded all 32K bytes (0x8000) of the EPROM image, starting at address 0 (0x0000).
@@ -99,6 +105,8 @@ That is precisely what a visualizer needs in order to quickly scan the large log
 
 To decode a log into HDF5 format, you would type:
 
-    uv run tools/logtools/decoder/decodelog.py --format h5 <path-to-log-file>
+```bash
+uv run tools/logtools/decoder/decodelog.py --format h5 <path-to-log-file>
+```
 
 Note that there is really no reason to create .h5 files 'manually' in this fashion: the visualizer will invoke the log decoder to create h5 files for you, as needed.

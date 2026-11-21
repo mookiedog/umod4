@@ -113,7 +113,7 @@ In either case, the control website that the umod4 serves to a phone's browser i
   It runs natively on Windows 11 or on Linux: unzip the release and follow its `README.txt`.
   [GETTING_STARTED.md](GETTING_STARTED.md#set-up-your-pc) says where to get the zip.
 * **The visualizer** is a separate program that turns a downloaded ride log into graphs and a map.
-  See [Tools.md](Tools.md) for how it works; this guide only says when to use it.
+  See the [visualizer user guide](tools/README_Visualizer_User_Guide.md) for how it works; this guide only says when to use it.
 
 ### WiFi
 
@@ -203,7 +203,7 @@ The umod4 writes compact **raw logs** (`.um4`, binary, small).
 To graph one, a .um4 file must be **decoded** into an HDF5 file that the visualizer can load quickly.
 If the visualizer needs to decode a log file, it will ask you for permission.
 The decoded HDF5 versions of the log files remain on the PC so that you can reopen a log without having to reconvert it.
-The details, and what each graph means, are in [Tools.md](Tools.md).
+The details, and what each graph means, are in the [visualizer user guide](tools/README_Visualizer_User_Guide.md) and the [visualizer walkthrough](tools/README_Visualizer.md).
 
 ## Choosing what the ECU runs (EPROM images)
 
@@ -223,10 +223,11 @@ Its controls are disabled while the engine is running.
 ### Where images come from
 
 **UM4, the datalogging image.**
-This is the program that provides the logging.
-It is built from this project's source, which is one reason you need the cloned project and a working build environment (see [One-time setup, on the bench](#one-time-setup-on-the-bench)).
-The build writes it out as `UM4.bin`.
-UM4 comes with the 549USA maps, so you can run it as-is and get logging without bringing any EPROM image of your own.
+A UM4.bin file is included in the zip file for every [release](https://github.com/mookiedog/umod4/releases/latest).
+If you have gone through the [BUILDING](./BUILDING.md) process, UM4.bin can be found in the build directory outputs after any successful build operation.
+
+UM4 comes with the 549USA maps.
+If your bike was running a 549USA EPROM, you can use the UM4.bin as-is to get data logging without needing to supply any other EPROM image.
 
 **Your own maps.**
 If you want to run your own maps, you need them as a 32 KB `.bin` file.
@@ -252,7 +253,7 @@ Whichever case you are in, once you have a `.bin` file, check that it is RP58-co
 Many EPROMs you will encounter are **protected**, meaning their contents are scrambled.
 A protected EPROM only works in an ECU that has a hardware **daughterboard**, which unscrambles the data on the fly as the ECU reads it.
 Some Aprilia EPROMs are protected, as are many aftermarket ones.
-[eprom_lib/README.md](eprom_lib/README.md) has the background.
+[Daughterboards](eprom_lib/README.md#daughterboards) in the EPROM library has the background.
 
 What it means for you:
 
@@ -265,7 +266,7 @@ What it means for you:
   The umod4 source code is set up to accept an appropriate descrambler routine (this is what the Protection setting on the upload form is for).
 
   **This project does not include the descrambler source!**
-  This keeps the umod4 project clean with respect to other peoples IP that they have protected with daughterboards.
+  This keeps the umod4 project clean with respect to other people's IP that they have protected with daughterboards.
   *If you want to write your own, it's possible: I did it, and I'm pretty sure I was neither the first nor the last person to do so.*
 
 ### Putting a .bin file into the umod4
@@ -281,9 +282,9 @@ They *can* be stored on a phone, but it's less convenient than a PC.
    You will pick the image by this name later.
 5. Leave **Protection** at `N - None`.
    A stock umod4 cannot run protected images (see "Protected EPROMs" above).
-   **If you wrote you own descrambler**, you have two choices.
+   **If you wrote your own descrambler**, you have two choices.
    If you saved a .bin of the descrambled EPROM, then select protection 'none'.
-   If the .bin file is a direct copy of the original scrambled EPROM, the select protection 'A - Aprilia'.
+   If the .bin file is a direct copy of the original scrambled EPROM, then select protection 'A - Aprilia'.
    This tells the umod4 that it will need to descramble the EPROM image as it gets loaded.
 6. Click **Upload**.
 
@@ -333,7 +334,7 @@ An EPROM is RP58-compatible if its data in the code range (`0x4000` through `0x7
 The mapblobs of such EPROMs can differ in their contents, but they all use the same layout.
 
 **How to check yours.**
-The project includes a `checksum` tool.
+If you have gone through the [BUILDING](./BUILDING.md) process, the project will create a `checksum` tool.
 Run it on your `.bin` file:
 
 ```bash
@@ -343,6 +344,8 @@ checksum -o 0x4000 -3 YourImage.bin
 If it prints `0x18E7E9F2` (the Murmur3 checksum of the code range of an RP58), your image is RP58-compatible.
 Any other value means it is not, and combining it with UM4 will not work.
 The check applies to the unscrambled `.bin` file.
+
+If you have not built the project, look your EPROM up in the [table of known EPROM images](./eprom_lib/README.md).
 
 If your image is not RP58-compatible, its maps are laid out differently, so combining it with UM4 would give the ECU the wrong data.
 
@@ -396,13 +399,20 @@ The umod4 starts a new log file every time it reboots.
 That means every power-up creates one, including each time you power-cycle the bike to get WiFi mid-ride.
 A single outing can therefore produce several log files, and you view them one piece at a time.
 
-The server stores downloaded logs by device, then by date:
+The server stores downloaded logs by device, then by date.
+On Windows:
+
+```text
+%APPDATA%\umod4_server\logs\<device-name>\<YYYY-MM-DD>\log_N.um4
+```
+
+On Linux:
 
 ```text
 ~/.umod4_server/logs/<device-name>/<YYYY-MM-DD>/log_N.um4
 ```
 
-This is the default location, and you can choose a different one.
+These are the default locations, and you can choose a different one.
 Storing logs per device lets you keep several umod4 units apart, for example two bikes, or one bike and a bench test unit.
 
 A log's file name does not contain the date, because the umod4 does not know the date when it creates the file.

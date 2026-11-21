@@ -16,7 +16,9 @@ Requirements:
 
 Usage:
 
-    tools/wp_enter_bootsel build/WpUsbBoot/WpUsbBoot
+```bash
+tools/wp_enter_bootsel build/WpUsbBoot/WpUsbBoot
+```
 
 ## Partition and Flash the WP
 
@@ -45,11 +47,13 @@ The flash_WP script will take care of reassigning the WP from Windows to WSL on 
 The EP is flashed by the WP over SWD, so no USB cable or BOOTSEL mode is involved.
 The WP must be running and connected to your home network, and its SD card must be inserted (the WP stages the EP image there).
 
-The normal way is the server GUI: select the device and click __Reflash EP__.
+The normal way is the server GUI: select the device and click **Reflash EP**.
 
 For scripting, the server also has a command-line mode that skips the GUI:
 
-    tools/server/run_server.sh --ip <device-ip> --flash-ep build/EP/EP.uf2
+```bash
+tools/server/run_server.sh --ip <device-ip> --flash-ep build/EP/EP.uf2
+```
 
 It uploads the file, triggers the reflash, prints the result and exits.
 Use the device's IP address (the server's device list shows it).
@@ -93,3 +97,29 @@ UMOD4_AP_PASSWORD=<new-ap-password>
 
 With all of those defined, running the script with no arguments provisions the device.
 Only the values supplied are written.
+
+## Nightly Test Job
+
+The tool 'tools/setup_nightly_tests' manages a per-user Windows Scheduled Task that runs `tests/nightly_run.sh` every night.
+It does not need Administrator privileges.
+
+Usage:
+
+```bash
+tools/setup_nightly_tests                   # register or update the task: daily at 02:00, distro "Ubuntu"
+tools/setup_nightly_tests -Time "03:00"     # use a different time
+tools/setup_nightly_tests -Distro "Ubuntu"  # use a different WSL distro
+tools/setup_nightly_tests --status          # show registration state, schedule, last and next run
+tools/setup_nightly_tests --disable         # pause the task (it stays registered)
+tools/setup_nightly_tests --enable          # resume a paused task
+```
+
+Running it again with a new `-Time` or `-Distro` updates the existing task in place.
+
+## Other Tools
+
+These tools are described in the documents that cover the jobs they do:
+
+* `tools/make_release` and `tools/make_tools_bundle`: build a release and its tools zip. See [RELEASING.md](RELEASING.md).
+* `tools/setup_usb_wsl` (and `setup_usb_wsl.ps1`): make the debug probe and the ap_proxy usable from WSL. See [WSL2: USB Device Sharing](BUILDING.md#wsl2-usb-device-sharing) in BUILDING.md and [tests/README.md](tests/README.md).
+* The log decoder and visualizer in `tools/logtools`: see [README_LogDecoder.md](tools/README_LogDecoder.md), [README_Visualizer_User_Guide.md](tools/README_Visualizer_User_Guide.md) and [README_Visualizer.md](tools/README_Visualizer.md).

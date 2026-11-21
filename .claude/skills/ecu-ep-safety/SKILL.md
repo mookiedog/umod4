@@ -16,18 +16,18 @@ This skill adds the specific rules for the EPROM emulator.
 3. **Any change MUST update the timing calculations in the mainloop comments.**
 
 The PIO state machines that touch the HC11 bus are part of the EPROM emulation timing, so these rules cover them too: `EP/src/hc11Sync.pio` and `EP/src/busFailsafe.pio`, and their setup code (`hc11SyncSetup.cpp`, `busFailsafeSetup.cpp`).
-`uart_tx32.pio` is the EP-to-WP UART, not the HC11 bus. I assume it is not covered, but confirm with the user if a change there could affect bus timing.
+`uart_tx32.pio` is the EP-to-WP UART (it lives in `lib/pio`, next to the WP's `uart_rx32.pio`), not the HC11 bus. I assume it is not covered, but confirm with the user if a change there could affect bus timing.
 
 ## Why the timing is tight
 
 All of this is from the comments at the top of `epromEmulator.S`; read them before editing.
 
-- The HC11 E clock is 2 MHz, and the emulator runs at 125 MHz, so one RP2040 clock is 8 nS.
-- That leaves about 60 clocks per E cycle. The loop targets finishing within 58 clocks in the worst case, so the CPU can get back to `wfi`.
-- Every instruction is annotated `x [y]`: `x` is the cycles it takes and `y` is the cumulative cycles since falling E.
-- A taken branch costs 1 extra clock. The target label of every branch must sit on an otherwise empty source line, and the label is billed for that clock.
-- Every path (read, write, ignore) must reach the shared `log:` label at exactly the same cycle count. The comments state the value, and the code carries the reasoning.
-- The existing comments record a measured margin at the `wfi` (about 3 clocks, 24 nS, at the time of writing).
+* The HC11 E clock is 2 MHz, and the emulator runs at 125 MHz, so one RP2040 clock is 8 nS.
+* That leaves about 60 clocks per E cycle. The loop targets finishing within 58 clocks in the worst case, so the CPU can get back to `wfi`.
+* Every instruction is annotated `x [y]`: `x` is the cycles it takes and `y` is the cumulative cycles since falling E.
+* A taken branch costs 1 extra clock. The target label of every branch must sit on an otherwise empty source line, and the label is billed for that clock.
+* Every path (read, write, ignore) must reach the shared `log:` label at exactly the same cycle count. The comments state the value, and the code carries the reasoning.
+* The existing comments record a measured margin at the `wfi` (about 3 clocks, 24 nS, at the time of writing).
   A change can eat it.
 
 ## Procedure for a change to the mainloop
@@ -56,13 +56,13 @@ If the change moves the pulse, update the margin comment in that block with the 
 
 ## Other dangerous code
 
-- **Other EP code** (`epromEmulator.h`, core 1 code): the rules were stated for `epromEmulator.S` and the PIO machines. If a change could affect bus timing, treat it as needing scope verification, and ask the user if unsure.
-- **PIO changes:** the scope procedure above was described for the mainloop.
+* **Other EP code** (`epromEmulator.h`, core 1 code): the rules were stated for `epromEmulator.S` and the PIO machines. If a change could affect bus timing, treat it as needing scope verification, and ask the user if unsure.
+* **PIO changes:** the scope procedure above was described for the mainloop.
   Which signals to probe for a change to a PIO program is not recorded. Ask the user.
-- **ECU assembly (`ecu/src/UM4.S`):** the owner wants this to have its own skill, which does not exist yet.
+* **ECU assembly (`ecu/src/UM4.S`):** the owner wants this to have its own skill, which does not exist yet.
   Until then, follow AGENTS.md section 4: explain the risk, require bench testing (see BENCH_TESTING.md), and state what was not tested.
   Ask the user what verification they want for the change at hand.
-- **Power circuitry:** hardware, not firmware. Do not guess. Point to the hardware documentation.
+* **Power circuitry:** hardware, not firmware. Do not guess. Point to the hardware documentation.
 
 ## Keeping this skill current
 

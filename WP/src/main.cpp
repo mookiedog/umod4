@@ -355,7 +355,7 @@ void __time_critical_func(isr_rx32)()
             case LOGID_ECU_CRANKREF_ID_TYPE_U8:
                 g_last_crank_event_us = t0;
                 break;
-            case LOGID_ECU_T1_OFLO_TYPE_TS:
+            case LOGID_ECU_T1_OFLO_TYPE_U16:
                 g_t1_oflo_prev_us = g_t1_oflo_last_us;
                 g_t1_oflo_last_us = t0;
                 break;

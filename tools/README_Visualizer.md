@@ -23,7 +23,7 @@ In the most general terms, if a crankshaft is not speeding up during its power s
 This constant change in rotation speed is one of the reasons you feel vibration when an engine runs.
 The rotational speed reported by the tachometer on the dashboard is heavily filtered so that you are seeing a nice, smooth RPM report.
 When trying to observe the minute details of engine operation though, we want to see how the speed varies during a single rotation.
-In the case of the Rotax 1000cc twin, the ECU tracks the position of the crankshaft 6 times per rotation, meaning that every 60 degrees, the ECU knows precisely where the crankshaft is.
+In the case of the Rotax 1000cc twin, the ECU tracks the position of the crankshaft 6 times per rotation, or every 60 degrees.
 By measuring the time between subsequent crankshaft position events, the ECU can calculate what the rotation speed was during that fraction of a crank rotation.
 For the purposes of viewing logs, this is defined to be the crankshaft's 'instantaneous' RPM.
 
@@ -63,14 +63,17 @@ Or, you can just click and drag an area in the navigation window, and the graph 
 
 You can also click and drag in the main window as well.
 That is how to zoom in on a specific area of detail.
-Keyboard shortcuts also work to zoom in and out, and to pan the whole main window left or right:
+Keyboard shortcuts also work to zoom in and out, to pan the whole main window left or right, and for a few other things:
 
 * "ctrl +" to zoom in by a factor of 2
 * "ctrl -" to zoom out by a factor of 2
 * Window movement:
   * the right/left arrow keys pan the display by 50%
   * "ctrl \<arrow-key\>" pans right or left by 15%
-  * "shft \<arrow-key\>" pans right or left by 90%
+  * "shift \<arrow-key\>" pans right or left by 90%
+* "alt left-arrow" is undo and "alt right-arrow" is redo for zoom and pan operations
+* "ctrl m" shows the ride on a map
+* "l" shows or hides the log viewer (the low-level binary data described under Binary Log Details)
 
 The arrow keys make it easy to pan the graph window left or right without changing the zoom level.
 
@@ -107,6 +110,8 @@ From there, each subsequent crank sensor event increments the CRID count up to 1
 At that point, the next cam sensor arrives and the CRID count starts over at CR0.
 The important aspects of the Aprilia diagram show that the power stroke for the front cylinder starts on CR5 and runs through CR7.
 For the rear, the power stroke starts on CR10 and runs through CR0.
+That is how the diagram draws it.
+The real engine is a bit fuzzier, because the CR periods do not line up exactly with the crank: see [Operation.md](../ecu/doc/Operation.md#the-cr-periods-do-not-line-up-exactly-with-the-strokes) for why.
 
 I'm proud of this next bit: one of the graphical ECU streams the log visualizer can display is the CRID.
 Not only that, the CRID is what I call a "marker" stream because it is used to mark up the instantaneous RPM with additional detail:
@@ -138,7 +143,7 @@ Now check out the detail in the circled areas in the screenshot below:
 ![operation](./images/viz-detail-2-crid.jpg)
 
 There are a few things to note.
-If you look inside the orange cicle, you see a proper firing cycle.
+If you look inside the orange circle, you see a proper firing cycle.
 
 * All CRIDs 3/4/5 are all approximately the same width
 * They are all slowing though, as it has been some time since the last firing event, so the crank can only be slowing down since then
@@ -148,16 +153,16 @@ If you look inside the orange cicle, you see a proper firing cycle.
 So what happened when the engine "missed", inside the blue circle?
 A few things are obvious:
 
-1) The duration of both CR4 and CR5 are a lot wider than CR3. The crank is slowing down. That is __NOT__ how the previous cycle CR4/5 looked where CR3/4/5 were about the same duration.
-1) Interesting Fact: the front cylinder did __not__ misfire: the crank clearly speeds up during CR6. Had it been a genuine misfire, CR6 would have been slower than CR5.
-1) Even More Interesting Fact: CR5 took an extra long time compared to the previous CR5. Normally, you will see the crank slow slightly during CR5 because it was just completed the compression stroke. The spark should have lit off the cylinder just prior to TDC, but the increasing pressure is unable to spin the crank faster just yet.
+1) The duration of both CR4 and CR5 are a lot wider than CR3. The crank is slowing down. That is **NOT** how the previous cycle CR4/5 looked where CR3/4/5 were about the same duration.
+1) Interesting Fact: the front cylinder did **not** misfire: the crank clearly speeds up during CR6. Had it been a genuine misfire, CR6 would have been slower than CR5.
+1) Even More Interesting Fact: CR5 took an extra long time compared to the previous CR5. Normally, you will see the crank slow slightly during CR5 because it has just completed the compression stroke. The spark should have lit off the cylinder just prior to TDC, but the increasing pressure is unable to spin the crank faster just yet.
 
-So why was the CR5 circled in blue _so_ much slower?
+So why was the CR5 circled in blue *so* much slower?
 Well, the log contains even more data to look at.
 
 The ECU has [circuitry that detects the high-voltage kickback](https://github.com/mookiedog/ApriliaGen1ECU/blob/main/ECU_s2.png) that occurs when the coils fire.
 In theory, this circuitry detects that a spark occurred.
-In practice, this may not be _precisely_ true.
+In practice, this may not be *precisely* true.
 There are plenty of reasons why a coil could fire, but result in no spark at the sparkplug:
 
 * The sparkplug boot fell off
@@ -166,7 +171,7 @@ There are plenty of reasons why a coil could fire, but result in no spark at the
 
 But assuming that those abnormal situations above were not happening, the spark sensor circuit really does indicate that a spark occurred.
 The standard ECU firmware uses these "coil fired" signals to verify that sparks are happening.
-If it failes to see them, it will blink the EFI light on the dash.
+If it fails to see them, it will blink the EFI light on the dash.
 For the purposes of the umod4 datalogger, it gets even better.
 The ECU's processor actually captures the precise time that the coil fired.
 That allows the UM4 logging firmware to log the precise time of every single coil/spark.
@@ -187,10 +192,10 @@ But if you look at the problem event, you see something different.
 CR4 takes unusually long to complete.
 As a result, the spark that the ECU wanted to occur right around CR5 actually occurred significantly in advance of CR5.
 
-And _that_ means that pressures in that cylinder are going to be extra high before the piston has even got to the top yet.
+And *that* means that pressures in that cylinder are going to be extra high before the piston has even got to the top yet.
 The extra high pressure will slow the crank down more than normal as it tries to get over the top to begin the power stroke.
 
-The next spark timing event shows that it is a tiny ahead of CR10, but apparently not enough to cause a noticible problem.
+The next spark timing event shows that it is a tiny bit ahead of CR10, but apparently not enough to cause a noticeable problem.
 The final spark event in that view is right where it should be.
 
 The net result is that that the "misses" were not actually misses, but the result of a spark that fired a bit too early.
@@ -224,8 +229,8 @@ Much fun ensues!
 
 The basic issue is getting GPS data on the screen.
 
-For that, I added a visualizer view menu option that would display all the GPS info from a ride as data points on a Google Map webpage.
-Clicking on view/"Show Ride On Maps" will cause a browser window to open, with a Google Map view showing an overview of the entire ride.
+For that, I added a visualizer view menu option that would display all the GPS info from a ride as data points on a map webpage.
+Clicking on view/"Show Ride on Maps" will cause a browser window to open, with a map view showing an overview of the entire ride.
 
 This is what I got from my very first test ride:
 
@@ -253,7 +258,7 @@ It was a longer trip, hence the frozen fingers.
 
 ![ride-2](images/ride-2-overview.jpg)
 
-I used Google Maps to zoom in and find that right turn by the grocery store:
+I used the map to zoom in and find that right turn by the grocery store:
 
 ![ride-2-safeways](images/ride-2-safeways.jpg)
 
@@ -326,12 +331,12 @@ There is a dedicated tool 'decodelog.py' which can decode the .um4 log files int
 * .h5 files: used by the visualizer to display log data graphically
 * .hr files: 'human readable' log files, decoded into English
 
-One reason to _not_ decode .um4 log files into human readable logs is that they are huge and take up a lot of disk space. I will still do that if I want to grep certain events from the log, but I usually don't need the whole thing laying around.
+One reason to *not* decode .um4 log files into human readable logs is that they are huge and take up a lot of disk space. I will still do that if I want to grep certain events from the log, but I usually don't need the whole thing lying around.
 
 To make things easier, the visualizer is now set up to show me the low-level binary data for every log item on the screen, on demand.
 You can see how it works, below:
 
-![binry-data-viewer](images/viz-detail-log.jpg)
+![binary-data-viewer](images/viz-detail-log.jpg)
 
 I clicked on the first spark event in the graph display.
 It was captured while the bike was cranking over during a startup sequence.
@@ -371,7 +376,7 @@ Catching up to someone riding an Aprilia Mille (really!) in turn 2.
 I followed them through 2, realized I was faster, got myself set up and then passed them through turn 3.
 On a V-Max!!
 It is proof that a 1985 V-Max can turn.
-They just don't _like_ to.
+They just don't *like* to.
 
 ## Acknowledgements
 

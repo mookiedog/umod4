@@ -20,14 +20,14 @@ Do NOT keep blindly charging ahead.
 
 Before attempting any hardware/firmware approach you are not certain about:
 
-- State your confidence level explicitly ("I know this from docs/disassembly" vs "I believe this but am not sure")
-- State what you DON'T know that could cause it to fail
+* State your confidence level explicitly ("I know this from docs/disassembly" vs "I believe this but am not sure")
+* State what you DON'T know that could cause it to fail
 
 After a failure:
 
-- Explain WHY it failed before proposing anything new
-- If you cannot explain the failure, say so explicitly: "I don't know why that didn't work"
-- Do NOT propose a variant of the same approach if you can't explain the previous failure
+* Explain WHY it failed before proposing anything new
+* If you cannot explain the failure, say so explicitly: "I don't know why that didn't work"
+* Do NOT propose a variant of the same approach if you can't explain the previous failure
 
 Hard stop rule: After 2 failures on the same approach, stop and write a summary:
 
@@ -40,7 +40,7 @@ When the user asks "what is going on?" or "are you sure?", treat this as a signa
 
 ## Other Interactions
 
-- if the user ends a prompt using a phrase or sentence like "Discuss." it means do not rush ahead and start editing, it means that you and the user need to discuss the situation before moving forward with a solution.
+* if the user ends a prompt using a phrase or sentence like "Discuss." it means do not rush ahead and start editing, it means that you and the user need to discuss the situation before moving forward with a solution.
 
 ## Project Overview
 
@@ -53,9 +53,9 @@ Umod4 is a data logging system for Aprilia Gen 1 motorcycle fuel injection ECUs.
 This project uses CMake's **ExternalProject_Add** superbuild pattern because the Raspberry Pi Pico SDK can only be configured once per CMake namespace. Since the project requires two different board configurations (EP and WP), each must have its own namespace.
 
 **Critical Build Constraints:**
-- Never try to build this as a single unified CMake project
-- Each external project (tools, ecu, eprom_lib, EP, WP) has its own build namespace.
-- Build dependencies: `EP` depends on `tools`, `ecu`, `eprom_lib`; `WP` depends on `tools`, `EP`
+* Never try to build this as a single unified CMake project
+* Each external project (picotool, tools, ecu, EP, SwdReflash, WpUsbBoot, WP_erase, ap_proxy, WP) has its own build namespace.
+* Build dependencies: `EP` depends on `tools`, `ecu`, `picotool`; `WP` depends on `tools`, `EP`, `SwdReflash`, `picotool`
 
 ### Building the Project
 
@@ -80,63 +80,62 @@ The Python environment is managed by uv. `pyproject.toml` lists the packages (in
 
 ### Build Output Locations
 
-- ECU firmware: `build/ecu/`
-- EP firmware: `build/EP/EP.uf2`, `build/EP/EP.elf`
-- WP firmware: `build/WP/WP.uf2`, `build/WP/WP.elf`
-- WP first-install files (BOOTSEL drag-and-drop): `build/WP_erase/WP_erase.uf2`, `build/WP/WP_partition.uf2`
-- Tools: `build/tools/` (installed to `~/.local/bin`)
-- EPROM library: `build/eprom_lib/`
+* ECU firmware: `build/ecu/`
+* EP firmware: `build/EP/EP.uf2`, `build/EP/EP.elf`
+* WP firmware: `build/WP/WP.uf2`, `build/WP/WP.elf`
+* WP first-install files (BOOTSEL drag-and-drop): `build/WP_erase/WP_erase.uf2`, `build/WP/WP_partition.uf2`
+* Tools: `build/tools/` (installed to `~/.local/bin`)
 
 ## Component Architecture
 
 ### ECU (Engine Control Unit)
-- **Processor:** Motorola 68HC11G5 (512 bytes RAM)
-- **Toolchain:** Custom-built m68hc11-elf binutils (assembler, linker, objcopy)
-- **Language:** Pure assembly (`ecu/src/UM4.S`)
-- **Purpose:** Custom data-logging firmware based on stock 549USA/RP58 EPROM
-- **Log Events:** Emits timestamped events for crank position, ignition, injection, sensors, etc.
+* **Processor:** Motorola 68HC11G5 (512 bytes RAM)
+* **Toolchain:** Custom-built m68hc11-elf binutils (assembler, linker, objcopy)
+* **Language:** Pure assembly (`ecu/src/UM4.S`)
+* **Purpose:** Custom data-logging firmware based on stock 549USA/RP58 EPROM
+* **Log Events:** Emits timestamped events for crank position, ignition, injection, sensors, etc.
 
 **Key Files:**
-- `ecu/src/UM4.S` - Main ECU assembly code
-- `lib/inc/log_ids.h` - log event ID definitions (shared by the ECU, EP and WP)
+* `ecu/src/UM4.S` - Main ECU assembly code
+* `lib/inc/log_ids.h` - log event ID definitions (shared by the ECU, EP and WP)
 
 ### EP (EPROM Processor)
-- **Processor:** RP2040 (Cortex-M0+)
-- **SDK:** Raspberry Pi Pico SDK 2.3.0 (configurable in top-level CMakeLists.txt)
-- **Toolchain:** arm-none-eabi-gcc 15.2.rel1 (at `/opt/arm/arm-none-eabi/15.2.rel1`)
-- **Source:** `EP/src/`
+* **Processor:** RP2040 (Cortex-M0+)
+* **SDK:** Raspberry Pi Pico SDK 2.3.0 (configurable in top-level CMakeLists.txt)
+* **Toolchain:** arm-none-eabi-gcc 15.2.rel1 (at `/opt/arm/arm-none-eabi/15.2.rel1`)
+* **Source:** `EP/src/`
 
 **Dual-Core Architecture:**
-- **Core 1:** EPROM emulation - Responds to HC11 read/write requests at 2MHz bus speed using 27 GPIO pins
-- **Core 0:** Flash management, UART communication with WP, image loading from SPI flash
+* **Core 1:** EPROM emulation - Responds to HC11 read/write requests at 2MHz bus speed using 27 GPIO pins
+* **Core 0:** Flash management, UART communication with WP, image loading from SPI flash
 
 **Key Capabilities:**
-- Emulates 32KB EPROM with regions that can act as RAM (expands ECU's 512 bytes)
-- Loads and combines multiple EPROM images from 16MB SPI flash partition
-- Forwards ECU data stream to WP via UART at 2.5 megabaud
-- Logs all HC11 accesses to circular buffer (8,192 entries × 4 bytes = 32KB) for debugging
-- Image store and image selector for the EPROM images in flash (replaced the earlier BSON-based EPROM library)
-- has RTT debug output, NOT UART!
+* Emulates 32KB EPROM with regions that can act as RAM (expands ECU's 512 bytes)
+* Loads and combines multiple EPROM images from 16MB SPI flash partition
+* Forwards ECU data stream to WP via UART at 2.5 megabaud
+* Logs all HC11 accesses to circular buffer (8,192 entries × 4 bytes = 32KB) for debugging
+* Image store and image selector for the EPROM images in flash (replaced the earlier BSON-based EPROM library)
+* has RTT debug output, NOT UART!
 
 **Important Files:**
-- `EP/src/epromEmulator.h` - Core EPROM emulation on Core 1
-- `EP/src/EpromLoader.h` - Image loading and management on Core 0
-- `EP/src/image_store_config.json` - which images go into the image store
+* `EP/src/epromEmulator.h` - Core EPROM emulation on Core 1
+* `EP/src/EpromLoader.h` - Image loading and management on Core 0
+* `EP/src/image_store_config.json` - which images go into the image store
 
 ### WP (Wireless Processor)
-- **Processor:** RP2350 on Pico2W (Cortex-M33, more RAM/speed than RP2040)
-- **SDK:** Same Pico SDK as EP
-- **Source:** `WP/src/`
+* **Processor:** RP2350 on Pico2W (Cortex-M33, more RAM/speed than RP2040)
+* **SDK:** Same Pico SDK as EP
+* **Source:** `WP/src/`
 
 **Capabilities:**
-- Receives ECU data stream from EP via UART
-- GPS integration (uBlox NEO-8, 10Hz position/velocity)
-- Logs to micro SD card using LittleFS filesystem
-- Future: WiFi log upload, Bluetooth UI, OTA updates
-- has RTT debug output, NOT UART!
+* Receives ECU data stream from EP via UART
+* GPS integration (uBlox NEO-8, 10Hz position/velocity)
+* Logs to micro SD card using LittleFS filesystem
+* Future: WiFi log upload, Bluetooth UI, OTA updates
+* has RTT debug output, NOT UART!
 
 **Important Files:**
-- `WP/src/` - WP firmware source
+* `WP/src/` - WP firmware source
 
 ### Tools & Python Scripts
 
@@ -150,19 +149,22 @@ uv run tools/logtools/viz/viz.py output.h5
 ```
 
 **Key Tools:**
-- **Build-time tools** (in `tools/src/`):
-  - `build-image-store.py` - Builds image store artifacts (slot files, image_store.bin) from image_store_config.json
-  - `h2py.py` - Converts C header log IDs to Python
-  - `generate_encoder.py` - Generates log encoding code
-- **Runtime log analysis tools** (in `tools/logtools/`):
-  - `decoder/decodelog.py` - Decodes binary logs to HDF5 or text
-  - `viz/viz.py` - Interactive visualization tool for HDF5 logs
+* **Build-time tools** (in `tools/src/`):
+  * `build-image-store.py` - Builds image store artifacts (slot files, image_store.bin) from image_store_config.json
+  * `h2py.py` - Converts C header log IDs to Python
+  * `generate_encoder.py` - Generates log encoding code
+* **Runtime log analysis tools** (in `tools/logtools/`):
+  * `decoder/decodelog.py` - Decodes binary logs to HDF5 or text
+  * `viz/viz.py` - Interactive visualization tool for HDF5 logs
 
 ### EPROM Library (eprom_lib)
 
-JSON description files for stock Aprilia EPROMs (549USA, RP58, etc.).
+`eprom_lib/README.md` is a table of the stock Aprilia EPROM images that are known to exist (549USA, RP58, etc.), with notes on which ones are RP58-compatible and which are protected (need a daughterboard).
+It is documentation only: eprom_lib is not a build project.
 
 **Note:** Repository does not include .bin files - users must source separately.
+Users load their own .bin files onto the device through its web page.
+`eprom_lib/bin_files/` is an optional place to keep them (gitignored); the only build use is `RP58.bin` supplying maps for the EP's limp-mode image.
 
 ## Log System Architecture
 
@@ -178,7 +180,7 @@ umod4/
 ├── ecu/               - HC11 assembly firmware for ECU
 ├── EP/                - RP2040/2350 EPROM emulator
 ├── WP/                - RP2040/2350 wireless/logging processor
-├── eprom_lib/         - JSON descriptions of stock EPROMs
+├── eprom_lib/         - Table of stock EPROM images (README.md); optional bin_files/
 ├── tools/             - Python build tools and log decoders
 ├── lib/               - Shared C libraries (src/, inc/)
 ├── cmake/
@@ -191,10 +193,10 @@ umod4/
 ## Hardware Integration
 
 **Debug Probes:**
-- Uses Raspberry Pi Debug Probe (CMSIS-DAP)
-- VS Code launch.json configured for OpenOCD debugging
-- On WSL2: Use usbipd to attach debug probe to WSL
-- When debugging the EP on 4V1 PCB, SPARE2 must be grounded to inhibit WP from using SWD to talk to EP
+* Uses Raspberry Pi Debug Probe (CMSIS-DAP)
+* VS Code launch.json configured for OpenOCD debugging
+* On WSL2: Use usbipd to attach debug probe to WSL
+* When debugging the EP on 4V1 PCB, SPARE2 must be grounded to inhibit WP from using SWD to talk to EP
 
 **Flashing:**
 ```bash
@@ -207,13 +209,13 @@ F1 -> "Debug: Select And Start Debugging" -> "*** EP: Launch CMSIS-DAP"
 ## Development Environment Requirements
 
 **Prerequisites (from BUILDING.md):**
-- Linux (Ubuntu WSL2, Linux Mint, or Raspberry Pi OS)
-- VS Code with extensions: C/C++, CMake, Cortex-debug, MemoryView, Python
-- m68hc11-elf toolchain (built from binutils source, installed to ~/.local/bin)
-- arm-none-eabi-gcc 15.2.rel1 (installed to /opt/arm/arm-none-eabi/15.2.rel1)
-- OpenOCD (built from raspberrypi fork for RP2xxx support)
-- Raspberry Pi Pico SDK 2.3.0 (at ~/projects/pico-sdk/2.3.0)
-- uv (installs and manages the Python environment, Python 3.12; see BUILDING.md)
+* Linux (Ubuntu WSL2, Linux Mint, or Raspberry Pi OS)
+* VS Code with extensions: C/C++, CMake, Cortex-debug, MemoryView, Python
+* m68hc11-elf toolchain (built from binutils source, installed to ~/.local/bin)
+* arm-none-eabi-gcc 15.2.rel1 (installed to /opt/arm/arm-none-eabi/15.2.rel1)
+* OpenOCD (built from raspberrypi fork for RP2xxx support)
+* Raspberry Pi Pico SDK 2.3.0 (at ~/projects/pico-sdk/2.3.0)
+* uv (installs and manages the Python environment, Python 3.12; see BUILDING.md)
 
 **Directory Layout Assumption:**
 The build system expects this specific structure:
@@ -221,10 +223,11 @@ The build system expects this specific structure:
 ~/projects/
 ├── pico-sdk/2.3.0/    - Pico SDK (version configurable in CMakeLists.txt)
 ├── pico-examples/     - REQUIRED: one checkout per SDK version, e.g. pico-examples/2.3.0 (tag sdk-2.3.0)
-├── picotool/          - Picotool (built and installed to ~/.local/bin)
+├── FreeRTOS-Kernel/   - FreeRTOS, a separate sibling checkout (tag V11.3.0, see BUILDING.md)
 ├── openocd/           - OpenOCD from raspberrypi GitHub
 └── umod4/             - This project
 ```
+(picotool is not a sibling checkout: the superbuild fetches and builds it itself.)
 
 ## Common Development Tasks
 
@@ -248,22 +251,22 @@ The CAM sensor indicates that the next crankshaft event will be crankshaft refer
 Subsequent crank events go from CRID1 through CRID11, when a CAM event will occur, and the entire CRID0..CRID11 cycle will repeat as long as the engine is running.
 
 **EPROM Emulation Timing:**
-- HC11 E-clock: 2MHz
-- Bus cycle: 500ns
-- EP Core 1 responds to read/write within HC11 timing requirements
-- All 27 GPIO pins used for address/data/control lines
+* HC11 E-clock: 2MHz
+* Bus cycle: 500ns
+* EP Core 1 responds to read/write within HC11 timing requirements
+* All 27 GPIO pins used for address/data/control lines
 
 **UART Communication:**
-- EP → WP: 2.5 megabaud baud, 32-bit transfers (log ID + up to 2 bytes of data)
+* EP → WP: 2.5 megabaud baud, 32-bit transfers (log ID + up to 2 bytes of data)
 
 **Filesystem:**
-- LittleFS on micro SD card (wear-leveling, power-fail resilient)
-- More reliable than FAT for embedded systems, but can get extremely slow when it gets a lot of data in the filesystem.
+* LittleFS on micro SD card (wear-leveling, power-fail resilient)
+* More reliable than FAT for embedded systems, but can get extremely slow when it gets a lot of data in the filesystem.
 
 **GPS:**
-- uBlox NEO-8 module
-- 10Hz update rate for position and velocity
-- UART interface to WP
+* uBlox NEO-8 module
+* 10Hz update rate for position and velocity
+* UART interface to WP
 
 ## Known Issues & Limitations
 
@@ -277,22 +280,22 @@ To force a genuine full rebuild of one subproject: `rm -rf build/<name>` and reb
 ## Coding Conventions
 
 **Editing:**
-- do not leave trailing whitespace when editing
-- tab spacing is 4
+* do not leave trailing whitespace when editing
+* tab spacing is 4
 
 **Assembly (ECU):**
-- 68HC11 assembly syntax
-- Heavy use of comments for reverse-engineered sections
-- See annotated `ecu/src/UM4.S` for example
+* 68HC11 assembly syntax
+* Heavy use of comments for reverse-engineered sections
+* See annotated `ecu/src/UM4.S` for example
 
 **C/C++ (EP/WP):**
-- Pico SDK conventions
-- Dual-core aware: Use appropriate core for timing-critical vs. background tasks
-- No panic() calls in EP (log errors instead to reach WP logfile)
+* Pico SDK conventions
+* Dual-core aware: Use appropriate core for timing-critical vs. background tasks
+* No panic() calls in EP (log errors instead to reach WP logfile)
 
 **Python (Tools):**
-- Run with `uv run <script>` (the project environment is `.venv`, managed by uv)
-- Add or change dependencies in `pyproject.toml`, then run `uv lock`
+* Run with `uv run <script>` (the project environment is `.venv`, managed by uv)
+* Add or change dependencies in `pyproject.toml`, then run `uv lock`
 
 ## Testing
 

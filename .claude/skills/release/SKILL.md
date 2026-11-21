@@ -13,8 +13,8 @@ This skill adds only what an agent must do on top of it: which kind of release t
 
 Ask this before running anything, as its own question, and do not guess:
 
-- **Test release**: a rehearsal of the process. Nothing public is produced.
-- **Real release**: the one riders will download.
+* **Test release**: a rehearsal of the process. Nothing public is produced.
+* **Real release**: the one riders will download.
 
 Also get the version.
 A test release uses a throwaway version such as `v0.1.0-test1`, so it can never be mistaken for the real `v0.1.0`.
@@ -23,24 +23,24 @@ Say back what you understood ("test release v0.1.0-test1") and wait for a yes.
 
 ## What is the same for both
 
-- `git status` must be clean and the branch must be `main`, pushed. Check it.
-- Run `uv run tools/make_release --version <version>`, adding `--previous ~/umod4-releases/umod4-release-<previous version>` when an earlier real release exists (check that the folder is there; if not, ask where it is, never guess).
-- Read the changed/unchanged table in `RELEASE_NOTES.md` and compare it with `git diff --name-only <previous commit> HEAD`, not just with what the script says.
-- Check the zip contents against the list in RELEASING.md.
-- Check `release.json` and `SHA256SUMS` agree with the files.
+* `git status` must be clean and the branch must be `main`, pushed. Check it.
+* Run `uv run tools/make_release --version <version>`, adding `--previous ~/umod4-releases/umod4-release-<previous version>` when an earlier real release exists (check that the folder is there; if not, ask where it is, never guess).
+* Read the changed/unchanged table in `RELEASE_NOTES.md` and compare it with `git diff --name-only <previous commit> HEAD`, not just with what the script says.
+* Check the zip contents against the list in RELEASING.md.
+* Check `release.json` and `SHA256SUMS` agree with the files.
 
 ## Test release
 
 The point is to find problems in the process, so report every surprise, and propose a fix to `RELEASING.md` or the script for each one (edit only after Robin agrees).
 
-- Bypass flags (`--allow-dirty`, `--no-build`) are allowed if needed, but say so; the output will be marked REHEARSAL, which is expected.
-- The bike gate is optional: ask whether Robin wants to flash the release folder's files this time or only rehearse the steps. Never present a skipped hardware test as passed.
-- Publishing: at most a **draft** GitHub release, and only if Robin asks for that part to be rehearsed. Never a published release and never a pre-release. Say before each `gh` or `git push` command what it will do.
-- Always finish with cleanup, and show Robin the exact commands before running them:
-  - `gh release delete <tag> --cleanup-tag --yes` (only for a release that this session made)
-  - `git tag -d <tag>` locally
-  - delete the test release folder under `build/dist/` only if Robin says so
-- Confirm afterwards with `gh release list` and `git tag` that nothing test-related is left.
+* Bypass flags (`--allow-dirty`, `--no-build`) are allowed if needed, but say so; the output will be marked REHEARSAL, which is expected.
+* The bike gate is optional: ask whether Robin wants to flash the release folder's files this time or only rehearse the steps. Never present a skipped hardware test as passed.
+* Publishing: at most a **draft** GitHub release, and only if Robin asks for that part to be rehearsed. Never a published release and never a pre-release. Say before each `gh` or `git push` command what it will do.
+* Always finish with cleanup, and show Robin the exact commands before running them:
+  * `gh release delete <tag> --cleanup-tag --yes` (only for a release that this session made)
+  * `git tag -d <tag>` locally
+  * delete the test release folder under `build/dist/` only if Robin says so
+* Confirm afterwards with `gh release list` and `git tag` that nothing test-related is left.
 
 ## Real release
 
@@ -60,8 +60,8 @@ You never decide any of them, and you never report one as done unless Robin has 
 
 After publishing:
 
-- Check whether GETTING_STARTED.md (or any other document) points riders at download names or places that changed, and say so.
-- Check that the published release has every file in the folder, and that the downloaded checksums match `SHA256SUMS`.
+* Check whether GETTING_STARTED.md (or any other document) points riders at download names or places that changed, and say so.
+* Check that the published release has every file in the folder, and that the downloaded checksums match `SHA256SUMS`.
 
 ## Writing "What changed"
 
@@ -77,12 +77,12 @@ Write the draft yourself, show it, and let Robin edit it; never publish text he 
 
 **How to write it:**
 
-- Lead with what a rider must do: "reflash the WP", "nothing to do for the EP", "old logs still open".
-- Group by what the reader cares about: firmware (EP, WP), tools (server, visualizer, decoder), documents. Leave out purely internal work (test harness, refactors, build scripts) unless a rider would notice it.
-- Plain sentences, one thing per line, no commit hashes, no jargon without a few words of explanation.
-- Do not invent. Every line must trace to a commit or to the table. If a commit message is unclear, ask Robin instead of guessing.
-- Keep the "Tested" part short: one line for what passed (hardware test suite, platform), one line for what the claims are limited to (Robin's own bike and board), and, when it applies, one line "Not yet ridden with this build". That last line is the one that matters for safety; never write that firmware is safe for the bike. Do not list every thing that was not tested: only Robin needs that, so put the detailed list in your report to him, not in the notes.
-- If the log format changed, say which firmware and tools versions go together.
+* Lead with what a rider must do: "reflash the WP", "nothing to do for the EP", "old logs still open".
+* Group by what the reader cares about: firmware (EP, WP), tools (server, visualizer, decoder), documents. Leave out purely internal work (test harness, refactors, build scripts) unless a rider would notice it.
+* Plain sentences, one thing per line, no commit hashes, no jargon without a few words of explanation.
+* Do not invent. Every line must trace to a commit or to the table. If a commit message is unclear, ask Robin instead of guessing.
+* Keep the "Tested" part short: one line for what passed (hardware test suite, platform), one line for what the claims are limited to (Robin's own bike and board), and, when it applies, one line "Not yet ridden with this build". That last line is the one that matters for safety; never write that firmware is safe for the bike. Do not list every thing that was not tested: only Robin needs that, so put the detailed list in your report to him, not in the notes.
+* If the log format changed, say which firmware and tools versions go together.
 
 **Every release after the first** starts its "What you need to do" with this block, unchanged, when the zip's tools changed (it is the same text as "UPGRADING" in `tools/bundle/README.txt`; keep the two in step):
 
@@ -100,8 +100,8 @@ Write instead: what this release is, what is in it, how to start (link GETTING_S
 
 ## Rules that apply throughout
 
-- Never push, tag, publish or delete anything on GitHub without Robin's explicit go-ahead for that specific action.
-- Never stop processes or delete folders on Robin's PC without asking (this includes `C:\temp` and the sandbox's folders).
-- If something fails twice, stop and report (AGENTS.md section 5); do not try variations.
-- If RELEASING.md and the script disagree, say so and ask which is right; do not silently pick one.
-- At the end, if you hit a situation this skill does not cover, propose a specific edit to this file and wait for approval.
+* Never push, tag, publish or delete anything on GitHub without Robin's explicit go-ahead for that specific action.
+* Never stop processes or delete folders on Robin's PC without asking (this includes `C:\temp` and the sandbox's folders).
+* If something fails twice, stop and report (AGENTS.md section 5); do not try variations.
+* If RELEASING.md and the script disagree, say so and ask which is right; do not silently pick one.
+* At the end, if you hit a situation this skill does not cover, propose a specific edit to this file and wait for approval.

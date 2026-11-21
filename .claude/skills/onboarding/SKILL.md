@@ -14,10 +14,10 @@ Read those before acting on anything below.
 Before doing anything substantial, ask these, conversationally, in one short message:
 
 1. What do you want from this project? Pick any:
-   - try the log visualizer on sample data (no hardware needed)
-   - build and install the hardware on a bike
-   - analyze logs from a bike that already has one
-   - change or extend the software
+   * try the log visualizer on sample data (no hardware needed)
+   * build and install the hardware on a bike
+   * analyze logs from a bike that already has one
+   * change or extend the software
 2. How comfortable are you with a terminal, git, and soldering? (none / some / a lot)
 3. Do you want me to do the setup work myself and tell you only what I need from you, or do you want to learn each step as we go?
 4. Do you plan to change the software, or just build and run it? (This decides forking, section 2.)
@@ -25,16 +25,16 @@ Before doing anything substantial, ask these, conversationally, in one short mes
 
 Then adapt:
 
-- **Default for beginners: you do the work.**
+* **Default for beginners: you do the work.**
   Run the commands, fix the errors, check the results.
   Interrupt the person only for things you cannot do: entering a sudo password, plugging hardware in or out, pressing BOOTSEL, soldering, a real decision.
-- Use plain language. Explain a term the first time you use it. Summarize output; do not paste walls of it.
-- Infer skill from how they write and what they do. Do not interrogate. Re-ask if your guess turns out wrong.
-- Say what you are about to do before anything that is hard to undo.
-- **Git:** assume the person does not know git.
+* Use plain language. Explain a term the first time you use it. Summarize output; do not paste walls of it.
+* Infer skill from how they write and what they do. Do not interrogate. Re-ask if your guess turns out wrong.
+* Say what you are about to do before anything that is hard to undo.
+* **Git:** assume the person does not know git.
   Explain in plain language what a git operation will do before you do it.
   Never push, force anything, or delete branches or files without being asked and without them understanding the effect.
-- Match the track to their goal. Someone who only wants the visualizer must not be dragged through ARM toolchain installation.
+* Match the track to their goal. Someone who only wants the visualizer must not be dragged through ARM toolchain installation.
 
 ## 2. Changes, forks and ownership
 
@@ -42,16 +42,16 @@ What you do depends on the maintainer status line at the top of AGENTS.md.
 
 **UNMAINTAINED** (or the person plans non-trivial changes and status is not ACTIVE):
 
-- The original repository is a frozen reference. Nobody is reviewing pull requests or answering issues there. Do not suggest opening them.
-- If the person only wants to build and run the project, they can use the original as is.
-- If they plan to change anything beyond a trivial tweak, they should have their own copy BEFORE the first edit.
+* The original repository is a frozen reference. Nobody is reviewing pull requests or answering issues there. Do not suggest opening them.
+* If the person only wants to build and run the project, they can use the original as is.
+* If they plan to change anything beyond a trivial tweak, they should have their own copy BEFORE the first edit.
   Set it up for them: fork on GitHub, or clone and push to a new repository of their own.
   Explain in plain language what this creates, that they own it, and that nothing they do there affects the original or anyone else.
-- The license is MIT (LICENSE.md).
+* The license is MIT (LICENSE.md).
   It lets anyone use, copy, modify, publish and distribute the software, including in their own fork, as long as the copyright notice and license text stay with it.
   Tell them that in plain language.
-- Add a short note to the top of their copy's README saying it derives from the original, with a link.
-- Their copy has no outside reviewer. The safety rules in AGENTS.md section 4 apply even harder: nobody else will catch a bad ECU or EP change.
+* Add a short note to the top of their copy's README saying it derives from the original, with a link.
+* Their copy has no outside reviewer. The safety rules in AGENTS.md section 4 apply even harder: nobody else will catch a bad ECU or EP change.
 
 **ACTIVE:** real bugs and fixes are welcome upstream.
 Tell the person how to reach the owner by opening an issue at https://github.com/mookiedog/umod4/issues (the person needs a free GitHub account).
@@ -62,29 +62,29 @@ Large feature work still belongs in a fork.
 Many people who find this project will assume they are not qualified to change it.
 Correct that early, honestly and without hype.
 
-- The author described the log visualizer and the server program in plain language and an AI agent wrote them.
+* The author described the log visualizer and the server program in plain language and an AI agent wrote them.
   The author did not need to understand how each piece was done.
   The same route is open to anyone: describe what you want, review what you get, run it, correct it.
-- Big changes are realistic in the safe areas (AGENTS.md section 4): a rewritten visualizer, a different server, new analysis tools, a new way to view rides.
+* Big changes are realistic in the safe areas (AGENTS.md section 4): a rewritten visualizer, a different server, new analysis tools, a new way to view rides.
   A person can start from what the existing tools do (what they read, what they compute, what they show), keep the parts that work, and take it in their own direction in their own fork.
   They do not have to read or understand the old code first. You can read it and summarize the essentials for them.
-- Offer this when it fits: when they say what they wish the tools did, or when the first question shows they only want to use it.
+* Offer this when it fits: when they say what they wish the tools did, or when the first question shows they only want to use it.
   Suggest ideas in their own terms, not code terms.
-- Be honest about the limit.
+* Be honest about the limit.
   In the safe areas the main risk is wasted time.
   In the dangerous areas (ECU assembly, EPROM timing, power) the risk is a damaged engine or a stranded rider, and enthusiasm does not make a change safe.
   Say that plainly, then help anyway with the testing steps that make it as safe as it can be.
-- Encourage working in small steps they can see and check, committing working states so a bad experiment can be undone, and keeping the original behavior as a reference until the replacement matches it.
+* Encourage working in small steps they can see and check, committing working states so a bad experiment can be undone, and keeping the original behavior as a reference until the replacement matches it.
 
 ## 4. If the person is a maintainer or co-owner
 
 They are not a beginner. Skip the onboarding hand-holding and ask what they need.
 When reviewing or accepting changes:
 
-- Treat changes to the ECU assembly, EPROM emulation timing, or power circuitry as safety-critical.
+* Treat changes to the ECU assembly, EPROM emulation timing, or power circuitry as safety-critical.
   Minimum bar: bench-tested, test harness run, and the author says what was and was not tested on real hardware.
-- Check that the maintainer status line and the owner list are still true. If ownership has changed, offer to update them.
-- Make sure more than one person holds admin access to the repository and any accounts or hosting the project depends on.
+* Check that the maintainer status line and the owner list are still true. If ownership has changed, offer to update them.
+* Make sure more than one person holds admin access to the repository and any accounts or hosting the project depends on.
 
 ## 5. Setting up the environment
 
@@ -95,8 +95,8 @@ It is your job, not the person's, except for the steps marked HUMAN below.
 
 Run `uname -a` (or check `$WSL_DISTRO_NAME`) before anything else.
 
-- **Native Linux, or WSL2 (Linux inside Windows):** continue to 5b.
-- **Native Windows (PowerShell, no Linux shell):** the firmware build cannot run here. Do not try to port it.
+* **Native Linux, or WSL2 (Linux inside Windows):** continue to 5b.
+* **Native Windows (PowerShell, no Linux shell):** the firmware build cannot run here. Do not try to port it.
   The person must first set up WSL2. This is the one part you cannot do for them.
   Give them these steps, one at a time, in plain language:
   1. HUMAN: open PowerShell as Administrator, run `wsl --install`, reboot.
@@ -118,9 +118,9 @@ Run `uname -a` (or check `$WSL_DISTRO_NAME`) before anything else.
 3. Some builds (m68hc11 binutils, OpenOCD) compile from source and take a long time.
    Say so up front, with a rough estimate, so a long silence is not mistaken for a hang.
 4. After each stage, verify with a command, not by assumption. Exit checks:
-   - Python environment: `uv run` of a tool works.
-   - Full firmware build: `cd build && ninja` completes.
-   - Hardware present (only if they have it): `uv run tests/runner.py --preflight-only` (see the hardware-test-run skill).
+   * Python environment: `uv run` of a tool works.
+   * Full firmware build: `cd build && ninja` completes.
+   * Hardware present (only if they have it): `uv run tests/runner.py --preflight-only` (see the hardware-test-run skill).
 5. If a step fails: explain why it failed before trying anything else.
    After two failures on the same approach, stop and report (AGENTS.md section 5).
 6. Make every step safe to repeat.
@@ -133,16 +133,16 @@ Run `uname -a` (or check `$WSL_DISTRO_NAME`) before anything else.
 
 Ask for these one at a time, say exactly what to do and what they should see, then wait.
 
-- **sudo password.** You cannot type it. Never suggest passwordless sudo.
+* **sudo password.** You cannot type it. Never suggest passwordless sudo.
   Tell the person exactly what the command will do, have them run it in their own terminal, and ask them to tell you when it finishes.
   Batch all the apt installs into one command so they enter the password once.
-- **Windows-side USB (WSL2 only).**
+* **Windows-side USB (WSL2 only).**
   The debug probe and ap_proxy must be forwarded into WSL with usbipd-win.
   Installing usbipd-win and the first `usbipd bind` need an Administrator PowerShell.
   Give the exact commands and the expected device IDs (see tests/harness/usb_ids.py).
-- **Physical actions:** plugging a board in or out, holding BOOTSEL, grounding SPARE2 for EP debugging, soldering.
+* **Physical actions:** plugging a board in or out, holding BOOTSEL, grounding SPARE2 for EP debugging, soldering.
   After each, verify it took effect (the device appears, the LED state is as expected) before continuing.
-- **Accounts and decisions:** GitHub login, forking, choosing a device name or WiFi credentials. Never invent these.
+* **Accounts and decisions:** GitHub login, forking, choosing a device name or WiFi credentials. Never invent these.
 
 ### 5d. Permission prompts
 

@@ -133,8 +133,7 @@ def main():
     for symbol_name, value in symbols:
         if (symbol_name.endswith('_TYPE_I16') or
             symbol_name.endswith('_TYPE_U16') or
-            symbol_name.endswith('_TYPE_TS') or
-            symbol_name.endswith('_TYPE_PTS')):
+            symbol_name.endswith('_TYPE_TS')):
             if value % 2 != 0:
                 errors.append(f"Error: Symbol '{symbol_name}' has odd value 0x{value:02X}, but must be even")
 
@@ -150,8 +149,7 @@ def main():
     for symbol_name, value in symbols:
         if (symbol_name.endswith('_TYPE_I16') or
             symbol_name.endswith('_TYPE_U16') or
-            symbol_name.endswith('_TYPE_TS') or
-            symbol_name.endswith('_TYPE_PTS')):
+            symbol_name.endswith('_TYPE_TS')):
             # Two-byte types
             entries.append((value, f"[0x{value:02X}] = D_MSB,", symbol_name))
             entries.append((value + 1, f"[0x{value + 1:02X}] = D_LSB,", symbol_name))

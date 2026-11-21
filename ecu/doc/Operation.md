@@ -9,10 +9,11 @@ The following diagram shows the operational sequencing of the engine as it start
 The '#1 cycle' in the diagram refers to the front cylinder operation, and '#2 cycle' refers to the rear.
 
 ### Injectors
+
 On the diagram, the '#10 injection' refers to the front cylinder injector #1, and '#20 injection' refers to the rear cylinder injector.
 If you look at the ECU PCB silkscreen, these are actually numbered #11 and #21, respectively.
 In addition, the ECU circuit board is designed to drive *two* injectors per cylinder.
-The secondart injectors are labled #12 and #22 on the PCB.
+The secondary injectors are labeled #12 and #22 on the PCB.
 The pairs of injectors are wired together on the PCB so they would always fire simultaneously.
 The ECU software would never be able to control the injector pair independently.
 It doesn't really matter though because:
@@ -30,21 +31,69 @@ There are 12 CR periods because:
 
 The diagram makes it clear how each 60 degree portion of a crank rotation maps onto the 4-stroke operation for each cylinder.
 
-Because of the way that the crankshaft is designed and because the cylinders are splayed 60 degrees apart, the starts of power strokes for the two cylinders are spaced unequally around a rotation of the crank.
-Specifically, the diagram makes it clear that a power stroke on the front cylinder starts at the beginning of CR5.
-As the engine continues to rotate, the power stroke on the rear will start only five 60-degree CR intervals later at CR10.
-The next power stroke on CR5 will not occur until seven more 60-degree intervals elapse until CR4.
+Because of the way that the crankshaft is designed and because the cylinders are splayed 60 degrees apart, the power strokes of the two cylinders are unequally spaced around the 2 rotations of a 4-stroke cycle.
+On the diagram, the front cylinder's power stroke begins at about CR5.
+The rear cylinder's begins five 60-degree CR periods later, at about CR10.
+The front cylinder's next power stroke begins seven periods after that, back at CR5.
 This is one of the fundamental reasons that V-twin engines vibrate: uneven firing pulses.
+
+### The CR periods do not line up exactly with the strokes
+
+The diagram draws every stroke as a whole number of CR periods, which makes it easy to read.
+The real engine differs from the diagram, as the following shows:
+
+* A CR event starts as the leading edge of a rotor protrusion passes under the crank sensor.
+  It is a position marker, and it is not required to align precisely with the start of any part of a stroke
+* **Documented Facts**
+  * The leading edges of the rotor protrusions are known to be exactly 60 degrees apart
+  * The Rotax V990 shop manual (p. 2-6) says that the ignition advance while starting is 5 degrees BTDC
+  * The ECU source code indicates that the ECU will fire the coil on the trailing edge of CR5 (front) or CR10 (rear) when starting
+* **Measurements** Each protrusion measures out at 7 degrees wide (9.15 mm protrusion width on a 150.7 mm diameter rotor means the protrusion must be 6.96 degrees wide)
+
+Putting it together:
+
+* If the trailing edge of CR5 is at 5 degrees BTDC, then the leading edge (the CR5 event) must be at 12 degrees BTDC
+* CR4 must be 60 degrees earlier, at 72 degrees BTDC.
+  See [Ignition.md](Ignition.md) and the comments in UM4.S
+
+*Caveat: Nobody has measured the position of the rotor protrusions relative to TDC or BDC on a real engine, so treat them as the best available estimate.*
+
+For the front cylinder, the CR periods fall against the crankshaft like this:
+
+| Period | Crank angle (degrees from front TDC) |
+| --- | --- |
+| CR4 | 72 to 12 before TDC |
+| CR5 | 12 before to 48 after |
+| CR6 | 48 to 108 after |
+| CR7 | 108 to 168 after |
+| CR8 | 168 to 228 after |
+
+The rear cylinder is the same, shifted by five periods: its TDC falls 12 degrees into CR10.
+
+That puts the front power stroke (0 to 180 degrees after TDC) across the last 48 degrees of CR5, all of CR6 and CR7, and the first 12 degrees of CR8.
+In the same way, the compression stroke covers the last 48 degrees of CR2, all of CR3 and CR4, and the first 12 degrees of CR5.
+Combustion starts before TDC, because the spark is fired ahead of it: 5 degrees BTDC while starting, and 21.8 degrees (plus or minus 2) at 2800 RPM, according to the shop manual.
+
+Even with perfect knowledge of the angles, the instantaneous RPM as the crank goes through a single rotation would still look a bit fuzzy.
+A closed throttle does not mean no forces: the compression stroke still slows the engine a bit, and there is still a small power stroke.
+
+### Power Strokes
+
+Even though the periods are fuzzy, we can say where the crank should speed up during a power stroke.
+The power stroke does not push on the crank equally through its three 60-degree portions.
+
+* **Near TDC:** the cylinder pressure rises rapidly, but the connecting rod is almost vertical.
+  The piston can push as hard as it likes, but the rod has almost no mechanical advantage over the crankshaft
+* **Mid-stroke:** the rod angle has opened up, and the pressure is still high.
+  This is where combustion pressure is converted into crankshaft rotation most efficiently
+* **Late stroke:** the cylinder volume has grown a lot, so the pressure has dropped, and the rod is approaching vertical again.
+  What is left of the cylinder pressure is fighting rapidly decreasing mechanical advantage
+
+So for the front cylinder we expect little speed gain in CR5, the most in CR6, and a little in CR7.
+The other cylinder complicates this: while the front cylinder is in CR7, the rear is starting its compression stroke, which drags on the crank and can hide some of the front's late power.
 
 ### Observations
 
-Examining the logs from a umod4 run tell us some important things.
-First off, an internal combustion engine will speed up and slow down during every rotation.
-It might seem obvious that the slowest part of the rotation would be during CR4 and CR9 where the engine is at the end of the compression stroke.
-This is almost true, but not quite.
-In fact, the slowest part of the engine rotation occurs immediately afterwards, during CR5 and CR10.
-This is the initial part of the power stroke.
-The thing to consider is that the while the pressure in the cylinder is increasing rapidly during CR5 and CR10, the piston is trying to push down on a connecting rod that is still nearly vertical.
-As a result, the high combustion pressure is not able to translate that high pressure into turning the crankshaft.
-During CR6 and CR11, the crankshaft has rotated enough that the rod angle allows the piston to accellerate the rotary motion of the crankshaft with maximum efficiency.
-That's a long way of saying that if we analyze the time period that each CR period takes, CR5 should be significantly shorter than CR4, and CR11 shorter than CR10.
+Logs of full-throttle acceleration broadly agree with these expectations.
+The time taken by each CR period shows the crank speeding up through CR5 and CR6, with the larger gain in CR6, and with essentially no gain through CR7.
+The effect is small, a few percent of the average speed, and the CR periods are fuzzy as described above, so it is a trend, not a precise measurement.

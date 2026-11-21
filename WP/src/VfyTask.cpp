@@ -199,7 +199,7 @@ static void emit_ecu(void)
                meta,
                (unsigned)ecuLogidRxCount[LOGID_ECU_CPU_EVENT_TYPE_U8],
                (unsigned)ecuLiveLog[LOGID_ECU_CPU_EVENT_TYPE_U8],
-               (unsigned)ecuLogidRxCount[LOGID_ECU_T1_OFLO_TYPE_TS],
+               (unsigned)ecuLogidRxCount[LOGID_ECU_T1_OFLO_TYPE_U16],
                (unsigned long)t1_period,
                (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_VTA_TYPE_U16],
                (unsigned)ecuLogidRxCount[LOGID_ECU_RAW_VM_TYPE_U8],

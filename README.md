@@ -22,7 +22,7 @@ These are just a couple of examples to show the kinds of things you can do with 
 ## Server
 
 The server runs on a PC on your local network.
-It automatically pulls new ride logs off a umod4 and lets you reflash the onboard processors.
+It automatically pulls new ride logs off a umod4 and lets you reflash the two onboard processors, the EP and the WP.
 
 <p align="center">
 <img src="doc/images/README/server-reflash-wp.png" width="560" alt="The umod4 server managing two devices, BenchECU and Tuono2, with a progress dialog showing a WP firmware update uploading over WiFi">
@@ -44,7 +44,7 @@ The narrow blue rectangle in the bottom window shows you what part of the log yo
 From the main window, you can see that I started from a stop, slowly opened the throttle (green line) to let the revs rise, then changed to 2nd gear and whacked the throttle open.
 I let the throttle roll off as my speed increased, shifting to 3rd gear just over 50 MPH.
 The blue triangles represent when GPS position & velocity data was received.
-Of course, you can zoom in to any level of detail in a log, right down to a partial rotations of the crankshaft with the engine running at redline.
+Of course, you can zoom in to any level of detail in a log, right down to a fraction of one rotation of the crankshaft with the engine running at redline.
 
 The visualizer will generate a map in a web browser showing that GPS data.
 Here is the very first ride map I ever collected.
@@ -59,8 +59,9 @@ Find yourself below:
 
 | If you are... | Start here |
 |---|---|
-| Curious what a Umod4 would do for a rider | [WHY_UMOD4.md](WHY_UMOD4.md) |
-| A rider with a Umod4: setting it up and using it | [USER_GUIDE.md](USER_GUIDE.md) |
+| Curious what a umod4 would do for a rider | [WHY_UMOD4.md](WHY_UMOD4.md) |
+| A rider with a umod4: setting it up and using it | [USER_GUIDE.md](USER_GUIDE.md) |
+| Wanting the server and visualizer on a PC | [Download the latest release](https://github.com/mookiedog/umod4/releases/latest) |
 | Building a board and installing it in an ECU | [GETTING_STARTED.md](GETTING_STARTED.md) |
 | Wondering how it works: the EP/WP design, the ECU interface, the board | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) |
 | A software developer: building, debugging, testing, releasing | [BUILDING.md](BUILDING.md), [DEBUGGING.md](DEBUGGING.md), [BENCH_TESTING.md](BENCH_TESTING.md), [RELEASING.md](RELEASING.md), [Tools.md](Tools.md) |
@@ -80,14 +81,13 @@ Everything here has been verified on my own bike and my own test bench setup.
 | WP firmware (WiFi, GPS, SD card, logging) | Working | LittleFS's trouble with large files on SD cards was resolved by adding the LogStore class |
 | Server | Working | automatic log download, OTA firmware upgrades |
 | Visualizer | Working | Minor bugs exist |
-| PCB | Working | 4V2 is the most recent board actually fabricated. A 4V3 would fix pad dimensions to suit JLCPCB's manufacturability requirements and resolve the noise issue below. No other functional changes are expected |
-| PCB noise issue | In progress | Noise appears at VSYS that could possibly damage the Pico2W's voltage regulator. A 4V2 board can be bodged with a silicon diode to add 0.8V of noise headroom. It is not known whether that is a complete fix for a 4V3, or whether more filtering is needed |
+| PCB | 4V2 | [4V3 in progress](https://github.com/mookiedog/umod4-PCB) |
 
 ## Getting a Board
 
 The [umod4 PCB design](https://github.com/mookiedog/umod4-PCB) is a separate project, also on Github.
-As mentioned in the Status section, the 4V2 board is the most recent board that has been fabricated and tested.
-The 4V3 update represents only minor changes, and is in progress.
+The 4V2 board is the most recent board that has been fabricated and tested on a bike.
+A 4V3 update represents minor changes, and is in progress.
 The 4V3 design will be software compatible with 4V2.
 I have no timeframe for finishing it.
 

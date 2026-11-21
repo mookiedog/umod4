@@ -18,17 +18,17 @@ const log_id_meta_t g_log_id_meta[256] = {
 
     // ── ECU — timing / events (not suitable for live numeric display) ─────
     [LOGID_ECU_CPU_EVENT_TYPE_U8]        = META_HIDE("CPU Event"),
-    [LOGID_ECU_T1_OFLO_TYPE_TS]          = META_HIDE("Timer Overflow"),
-    [LOGID_ECU_F_INJ_ON_TYPE_PTS]        = META_HIDE("Front Inj ON"),
-    [LOGID_ECU_R_INJ_ON_TYPE_PTS]        = META_HIDE("Rear Inj ON"),
-    [LOGID_ECU_F_COIL_ON_TYPE_PTS]       = META_HIDE("Front Coil ON"),
-    [LOGID_ECU_F_COIL_OFF_TYPE_PTS]      = META_HIDE("Front Coil OFF"),
-    [LOGID_ECU_R_COIL_ON_TYPE_PTS]       = META_HIDE("Rear Coil ON"),
-    [LOGID_ECU_R_COIL_OFF_TYPE_PTS]      = META_HIDE("Rear Coil OFF"),
+    [LOGID_ECU_T1_OFLO_TYPE_U16]         = META_HIDE("Timer Overflow"),
+    [LOGID_ECU_F_INJ_ON_TYPE_U16]        = META_HIDE("Front Inj ON"),
+    [LOGID_ECU_R_INJ_ON_TYPE_U16]        = META_HIDE("Rear Inj ON"),
+    [LOGID_ECU_F_COIL_ON_TYPE_U16]       = META_HIDE("Front Coil ON"),
+    [LOGID_ECU_F_COIL_OFF_TYPE_U16]      = META_HIDE("Front Coil OFF"),
+    [LOGID_ECU_R_COIL_ON_TYPE_U16]       = META_HIDE("Rear Coil ON"),
+    [LOGID_ECU_R_COIL_OFF_TYPE_U16]      = META_HIDE("Rear Coil OFF"),
     [LOGID_ECU_CRANKREF_START_TYPE_TS]   = META_HIDE("Crank Ref Start"),
     [LOGID_ECU_CAMSHAFT_TYPE_TS]         = META_HIDE("Camshaft Event"),
-    [LOGID_ECU_SPRK_X1_TYPE_PTS]         = META_HIDE("Spark X1"),
-    [LOGID_ECU_SPRK_X2_TYPE_PTS]         = META_HIDE("Spark X2"),
+    [LOGID_ECU_SPRK_X1_TYPE_U16]         = META_HIDE("Spark X1"),
+    [LOGID_ECU_SPRK_X2_TYPE_U16]         = META_HIDE("Spark X2"),
 
     // ── ECU — ignition timing ─────────────────────────────────────────────
     [LOGID_ECU_F_IGN_DLY_TYPE_0P8]  = META_DISP(LOGID_ECU_F_IGN_DLY_NAME, LOGID_ECU_F_IGN_DLY_UNITS),

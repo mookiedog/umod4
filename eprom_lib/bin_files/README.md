@@ -1,14 +1,19 @@
 # Bin Files
 
-This directory can be populated with whatever .bin files you can find on the web, or from your own collection.
+This directory is an optional place to keep EPROM .bin files while you work with them.
+Nothing requires you to use it: your .bin files can live anywhere on your PC, because you load them onto the umod4 through its web page.
+See [Putting a .bin file into the umod4](../../USER_GUIDE.md#putting-a-bin-file-into-the-umod4) in the User Guide.
 
-For each .bin file in this directory, there should be a corresponding ".dsc" file in the source directory
-that describes the bin file. The eprom_lib/CMakeLists.txt file should be modified to match your collection
-of .bin files. Likewise, the EP's CMakeLists.txt should be modified to pull in whatever .bin files
-you want in your system.
+Stock Aprilia EPROM images are deliberately not part of this repository.
+The `.gitignore` in this directory keeps any `.bin` or `.bin.*` file you put here from being committed by accident.
+See [Bin Files](../README.md#bin-files) in the EPROM library for the reasoning.
 
-In truth, this eprom_lib in its present form is temporary. At some point, the .bin files and .dsc files
-should be part of a collection that is managed by an app on someone's phone, to be loaded into the ECU
-as desired.
+## The one thing the build does with this directory
 
-For now, we build the .bin and .dsc files right into the EP firmware as BSON documents.
+The EP firmware contains a built-in 'limp mode' image that it loads when it cannot load anything else.
+By default, the build makes that image from the maps in `RP58.bin` combined with the code from `UM4.bin`.
+If there is an `RP58.bin` in this directory, the build uses its maps.
+If there is not, the limp mode image is simply `UM4.bin`.
+The details are in the limp mode section of [EP/CMakeLists.txt](../../EP/CMakeLists.txt).
+
+[Notes.md](Notes.md) describes how to compare the map sets of two EPROMs.

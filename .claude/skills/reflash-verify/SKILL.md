@@ -22,22 +22,22 @@ A flash command that exits cleanly proves nothing about what is running.
 
 How these work:
 
-- **EP flashing is done by the WP over SWD.** The WP must be running, on the network, and have its SD card inserted, because it stages the EP image there.
-- **`flash_WP` needs the WP in BOOTSEL.** On WSL2 it does the usbipd attach itself. USB trouble is covered in the hardware-test-run skill.
-- **Build first:** `cd ~/projects/umod4/build && ninja`. Then confirm `build/WP/WP.uf2` or `build/EP/EP.uf2` has a fresh timestamp.
+* **EP flashing is done by the WP over SWD.** The WP must be running, on the network, and have its SD card inserted, because it stages the EP image there.
+* **`flash_WP` needs the WP in BOOTSEL.** On WSL2 it does the usbipd attach itself. USB trouble is covered in the hardware-test-run skill.
+* **Build first:** `cd ~/projects/umod4/build && ninja`. Then confirm `build/WP/WP.uf2` or `build/EP/EP.uf2` has a fresh timestamp.
 
 ## Traps
 
-- **Never let a debugger write a WP image straight to its run address.**
+* **Never let a debugger write a WP image straight to its run address.**
   The WP flash holds two image slots plus partition data, and the bootloader remaps a slot to the run address.
   A normal debugger load lands at the run address and destroys the partitions.
   Use "attach to running firmware", or the partition-aware loader (it erases slot 1 and loads slot 0).
-- **Debugging the EP conflicts with the WP.**
+* **Debugging the EP conflicts with the WP.**
   Both would drive the EP's SWD pins.
   Power off, ground SPARE2, attach the debugger, then power on.
   When finished: detach, let SPARE2 float, reboot the WP.
   For test-harness runs SPARE2 must be floating.
-- **Changing EP code that affects bus timing triggers the ecu-ep-safety rules** (scope verification, comment updates).
+* **Changing EP code that affects bus timing triggers the ecu-ep-safety rules** (scope verification, comment updates).
   A successful flash says nothing about timing.
 
 ## Verify the new build is running
@@ -61,11 +61,11 @@ How these work:
 
 ## When it fails
 
-- Explain why before retrying anything.
-- The SwdReflash EP path has a known intermittent failure: `flash_timeout` with `last_status:-1`, roughly half the runs in earlier testing, cause not understood.
+* Explain why before retrying anything.
+* The SwdReflash EP path has a known intermittent failure: `flash_timeout` with `last_status:-1`, roughly half the runs in earlier testing, cause not understood.
   Do not describe it as understood.
-- After two failures of the same approach, stop and write the four-part summary from CLAUDE.md: what was tried, what is known versus guessed, the open question, and whether to continue.
-- Ask the user before anything physical: pressing BOOTSEL, grounding SPARE2, unplugging.
+* After two failures of the same approach, stop and write the four-part summary from CLAUDE.md: what was tried, what is known versus guessed, the open question, and whether to continue.
+* Ask the user before anything physical: pressing BOOTSEL, grounding SPARE2, unplugging.
 
 ## Keeping this skill current
 

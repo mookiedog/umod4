@@ -1,6 +1,7 @@
 # How The Umod4 Works
 
-This page explains what is inside a umod4 and how it all works. It will cover the umod4 from its conceptual viewpoint down through the system's data flow and high-level electrical power considerations.
+This page explains what is inside a umod4 and how it all works.
+It will cover the umod4 from its conceptual viewpoint down through the system's data flow and high-level electrical power considerations.
 If you just want to know what a umod4 does for a rider, start with [WHY_UMOD4.md](WHY_UMOD4.md).
 If you want to build one, see [GETTING_STARTED.md](GETTING_STARTED.md).
 
@@ -244,7 +245,7 @@ The board design is in its own repository, [umod4-PCB](https://github.com/mookie
 
 ![Umod4 PCB](doc/images/HOW_IT_WORKS/ultraMod4_pcb.jpg)
 
-*The 4V1 version of the umod4 circuit board*
+*An early (4V1) version of the umod4 circuit board*
 
 ## Where to go next
 

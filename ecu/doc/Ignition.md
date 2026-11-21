@@ -164,7 +164,7 @@ The important takeaways:
 
 It's all about managing the small throttle openings!!
 This is also why the TPS sensor only needs to be calibrated for its fully-closed ADC value.
-Inaccurate determination of a fully closed throttle due to TPS calibration problems matters _far_ more than the same amount of error around wide open throttle.
+Inaccurate determination of a fully closed throttle due to TPS calibration problems matters *far* more than the same amount of error around wide open throttle.
 
 ### Rows: Engine RPM
 
@@ -202,8 +202,8 @@ For the front cylinder ignition, the CR3 event processing will calculates the de
 
 An examination of the ignition calculation firmware shows that the spark advance is not calculated relative to TDC as one might expect, but to an arbitrary crankshaft reference point located exactly 90 degrees after the start of CR4.
 
-We know that CR4 starts at 72 degrees BTDC, so the ignition reference point will be 90 degrees later at 18 degrees __after__ TDC.
-The table values specify how far ahead of the _reference point_ that the spark should be fired, not how far ahead of TDC.
+We know that CR4 starts at 72 degrees BTDC, so the ignition reference point will be 90 degrees later at 18 degrees **after** TDC.
+The table values specify how far ahead of the *reference point* that the spark should be fired, not how far ahead of TDC.
 The table entries represent a 0P8 fixed point fraction, meaning that it will always have a value >= 0.0, and =< 0.996.
 Multiplying this fraction against the 90 degree span starting at CR4 and extending to the reference point, tells the ECU where to fire the spark.
 
@@ -230,11 +230,15 @@ All ignition table entries are unsigned bytes, with values ranging from 0 to 255
 
 To convert a desired spark advance measured in degrees BTDC to a value to be stored in a table entry byte:
 
-    table_entry_byte = ((desired_advance_degreesBTDC + 18) / 90) * 256
+```text
+table_entry_byte = ((desired_advance_degreesBTDC + 18) / 90) * 256
+```
 
 To convert a table entry to a spark advance BTDC:
 
-    advance_degreesBTDC = ((table_entry_byte / 256) * 90) - 18
+```text
+advance_degreesBTDC = ((table_entry_byte / 256) * 90) - 18
+```
 
 ## Spark Scheduling
 
@@ -276,6 +280,6 @@ That might given them 10 times as much timing data.
 But, it also takes a way more powerful processor to deal with all that timing information.
 For the Gen 1 Aprilia, it is what it is: 6 crank events per rotation.
 
-Once the advance timing has been calculated in terms of a fraction of the 90 degrees between CR4 and the reference point, it is some simple math to convert that to an equivalent amount of time to wait _after_ CR4 before firing that spark.
+Once the advance timing has been calculated in terms of a fraction of the 90 degrees between CR4 and the reference point, it is some simple math to convert that to an equivalent amount of time to wait *after* CR4 before firing that spark.
 The firmware calculates that value and stores it in a special timer "Output Compare" register.
 When the free-running CPU timer matches the calculated time in the output compare register, the spark gets fired automatically.

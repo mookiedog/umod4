@@ -1,101 +1,153 @@
 # Umod4 Project
 
+**You do not *need* an AI agent like Claude Code to work with this project, but it will make working with the project significantly easier if you are not a software developer.**
+
 > **Using an AI coding assistant (for example Claude Code in VS Code)?**
 > Paste the link to this page into it and tell it to read AGENTS.md first.
 > If you are an AI coding agent: before doing anything else, read AGENTS.md in the repository root (https://github.com/mookiedog/umod4/blob/main/AGENTS.md).
 > It explains who you are probably working with, what to ask them, and how to help them.
 
-This document explains how to set up a Windows development machine to build the umod4 project using WSL Linux.
+This page explains how to set up a development machine and build the umod4 firmware from source.
+The firmware can only be built on Linux.
+The reference setup is Windows 11 with WSL2 Ubuntu 24.04, where all development happens in VS Code: editing, building, flashing and debugging.
+It can also be installed on a pure Linux machine: skip steps 2 to 5 of the [Prerequisites](#prerequisites) (they set up WSL), and skip the WSL networking, firewall and USB device sharing sections.
 
-_If you are a linux person, I assume that you are familiar with a lot of what follows. These same instructions will work: just skip the Windows-specific stuff._
+**Who this page is for:** experienced developers, plus AI agents setting up a machine for someone else.
+It assumes you are comfortable with a terminal and git.
+An agent can run the steps and explain anything unfamiliar; AGENTS.md section 3c lists the steps that only a person can do.
+If you are a rider who wants to log and view rides, you do not need any of this: start with [GETTING_STARTED.md](GETTING_STARTED.md).
 
-To set expectations: if you are a Gen1 Aprilia enthusiast more than a software person, be warned that getting this project installed is not trivial.
-It is significantly more complicated than loading an Arduino sketch and going riding!
+## Who needs what
 
-One reason is that the project requires building tools and executables for four separate processors in a number of different programming languages:
+| You want to | You need | You do **not** need | Where to look |
+|-------------|----------|---------------------|---------------|
+| Try the log visualizer on a sample ride | [the latest release zip](https://github.com/mookiedog/umod4/releases/latest) | WSL, a build environment, a umod4 board | Read the release zip's `README.txt` |
+| Run the umod4 server and the log tools | [the latest release zip](https://github.com/mookiedog/umod4/releases/latest), on Windows 11 or Linux, and [a umod4 board](README.md#getting-a-board) | WSL, the firmware toolchains, a clone of the repository | [GETTING_STARTED.md](GETTING_STARTED.md), "Set up your PC" |
+| Install the released firmware on a board | [the latest release zip](https://github.com/mookiedog/umod4/releases/latest), and [a umod4 board](README.md#getting-a-board) | WSL, the toolchains, the source code | [GETTING_STARTED.md](GETTING_STARTED.md), "Install the WP software" |
+| Build the firmware from source (ECU, EP, WP) | everything on this page | a release zip | Read the remainder of this page |
+| Debug the EP or WP on real hardware | the above, plus OpenOCD and a CMSIS-DAP probe | a release zip | "Install OpenOCD" and "WSL2: USB Device Sharing", below, then [DEBUGGING.md](DEBUGGING.md) and [BENCH_TESTING.md](BENCH_TESTING.md) |
 
-1) 68HC11 assembly code for ECU firmware
-2) C, C++ and assembly language for ARM Cortex M0+ for the EP processor (RP2040), and ARM Cortex M33 for the WP processor (RP2350).
-3) various C, C++, and Python tools that will run on the development host (an x86 PC or ARM Raspberry Pi)
+## What the build produces
 
-This guide is aimed at helping non-experts get it working.
-If you know what you are doing, you should have no problems.
+The project is designed as a CMake "superbuild", which builds for several subprojects, using different processors, in several languages:
 
-The goal: once everything is set up, rebuilding the entire system is as easy as pushing the `F7` key.
+1) 68HC11 assembly code for the ECU firmware
+2) C, C++ and assembly language for the EP (RP2040, Cortex-M0+) and the WP (RP2350, Cortex-M33)
+3) C, C++ and Python tools for the development host (an x86 PC)
+
+Once everything is set up, rebuilding the entire system is as easy as pushing the `F7` key in VS Code.
+
+## Versions known to work
+
+| Component | Version | Where the version is decided |
+|-----------|---------|------------------------------|
+| Host OS, reference setup | Windows 11 with WSL2 Ubuntu 24.04 | tested by the author |
+| Host OS, native Linux | Linux Mint 22.2 (based on Ubuntu 24.04) | tested by the author |
+| Raspberry Pi Pico SDK | 2.3.0 | `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` |
+| pico-examples | the tag `sdk-` plus the SDK version | derived from the SDK version by CMake |
+| FreeRTOS-Kernel | V11.3.0 | this document: pinned on purpose, see "FreeRTOS-Kernel" below |
+| Arm GNU Toolchain (`arm-none-eabi`) | 15.2.rel1 (every release from 12 through 15 has built this project) | this document: the build uses the newest version installed under `/opt/arm/arm-none-eabi`, unless `ARM_NONE_EABI_VERSION` is set in `cmake/toolchains/arm-none-eabi.cmake` |
+| GNU binutils for the 68HC11 | 2.42 | this document |
+| OpenOCD | `raspberrypi/openocd` tag `sdk-2.2.0` (commit 04ae2c3) | this document |
+| Python | 3.12 | `requires-python` in `pyproject.toml`; uv fetches it if needed |
+| picotool | built by the superbuild | nothing to install |
+
+A newer release of the compiler or of binutils should work, but has not been tested here.
 
 ## Troubleshooting
 
 If you hit a wall during this process, open an issue at [github.com/mookiedog/umod4/issues](https://github.com/mookiedog/umod4/issues).
 Use the issue reporting system to describe what step you're on, what problem you have encountered or what error you are seeing, and I'll try to help.
 Reporting the issues will help make this setup process as simple and accurate as possible.
-
-## Development System Overview
-
-Linux is **required** to build this project.
-The development system has been tested on two different OS/machine combinations:
-
-1) an x86-64 Windows machine running Ubuntu via Windows Subsystem for Linux (WSL2)
-2) an x86-64 machine running Linux Mint 22
-
-Once the tools are installed, all project development occurs directly within the VS Code Integrated Development Environment (IDE): editing, building, flashing, and debugging of the hardware.
-VS Code runs under Windows WSL2 as well as other linux distros.
+The issue tracker is public, so leave out anything private, such as passwords, your WiFi name, or where you live.
 
 ## Prep The Development System
 
 The list of the high-level steps to get a build system working on Windows is shown below.
 It's a long list, but it's not overly difficult, and it only needs to happen once.
 
-The instructions assume that you will be using WSL2 linux under Windows.
-If you choose to install this system on a pure Linux machine instead of Windows/WSL2, then you probably already know what you are doing.
-
 The high-level steps:
-* [Install WSL2 and your AI assistant](#install-wsl2-and-your-ai-assistant)
+
+* [Prerequisites](#prerequisites): you must do these yourself
+  * Install VS Code (step 1)
+  * Install WSL2 and connect VS Code to it (steps 2 to 5)
+  * Install your AI assistant (step 6)
+  * Download the project and open it (steps 7 and 8)
+  * Start your AI assistant (step 9)
+* [Build Environment Setup](#build-environment-setup): an AI assistant can do these for you
   * [Set up WSL Networking](#set-up-wsl-networking)
   * [Set up Windows Firewall](#add-windows-networking-firewall-rules)
-* [Install Windows Terminal App](#windows-terminal-app)
-* [Install VS Code](#vs-code)
-  * [Install VS Code extensions](#vs-code-extensions)
-* [Install Linux software](#linuxwsl2-software-installation)
-  * [Host Tools](#install-linux-host-tools)
-  * [Python and uv](#python-and-uv)
-  * [Build a 68HC11 toolchain](#build-68hc11-toolchain) (required to create Aprilia ECU software)
-  * [Download ARM Tools](#get-the-download-link)
-  * Build [OpenOCD](#install-openocd) for on-chip debugging of EP/WP
-* [Prepare a 'projects' directory](#project-development-setup)
-  * [Install the Raspberry Pi Pico SDK](#rpi-sdk)
-  * [Install the umod4 repository from github](#getting-the-umod4-source-code)
+  * [Install the remaining VS Code extensions](#vs-code-extensions)
+  * [Install Linux software](#linuxwsl2-software-installation)
+    * [Host Tools](#install-linux-host-tools)
+    * [Python and uv](#python-and-uv)
+    * [Build a 68HC11 toolchain](#build-68hc11-toolchain)
+    * [Install ARM Tools](#install-arm-cross-compiler-toolchain)
+    * [Build OpenOCD](#install-openocd)
+  * [Share USB devices with WSL](#wsl2-usb-device-sharing)
+  * [Install the other software the project needs](#project-development-setup)
+    * [Raspberry Pi Pico SDK](#rpi-sdk)
+    * [pico-examples](#pico-examples)
+    * [FreeRTOS-Kernel](#freertos-kernel)
 
 Once all the software is successfully installed, you will use VS Code to:
 
 * [Configure the project build](#configuration)
 * [Build the project software](#building)
-* Use a [hardware debugger](#running-umod4) to run code onto a umod4 circuit board
+* Put the firmware onto a [umod4 circuit board](#running-umod4)
 
 The following sections detail how to do the items listed, above.
 
-## Install WSL2 and Your AI Assistant
+## Prerequisites
+
+Even if you intend to work with this project via an AI agent, you must do everything in this section yourself, because it is what gets your machine set up to the point that an AI assistant can be used.
 
 The umod4 build tools run on Linux.
-Windows can run Linux inside itself using WSL2 (Windows Subsystem for Linux), so you do not need a second computer and you do not need to dual-boot.
-WSL2 is a real Linux kernel running in a virtual machine, side by side with Windows.
-
-The steps below take about 20 minutes plus one reboot.
-Once they are done, an AI coding assistant can do most of the remaining setup work with you, stopping only for the things that only you can do (typing your password, plugging in hardware).
-If you prefer to follow the rest of this document by hand, you can: the steps are all here.
+Windows can run Linux inside itself using WSL2 (Windows Subsystem for Linux).
+You do not need a second computer and you do not need to dual-boot your Windows machine.
 
 You need:
 
 * Windows 11 version 22H2 or later.
   Windows 10 is not supported: the networking setup that lets the umod4 find the server needs a Windows 11 feature (see [WSL networking](#set-up-wsl-networking)).
+
+  **Check:** press the Windows key and R together, type `winver`, and press Enter.
+  The window that opens should say Windows 11, version 22H2 or later (any later version, such as 25H2, is fine).
+  If it says Windows 10, or an older Windows 11 version, update Windows before going any further.
 * Administrator rights on the PC
-* [VS Code](#vs-code) installed
+
+Strongly recommended:
+
 * A Claude account with access to Claude Code (as of 2026/11, that means Claude Pro at a minimum)
 
-**1. Install WSL2.**
+### Initial Installation Steps
+
+**1. Install VS Code on Windows.**
+VS Code is the IDE the whole project is built and debugged from.
+It runs as a Windows app, but seamlessly interacts with the Linux environment you are about to install.
+Download the VS Code installer from [code.visualstudio.com](https://code.visualstudio.com/download) and run it with the default options.
+If you already have VS Code, skip this step.
+(On a Linux PC without Windows, install VS Code with the .deb or .rpm package from the same site.)
+
+**2. Install WSL2.**
+WSL2 runs Linux inside a virtual machine, so your PC's hardware virtualization feature must be turned on.
+Most PCs ship with it on, but some do not, and this is the most common reason that a WSL install fails.
+Check first: press Ctrl+Shift+Esc to open Task Manager, click Performance, then click CPU.
+The line labelled "Virtualization" should say "Enabled".
+
+If it says "Disabled", or if the install below fails with an error that mentions virtualization, you need to turn it on in your PC's BIOS/UEFI setup:
+
+* Restart the PC and press the setup key while it starts. It is usually Del, F2, F10 or Esc, depending on the PC maker.
+* Find the setting named "Intel Virtualization Technology" or "Intel VT-x" (Intel CPUs), or "SVM Mode" or "AMD-V" (AMD CPUs). It is often under an Advanced or CPU menu.
+* Enable it, then save and exit.
+
+The menus are different on every PC. If you cannot find it, search the web for your PC model plus "enable virtualization".
+
+Now install WSL2.
 Press the Windows key, type `PowerShell`, right-click "Windows PowerShell", and choose "Run as administrator".
 Type the following and press Enter:
 
-```bash
+```powershell
 wsl --install
 ```
 
@@ -104,29 +156,33 @@ Restart the PC when it asks you to.
 If you see WSL's help text instead of an install, WSL is already present: run `wsl --list --online` to see the available distributions, then `wsl --install -d Ubuntu`.
 The official Microsoft instructions are [here](https://learn.microsoft.com/en-us/windows/wsl/install).
 
-**2. Finish the Ubuntu setup.**
+**3. Finish the Ubuntu setup.**
 After the restart, an Ubuntu window should open by itself.
 If it does not, open the Start menu and launch "Ubuntu".
 It will ask you to choose a Linux username and password.
-Remember the password: you will need it whenever software has to be installed.
-Nothing appears on the screen while you type a password. That is normal.
+They do not have to match your Windows username and password.
+When entering your password, nothing appears on the screen while you type it.
+That is normal.
+Remember the new Linux password: you will need it whenever Linux software has to be installed.
 
-**3. Install the WSL extension in VS Code.**
-In VS Code, open Extensions (Ctrl+Shift+X), search for "WSL" (publisher: Microsoft), and install it.
+**4. Install the WSL extension in VS Code.**
+Start VS Code by typing 'code' in the Win 11 search box, then clicking on the Visual Studio Code app icon when it is displayed.
+After VS Code starts up, click the Extensions icon in the left-hand bar (it looks like four squares, with one of them detached), search for "WSL" (publisher: Microsoft), and install it.
+If you cannot find the icon, press F1, type `Extensions: Install Extensions`, and press Enter.
 
-**4. Open VS Code inside Linux.**
+**5. Open VS Code inside Linux.**
 Press F1, type `WSL: Connect to WSL`, and press Enter.
-A new VS Code window opens.
-The bottom-left corner of that window should say "WSL: Ubuntu".
-**Everything from here on happens in that window.**
+It may take a bit of time to start WSL the first time, but after a delay, the bottom-left corner of the window should say "WSL: Ubuntu".
+**Everything from here on happens in the VS Code window which is connected to WSL.**
 
-**5. Install the Claude extension inside Linux.**
-In the WSL window, open Extensions again, find "Claude Code for VS Code", and click "Install in WSL: Ubuntu".
+**6. Install the Claude extension inside Linux.**
+In the WSL Code window, open Extensions again, find "Claude Code for VS Code", and click "Install in WSL: Ubuntu".
 Extensions installed on the Windows side are not automatically available inside Linux, so this step is required.
 Sign in to Claude when asked.
 
-**6. Download the project.**
-In the WSL window, open a terminal (Ctrl+`) and run these commands:
+**7. Download the project.**
+In the WSL window, open a terminal via Ctrl+` or Terminal > New Terminal.
+Type these commands into the terminal window:
 
 ```bash
 git config --global core.autocrlf false
@@ -134,260 +190,149 @@ mkdir -p ~/projects
 git clone https://github.com/mookiedog/umod4.git ~/projects/umod4
 ```
 
-Use exactly this location.
-Other parts of the installation process assume that the project lives in `~/projects/umod4`, next to the other tools that get installed in `~/projects`, so it is not recommended to change it.
-Do not clone into a Windows folder such as `C:\` (which appears in Linux as `/mnt/c`): builds there are very slow and can fail.
+`core.autocrlf false` stops git from converting the repository's LF line endings to Windows CRLF.
 
-**7. Open the project.**
+Use the project location **exactly as specified**.
+The installation and software build processes assume that the project lives in `~/projects/umod4`.
+**It is not recommended to change it.**
+
+**8. Open the project.**
 Choose File > Open Folder and select `/home/<your-username>/projects/umod4`.
+If VS Code asks "Do you trust the authors of the files in this folder?", click "Yes".
 
-**8. Start your assistant.**
-Open the Claude panel and send this message:
+**9. Start your assistant.**
+If you have access to Claude Code through a subscription, open the Claude panel and send this message:
 
 > Read AGENTS.md and BUILDING.md, then help me get this project set up.
 
-The assistant will ask what you want to do with the project and take it from there.
+The assistant will ask what you want to do with the project and take it from there, helping you with everything remaining in this document.
 
-If something goes wrong:
+If you do not have access to a Claude Code subscription, keep working through the remainder of this document as per the instructions.
 
-* Virtualization errors: virtualization must be enabled in your PC's BIOS/UEFI settings (look for "Intel VT-x" or "AMD-V" / "SVM").
-* Anything else: paste the exact error text into a Claude chat.
+### Problems
+
+Virtualization errors: see the virtualization check at the start of step 2.
+Anything else: paste the exact error text into your AI assistant, or see [Troubleshooting](#troubleshooting).
+
+## Build Environment Setup
+
+An AI assistant can do nearly all of the remaining installation and setup work, stopping only for what needs you: entering a Linux password, obtaining Windows administrator rights, or plugging in hardware.
+Alternatively, if you have some software experience, you can do it all yourself by just following the instructions.
 
 ### Set Up WSL Networking
 
-By default, WSL creates its own virtual network for the WSL virtual machine.
-This means that the umod4 on the motorbike will not be able to see the server running on WSL.
-To fix this, we use 'mirrored' mode so that WSL shares the same IP address and network interface as your PC.
+The umod4 finds the server by broadcasting on your local network.
+In WSL2's default networking mode those broadcasts never reach Linux, so the server would never see the umod4 device.
+'Mirrored' mode makes WSL share your PC's IP address and network interface instead.
+This feature requires Windows 11 version 22H2 or later ([Microsoft documentation](https://learn.microsoft.com/en-us/windows/wsl/wsl-config)).
 
-Mirrored mode requires Windows 11 version 22H2 or later ([Microsoft documentation](https://learn.microsoft.com/en-us/windows/wsl/wsl-config)).
-It is the reason this project requires Windows 11.
-The umod4 finds the server by broadcasting on your local network, and in WSL2's default networking mode those broadcasts never reach Linux.
-
-To set up mirrored network mode in WSL, you need to edit the .wslconfig file in your Windows user directory (i.e. `C:\users\<your-user-name>\.wslconfig`).
-You can use Notepad or any other windows editor.
-Add a line 'networkingMode=mirrored' under the [wsl2] section:
+Add these lines to `C:\Users\<your-user-name>\.wslconfig`.
+Create the file if it does not exist, or add only the second line under an existing `[wsl2]` section:
 
 ```txt
 [wsl2]
 networkingMode=mirrored
 ```
 
-If there is no [wsl2] section in the file (or if the `.wslconfig` file does not exist), just add both the lines shown above.
-Write the file, then restart your WSL distribution by typing 'wsl --shutdown' in a PowerShell window.
-Open a new WSL bash terminal window to restart WSL, then type:
+Then restart WSL from a PowerShell window:
 
-```bash
-robin@Morty:~$ hostname -I
-192.168.1.198
-robin@Morty:~$ ipconfig.exe | findstr.exe IPv4
-   IPv4 Address. . . . . . . . . . . : 192.168.1.198
+```powershell
+wsl --shutdown
 ```
 
-The 'hostname' command reports what WSL thinks the IP address is.
-The 'ipconfig.exe' command reports what Windows thinks the IP address is.
-Both commands should now return the same IP address.
+This closes every WSL window, including the VS Code window that is connected to WSL.
+Reopen it afterwards (F1, `WSL: Connect to WSL`) or click the connect icon in the lower left corner of the VS Code window.
+
+**Verify:** in a WSL terminal, this should print `mirrored`:
+
+```bash
+wslinfo --networking-mode
+```
 
 ### Add Windows Networking Firewall Rules
 
-We need to adjust the Windows firewall settings so that the motorbike and the server can chat with each other.
+The device checks in with the server over UDP port 54549, so Windows must allow that traffic in.
+This is the only rule needed: the server connects out to the device, nothing connects in over TCP, and Windows allows outbound connections by default.
 
-Start by opening Windows Firewall, Advanced Settings:
+In a PowerShell window opened as Administrator (as in step 2 above):
 
-* Press the **Windows key**, type **Windows Defender Firewall**, click it
-* On the left, click **Advanced settings**: a new window opens
-* Click **Inbound Rules** in the left panel
+```powershell
+New-NetFirewallRule -DisplayName "umod4 Server UDP Check-in" -Direction Inbound -Protocol UDP -LocalPort 54549 -Action Allow -Profile Any
+```
 
-#### Create Rule 1 — TCP port 8080 (to allow log file uploads)
+The same rule can be made in the Windows Defender Firewall GUI: Advanced settings, Inbound Rules, New Rule, Port, UDP 54549, Allow the connection, all three profiles.
 
-* Click **New Rule...** (located in the right panel)
-* Select **Port** → click **Next**
-* Select **TCP**, type `8080` in the port box → click **Next**
-* Select **Allow the connection** → click **Next**
-* Leave all three boxes checked (Domain, Private, Public) → click **Next**
-* Name it `umod4_server` → click **Finish**
+**Verify:** this should show `Protocol : UDP` and `LocalPort : 54549`:
 
-#### Create Rule 2 — UDP port 54549 (to allow umod4 device check-ins)
+```powershell
+Get-NetFirewallRule -DisplayName "umod4 Server UDP Check-in" | Get-NetFirewallPortFilter
+```
 
-* Click **New Rule...** (just like before)
-* Select **Port** → click **Next**
-* Select **UDP**, type `54549` in the port box → click **Next**
-* Select **Allow the connection** → click **Next**
-* Leave all three boxes checked → click **Next**
-* Name it `umod4 Server UDP Check-in` → click **Finish**
+## VS Code Extensions
 
-No outbound firewall rules are needed.
-Windows allows all outbound connections by default, so the umod4 server can reach the umod4 device on the motorbike without any additional configuration.
+Steps 4 and 6 above already installed the WSL and Claude extensions.
+These are the rest of the extensions the project needs:
 
-## Windows Terminal App
+* C/C++ and C/C++ Extension Pack (Microsoft): `ms-vscode.cpptools`, `ms-vscode.cpptools-extension-pack` (the pack also brings in CMake Tools)
+* Cortex-Debug: `marus25.cortex-debug`
+* MemoryView: `mcu-debug.memory-view`
+* RTOS Views: `mcu-debug.rtos-views`
+* Markdown Preview Github Styling: `bierner.markdown-preview-github-styles`
+* markdownlint: `davidanson.vscode-markdownlint`
+* Python (Microsoft): `ms-python.python`
 
-Once WSL2/Ubuntu has been installed, go to the Microsoft store and download the "[Windows Terminal](https://apps.microsoft.com/detail/9n0dx20hk701?hl=en-us&gl=US)" free app.
-Terminal works great for interacting with WSL2.
-It supports multiple terminal windows using a tabbed interface which is nice.
+The required extensions can be installed all at once using the VS Code terminal window from step 5:
 
-**Note:** From this point on, any of the instructions in this document that are executed from a Linux command line will be using a Windows Terminal window that is running Ubuntu/WSL.
+```bash
+code --install-extension ms-vscode.cpptools \
+     --install-extension ms-vscode.cpptools-extension-pack \
+     --install-extension marus25.cortex-debug \
+     --install-extension mcu-debug.memory-view \
+     --install-extension mcu-debug.rtos-views \
+     --install-extension bierner.markdown-preview-github-styles \
+     --install-extension davidanson.vscode-markdownlint \
+     --install-extension ms-python.python
+```
 
-* Open the terminal app by typing 'terminal' into the Windows search box.
-* On the title bar, click the small down-arrow to get a bunch of options.
-* Find the 'settings' option and click it.
-* At the bottom left of the settings screen, you will see "Add New Profile".
-Click that.
-* Add a new empty profile.
-Give it a name, like 'wsl-Ubuntu'.
-* Change the 'command line' option to be '%SystemRoot%\System32\wsl.exe -d Ubuntu'.
-* In the Starting Directory option, uncheck the 'Use Parent Process Directory' option.
-* Enter '\~' as the starting directory.
-  On linux, '\~' means your home directory.
-  You can use '\~' as a shortcut when typing any pathname involving your home directory.
-  For example, 'cd \~' will change back to your home directory saving you from typing "/home/<username>".
-* Click 'save'
+The install command is harmless if one of the extensions in the install list is already installed.
 
-There are other options you can play with (like fonts and colors), but those mentioned above are the required options to be changed.
+The manual method would be to search for each name in the Extensions panel and click "Install in WSL: Ubuntu".
 
-If you click the same little down arrow on the title bar now, you will see a new entry with the name you entered earlier: 'wsl-Ubuntu'.
-Click the 'wsl-ubuntu' selection.
+Once installed, force VS Code to activate the new extensions.
+Press F1, type `Developer: Reload Window`, and press Enter to activate them.
 
-The linux boot will take a few seconds the very first time that it runs.
-You will be asked for a user name and password for your initial Ubuntu user account.
-You can use the same user name as your windows account, or create a different user name.
-The new user name is used by linux only.
-The new user name will automatically be given 'sudo' privileges.
-The "su" of "sudo" means 'Super User'.
-It's the equivalent of having system administrator privileges on a Windows machine.
+**Verify:** this should list all eight extension IDs above (along with others):
 
-From this point on, when you type 'terminal' in the windows search box (the green circle, below), you will have the option to directly select your new Ubuntu distro (the blue circle, below):
-
-![image](doc/images/BUILDING/terminal-app.jpg)
-
-Once you have a single terminal window open, you can open more bash shells as separate tabs in the same terminal window.
-To try that, look at the top of the terminal window.
-You will see a 'Ubuntu' tab, a '+' icon, and an upside-down caret '^'.
-The '+' icon opens a new tab using your default choice of what to run in that tab.
-The upside-down caret lets you select what to run in the new tab.
-Selecting 'Ubuntu' opens a new WSL linux tab.
-You can even run a Windows Powershell or old-fashioned Windows Command Prompt, if needed.
-
-### WSL and Windows Filesystems
-
-WSL and Windows run simultaneously, but each has its own separate filesystem.
-Even so, WSL2 arranges for the two filesystems to get cross-mounted so that each one is accessible from the other.
-
-From Windows, the root of all the distros that may be installed is located at '\\\\wsl$' or '\\wsl.localhost'. Appending the distro name takes you to the root of that distro's filesystem, as shown below:
-
-![image](doc/images/BUILDING/wsl-from-windows.jpg)
-
-Windows 11 will show you the root of your new Ubuntu distribution on the left side of the explorer window, down at the bottom.
-Double click the Ubuntu folder like any other to see inside it.
-Your new linux home directory will be accessible by double clicking Ubuntu, then double clicking 'home', then double clicking your user name.
-
-Having Linux access the Windows machine is just as easy.
-In Ubuntu, each Windows drive letter automatically gets mounted under '/mnt'.
-Doing an `ls -l /mnt/c` in a linux terminal window will show you the contents of your top-level directory on Windows drive 'C:'.
-
-Linux commands like 'cp' or 'mv' operate seamlessly on both filesystems.
-If you are a linux person, it's nice to be able to use linux commands like 'find' and 'grep' on the directories inside your Windows machine.
-
-### WSL and Windows Executables
-
-WSL is set to run any Windows executable that is on your Windows PATH environment variable.
-WSL automatically includes all the directories on your Windows PATH variable to the end of your WSL PATH.
-To execute any Windows command in a WSL window, just type its full name including the Windows `.exe` suffix.
-For example, if you type `explorer.exe .` in a WSL terminal window, it will open a standard Windows explorer window pointing at your current directory (the `.` means the current directory).
-
-## Windows Software Installation
-
-There are a few programs that need to be installed on the development host.
-
-### VS Code
-
-VS Code is a software IDE (Integrated Development Environment) that runs in Windows.
-Basically, it is an extremely powerful text editor, with all kinds of additions to help you write code.
-One feature of VS Code is that it can edit from remote sources.
-If VS Code is running on a Windows machine, as a Windows executable, it will seamlessly connect to the 'remote' WSL2 linux environment on the same machine to allow you to edit the project files in the linux filesystem.
-
-Official Microsoft installation instructions are located [here](https://code.visualstudio.com/docs/setup/windows).
-If that link goes dead, just google 'installing VS Code', and find a Microsoft link that tells you how to install VS Code.
-
-If you are developing strictly on a linux machine, VS Code can be installed as a native linux app using .deb or .rpm mechanisms.
-Google for the VS Code linux download page and there will be instructions.
-
-Once you have VS Code installed, you need to add a bunch of extensions, as described in the next section.
-
-#### VS Code Extensions
-
-One of VS Code's best features is that it is amazingly extensible.
-People all over the world write useful "extensions" that add new features to the editor.
-This project needs a bunch of extensions to be installed.
-To install the extensions:
-
-* Start VS Code, but don't open any files or directories just yet.
-* Click the 'extensions' icon on the left side ribbon (icon looks like 3 boxes with a 4th box floating above the 3 boxes)
-* A search box will open saying 'Search Extensions in Marketplace'
-
-Search for each of the extensions listed below and install each one in turn when given the chance:
-
-* C/C++ (by Microsoft)
-* C/C++ Extension pack (by Microsoft)
-* Cortex-debug
-* MemoryView
-* RTOS Views
-* Markdown Preview Github Styling
-* markdownlint
-* Python (by Microsoft)
-* WSL (by Microsoft)
-* Claude Code for VS Code (install it in WSL: Ubuntu, not just on Windows)
-
-The C/C++ Extension Pack should install a couple of other extensions, namely: CMake, CMake Tools, and Themes.
-
-Note that these extensions run as windows apps on Windows versions of VS Code and as linux apps on either linux versions of VS Code, or Windows versions of VS Code that are using a remote connection to a linux machine.
-What this means is that you might need to install linux versions of these extensions later, if you use Windows in its remote editor mode.
-VS Code will let you know if you need to install the linux versions later.
+```bash
+code --list-extensions
+```
 
 ## Linux/WSL2 Software Installation
 
-Before starting the installation process for all of the Linux software, make sure that all the software on your linux machine is up to date. Type the following into a terminal window:
+Run the Linux commands in this document in a terminal in the VS Code WSL window (Ctrl+`, or Terminal > New Terminal).
+
+Bring Ubuntu up to date first.
+`sudo` asks for the Linux password you chose in step 3, and the first run may install many updates:
 
 ```bash
 sudo apt update
 sudo apt upgrade
 ```
 
-The Linux "update/upgrade" sequence is basically the same as a "Windows Update" scan.
-You need to type 'sudo' because installing software can only be performed by the super user.
-Use your new linux password when sudo asks for it.
-The first time around, these commands may install a bunch of updates.
-You should run this command pair once in a while to keep your Linux distro up-to-date for application updates and security patches.
+### Create a Local Bin Directory
 
-## Create a 'projects' Directory
-
-A lot of the software we will be installing needs to be installed in a fashion that certain parts can find other parts.
-To that end, we will be putting everything inside a directory called 'projects' located inside your home directory.
-Create that directory now:
-
-```bash
-mkdir -p ~/projects
-```
-
-## Create a Local Bin Directory
-
-This project creates a few special executables to help build the software.
-Rather than put these tools in the standard system-wide installation locations,
-the build system will place them in a user-specific ``~/.local/bin`` directory.
-
-The following command will create that directory if it does not already exist, then add it to your PATH:
+The build installs a few helper executables into `~/.local/bin` instead of a system-wide location, so that directory must be on your PATH:
 
 ```bash
 mkdir -p ~/.local/bin
 . ~/.profile
+echo $PATH | tr ':' '\n' | grep '[.]local'
 ```
 
-Check your PATH variable to verify that your ".local/bin" directory is part of it:
+**Verify:** the output should include `/home/<your-user-name>/.local/bin`.
 
-```bash
-echo $PATH|tr ':' '\n'|grep '[.]local'
-/home/<your-user-name>/.local/bin
-```
-
-If your .profile is not adding "\~/.local/bin" to your path, run the following commands to append the required lines to it:
+If it does not, your `~/.profile` is not adding that directory to the PATH.
+Append the lines that do, then repeat the check:
 
 ```bash
 cat >> ~/.profile << 'EOF'
@@ -399,647 +344,450 @@ EOF
 . ~/.profile
 ```
 
-Re-run the previous 'echo' command to verify that your ``.local/bin`` directory is on your path now.
-
 ### Install Linux Host Tools
 
-A number of tools that need to run on the host machine need to be installed.
-It is possible that they are already installed in the fresh WSL distro, but it is harmless to ask to reinstall them.
-Install them as below:
+These tools run on the host PC.
+Some may already be installed; asking again is harmless:
 
 ```bash
 sudo apt install gcc g++ git curl unzip cmake jq ninja-build libncurses5-dev libncursesw5-dev
 ```
 
-The ``gcc`` and ``g++`` compilers installed above generate code for your Linux **host** machine, not the ARM chips on the Pico boards. The Pico SDK expects to find the host g++ compiler using an environment variable called 'CXX'.
-Run the following commands to add the appropriate CXX definition to your .bashrc file and update your environment:
+`gcc` and `g++` here build code for your Linux **host**, not for the Pico's ARM chips.
+
+**Verify:** this should print a path for each of the eight tools:
 
 ```bash
-echo "export CXX=/usr/bin/g++" >> ~/.bashrc
-. ~/.bashrc
+command -v gcc g++ git curl unzip cmake jq ninja
 ```
 
 #### Python and uv
 
-The umod4 system uses Python3 for some utility programs, as well as the visualizer and the test harness.
-Python uses packages to provide a lot of its functionality.
-Managing all the packages used by a complex Python environment can get very tricky.
-To make package management simpler for a umod4 user, the project's Python environment is managed by [uv](https://docs.astral.sh/uv/).
-The project's required packages are listed in `pyproject.toml`, their exact versions are pinned in `uv.lock`, and the virtual environment lives in `.venv` at the top of the umod4 directory.
-The build creates and updates that environment automatically (it runs `uv sync`), so the only thing to do by hand is to install uv.
-uv can also download a suitable Python itself, so there is no need to install a particular Python version or the `python3-venv` package.
+The Python tools (the visualizer, the server and the test harness) run in a virtual environment managed by [uv](https://docs.astral.sh/uv/).
+The packages are listed in `pyproject.toml`, their exact versions are pinned in `uv.lock`, and the environment lives in `.venv` at the top of the repository.
+The build creates and updates it (it runs `uv sync`), so installing uv is the only manual step.
+uv also downloads Python 3.12 the first time it needs it, so you do not need to install Python or the `python3-venv` package.
 
 ```bash
-$ curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-The installer puts `uv` in `~/.local/bin`, which is on your PATH if you followed the instructions in "Create a Local Bin Directory", above.
-Open a new terminal and check that it worked:
+The installer puts `uv` in `~/.local/bin`, which is on your PATH if you did "Create a Local Bin Directory", above.
+
+**Verify:** in a new terminal, this should print a version number:
 
 ```bash
-$ uv --version
+uv --version
 ```
 
-After a build, Python tools are run with `uv run`, from anywhere inside the umod4 directory.
-There is no need to activate a virtual environment. For example:
+Things worth knowing:
 
-```bash
-$ uv run tools/logtools/decoder/decodelog.py <logfile>
-```
-
-If your machine does not already have Python 3.12, uv downloads one the first time it needs it.
-That is normal, and it only happens once per machine.
-The downloaded copy is kept in `~/.local/share/uv/python`, shared by every uv project, and not inside the project's `.venv`.
-
-The project is deliberately pinned to Python 3.12.
-To find out why, or to change the version, see the comment above `requires-python` at the top of `pyproject.toml`: it explains the reasoning and lists the steps.
-
-The `.venv` directory is large (about 400 MB), mostly because of the Qt libraries (PySide6) that the visualizer and the server GUI use.
-That is expected.
-
-#### Git and Line Endings
-
-We need to make a small configuration change to the git program installed in the previous step.
-The project's Git repository always has Unix-style LF line endings.
-Configuring the git setting 'core.autocrlf' to 'false' tells Git to _not_ change files to use CRLF-style endings when it checks stuff out onto a Windows machine.
-VS Code on Windows operates just fine on LF-style endings so there is no need to add CR characters just because it is a Windows machine.
-
-To avoid the whole CR mess when working with Windows, type the following in your WSL2 terminal window:
-
-```bash
-git config --global core.autocrlf false
-```
+* Run Python tools with `uv run <script>` from anywhere inside the repository. There is no virtual environment to activate.
+* The Python version is pinned to 3.12 on purpose. The comment above `requires-python` in `pyproject.toml` explains why, and lists the steps to change it.
+* The downloaded Python is kept in `~/.local/share/uv/python`, shared by every uv project, not inside `.venv`.
+* `.venv` is large (about 400 MB), mostly the Qt libraries (PySide6) used by the visualizer and the server GUI. That is expected.
 
 ### Build 68HC11 Toolchain
 
-The Gen 1 ECU's processor is a Motorola M68HC11.
-The C compiler for the HC11 has not been supported since GCC version 3.4.6, back in the early 2000's.
-Fortunately, for the purposes of building the UM4 software, we don't need a full 68HC11 C compiler, we only need an assembler.
-And amazingly enough, a modern GCC 'binutils' package still contains everything we need to target the ECU's 68HC11:
+The Gen 1 ECU's processor is a Motorola 68HC11, and GCC has not had a C compiler for it since version 3.4.6, in the early 2000's.
+That does not matter here: the UM4 firmware is pure assembly, so the build only needs the assembler, linker and objcopy from GNU binutils, and modern binutils can still target the 68HC11.
+A 68HC11 build of binutils cannot be installed with apt, so you build it from source, which takes a couple of minutes.
 
-* a 68HC11 assembler
-* a linker
-* an objcopy utility
-
-The only downside is that a 68HC11 version of the binutils is not something that can just be installed via 'apt', but will need to be built from source code.
-Fortunately, this is quite easy:
-
-1) Go to the [GNU Binutils](https://www.gnu.org/software/binutils/) page
-2) Find out what the latest version of the binutils is (2.42 at the time this page was written)
-
-Run the commands below, replacing version "2.42" with whatever version you are using.
-Or if you are lazy, just copy the commands below to install version 2.42, which is known to work fine.
-The commands assume that you would like to put your binutils source in a directory called ~/binutils/binutils-2.42.
-This naming convention allows you to support multiple versions of the binutils, should that be useful.
+The version known to work is 2.42, listed in "Versions known to work" above.
+Newer versions should work, but have not been tested here.
+Releases are listed on the [GNU Binutils](https://www.gnu.org/software/binutils/) page.
+The source goes in `~/binutils/binutils-m68hc11-elf-<version>`, so that several versions can coexist.
+The tools install into `~/.local/bin`, which must be on your PATH (see "Create a Local Bin Directory", above).
 
 ```bash
+BINUTILS_VERSION=2.42
 sudo apt install texinfo
-cd ~
-mkdir binutils
-cd binutils
-wget https://ftp.gnu.org/gnu/binutils/binutils-2.42.tar.gz
-tar zxvf binutils-2.42.tar.gz
-mv binutils-2.42 binutils-m68hc11-elf-2.42
-cd binutils-m68hc11-elf-2.42
+mkdir -p ~/binutils/binutils-m68hc11-elf-$BINUTILS_VERSION
+cd ~/binutils
+curl -LO https://ftp.gnu.org/gnu/binutils/binutils-$BINUTILS_VERSION.tar.gz
+tar zxf binutils-$BINUTILS_VERSION.tar.gz --strip-components=1 -C binutils-m68hc11-elf-$BINUTILS_VERSION
+cd binutils-m68hc11-elf-$BINUTILS_VERSION
 ./configure --prefix=$HOME/.local --target=m68hc11-elf
-make
+make && make install
 ```
 
-The 'make' operation will take a couple minutes.
-Assuming that 'make' completed without errors, install the tools and then make sure they ended up in the right place.
-You should see a whole bunch of new executable files all relating to the m68hc11 processor:
+**Verify:** the first command should print `GNU assembler (GNU Binutils) 2.42` (or the version you built), and the second should print a path for each of the two tools:
 
 ```bash
-$ make install
-$ ls -l ~/.local/bin
-total 86244
--rwxr-xr-x 1 robin robin 4964128 Aug  7 07:09 m68hc11-elf-addr2line
--rwxr-xr-x 2 robin robin 5150512 Aug  7 07:09 m68hc11-elf-ar
--rwxr-xr-x 2 robin robin 6816200 Aug  7 07:09 m68hc11-elf-as
--rwxr-xr-x 1 robin robin 4911176 Aug  7 07:09 m68hc11-elf-c++filt
--rwxr-xr-x 1 robin robin  125992 Aug  7 07:09 m68hc11-elf-elfedit
--rwxr-xr-x 1 robin robin 5556088 Aug  7 07:09 m68hc11-elf-gprof
--rwxr-xr-x 4 robin robin 8066152 Aug  7 07:09 m68hc11-elf-ld
--rwxr-xr-x 4 robin robin 8066152 Aug  7 07:09 m68hc11-elf-ld.bfd
--rwxr-xr-x 2 robin robin 5030672 Aug  7 07:09 m68hc11-elf-nm
--rwxr-xr-x 2 robin robin 5792040 Aug  7 07:09 m68hc11-elf-objcopy
--rwxr-xr-x 2 robin robin 8331408 Aug  7 07:09 m68hc11-elf-objdump
--rwxr-xr-x 2 robin robin 5150544 Aug  7 07:09 m68hc11-elf-ranlib
--rwxr-xr-x 2 robin robin 4325152 Aug  7 07:09 m68hc11-elf-readelf
--rwxr-xr-x 1 robin robin 4954320 Aug  7 07:09 m68hc11-elf-size
--rwxr-xr-x 1 robin robin 4966904 Aug  7 07:09 m68hc11-elf-strings
--rwxr-xr-x 2 robin robin 5792040 Aug  7 07:09 m68hc11-elf-strip
+m68hc11-elf-as --version | head -1
+command -v m68hc11-elf-ld m68hc11-elf-objcopy
 ```
 
-Finally, do a trivial test of the assembler by typing the commands, below.
-
-```bash
-$ cd ~
-$ m68hc11-elf-as --version
-GNU assembler (GNU Binutils) 2.42
-Copyright (C) 2024 Free Software Foundation, Inc.
-This program is free software; you may redistribute it under the terms of
-the GNU General Public License version 3 or later.
-This program has absolutely no warranty.
-This assembler was configured for a target of `m68hc11-elf'.
-```
-
-The important part is that the new assembler knows it has been configured to target "m68hc11-elf", which represents the processor inside the ECU.
-If the system was not able to find the m68hc11-elf-as executable, make sure that "~/.local/bin" is on your PATH, as described earlier in this document.
+If a command is not found, `~/.local/bin` is not on your PATH.
 
 ### Install ARM Cross-Compiler Toolchain
 
-ARM cross-compilers are required to build code for the ARM processors used by this project.
-A cross-compiler runs on your x86 PC but generates code for the ARM processors inside the umod4.
+A cross-compiler runs on your x86 PC but generates code for the ARM processors inside the umod4: the RP2040 in the EP and the RP2350 in the WP.
 
-The build system expects the cross-compiler toolchains to be installed under `/opt/arm/arm-none-eabi/`, one subdirectory per version:
+The build expects the toolchains under `/opt/arm/arm-none-eabi/<version>`, one subdirectory per version.
+It uses the newest version it finds there, unless `ARM_NONE_EABI_VERSION` is set in `cmake/toolchains/arm-none-eabi.cmake`.
+The current version is 15.2.rel1, listed in "Versions known to work" above, and every release from 12 through 15 has built this project.
+A newer release should work, but has not been tested here.
 
-```text
-/opt/arm/arm-none-eabi/
-    ├── 14.2.rel1    example of an older version (if any)
-    └── 15.2.rel1    the most recent version
-```
-
-This layout lets you switch toolchain versions by editing one CMake file.
-It also means that old projects aren't forced to upgrade when a new release comes out.
-
-#### Get the Download Link
-
-Go to the [Arm GNU Toolchain download page](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads).
-
-* **x86 PC / WSL2:** scroll to _x86_64 Linux hosted cross toolchains_ → _AArch32 bare-metal target (arm-none-eabi)_ → the `.tar.xz` file.
-
-The download page looks like this:
-
-![image](./doc/images/BUILDING/arm-tools.jpg)
-
-**Don't click the link to download it.**
-Instead: Right-click the link and choose "Copy link address."
-
-The filename tells you the version number — for example `arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz` means the version is `15.2.rel1`.
-
-#### Download and Install
-
-Set `ARM_VERSION` to the version string you just identified from the filename:
+The download is about 150 MB:
 
 ```bash
 ARM_VERSION=15.2.rel1
-echo $ARM_VERSION
+curl -fL -o /tmp/arm-toolchain.tar.xz https://developer.arm.com/-/media/Files/downloads/gnu/$ARM_VERSION/binrel/arm-gnu-toolchain-$ARM_VERSION-x86_64-arm-none-eabi.tar.xz \
+  && sudo mkdir -p /opt/arm/arm-none-eabi/$ARM_VERSION \
+  && sudo tar xf /tmp/arm-toolchain.tar.xz --strip-components 1 -C /opt/arm/arm-none-eabi/$ARM_VERSION \
+  && rm /tmp/arm-toolchain.tar.xz
 ```
 
-Double-check that the version that gets printed from the commands above matches the version on the download page.
-If not, retry those commands with the proper version name.
+The `&&` chain matters: the build picks the newest directory under `/opt/arm/arm-none-eabi`, so a failed download must not leave an empty one behind.
+The `--strip-components 1` removes the long directory prefix that Arm buries inside the archive.
 
-Once ARM_VERSION is correct, execute the following:
+If that `developer.arm.com` URL stops working, get the link from the [Arm GNU Toolchain download page](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads): under *x86_64 Linux hosted cross toolchains* → *AArch32 bare-metal target (arm-none-eabi)*, right-click the `.tar.xz` file, choose "Copy link address", and use that link in place of the URL above.
+The version number is in the filename.
 
-```bash
-sudo mkdir -p /opt/arm/arm-none-eabi/$ARM_VERSION
-cd /opt/arm/arm-none-eabi/$ARM_VERSION
-```
-
-For the next command, you will be pasting in the link that you copied from the download webpage a few steps back:
+**Verify:** both commands should print a line containing the version you installed, for example `Arm GNU Toolchain 15.2.Rel1`.
+The other numbers on the line (the compiler or debugger version) differ between the two tools:
 
 ```bash
-sudo wget <paste the link you copied here>
-```
-
-If wget succeeded, type the following to extract the archive:
-
-```bash
-sudo tar xf arm-gnu-toolchain-*.tar.xz --strip-components 1
-```
-
-The `--strip-components 1` strips a very long directory prefix that ARM buries inside the archive.
-
-Once tar completes, verify the tools work by asking them what version they are:
-
-```bash
-$ ./bin/arm-none-eabi-gcc --version
-arm-none-eabi-gcc (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 15.2.1 20251203
-
-$ ./bin/arm-none-eabi-gdb --version
-GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git
+/opt/arm/arm-none-eabi/$ARM_VERSION/bin/arm-none-eabi-gcc --version | head -1
+/opt/arm/arm-none-eabi/$ARM_VERSION/bin/arm-none-eabi-gdb --version | head -1
 ```
 
 Do **not** add the `bin` directory to your PATH.
-The umod4 project's build system will locate it automatically from the `/opt/arm/arm-none-eabi` structure.
+The umod4 build system finds it automatically from the `/opt/arm/arm-none-eabi` layout.
 
 ### Install OpenOCD
 
-_At some point, the RP2xxx support will exist in the Ubuntu distribution and installing OpenOCD will be as simple as "sudo apt install openocd".
-But for now, it needs to be built from source, as described in this next section._
+*At some point, the RP2350 support will exist in the Ubuntu distribution and installing OpenOCD will be as simple as "sudo apt install openocd".
+But for now, it needs to be built from source, as described below.*
 
 OpenOCD is the "Open On-Chip Debugger" software tool.
 GDB uses OpenOCD to talk to the silicon debug unit inside the chip being debugged.
-OpenOCD has been around forever, but it needs to run a special version for the Pi Pico boards because the RP2xxx processors on those boards are dual core.
+We need a special version of OpenOCD to properly deal with the dual core RP2040 and RP2350 processors used by the umod4 project.
+The version known to work is the Raspberry Pi fork's `sdk-2.2.0` tag, listed in "Versions known to work" above.
+A newer tag, `sdk-2.3.0`, exists but has not been tested here.
 
-Install source code for OpenOCD, making sure to get the sources from raspberrypi where the RP2xxx support is located:
-
-```bash
-cd ~/projects
-git clone https://github.com/raspberrypi/openocd.git
-cd openocd
-git submodule init
-git submodule update
-```
-
-You will need to install a bunch of packages for building OpenOCD:
+Install OpenOCD from the raspberrypi repository to get RP2xxx support:
 
 ```bash
-sudo apt install libusb-1.0-0 libusb-1.0-0-dev libhidapi-dev libtool texinfo pkg-config make
+git clone --branch sdk-2.2.0 --recurse-submodules https://github.com/raspberrypi/openocd.git ~/projects/openocd
 ```
 
-Finally, build OpenOCD:
+Building OpenOCD requires a few more packages:
+
+```bash
+sudo apt install libusb-1.0-0 libusb-1.0-0-dev libhidapi-dev libtool autoconf automake texinfo pkg-config make
+```
+
+Then build and install it:
 
 ```bash
 cd ~/projects/openocd
 ./bootstrap
 ./configure --enable-ftdi --enable-sysfsgpio --enable-bcm2835gpio --enable-cmsis-dap --enable-internal-jimtcl
-make
-sudo make install
-openocd --version
+make && sudo make install
 ```
 
-The fun never ends with openocd though.
-We need to give ourselves permission to access the USB debug probe so that we don't have to use sudo all the time.
-For that, we create another rules file as follows:
+OpenOCD needs to access the USB Pico Debug probe.
+We create a rules file that allows you to access the Pico Probe USB device without `sudo`:
 
 ```bash
-sudo sh -c 'printf "# Pi Pico CMSIS-DAP USB debug probe\nATTRS{idProduct}==\"000c\", ATTRS{idVendor}==\"2e8a\", MODE=\"666\", GROUP=\"plugdev\"\n" >> /etc/udev/rules.d/46-probe.rules'
+sudo tee /etc/udev/rules.d/46-probe.rules > /dev/null << 'EOF'
+# Pi Pico CMSIS-DAP USB debug probe
+ATTRS{idProduct}=="000c", ATTRS{idVendor}=="2e8a", MODE="666", GROUP="plugdev"
+EOF
 ```
 
-Finally, we trigger reloading the new rules file we just created:
+Activate the new rules file:
 
 ```bash
 sudo udevadm control --reload
 sudo udevadm trigger
 ```
 
-From now on, the rules will be reapplied every time WSL starts.
+**Verify:** the first command should print `Open On-Chip Debugger 0.12.0+dev` followed by a build date.
+The second should print the paths of the RP2040 and RP2350 target files; it fails if OpenOCD lacks support for either chip (the stock Ubuntu 24.04 package has no `rp2350.cfg`).
+The third should print `plugdev`:
+
+```bash
+openocd --version | head -1
+openocd -c "find target/rp2040.cfg" -c "find target/rp2350.cfg" -c shutdown
+id -nG | grep -w plugdev
+```
+
+If the third command prints nothing, add yourself to the group with `sudo usermod -aG plugdev $USER`, then run `wsl --shutdown` in PowerShell and reopen WSL.
 
 ## WSL2: USB Device Sharing
 
-_If you are on native Linux (not Windows/WSL2), skip this section._
+*If you are on native Linux (not Windows/WSL2), skip this section.*
 
-By default, USB devices plugged into a Windows machine are owned by Windows — WSL cannot see them.
-`usbipd` solves this by sharing ("binding") specific device types from Windows to WSL.
-The project includes a script that does this binding for all the USB devices you will need as a developer.
+Windows owns every USB device plugged into it, so WSL cannot see them until `usbipd` shares them.
+There are two operations.
+**Bind** is a one-time grant, made by an Administrator, that lets a device type be shared with WSL; the device then shows as `Shared`, and it stays that way across unplugging and reboots.
+**Attach** connects a shared, plugged-in device to WSL each session, and `flash_WP` and the test runner do that for you.
+So you only need to bind, once per device type.
 
-### Bind vs. Attach
+### Install usbipd
 
-There are two distinct usbipd operations:
+Install usbipd-win once, from a PowerShell window opened as Administrator (as in step 2 above):
 
-- **Bind** (`usbipd bind`): a one-time, persistent grant that says "this VID:PID is allowed to be shared with WSL".
-  Survives unplugging, rebooting, and re-plugging.
-  Must be done by an Administrator.
-- **Attach** (`usbipd attach`): per-session connection of a currently-plugged device to WSL.
-  Tools like `flash_WP` and the test runner handle this automatically.
+```powershell
+winget install --interactive --exact dorssel.usbipd-win
+```
 
-You only need to worry about **binding**.
+**Verify:** in a WSL terminal, this should print a version number:
 
-### Running the Setup Script
+```bash
+usbipd.exe --version
+```
 
-With your umod4 hardware (or debug probe) plugged in, run from a WSL terminal:
+### Bind the Devices
+
+With your umod4 hardware (or debug probe) plugged in, run this in a WSL terminal:
 
 ```bash
 ~/projects/umod4/tools/setup_usb_wsl
 ```
 
-A UAC prompt will appear on the Windows desktop — click **Yes** to allow it to run as Administrator.
-The script binds all Raspberry Pi Pico-family PIDs (including the CMSIS-DAP debug probe and the RP2350 BOOTSEL mass-storage device) plus the ap_proxy device used by the automated test harness.
+A Windows permission prompt (UAC, User Account Control) will appear on the Windows desktop.
+Click **Yes** to allow the script to run as Administrator.
+The script binds all the Raspberry Pi Pico-family devices (including the CMSIS-DAP debug probe and the RP2350 BOOTSEL mass-storage device), plus the ap_proxy device used by the automated test harness.
+Devices must be plugged in when it runs, so run it again whenever you add a device that was not plugged in the first time.
 
-Re-run the script any time you add a new physical device that wasn't plugged in the first time.
+**Verify:** with the debug probe plugged in, this should list it (`2e8a:000c`) with the state `Shared`, or `Attached` if something has already attached it to WSL:
 
-### Note on usbipd Versions
-
-`usbipd policy add --operation AutoBind` (which would automate all of this) is broken in usbipd 5.2 — it throws `Invalid policy rule` for every entry and does nothing.
-The script uses `usbipd bind --hardware-id` instead, which achieves the same persistent result.
+```bash
+usbipd.exe list
+```
 
 ## Project Development Setup
 
-The next step is to start filling out the project directory structure.
-There is a fair amount of software source that needs to be installed, and some of it needs to know where other parts of it are located.
-By installing things as described in the sections that follow, the various bits of the system will be able to find each other.
-
-### Development Directory Structure
-
-The biggest part of the project directory is the Pico SDK (Software Development Kit), which is quite large, at over 600 megabytes.
-The SDK could be installed by cmake as sub-piece of each of your Pico projects, but replicating the entire SDK for every project in your system that might need it is a giant waste of disk storage.
-Instead, we will set things up so that all projects will share a single SDK installation.
-We do this by storing the SDK at a well-known location in the 'projects' directory.
-We then tell the individual Pico development projects where to find it.
-This also allows us to store multiple versions of the SDK, enabling old projects to use old SDK versions without forcing them to upgrade.
-
-Pictorially, we want to end up with a directory structure that has this general form:
+The build finds the SDK, pico-examples and FreeRTOS-Kernel by location: it computes their paths from the directory that contains the umod4 repository, so all of them must sit side by side in `~/projects`.
+No environment variables are needed.
 
 ```text
 /home/<your-user-name>/
 └── projects/
-    ├── openocd       (a special version for debugging RP2xxx chips)
-    ├── pico-examples (files that WP and WP_erase build; one checkout per SDK version, like pico-sdk)
-    │   └── 2.3.0     (git tag sdk-2.3.0: the examples that go with SDK 2.3.0)
-    ├── pico-sdk      (may contain multiple versions of the SDK over time)
-    │   ├── 1.5.1     (Supports Pico/RP2040 only)
-    │   ├── 2.0.0     (first version that supports Pico/RP2040 and Pico2/RP2350)
-    │   ├── 2.1.1     (bug fixes and improvements)
-    │   └── 2.3.0     (the version this project currently builds with)
-    └── umod4         (where the umod4 software project will be stored)
+    ├── FreeRTOS-Kernel   (one checkout, pinned to V11.3.0)
+    ├── openocd           (the Raspberry Pi fork, built earlier)
+    ├── pico-examples
+    │   └── 2.3.0         (git tag sdk-2.3.0)
+    ├── pico-sdk
+    │   └── 2.3.0         (git tag 2.3.0: the version this project builds with)
+    └── umod4             (this repository)
 ```
+
+The SDK is large (about 800 MB), so every project on the machine shares one copy.
+Each SDK version lives in its own subdirectory, so older projects can keep using older versions.
 
 ### RPi SDK
 
-The Raspberry Pi Software Development Kit (SDK) is a collection of software tools and code libraries that make it easier to work with the RP2xxx processor chips.
-
-The SDK can be installed in a number of fashions.
-For various reasons, we will install it using Git.
-
-First, we create the top-level directory inside the projects directory that will contain all the SDK versions:
-
-```bash
-cd ~/projects
-mkdir pico-sdk
-cd pico-sdk
-```
-
-Next, we clone the 'master' branch of the pico-sdk into the new directory:
-
-```bash
-git clone https://github.com/raspberrypi/pico-sdk
-```
-
-Rename pico-sdk to reflect the SDK version that we will be checking out.
-The version to use is set by `PICO_SDK_VERSION` in the top-level `CMakeLists.txt`, and it is currently 2.3.0.
-If that file says something different when you read this, use the number from the file in place of 2.3.0 in the commands below.
+The version to use is `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` (currently 2.3.0).
 Do not pick a newer version just because one exists: the project is only known to build with the version it asks for.
+The SDK's submodules supply the WiFi and Bluetooth code.
 
 ```bash
-mv pico-sdk 2.3.0
+SDK_VERSION=2.3.0
+mkdir -p ~/projects/pico-sdk
+git clone --branch "$SDK_VERSION" --recurse-submodules https://github.com/raspberrypi/pico-sdk ~/projects/pico-sdk/"$SDK_VERSION"
 ```
 
-Now we tell git that we actually want to lock this cloned branch to the "2.3.0" tag on the master branch:
+**Verify:** the first command should print `2.3.0`, and the second should print `0` (the number of submodules that were not fetched):
 
 ```bash
-cd 2.3.0
-git checkout 2.3.0
+git -C ~/projects/pico-sdk/"$SDK_VERSION" describe --tags
+git -C ~/projects/pico-sdk/"$SDK_VERSION" submodule status | grep -c '^-'
 ```
-
-Our new git tag now matches its directory name.
-Update the new branch so that it can do WiFi and Bluetooth:
-
-```bash
-git submodule update --init --recursive
-```
-
-No environment variable is needed — the umod4 superbuild's top-level `CMakeLists.txt` computes the SDK path itself from its `PICO_SDK_VERSION` setting (see the next section), and passes it down to every subproject.
 
 #### pico-examples
 
 The `pico-examples` repository is **required**, not optional sample code.
 The WP firmware builds `ws2812.pio` from it, and the `WP_erase` tool builds `nuke.c` from it.
-Like the SDK, it needs one checkout per SDK version.
-The umod4 superbuild computes the location itself: `~/projects/pico-examples/<PICO_SDK_VERSION>`.
-Clone the tag that matches the SDK.
-The tag is `sdk-` plus the same number as `PICO_SDK_VERSION` (currently 2.3.0):
-
-```bash
-mkdir -p ~/projects/pico-examples
-git clone --branch sdk-2.3.0 --depth 1 https://github.com/raspberrypi/pico-examples.git ~/projects/pico-examples/2.3.0
-```
-
-Check it:
-
-```bash
-git -C ~/projects/pico-examples/2.3.0 describe --tags
-```
-
-That should print `sdk-2.3.0`.
-
+Like the SDK, it needs one checkout per SDK version, and the tag is `sdk-` plus the same number as `PICO_SDK_VERSION`.
 The match matters because `nuke.c` differs between SDK releases.
+
+```bash
+SDK_VERSION=2.3.0
+mkdir -p ~/projects/pico-examples
+git clone --branch "sdk-$SDK_VERSION" --depth 1 https://github.com/raspberrypi/pico-examples.git ~/projects/pico-examples/"$SDK_VERSION"
+```
+
+**Verify:** this should print `sdk-2.3.0`:
+
+```bash
+git -C ~/projects/pico-examples/"$SDK_VERSION" describe --tags
+```
+
 If the directory is missing, CMake stops and prints the clone command to use.
 If the checkout is on a different tag than the SDK, CMake warns and prints the command that fixes it.
-Anything else on your machine that points at the same checkout is affected if you change its tag.
 To keep the checkout somewhere else, pass `-DPICO_EXAMPLES_PATH=<dir>` to cmake.
 
 #### FreeRTOS-Kernel
 
-FreeRTOS-Kernel is **not** part of any official pico-sdk release — Raspberry Pi's own tooling expects it to be cloned as an entirely separate, independent checkout, as a sibling of `pico-sdk` (not nested inside a specific SDK version). This is deliberate: FreeRTOS-Kernel's release cadence has nothing to do with the SDK's, and pinning it inside a versioned SDK directory just means it has to be re-vendored by hand every time `PICO_SDK_VERSION` changes.
-
-Clone it once, as a sibling of `pico-sdk`:
-
-```bash
-cd ~/projects
-git clone https://github.com/FreeRTOS/FreeRTOS-Kernel
-cd FreeRTOS-Kernel
-git checkout V11.3.0
-git submodule update --init --recursive
-```
-
-That release tag is pinned deliberately — it's the version this project has actually been built and tested against, and it includes the `RP2350_ARM_NTZ` community port (via the `Community-Supported-Ports` submodule) that WP needs. Don't casually move this checkout to a newer release without re-testing a full WP build on real hardware: FreeRTOS-Kernel releases do change core kernel behavior (not just port-specific code) — for example V11.3.0 added a `configASSERT` in task creation that actively checks stack depth against the port's initial frame size, and WP's `configASSERT` is a real, non-stubbed `assert()`. A clean compile only proves there's no API/ABI break; it does not prove the new release behaves identically on target hardware.
-
-The umod4 superbuild computes `FREERTOS_KERNEL_PATH` from this location automatically (see top-level `CMakeLists.txt`) and passes it to WP; no environment variable or manual per-SDK-version setup is needed here either.
-
-#### Maintaining Multiple SDK Versions
-
-New versions of the SDK get released from time to time.
-A new SDK will be a mixture of new features and bug fixes.
-Just because a new SDK is released, there is no need to delete older versions.
-In fact, there are benefits to leaving old versions around:
-
-* A new version might introduce some incompatibility that needs to be fixed, meaning that the old version should continue to be used until the fix is in place.
-
-* If you develop any other software projects using a Pico, it is possible that some projects might need a specific version of the SDK, while others might want to use the most recent.
-
-By following the instructions above to load new SDK versions 'beside' the old ones, your system can contain multiple versions of the SDK and each project can use the version that it needs.
-
-Note that if you ever upgrade the SDK at some point, you change `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` and clone the matching `pico-examples` tag (see above) — everything else (including VS Code's debug SVD file lookup) follows automatically from that one setting.
-
-## Getting the Umod4 Source Code
-
-Now that all the tools are in place, it is finally time to get the umod4 code loaded onto your system!
-
-If you already cloned the project in the [WSL2 and AI assistant](#install-wsl2-and-your-ai-assistant) steps, skip the `git clone` below and continue at `git status`.
-
-Otherwise, start by cloning the umod4 project onto your own machine.
+FreeRTOS-Kernel is **not** part of any pico-sdk release, so it is its own checkout, next to `pico-sdk` and not inside a specific SDK version.
+Its releases are independent of the SDK's, so one checkout serves every SDK version.
 
 ```bash
-cd ~/projects
-git clone https://github.com/mookiedog/umod4.git
+git clone --branch V11.3.0 --recurse-submodules https://github.com/FreeRTOS/FreeRTOS-Kernel ~/projects/FreeRTOS-Kernel
 ```
 
-You should see some output taking this general form:
+V11.3.0 is pinned on purpose: it is the version this project has been built and tested against, and it includes the `RP2350_ARM_NTZ` community port (from the `Community-Supported-Ports` submodule) that the WP needs.
+**Do not move to a newer release without re-testing a full WP build on real hardware.**
+
+**Verify:** the first command should print `V11.3.0`, and the second should list the port directory (it only exists if the submodules were fetched):
+
 ```bash
-Cloning into 'umod4'...
-remote: Enumerating objects: 1766, done.
-remote: Counting objects: 100% (91/91), done.
-remote: Compressing objects: 100% (56/56), done.
-remote: Total 1766 (delta 36), reused 62 (delta 35), pack-reused 1675 (from 1)
-Receiving objects: 100% (1766/1766), 11.98 MiB | 16.18 MiB/s, done.
-Resolving deltas: 100% (1044/1044), done.
+git -C ~/projects/FreeRTOS-Kernel describe --tags
+ls -d ~/projects/FreeRTOS-Kernel/portable/ThirdParty/Community-Supported-Ports/GCC/RP2350_ARM_NTZ
 ```
 
-If you type 'ls' inside ~/projects, you should now see ~/projects/umod4.
+### Changing the SDK Version
+
+Old SDK versions can stay where they are: another project may still need one.
+With 2.3.1 added beside 2.3.0, the layout looks like this.
+The build uses whichever version `PICO_SDK_VERSION` names:
+
 ```text
-projects
+/home/<your-user-name>/
+└── projects/
+    ├── FreeRTOS-Kernel
     ├── openocd
+    ├── pico-examples
+    │   ├── 2.3.0         (git tag sdk-2.3.0)
+    │   └── 2.3.1         (git tag sdk-2.3.1)
+    ├── pico-sdk
+    │   ├── 2.3.0         (git tag 2.3.0)
+    │   └── 2.3.1         (git tag 2.3.1)
     └── umod4
 ```
 
-Now, cd into umod4 and check your umod4 project's git status:
+To move this project to a new version, clone the new SDK beside the old one as above and clone the matching `pico-examples` tag.
+Then change `PICO_SDK_VERSION` in the top-level `CMakeLists.txt`, and delete the `build` directory: the comment next to `PICO_SDK_VERSION` warns that a version change requires it.
+Everything else, including VS Code's debug SVD file lookup, follows from that one setting.
+
+## Getting the Umod4 Source Code
+
+If you already cloned the project in step 7 of the [Prerequisites](#prerequisites), skip this block.
+On native Linux, where those steps do not apply, clone it now:
 
 ```bash
-cd umod4
-git status
+mkdir -p ~/projects
+git clone https://github.com/mookiedog/umod4.git ~/projects/umod4
 ```
 
-You should see this exact output:
-
-```text
-On branch main
-Your branch is up to date with 'origin/main'.
-
-nothing to commit, working tree clean
-```
-
-Now, open a new VS Code editor.
-Make sure to select a remote window (>< chars in lower left), then select 'connect to WSL'.
-Select 'File/Open Folder' and navigate to ~/projects.
-Select the 'umod4' folder, and open it.
-It should just open and show you a ton of files.
-Specifically: VS Code should not be complaining about _anything_. To make absolutely sure, look at the source control icon, circled in green below:
-
-![vscode git status](./doc/images/BUILDING/vscode-no-changes.png)
-
-If you see thousands of changes, something is wrong: maybe you forgot to set the git line endings, as above?
-
-Your VS Code file viewer over on the left side of the window should show a bunch files.
-In fact, if you select the file "BUILDING.md" by clicking it, you will see the file that contains what you are reading right now.
-
-One last, important note.
-When you clone a repository onto your local machine, you are making a copy of the real, remote repository.
-If you accidentally mess up your repository, the nuclear option is to type the following to utterly erase your repository and start over again:
+**Verify:** the project is in place, next to the software installed above, and clean:
 
 ```bash
-cd ~/projects
-rm -rf umod4
+git -C ~/projects/umod4 status
+ls ~/projects
 ```
 
-At that point, go back to the step that clones the repository, and you will be good to go with a totally fresh repository.
+The first command should end with `nothing to commit, working tree clean`.
+If it lists thousands of changed files, git converted the line endings: set `core.autocrlf` to `false` as in step 7 and clone again.
+The second should list `FreeRTOS-Kernel`, `openocd`, `pico-examples`, `pico-sdk` and `umod4` side by side.
+
+If you ever make a mess of the repository, you can erase it and start over with a fresh clone.
+This destroys any changes that you have not pushed somewhere else:
+
+```bash
+rm -rf ~/projects/umod4
+```
 
 ## Building Umod4
 
-It should be clear by now that the umod4 is not a particularly simple system to get working!
-But we are finally ready to build it.
-
 ### Configuration
 
-The first step is to 'configure' the build.
-The configuration process runs a program called CMake, which analyzes the entire project's structure, then generates a set of files which will tell the build system _how_ to create the appropriate output files.
+Configuring runs CMake, which analyzes the whole project and generates the files that tell the build system how to create the outputs.
+Configuring needs internet access: it downloads several small libraries and picotool from GitHub.
+In VS Code, press F1, type `delete`, and choose **CMake: Delete Cache and Reconfigure**.
+If a window asks you to select a kit (a toolchain), choose "unspecified": the project sets up its own toolchains.
+From a terminal, the equivalent is:
 
-In your VS code window that you used to get the umod4 code from Github, hit 'F1' then type 'delete', but don't hit return.
-A bunch of selections related to the topic of 'deleting' will appear in a dropdown list.
-Click the list item called '**CMake: Delete Cache and Reconfigure**'.
-
-If a window pops up asking you to specify a toolkit, select 'unspecified'.
-The project will set up the toolkit by itself.
-
-After some amount of time, configuration operation should finish without errors.
-It should produce a bunch of messages in the VS Code 'output' window that look something like this:
-
-```text
-[main] Configuring project: umod4
-[driver] Removing /home/robin/projects/umod4/build/CMakeCache.txt
-[driver] Removing /home/robin/projects/umod4/build/CMakeFiles
-[proc] Executing command: /usr/bin/cmake -DCMAKE_BUILD_TYPE:STRING=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE --no-warn-unused-cli -S /home/robin/projects/umod4 -B /home/robin/projects/umod4/build -G Ninja
-[cmake] Not searching for unused variables given on the command line.
-[cmake] --    ---> Syncing the Python environment with uv: /home/robin/projects/umod4/.venv
-...
-<lots more messages snipped out from here>
-...
-[cmake] -- Configuring done (6.8s)
-[cmake] -- Generating done (0.0s)
-[cmake] -- Build files have been written to: /home/robin/projects/umod4/build
+```bash
+cd ~/projects/umod4
+cmake -DCMAKE_BUILD_TYPE=Debug -S . -B build -G Ninja
 ```
 
-The important part is that the configuration messages end with "Build files have been written to: ..." which means **no errors**.
+**Verify:** the messages should end with a line like this, which means no errors:
+
+```text
+-- Build files have been written to: /home/<your-user-name>/projects/umod4/build
+```
 
 ### Building
 
-Assuming that the configuration process completed without errors, you **finally** get to build the umod4 project.
-The files created by the configuration process drive the build process.
-They tell the build system exactly what to create, how to create it, and where to put the outputs that get created.
+In VS Code, press F7 with the cursor inside the window.
+Alternatively, from a VS Code terminal window:
 
-Invoking the build system is the easiest part of this whole process: with your cursor inside the VS Code window, hit key 'F7' to build everything.
-
-The VS Code output window will display tons of messages as everything runs.
-Depending on how beastly your PC is, this may take 30-ish seconds to a few minutes.
-This is the worst-case build time though.
-Once the build is complete, subsequent builds only rebuild files that have changed which only takes a small number of seconds.
-
-_Note: The very first time you build, the build system will generate an error, by design.
-The issue: [picotool](https://github.com/raspberrypi/picotool) requires 'sudo' (administrator rights) in order to access the Pico USB devices.
-Installing an appropriate udev 'rules' file gets rid of the 'sudo' requirement and allows the build system to use picotool itself.
-The build system will verify that the required rules file is installed.
-If not, the build system will stop with an error message showing you the exact commands to run to install the rules file.
-Run the commands in a bash terminal window, then hit F7 to continue the build process._
-
-If it all goes correctly, you will see these final messages in the VS Code OUTPUT window:
-
-```text
-[driver] Build completed: 00:00:32.466
-[build] Build finished with exit code 0
+```bash
+ninja -C ~/projects/umod4/build
 ```
 
-The exit code of 0 means **"All Is Good"**.
+The first build takes from about 30 seconds to a few minutes, depending on your PC's capabilities.
+After that, builds only redo what changed, which typically takes only a few seconds.
 
-A non-zero exit code means that some part of the build failed.
-If you get a non-zero exit code, scroll back to the top of the message output window, then scan down through all the output until you see the first error message appear.
-Then, fix the error.
-I know, I know, maybe not so simple...
+The first build may stop with an error saying that the picotool udev rules are not installed.
+These rules are required so that picotool can reach the Pico's USB devices without `sudo`.
+The error message shows the exact commands to run: run them, then hit `F7` to build again.
+
+**Verify:** in VS Code, the output should end with `[build] Build finished with exit code 0`.
+From a terminal, `ninja` should finish without an error.
+If a step fails, scroll back to the first error message in the output: that is the one to fix.
 
 ### The 'build' Directory
 
-The CMake process is designed to put anything that gets generated or created by the build process into a subdirectory called 'build', located inside the main "projects/umod4" directory.
-There is a reason for that: it keeps the files that are generated by the build process completely separate from the source files used to generate them.
-Because of that, it is _always_ safe to delete the build directory and everything inside it because everything in that directory can be re-created automatically.
+Everything that the build generates goes into `~/projects/umod4/build`, which keeps it completely separate from the sources.
+The one exception is the Python virtual environment, which lives in `.venv` at the top of the repository so that it survives deleting `build`.
+Both can be re-created automatically, so it is always safe to delete them, and a truly clean starting point means deleting both.
 
-The one exception to "everything is in build" is the Python virtual environment: it lives in the `.venv` directory at the top of the umod4 directory so that it survives deleting 'build'.
-It is just as safe to delete (the next build re-creates it from `uv.lock`), and a truly clean starting point means deleting both 'build' and `.venv`.
+Sometimes the CMake build gets out of sync, usually after a `CMakeLists.txt` was changed.
+First try **CMake: Delete Cache and Reconfigure** again.
+If that does not help, delete the build directory and rebuild:
 
-Why would you need to?
-Sometimes, things can get out of sync in the CMake build process.
-It usually happens after making changes to one of the CMakeLists.txt files in the system.
-If things are acting weird, the first thing to try is the 'F1', then start typing 'CMake: delete cache and reconfigure'. As you type, a menu will appear based on what you have typed so far. As soon as you see the menu item "CMake: delete cache and reconfigure" appear, you can quit typing and just click that menu item.
-If that does not work, the nuclear option to get back on track is to:
+```bash
+rm -rf ~/projects/umod4/build
+```
 
-1) Delete the entire 'build' directory by right-clicking 'build' in the VS Code file viewer window, then selecting 'delete permanently' from the menu.
-**When the dialog box opens up warning you about permanently deleting 'build', make sure that it really does say 'build' and that you didn't accidentally select some other directory**.
-Hit the 'delete' button to finally delete build.
-1) Hit "F1", then start typing "CMake: delete cache and reconfigure", and select the menu item as mentioned as above.
-1) Hit "F7" to rebuild everything. Your build directory will reappear, full of binary goodness.
-
-Try those commands right now, and rebuild your entire system from scratch.
-Remember: Never fear deleting the 'build' directory!
+Then reconfigure and build as above.
+Note that VS Code's **CMake: Clean Rebuild** does not clean the EP, WP and the other subprojects, because each is a separate CMake project inside `build`: delete `build` (or just `build/<name>`) instead.
 
 ### Build Outputs
 
-As part of a successful build operation, the build system generates a number of output files.
+A successful build generates many files.
 The most important ones are:
 
 * **build/EP/EP.uf2:** the EP firmware image
 * **build/WP/WP.uf2:** the WP firmware image
 * **build/WP_erase/WP_erase.uf2:** a small program that runs from RAM and erases the whole flash of a WP.
 * **build/WP/WP_partition.uf2:** the flash partition table for a blank WP.
-* **build/ecu/UM4.bin:** An ECU EPROM image containing the data-logging ECU codebase with default 549USA maps. A UM4.bin image is contained inside every EP.uf2 image where it acts as the default built-in EPROM image. If desired, UM4.bin can be uploaded to the EP's image library if you wanted to retain a specific version of it.
+* **build/ecu/UM4.bin:** An ECU EPROM image containing the data-logging ECU code with default 549USA maps. Every EP.uf2 contains a copy as its default built-in EPROM image. Upload UM4.bin to the EP's image library if you want to keep a specific version.
 * **build/ecu/sparky.bin:** A bench-only ECU image built from the same source as UM4.bin with `BENCH_IGNITION_TEST` defined. It skips the real ECU mainloop and just fires both front and rear ignition coils as though the engine were idling at 1200 RPM. It is not included in EP.uf2; upload it to the EP's image library or flash it into a 29C256 if you want to use it.
+
+**Verify:** this should list all six files:
+
+```bash
+cd ~/projects/umod4/build
+ls -l EP/EP.uf2 WP/WP.uf2 WP_erase/WP_erase.uf2 WP/WP_partition.uf2 ecu/UM4.bin ecu/sparky.bin
+```
 
 `WP_erase.uf2`, `WP_partition.uf2` and `WP.uf2` are the three files that get dragged onto a blank WP in BOOTSEL mode for the first install: see [Install the WP software](./GETTING_STARTED.md#install-the-wp-software).
 
 The server program will reflash the umod4 OTA (Over The Air) using the EP.uf2 and WP.uf2 files.
 
+#### Getting the files from Linux to Windows
+
+The build runs inside Linux, but the BOOTSEL drag-and-drop happens in a Windows Explorer window, so you need to reach the Linux files from Windows:
+
+* In a WSL terminal, `cd` to the directory holding the files (for example `cd ~/projects/umod4/build/WP`) and type `explorer.exe .`: an Explorer window opens there.
+* Or browse to `\\wsl.localhost\Ubuntu\home\<your-username>\projects\umod4\build` in Explorer (if you gave your Linux distribution a name other than `Ubuntu`, use that name).
+* Going the other way, your Windows C: drive appears in Linux as `/mnt/c`.
+
 ## Running Umod4
 
 The next step would be to flash the WP software onto a umod4 circuit board.
 If you have a umod4 board, check out [GETTING_STARTED.md](./GETTING_STARTED.md) to see how to prep your ECU and get the software installed onto it.
+
+To debug the EP or WP on real hardware using VS Code and a Pico Debug unit, you also need a bench setup: see [DEBUGGING.md](./DEBUGGING.md) and [BENCH_TESTING.md](./BENCH_TESTING.md).
 
 If you do not have a board, there are still plenty of areas of the project to explore though.
 Check out the project's [README](./README.md) for a high-level tour of the various pieces.

@@ -10,17 +10,17 @@ These rules come from CLAUDE.md and AGENTS.md section 5. This skill makes them s
 
 ## What flailing looks like
 
-- Making overly confident predictions after multiple failures.
-- Trying the same thing with slight variations.
-- Trying random things "just in case".
-- Attempting more than 2 fixes without understanding the root cause.
+* Making overly confident predictions after multiple failures.
+* Trying the same thing with slight variations.
+* Trying random things "just in case".
+* Attempting more than 2 fixes without understanding the root cause.
 
 ## Before trying a hardware or firmware approach you are not certain about
 
 State your confidence level explicitly, using one of these:
 
-- "I know this from docs / disassembly / the code" (and say which).
-- "I believe this but am not sure."
+* "I know this from docs / disassembly / the code" (and say which).
+* "I believe this but am not sure."
 
 Also state what you do NOT know that could make it fail.
 Hardware guesses have been wrong repeatedly in this project.
@@ -30,9 +30,9 @@ A fix for a failure you have not seen cannot be confirmed.
 
 ## After a failure
 
-- Explain WHY it failed before proposing anything new.
-- If you cannot explain it, say so: "I don't know why that didn't work."
-- Do not propose a variant of the same approach if you cannot explain the previous failure.
+* Explain WHY it failed before proposing anything new.
+* If you cannot explain it, say so: "I don't know why that didn't work."
+* Do not propose a variant of the same approach if you cannot explain the previous failure.
 
 ## Hard stop: two failures on the same approach
 
@@ -45,9 +45,9 @@ Stop and write this summary for the user. Do not try a third variant.
 
 ## Signals to stop and listen
 
-- The user asks "what is going on?" or "are you sure?": give an honest assessment of where things stand. Do not defend the current approach, and do not slide into the next attempt.
-- The user writes in all capitals or swears: stop, and do not keep charging ahead.
-- The user ends a message with "Discuss.": talk it over first. Do not edit anything until they say to.
+* The user asks "what is going on?" or "are you sure?": give an honest assessment of where things stand. Do not defend the current approach, and do not slide into the next attempt.
+* The user writes in all capitals or swears: stop, and do not keep charging ahead.
+* The user ends a message with "Discuss.": talk it over first. Do not edit anything until they say to.
 
 ## After a reflash
 
