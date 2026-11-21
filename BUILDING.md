@@ -756,6 +756,35 @@ The error message shows the exact commands to run: run them, then hit `F7` to bu
 From a terminal, `ninja` should finish without an error.
 If a step fails, scroll back to the first error message in the output: that is the one to fix.
 
+### Choosing the Limp Mode Maps (optional)
+
+The EP firmware contains a built-in 'limp mode' image: what the ECU runs when the boot selector cannot load anything else.
+By default it is the UM4 code with UM4's own maps, which are the 549USA maps.
+You do not need to do anything for that.
+
+To make limp mode use the maps from a different stock image, you need that image's `.bin` file (this repository does not contain any) in `eprom_lib/bin_files/`.
+Then make a symlink named `LIMP_MODE_MAPS` there that points at it:
+
+```bash
+cd ~/projects/umod4/eprom_lib/bin_files
+ln -s RP58.bin LIMP_MODE_MAPS
+```
+
+Use `ln -sfn <file>.bin LIMP_MODE_MAPS` to point it somewhere else, or `rm LIMP_MODE_MAPS` to go back to the default.
+Git ignores the link, so your choice never shows up as a change.
+
+The file must be an unprotected image with the stock RP58 code base (the table in [eprom_lib/README.md](eprom_lib/README.md) marks which ones are).
+The build checks that, and stops with an explanation if the file does not qualify.
+Every build prints what limp mode is made of as its very last line, for example:
+
+```text
+Limp Mode image is UM4 code, maps from RP58.bin (verified RP58-compatible)
+```
+
+Limp mode is what keeps the bike running when something else has failed, so bench-test any change to it before riding.
+If you build a release, look at that line first (see [RELEASING.md](RELEASING.md)).
+The details are in [eprom_lib/bin_files/README.md](eprom_lib/bin_files/README.md).
+
 ### The 'build' Directory
 
 Everything that the build generates goes into `~/projects/umod4/build`, which keeps it completely separate from the sources.

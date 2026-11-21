@@ -214,6 +214,7 @@ Three ideas to know:
 * **Limp mode** is the fallback.
   If nothing in the selector loads, the umod4 gives the ECU a built-in image.
   The limp-mode maps currently are from a stock 549USA.
+  (Someone who builds their own firmware can choose other maps: see [Bin Files](eprom_lib/bin_files/README.md).)
   Depending on the extent of mods to your driveline, these maps should allow the engine to run (though perhaps badly), and hopefully get you home.
 
 You manage both the library and the selector on the umod4's control web page.

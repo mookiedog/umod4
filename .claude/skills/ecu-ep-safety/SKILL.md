@@ -62,6 +62,12 @@ If the change moves the pulse, update the margin comment in that block with the 
 * **ECU assembly (`ecu/src/UM4.S`):** the owner wants this to have its own skill, which does not exist yet.
   Until then, follow AGENTS.md section 4: explain the risk, require bench testing (see BENCH_TESTING.md), and state what was not tested.
   Ask the user what verification they want for the change at hand.
+* **The limp mode image** (the `LIMP_MODE_MAPS` link in `eprom_lib/bin_files/`, the "Limp mode maps" section of the top-level `CMakeLists.txt`, the limp mode block of `EP/CMakeLists.txt`, and `cmake/check_limp_maps.cmake`):
+  it is what the ECU runs when the boot selector fails, and it is also the selectable "UM4 (built-in)" entry.
+  Changing what it contains, or how it is chosen, needs the usual explanation and a bench test: say what was and was not tested.
+  Two design decisions by the owner: the checksum guard on the maps file is build-time only, and at run time the EP stays best-effort (it copies whatever image it has and never refuses one, because a flipped bit may do no harm).
+  The built-in image is copied as it is, so it must be an unprotected image: nothing descrambles it.
+  A complete-image limp mode (a `LIMP_MODE_COMPLETE` link) was considered and left as a future possibility, because it would change what "UM4 (built-in)" means and cannot be validated.
 * **Power circuitry:** hardware, not firmware. Do not guess. Point to the hardware documentation.
 
 ## Keeping this skill current

@@ -85,6 +85,8 @@ Obviously, if you own a specific EPROM and have access to an EPROM reader, you c
 You can store them wherever you like on your PC.
 You load them onto your umod4 through its web page: see [Putting a .bin file into the umod4](../USER_GUIDE.md#putting-a-bin-file-into-the-umod4) in the User Guide.
 
+The only thing the firmware build does with .bin files is the optional `LIMP_MODE_MAPS` link, which chooses the maps for the built-in limp mode image: see [eprom_lib/bin_files/README.md](bin_files/README.md).
+
 The idea of a umod4 board containing every EPROM image ever released is quite possible, and seemingly cool.
 But, as someone pointed out to me, it's also pretty useless in the sense that once you get an image ironed out exactly the way you want it, all those other images are just wasted space.
 
