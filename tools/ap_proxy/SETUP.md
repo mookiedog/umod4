@@ -41,15 +41,11 @@ usbipd bind --hardware-id 1209:0001
 
 ## One-Time WSL2 Setup
 
-Create a udev rule so the device gets world-readable permissions automatically on every enumeration:
+The ap_proxy appears as a serial port (`/dev/ttyACM*`) that belongs to the `dialout` group, so your user must be a member of that group.
+[BUILDING.md](../../BUILDING.md#install-openocd) shows how to check, and how to add yourself.
 
-```bash
-echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", MODE="0666"' | \
-    sudo tee /etc/udev/rules.d/99-proxy-pico.rules
-sudo udevadm control --reload-rules
-```
-
-If you set up an earlier ap_proxy that used `2e8a:000a`, replace the old rule with this one.
+An earlier version of these instructions created a udev rule, `/etc/udev/rules.d/99-proxy-pico.rules`.
+It is not needed: if you have it, you can delete it.
 
 ---
 
@@ -135,7 +131,7 @@ The test can be run repeatedly.
 | Symptom | Fix |
 | --- | --- |
 | `usbipd attach` gives "Device in error state" | Unplug, plug into a different USB port, and attach again |
-| `/dev/ttyACM0` permission denied | The udev rule is not installed: see One-Time WSL2 Setup above |
+| `/dev/ttyACM*` permission denied | Your user is not in the `dialout` group, or the terminal was started before you joined it: see One-Time WSL2 Setup above |
 | `/dev/ttyACM*` not found after flash | Run `usbipd attach --wsl --hardware-id 1209:0001` again |
 | SCAN finds 0 networks | The umod4 is not powered on, or not in AP mode |
 | CONNECT times out | Wrong password: the default is the SSID itself (for example `umod4_1EA3`) |

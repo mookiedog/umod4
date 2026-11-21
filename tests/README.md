@@ -210,7 +210,6 @@ Edit `AP_PROXY_VID` and `AP_PROXY_PID` there, then verify the following:
 | `tools/set_credentials` | reads `usb_ids.txt` at startup | **none** |
 | `tools/flash_ap_proxy` | reads `usb_ids.txt` at startup | **none** |
 | `tools/setup_usb_wsl.ps1` | reads `usb_ids.txt` (copied to TEMP by launcher) | **none** |
-| `/etc/udev/rules.d/99-proxy-pico.rules` | hardcoded | **update manually**, then reload udev rules |
 | `tools/ap_proxy/SETUP.md` | documentation | **update manually** |
 
 After editing `usb_ids.txt`, rebuild the ap_proxy firmware and re-flash it:
