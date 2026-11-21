@@ -122,23 +122,29 @@ Boot status belongs on WP_STDIO.
 
 `runner.py` does the following, in order:
 
-1. **Build** (`harness/build.py`).
+1. **Environment check** (`harness/env_check.py`).
+   It runs `scripts/check_build_env`, which confirms that the toolchains, the source checkouts and the other prerequisites for building umod4 are in place.
+   A missing toolchain would otherwise appear as a long compiler error halfway through the build, so this reports it first, with the section of [BUILDING.md](../BUILDING.md) that explains the fix.
+   A problem is fatal.
+   It does not look at the hardware, and it takes well under a second.
+   `--skip-preflight` skips it.
+2. **Build** (`harness/build.py`).
    The runner runs the same top-level `ninja` build as F7 in VS Code, so the run always tests the sources in the working tree.
    When the build is already current this takes only a few seconds, because `ninja` knows what each artifact depends on and compiles nothing.
    A failed build is fatal.
    `--no-build` skips this step, for when you know the build is current: the run then says that the build was not checked.
-2. **Pre-flight checks** (`harness/preflight.py`).
+3. **Pre-flight checks** (`harness/preflight.py`).
    They confirm that everything the run needs is present before anything is touched: the USB devices, the tools, the build artifacts, and the arguments needed for provisioning.
    A missing prerequisite aborts the run with a descriptive error.
    The one exception is a running `umod4_server.py`.
    The server answers the WP's UDP auto-discovery broadcast, which makes the WP save the server's address into its configuration and corrupts the test state.
    The runner therefore terminates it, with a logged warning.
-3. **Flash and start OpenOCD.**
+4. **Flash and start OpenOCD.**
    The runner flashes the latest WP firmware, starts OpenOCD, and waits for RTT to come up.
    It then waits 5 seconds so the try-before-you-buy (TBYB) commit and the following cold boot finish before the first command is sent.
    Two suites, `test_provisioning` and `test_config_migration`, manage their own flashing and OpenOCD instead.
-4. **Run the suites** in order, sharing one `context` dictionary between them.
-5. **Report.**
+5. **Run the suites** in order, sharing one `context` dictionary between them.
+6. **Report.**
    The runner writes a report under `build/test_reports/` and exits 0 if everything passed, or 1 if not.
 
 On WSL2 the runner also attaches the debug probe to Linux (via usbipd) and detaches it on exit.

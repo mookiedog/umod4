@@ -107,6 +107,8 @@ A run prints the pre-flight checks, then each suite in turn with one line per te
 An abbreviated successful run looks like this:
 
 ```text
+[harness.env]
+  PASS  check_build_env  all 28 checks passed.
 [harness.build]
   PASS  ninja  build is up to date (3s)
 [harness.preflight]

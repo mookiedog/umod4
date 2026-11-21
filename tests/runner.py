@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from harness.openocd import OpenOCD, OpenOCDError, RTT_PORT_BASE
 from harness import preflight
 from harness import build
+from harness import env_check
 from harness.rtt import RttChannel, RttCapture, RttError
 from harness.usbipd import ensure_attached, ensure_detached
 
@@ -442,7 +443,7 @@ def _parse_args():
     p.add_argument("--preflight-only", action="store_true", dest="preflight_only",
                    help="Run pre-flight checks only, then exit")
     p.add_argument("--skip-preflight", action="store_true", dest="skip_preflight",
-                   help="Skip USB/tool preflight checks (for stress-test loops where the probe is known-good)")
+                   help="Skip the environment check and the USB/tool preflight checks (for stress-test loops where the probe is known-good)")
     p.add_argument("--no-flash", action="store_true", dest="no_flash",
                    help="Skip reflashing WP and run tests against the already-loaded firmware")
     p.add_argument("--no-build", action="store_true", dest="no_build",
@@ -483,6 +484,11 @@ def main():
     context = {}
 
     try:
+        if not args.skip_preflight:
+            print("[harness.env]", file=sys.__stdout__, flush=True)
+            results.start_suite("env")
+            env_check.run(results, PROJECT_ROOT)
+
         if args.no_build:
             print("Build not checked (--no-build): testing the artifacts as they are.",
                   file=sys.__stdout__, flush=True)
