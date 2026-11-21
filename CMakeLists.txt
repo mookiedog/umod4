@@ -101,7 +101,7 @@ endif()
 # See BUILDING.md for how this checkout was set up and which commit it is pinned to.
 # The version is pinned on purpose: it is the one the WP has been built and tested against.
 # Do not move to a newer release without re-testing a full WP build on real hardware.
-set(FREERTOS_KERNEL_VERSION V11.3.0)
+set(FREERTOS_KERNEL_VERSION V11.3.3)
 set(FREERTOS_KERNEL_PATH ${PROJECTS_PATH}/FreeRTOS-Kernel)
 
 if(NOT EXISTS "${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake")

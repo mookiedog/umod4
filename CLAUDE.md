@@ -223,7 +223,7 @@ The build system expects this specific structure:
 ~/projects/
 ├── pico-sdk/2.3.1/    - Pico SDK (version configurable in CMakeLists.txt)
 ├── pico-examples/     - REQUIRED: one checkout per SDK version, e.g. pico-examples/2.3.1 (tag sdk-2.3.1)
-├── FreeRTOS-Kernel/   - FreeRTOS, a separate sibling checkout (tag V11.3.0, see BUILDING.md)
+├── FreeRTOS-Kernel/   - FreeRTOS, a separate sibling checkout (tag V11.3.3, see BUILDING.md)
 ├── openocd/           - OpenOCD from raspberrypi GitHub
 └── umod4/             - This project
 ```

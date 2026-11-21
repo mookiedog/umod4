@@ -45,7 +45,7 @@ Once everything is set up, rebuilding the entire system is as easy as pushing th
 | Host OS, native Linux | Linux Mint 22.2 (based on Ubuntu 24.04) | tested by the author |
 | Raspberry Pi Pico SDK | 2.3.1 | `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` |
 | pico-examples | the tag `sdk-` plus the SDK version | derived from the SDK version by CMake |
-| FreeRTOS-Kernel | V11.3.0 | `FREERTOS_KERNEL_VERSION` in the top-level `CMakeLists.txt`: pinned on purpose, see "FreeRTOS-Kernel" below |
+| FreeRTOS-Kernel | V11.3.3 | `FREERTOS_KERNEL_VERSION` in the top-level `CMakeLists.txt`: pinned on purpose, see "FreeRTOS-Kernel" below |
 | Arm GNU Toolchain (`arm-none-eabi`) | 15.2.rel1 (every release from 12 through 15 has built this project) | this document: the build uses the newest version installed under `/opt/arm/arm-none-eabi`, unless `ARM_NONE_EABI_VERSION` is set in `cmake/toolchains/arm-none-eabi.cmake` |
 | GNU binutils for the 68HC11 | 2.42 | this document |
 | OpenOCD | `raspberrypi/openocd` tag `sdk-2.2.0` (commit 04ae2c3) | this document |
@@ -585,7 +585,7 @@ No environment variables are needed.
 ```text
 /home/<your-user-name>/
 └── projects/
-    ├── FreeRTOS-Kernel   (one checkout, pinned to V11.3.0)
+    ├── FreeRTOS-Kernel   (one checkout, pinned to V11.3.3)
     ├── openocd           (the Raspberry Pi fork, built earlier)
     ├── pico-examples
     │   └── 2.3.1         (git tag sdk-2.3.1)
@@ -645,13 +645,13 @@ FreeRTOS-Kernel is **not** part of any pico-sdk release, so it is its own checko
 Its releases are independent of the SDK's, so one checkout serves every SDK version.
 
 ```bash
-git clone --branch V11.3.0 --recurse-submodules https://github.com/FreeRTOS/FreeRTOS-Kernel ~/projects/FreeRTOS-Kernel
+git clone --branch V11.3.3 --recurse-submodules https://github.com/FreeRTOS/FreeRTOS-Kernel ~/projects/FreeRTOS-Kernel
 ```
 
-V11.3.0 is pinned on purpose: it is the version this project has been built and tested against, and it includes the `RP2350_ARM_NTZ` community port (from the `Community-Supported-Ports` submodule) that the WP needs.
+V11.3.3 is pinned on purpose: it is the version this project has been built and tested against, and it includes the `RP2350_ARM_NTZ` community port (from the `Community-Supported-Ports` submodule) that the WP needs.
 **Do not move to a newer release without re-testing a full WP build on real hardware.**
 
-**Verify:** the first command should print `V11.3.0`, and the second should list the port directory (it only exists if the submodules were fetched):
+**Verify:** the first command should print `V11.3.3`, and the second should list the port directory (it only exists if the submodules were fetched):
 
 ```bash
 git -C ~/projects/FreeRTOS-Kernel describe --tags
