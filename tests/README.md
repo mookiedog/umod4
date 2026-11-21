@@ -51,7 +51,10 @@ Re-run it if you replace either device with a new physical unit.
 
 ### Step 1: Build Umod4 System
 
-Press **F7** in VS Code to build **all** umod4 firmware.
+The runner builds the firmware itself before it tests, so there is nothing to do here.
+If you want to build first anyway, press **F7** in VS Code.
+A build that is already current costs the runner only a few seconds.
+To skip the runner's build step, add `--no-build`: the run then tests the artifacts exactly as they are.
 
 ### Step 2: Run the Test Suite
 
@@ -104,15 +107,13 @@ A run prints the pre-flight checks, then each suite in turn with one line per te
 An abbreviated successful run looks like this:
 
 ```text
+[harness.build]
+  PASS  ninja  build is up to date (3s)
 [harness.preflight]
   PASS  server_kill
   PASS  ap_proxy_usb  ap_proxy (1209:0001) present (state: Shared)
   PASS  cmsis_dap_usb  CMSIS-DAP (2e8a:000c) present (state: Shared)
   ...
-[harness.build_state]
-  PASS  wp_uf2  WP.uf2
-  PASS  ep_uf2  EP.uf2
-  PASS  wpusbboot  WpUsbBoot
 Entering WP BOOTSEL mode via SWD...
 Flashing WP from /home/you/projects/umod4/build/WP ...
 Flash complete.

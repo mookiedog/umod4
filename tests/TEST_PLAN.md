@@ -122,15 +122,17 @@ Boot status belongs on WP_STDIO.
 
 `runner.py` does the following, in order:
 
-1. **Pre-flight checks** (`harness/preflight.py`).
+1. **Build** (`harness/build.py`).
+   The runner runs the same top-level `ninja` build as F7 in VS Code, so the run always tests the sources in the working tree.
+   When the build is already current this takes only a few seconds, because `ninja` knows what each artifact depends on and compiles nothing.
+   A failed build is fatal.
+   `--no-build` skips this step, for when you know the build is current: the run then says that the build was not checked.
+2. **Pre-flight checks** (`harness/preflight.py`).
    They confirm that everything the run needs is present before anything is touched: the USB devices, the tools, the build artifacts, and the arguments needed for provisioning.
    A missing prerequisite aborts the run with a descriptive error.
    The one exception is a running `umod4_server.py`.
    The server answers the WP's UDP auto-discovery broadcast, which makes the WP save the server's address into its configuration and corrupts the test state.
    The runner therefore terminates it, with a logged warning.
-2. **Build-state check** (`harness/build_state.py`).
-   It refuses to test a firmware build that is older than its sources, because results against a stale build can't be trusted.
-   `--allow-stale` downgrades this to a warning.
 3. **Flash and start OpenOCD.**
    The runner flashes the latest WP firmware, starts OpenOCD, and waits for RTT to come up.
    It then waits 5 seconds so the try-before-you-buy (TBYB) commit and the following cold boot finish before the first command is sent.

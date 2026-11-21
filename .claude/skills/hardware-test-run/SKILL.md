@@ -18,8 +18,8 @@ Do not start a run until they ask for one.
    * umod4 board powered, Debug Probe on the WP SWD pins, ap_proxy plugged in, GPS and SD card installed.
    * **SPARE2 must be floating.** Grounding it (needed for EP debugging) disables the WP's SWD control of the EP and breaks the EP suites.
    * For the ECU suite (`test_ecu`), the bench ECU needs its fake sensors wired up: two resistors and a throttle divider with a pot. See [Fake sensors for the ECU](../../../tests/README.md#fake-sensors-for-the-ecu) in `tests/README.md`.
-2. Firmware must be built first: `cd ~/projects/umod4/build && ninja`.
-   The runner aborts on stale build artifacts; `--allow-stale` only downgrades that to a warning, so do not use it casually.
+2. The runner runs `ninja` in `build/` itself before it does anything else, so the firmware does not need to be built first.
+   A failed build stops the run. `--no-build` skips the build step: use it only if the user says the build is current.
 3. Preflight runs automatically at the start of every run (unless `--skip-preflight` is passed), so a separate preflight run is optional.
    If the user wants to check the setup without starting a run, offer `uv run tests/runner.py --preflight-only`.
    It checks USB devices (probe `2e8a:000c`, ap_proxy `1209:0001`), tools and build artifacts.

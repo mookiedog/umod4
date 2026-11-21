@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from harness.openocd import OpenOCD, OpenOCDError, RTT_PORT_BASE
 from harness import preflight
-from harness import build_state
+from harness import build
 from harness.rtt import RttChannel, RttCapture, RttError
 from harness.usbipd import ensure_attached, ensure_detached
 
@@ -445,8 +445,8 @@ def _parse_args():
                    help="Skip USB/tool preflight checks (for stress-test loops where the probe is known-good)")
     p.add_argument("--no-flash", action="store_true", dest="no_flash",
                    help="Skip reflashing WP and run tests against the already-loaded firmware")
-    p.add_argument("--allow-stale", action="store_true", dest="allow_stale",
-                   help="Warn instead of abort when build artifacts are older than their sources")
+    p.add_argument("--no-build", action="store_true", dest="no_build",
+                   help="Do not run ninja first: test the build artifacts exactly as they are")
     p.add_argument("--list", action="store_true", dest="list_suites",
                    help="List the available suites, then exit (no hardware needed)")
     return p.parse_args()
@@ -483,6 +483,14 @@ def main():
     context = {}
 
     try:
+        if args.no_build:
+            print("Build not checked (--no-build): testing the artifacts as they are.",
+                  file=sys.__stdout__, flush=True)
+        else:
+            print("[harness.build]", file=sys.__stdout__, flush=True)
+            results.start_suite("build")
+            build.run(results, PROJECT_ROOT)
+
         if args.skip_preflight:
             try:
                 ensure_attached(CMSIS_DAP_HW_ID)
@@ -501,10 +509,6 @@ def main():
                 results.fatal("cmsis_dap_attach", str(e))
 
             preflight.check_probe_not_busy(results)
-
-        print("[harness.build_state]", file=sys.__stdout__, flush=True)
-        results.start_suite("build_state")
-        build_state.run_all(results, PROJECT_ROOT, allow_stale=args.allow_stale)
 
         if not args.preflight_only:
             # Suites that manage their own WP flash and OpenOCD lifecycle.
