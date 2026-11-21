@@ -682,6 +682,10 @@ To move this project to a new version, clone the new SDK beside the old one as a
 Then change `PICO_SDK_VERSION` in the top-level `CMakeLists.txt`, and delete the `build` directory: the comment next to `PICO_SDK_VERSION` warns that a version change requires it.
 Everything else, including VS Code's debug SVD file lookup, follows from that one setting.
 
+The SDK also decides which picotool it needs, and it refuses to continue if the picotool installed in `~/.local` is a different version.
+The superbuild builds the matching picotool, but a build can stop on an older one before that happens, with the message `Incompatible picotool installation found`.
+If you see it, run `ninja picotool` in the `build` directory, which builds and installs the right version over the old one, and then build again.
+
 ## Getting the Umod4 Source Code
 
 If you already cloned the project in step 7 of the [Prerequisites](#prerequisites), skip this block.

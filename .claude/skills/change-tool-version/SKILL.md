@@ -26,6 +26,7 @@ Search it for the old version rather than trusting line numbers.
 |-----------|------------------|-------------|
 | **Pico SDK** | `PICO_SDK_VERSION` in the top-level `CMakeLists.txt` | BUILDING.md (table, clone and verify commands, directory diagrams); the directory diagram in the `CMakeLists.txt` comment; CLAUDE.md (several lines); `scripts/check_build_env` needs nothing, it reads the setting |
 | **pico-examples** | none: derived from the SDK version | the clone and verify commands in BUILDING.md follow the SDK change |
+| **picotool** | none: the superbuild builds the tag named by the SDK version | after an SDK change, run `ninja picotool` in `build`: an older picotool in `~/.local` makes the SDK stop with "Incompatible picotool installation found" |
 | **FreeRTOS-Kernel** | none: the build knows the path, not the version | BUILDING.md; `FREERTOS_VERSION` in `scripts/check_build_env`; CLAUDE.md |
 | **ARM toolchain** | none: the build uses the newest directory under `/opt/arm/arm-none-eabi`, unless `ARM_NONE_EABI_VERSION` is set in `cmake/toolchains/arm-none-eabi.cmake` | BUILDING.md; CLAUDE.md (two lines) |
 | **68HC11 binutils** | none | BUILDING.md only |

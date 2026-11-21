@@ -196,6 +196,12 @@ else
     bad "MISSING" "udev probe rule" "/etc/udev/rules.d/46-probe.rules not found" "Install OpenOCD"
 fi
 
+if [ -f /etc/udev/rules.d/60-picotool.rules ]; then
+    ok "udev picotool rule" "/etc/udev/rules.d/60-picotool.rules"
+else
+    bad "MISSING" "udev picotool rule" "/etc/udev/rules.d/60-picotool.rules not found: the build refuses to continue without it" "Building"
+fi
+
 groups_now="$(id -nG 2>/dev/null)"
 if echo "$groups_now" | grep -qw plugdev; then
     ok "group plugdev" "member (debug probe access)"

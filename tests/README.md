@@ -112,7 +112,7 @@ An abbreviated successful run looks like this:
 
 ```text
 [harness.env]
-  PASS  check_build_env  all 28 checks passed.
+  PASS  check_build_env  all 29 checks passed.
 [harness.build]
   PASS  ninja  build is up to date (3s)
 [harness.preflight]
