@@ -10,7 +10,11 @@ Usage:
 import subprocess
 import os
 
-NM = "/opt/arm/arm-none-eabi/15.2.rel1/bin/arm-none-eabi-nm"
+# The build creates build/arm_toolchain_latest, a symlink to the bin directory of the ARM
+# toolchain it uses (see cmake/toolchains/arm-none-eabi.cmake).  Using it means nm always comes
+# from the same toolchain as the compiler.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+NM = os.path.join(_PROJECT_ROOT, "build", "arm_toolchain_latest", "arm-none-eabi-nm")
 
 
 class ElfError(Exception):
