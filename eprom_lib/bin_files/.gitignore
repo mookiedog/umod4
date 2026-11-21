@@ -3,3 +3,6 @@
 # but they must not be tracked by git so that they don't get checked in by accident.
 *.bin
 *.bin.*
+
+# Optional symlink that selects the maps for the EP's limp-mode image (see README.md).
+LIMP_MODE_MAPS

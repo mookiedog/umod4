@@ -164,7 +164,7 @@ It is documentation only: eprom_lib is not a build project.
 
 **Note:** Repository does not include .bin files - users must source separately.
 Users load their own .bin files onto the device through its web page.
-`eprom_lib/bin_files/` is an optional place to keep them (gitignored); the only build use is `RP58.bin` supplying maps for the EP's limp-mode image.
+`eprom_lib/bin_files/` is an optional place to keep them (gitignored); the only build use is the optional `LIMP_MODE_MAPS` symlink, which picks the maps for the EP's limp-mode image (see `eprom_lib/bin_files/README.md`).
 
 ## Log System Architecture
 

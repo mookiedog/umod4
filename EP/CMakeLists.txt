@@ -258,71 +258,32 @@ endif()
 # image store, corrupted selector, all hash checks failed, etc.).
 # Being compiled into firmware makes it immune to image store corruption.
 #
-# All .bin files must be exactly 32768 bytes.
-# Output: limp_mode_image.h (C array via xxd -i)
+# The code (0x1C00-0x7FFF) always comes from UM4.bin.  The maps (0x0000-0x1BFF) come from
+# UM4.bin as well, unless the top-level project passes LIMP_MODE_MAPS_FILE: the file that
+# eprom_lib/bin_files/LIMP_MODE_MAPS points at.  The top-level CMakeLists.txt resolves and
+# validates that link and reports the choice; see the "Limp mode maps" section there.
 #
-# Configuration (mutually exclusive, override with cmake -D):
-#   LIMP_MODE_COMPLETE_BIN=<name>.bin  - A complete 32KB image from eprom_lib/bin_files/
-#   LIMP_MODE_MAPBLOB=<name>.bin       - Combine maps (0x0000-0x1BFF) from <name>.bin
-#                                        with code (0x1C00-0x7FFF) from UM4.bin;
-#                                        if the file is not found, falls back to UM4.bin
-#   (default)                          - Use UM4.bin from the ECU build as a complete image
-set(LIMP_MODE_MAPBLOB "RP58.bin")
-
-set(LIMP_MODE_BIN_DIR "${EPROM_LIB_SRC_DIR}/bin_files")
+# Output: limp_mode_image.h (C array via xxd -i)
+set(LIMP_MODE_CODE_SRC "${ECU_BINARY_DIR}/UM4.bin")
 set(LIMP_MODE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/limp_mode.bin")
 set(LIMP_MODE_HEADER "${CMAKE_CURRENT_BINARY_DIR}/limp_mode_image.h")
 
-if(DEFINED LIMP_MODE_COMPLETE_BIN AND LIMP_MODE_MAPBLOB)
-    message(FATAL_ERROR "LIMP_MODE_COMPLETE_BIN and LIMP_MODE_MAPBLOB are mutually exclusive")
-endif()
-
-if(DEFINED LIMP_MODE_COMPLETE_BIN)
-    # Use a complete 32KB image as-is
-    set(LIMP_MODE_SRC "${LIMP_MODE_BIN_DIR}/${LIMP_MODE_COMPLETE_BIN}")
-    if(NOT EXISTS "${LIMP_MODE_SRC}")
-        message(FATAL_ERROR "LIMP_MODE_COMPLETE_BIN: ${LIMP_MODE_SRC} does not exist")
-    endif()
+if(LIMP_MODE_MAPS_FILE)
     add_custom_command(
         OUTPUT ${LIMP_MODE_OUTPUT}
-        COMMAND ${CMAKE_COMMAND} -E copy "${LIMP_MODE_SRC}" "${LIMP_MODE_OUTPUT}"
-        DEPENDS "${LIMP_MODE_SRC}"
-        COMMENT "Limp mode image: using complete image ${LIMP_MODE_COMPLETE_BIN}"
+        # Build-time check that the maps file is usable with the UM4 code (see the script).
+        COMMAND ${CMAKE_COMMAND} -DMAPS_FILE=${LIMP_MODE_MAPS_FILE} -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/check_limp_maps.cmake
+        COMMAND bash -c "head -c 7168 '${LIMP_MODE_MAPS_FILE}' > '${LIMP_MODE_OUTPUT}' && tail -c +7169 '${LIMP_MODE_CODE_SRC}' >> '${LIMP_MODE_OUTPUT}'"
+        DEPENDS "${LIMP_MODE_MAPS_FILE}" "${LIMP_MODE_CODE_SRC}" "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/check_limp_maps.cmake"
+        COMMENT "Limp mode image: UM4 code, maps from ${LIMP_MODE_MAPS_FILE}"
         VERBATIM
     )
-
-elseif(LIMP_MODE_MAPBLOB)
-    # Combine maps (0x0000-0x1BFF) from the specified bin with code (0x1C00-0x7FFF) from UM4.bin.
-    # If the mapblob .bin is not present, fall back silently to UM4.bin as a complete image.
-    set(LIMP_MODE_MAPBLOB_SRC "${LIMP_MODE_BIN_DIR}/${LIMP_MODE_MAPBLOB}")
-    set(LIMP_MODE_CODE_SRC "${ECU_BINARY_DIR}/UM4.bin")
-    if(EXISTS "${LIMP_MODE_MAPBLOB_SRC}")
-        add_custom_command(
-            OUTPUT ${LIMP_MODE_OUTPUT}
-            COMMAND bash -c "head -c 7168 '${LIMP_MODE_MAPBLOB_SRC}' > '${LIMP_MODE_OUTPUT}' && tail -c +7169 '${LIMP_MODE_CODE_SRC}' >> '${LIMP_MODE_OUTPUT}'"
-            DEPENDS "${LIMP_MODE_MAPBLOB_SRC}" "${LIMP_MODE_CODE_SRC}"
-            COMMENT "Limp mode image: maps from ${LIMP_MODE_MAPBLOB}, code from UM4.bin"
-            VERBATIM
-        )
-    else()
-        message(STATUS "Limp mode: ${LIMP_MODE_MAPBLOB} not found in eprom_lib/bin_files/, falling back to UM4.bin")
-        add_custom_command(
-            OUTPUT ${LIMP_MODE_OUTPUT}
-            COMMAND ${CMAKE_COMMAND} -E copy "${LIMP_MODE_CODE_SRC}" "${LIMP_MODE_OUTPUT}"
-            DEPENDS "${LIMP_MODE_CODE_SRC}"
-            COMMENT "Limp mode image: using UM4.bin (${LIMP_MODE_MAPBLOB} not found)"
-            VERBATIM
-        )
-    endif()
-
 else()
-    # Use UM4.bin as a complete image
-    set(LIMP_MODE_CODE_SRC "${ECU_BINARY_DIR}/UM4.bin")
     add_custom_command(
         OUTPUT ${LIMP_MODE_OUTPUT}
         COMMAND ${CMAKE_COMMAND} -E copy "${LIMP_MODE_CODE_SRC}" "${LIMP_MODE_OUTPUT}"
         DEPENDS "${LIMP_MODE_CODE_SRC}"
-        COMMENT "Limp mode image: using UM4.bin"
+        COMMENT "Limp mode image: UM4.bin as built (UM4 code, UM4 maps)"
         VERBATIM
     )
 endif()

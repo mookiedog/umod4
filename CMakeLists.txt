@@ -312,6 +312,47 @@ ExternalProject_Add(ecu
 )
 
 # ---------------------------------------------------------------------------------------------
+# Limp mode maps
+#
+# The EP firmware contains a limp-mode image: a complete 32 KB EPROM image that it runs when no
+# normal image can be loaded.  By default that is UM4.bin as built, so it has UM4's own maps
+# (the 549USA maps).
+#
+# To use the maps from another stock image instead, make eprom_lib/bin_files/LIMP_MODE_MAPS a
+# symlink to a 32 KB .bin file, for example:
+#     ln -s RP58.bin eprom_lib/bin_files/LIMP_MODE_MAPS
+# Only the maps (0x0000-0x1BFF) come from that file; the code (0x1C00-0x7FFF) always comes from
+# UM4.bin.  git ignores the link (see eprom_lib/bin_files/.gitignore), so choosing maps never
+# shows up as a change.  The choice is printed here, and again at the very end of every build.
+# The EP build checks that the file is an unprotected, RP58-compatible image (cmake/check_limp_maps.cmake).
+set(LIMP_MODE_MAPS_LINK ${CMAKE_SOURCE_DIR}/eprom_lib/bin_files/LIMP_MODE_MAPS)
+set(LIMP_MODE_MAPS_FILE "")
+
+# Reconfigure when files are added to, removed from or re-linked in that directory.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/eprom_lib/bin_files)
+
+if(IS_SYMLINK "${LIMP_MODE_MAPS_LINK}" OR EXISTS "${LIMP_MODE_MAPS_LINK}")
+    # EXISTS follows symlinks, so a link to a missing file must be caught explicitly.
+    if(NOT EXISTS "${LIMP_MODE_MAPS_LINK}")
+        file(READ_SYMLINK "${LIMP_MODE_MAPS_LINK}" LIMP_MODE_MAPS_TARGET)
+        message(FATAL_ERROR "eprom_lib/bin_files/LIMP_MODE_MAPS points at a file that does not exist: "
+            "${LIMP_MODE_MAPS_TARGET}\n"
+            "Point it at a .bin file in that directory, or remove the link to use UM4's own maps.")
+    endif()
+    get_filename_component(LIMP_MODE_MAPS_FILE "${LIMP_MODE_MAPS_LINK}" REALPATH)
+    get_filename_component(LIMP_MODE_MAPS_NAME "${LIMP_MODE_MAPS_FILE}" NAME)
+    file(SIZE "${LIMP_MODE_MAPS_FILE}" LIMP_MODE_MAPS_SIZE)
+    if(NOT LIMP_MODE_MAPS_SIZE EQUAL 32768)
+        message(FATAL_ERROR "eprom_lib/bin_files/LIMP_MODE_MAPS must point at a 32768-byte .bin file, "
+            "but ${LIMP_MODE_MAPS_NAME} is ${LIMP_MODE_MAPS_SIZE} bytes.")
+    endif()
+    set(LIMP_MODE_MESSAGE "Limp Mode image is UM4 code, maps from ${LIMP_MODE_MAPS_NAME} (verified RP58-compatible)")
+else()
+    set(LIMP_MODE_MESSAGE "Limp Mode image is UM4 code, UM4 maps (549USA)")
+endif()
+message(STATUS "${LIMP_MODE_MESSAGE}")
+
+# ---------------------------------------------------------------------------------------------
 message(STATUS "Adding the 'EP' project")
 
 set(EP_CMAKE_ARG_LIST
@@ -319,6 +360,7 @@ set(EP_CMAKE_ARG_LIST
     -DLIB_DIR=${LIB_DIR}
     -DEPROM_LIB_SRC_DIR=${CMAKE_SOURCE_DIR}/eprom_lib
     -DECU_BINARY_DIR=${CMAKE_BINARY_DIR}/ecu
+    -DLIMP_MODE_MAPS_FILE=${LIMP_MODE_MAPS_FILE}
     -DPICO_SDK_PATH=${PICO_SDK_PATH}
     -DPICO_EXAMPLES_PATH=${PICO_EXAMPLES_PATH}
     -DCMAKE_EXPORT_COMPILE_COMMANDS=1
@@ -500,3 +542,15 @@ fi
 
 endif()
 
+# ---------------------------------------------------------------------------------------------
+# The last thing a build prints: what the limp mode image is made of.  It depends on every
+# sub-project, so that it comes after all of their output.
+add_custom_target(limp_mode_report ALL
+    COMMAND ${CMAKE_COMMAND} -E echo "${LIMP_MODE_MESSAGE}"
+    COMMENT "Limp mode image"
+    VERBATIM
+)
+add_dependencies(limp_mode_report picotool tools ecu EP SwdReflash WpUsbBoot WP_erase ap_proxy WP)
+if(TARGET merge_compile_commands)
+    add_dependencies(limp_mode_report merge_compile_commands)
+endif()
