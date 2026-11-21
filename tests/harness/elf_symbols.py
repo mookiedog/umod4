@@ -10,11 +10,14 @@ Usage:
 import subprocess
 import os
 
-# The build creates build/arm_toolchain_latest, a symlink to the bin directory of the ARM
-# toolchain it uses (see cmake/toolchains/arm-none-eabi.cmake).  Using it means nm always comes
-# from the same toolchain as the compiler.
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-NM = os.path.join(_PROJECT_ROOT, "build", "arm_toolchain_latest", "arm-none-eabi-nm")
+# Every build directory has an arm_toolchain_latest symlink to the bin directory of the ARM
+# toolchain that built it (see cmake/toolchains/arm-none-eabi.cmake).  nm comes from the link
+# next to the ELF, so it always matches the compiler that produced that ELF.  The top-level
+# build/arm_toolchain_latest is not used: it only exists if the top-level project was configured
+# with the ARM toolchain file, which VS Code does and a plain terminal cmake command does not.
+def _nm_for(elf_path):
+    return os.path.join(os.path.dirname(os.path.abspath(elf_path)), "arm_toolchain_latest",
+                        "arm-none-eabi-nm")
 
 
 class ElfError(Exception):
@@ -28,11 +31,12 @@ def read_symbols(elf_path, names):
     """
     if not os.path.exists(elf_path):
         raise ElfError(f"ELF not found: {elf_path}")
-    if not os.path.exists(NM):
-        raise ElfError(f"nm not found: {NM}")
+    nm = _nm_for(elf_path)
+    if not os.path.exists(nm):
+        raise ElfError(f"nm not found: {nm}")
 
     result = subprocess.run(
-        [NM, "--defined-only", elf_path],
+        [nm, "--defined-only", elf_path],
         capture_output=True, text=True
     )
     if result.returncode != 0:
