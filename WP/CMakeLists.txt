@@ -311,9 +311,8 @@ set_source_files_properties(
 )
 
 # Include the PIO program header files:
-# 32-bit UART RX & TX PIO programs (from shared lib/pio/ directory)
+# 32-bit UART RX PIO program (from shared lib/pio/ directory; the EP builds the matching TX program)
 pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pio/uart_rx32.pio)
-pico_generate_pio_header(${PROJECT_NAME}  ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pio/uart_tx32.pio)
 
 # 4-bit SDIO PIO program for RP2350
 pico_generate_pio_header(${PROJECT_NAME}  ${SDIO_RP2350_SRC_DIR}/src/sdio_rp2350.pio)
@@ -388,7 +387,7 @@ target_include_directories(sdio_rp2350 INTERFACE
     "${SDIO_RP2350_SRC_DIR}/include"
 )
 
-# Possibly temp: allow WP to include 'hardware.h' from the EP directory to access certain shared info
+# The WP also includes two headers that live in the EP source directory: ep_flash_layout.h and umod4_EP.h
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../EP/src)
 
 # WP needs to know how to talk to the RP2040 SWD reflasher app

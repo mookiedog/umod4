@@ -32,6 +32,7 @@
 #include "config.h"
 #include "EpromLoader.h"
 #include "hardware.h"
+#include "ep_wp_uart.h"
 #include "epromEmulator.h"
 #include "busFailsafeSetup.h"
 #include "hc11SyncSetup.h"

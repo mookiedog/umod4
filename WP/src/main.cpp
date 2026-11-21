@@ -3,7 +3,7 @@
 #include <string.h>
 #include <malloc.h>
 
-#include "hardware.h"
+#include "ep_wp_uart.h"
 #include "hardware/watchdog.h"
 #include "hardware/adc.h"
 #include "pico/stdlib.h"

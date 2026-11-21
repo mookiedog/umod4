@@ -81,9 +81,8 @@
         #define CLKOUT_GPIO             24
         #define CLKOUT_SOURCE           CLOCKS_CLK_GPOUT2_CTRL_AUXSRC_VALUE_CLK_SYS
     #else
-        // This is the new transmit-only EP to WP 16-bit UART mechanism
+        // This is the transmit-only EP to WP 32-bit UART: see lib/inc/ep_wp_uart.h for the baud rate and framing
         #define EP_TO_WP_TX_GPIO        24
-        #define EP_TO_WP_BAUDRATE       2500000
     #endif
 
     // This pin is driven to '0' by the WP when it is ready for data from the EP.
