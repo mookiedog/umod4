@@ -113,11 +113,12 @@ Run `uname -a` (or check `$WSL_DISTRO_NAME`) before anything else.
 
 ### 5b. Install what the goal needs
 
-1. Read BUILDING.md. Check what is already installed before installing anything (versions matter: Pico SDK, arm-none-eabi-gcc, m68hc11 binutils, uv, OpenOCD, picotool).
+1. Read BUILDING.md. Check what is already installed before installing anything: run `scripts/check_build_env` (section 5e). Versions matter: Pico SDK, arm-none-eabi-gcc, m68hc11 binutils, uv, OpenOCD, picotool.
 2. Install only what the person's goal needs. Visualizer or decoder only: uv alone is enough (`uv run tools/logtools/viz/viz.py <file.h5>`).
 3. Some builds (m68hc11 binutils, OpenOCD) compile from source and take a long time.
    Say so up front, with a rough estimate, so a long silence is not mistaken for a hang.
 4. After each stage, verify with a command, not by assumption. Exit checks:
+   * Prerequisites: `scripts/check_build_env` reports nothing MISSING or WRONG.
    * Python environment: `uv run` of a tool works.
    * Full firmware build: `cd build && ninja` completes.
    * Hardware present (only if they have it): `uv run tests/runner.py --preflight-only` (see the hardware-test-run skill).
@@ -151,10 +152,14 @@ Keep commands small and single-purpose, say in plain language what each does bef
 
 ### 5e. Prerequisite checker
 
-`scripts/doctor` does not exist yet.
-It should be a read-only checker that reports which prerequisites are installed (with versions), whether the build artifacts exist, and what is still missing, so that an agent can pick up a half-finished setup instead of starting over.
-Until it exists, do these checks by hand (section 3b of AGENTS.md).
-Check whether it exists before you start; when it does, run it first and again after each stage.
+`scripts/check_build_env` is a read-only checker for a developer machine (Linux or WSL2).
+It checks that the prerequisites are installed, that the source checkouts are the right ones, and that the project is configured, and for each problem it names the BUILDING.md section that explains the fix.
+By default it prints only the problems and a one-line summary; add `-v` for every check, with the installed versions.
+It changes nothing, takes about a second, and exits 1 if anything is missing or wrong.
+Run it first in every session and again after each stage, so you can pick up a half-finished setup instead of starting over.
+
+It is for building the firmware.
+It does not check the hardware (use `uv run tests/runner.py --preflight-only`), and someone who only wants the server or the visualizer does not need it: they need only uv, covered by the release zip's `README.txt`.
 
 ## 6. Keeping this skill current
 

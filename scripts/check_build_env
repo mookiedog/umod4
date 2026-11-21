@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+# check_build_env: report whether this machine is ready to build umod4.
+#
+# This is a READ-ONLY check of a developer machine (Linux or WSL2).  It changes nothing: it
+# runs "--version" style commands and looks at files.  Run it first in a new session, and
+# again after each setup stage, to see what is left to do.
+#
+# Usage:
+#   scripts/check_build_env       print only the problems, then a one-line summary
+#   scripts/check_build_env -v    print every check, with the installed versions
+#
+# Each check is one of:
+#   OK       installed and as expected
+#   MISSING  not found: the line names the BUILDING.md section that explains how to install it
+#   WRONG    found, but not what the project needs
+#   NOTE     information only: it never affects the result
+# The exit code is 0 if nothing is MISSING or WRONG, and 1 otherwise.
+#
+# Versions:
+#   * The Pico SDK version is read from PICO_SDK_VERSION in the top-level CMakeLists.txt, and
+#     pico-examples follows from it.
+#   * FreeRTOS-Kernel is pinned on purpose, so its version is the one hard-coded value below.
+#     If it changes, see the "Versions known to work" table in BUILDING.md.
+#   * The toolchains (ARM, 68HC11 binutils, OpenOCD) are only reported: BUILDING.md says newer
+#     versions should work, so a different version is not an error.
+#
+# This script is for developers.  Someone who only wants to run the server or the visualizer
+# needs just uv, and the release zip's README.txt covers that.
+
+FREERTOS_VERSION="V11.3.0"
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECTS="$(dirname "$ROOT")"
+ARM_BASE="/opt/arm/arm-none-eabi"
+
+VERBOSE=0
+for arg in "$@"; do
+    case "$arg" in
+        -v|--verbose)
+            VERBOSE=1
+            ;;
+        -h|--help)
+            sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "check_build_env: unknown option '$arg' (try --help)" >&2
+            exit 2
+            ;;
+    esac
+done
+
+checked=0
+problems=0
+
+ok()
+{
+    checked=$((checked + 1))
+    if [ "$VERBOSE" -eq 1 ]; then
+        printf '  %-8s %-26s %s\n' "OK" "$1" "$2"
+    fi
+}
+
+note()
+{
+    if [ "$VERBOSE" -eq 1 ]; then
+        printf '  %-8s %-26s %s\n' "NOTE" "$1" "$2"
+    fi
+}
+
+# bad STATUS NAME DETAIL BUILDING.md-SECTION
+bad()
+{
+    checked=$((checked + 1))
+    printf '  %-8s %-26s %s\n' "$1" "$2" "$3"
+    if [ -n "${4:-}" ]; then
+        printf '  %-8s %-26s %s\n' "" "" "-> BUILDING.md: $4"
+    fi
+    problems=$((problems + 1))
+}
+
+# first_line COMMAND...: the first line of a command's output, or nothing if it fails
+first_line()
+{
+    "$@" 2>&1 | head -1
+}
+
+section()
+{
+    if [ "$VERBOSE" -eq 1 ]; then
+        printf '\n%s\n' "$1"
+    fi
+}
+
+IS_WSL=0
+if grep -qi "microsoft" /proc/version 2>/dev/null; then
+    IS_WSL=1
+fi
+
+if [ "$VERBOSE" -eq 1 ]; then
+    echo "check_build_env: checking this machine for building umod4"
+    echo "Repository: $ROOT"
+fi
+
+# --- Platform ---------------------------------------------------------------------------
+section "Platform"
+if [ "$IS_WSL" -eq 1 ]; then
+    ok "platform" "WSL2 ($(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-Linux}"))"
+else
+    ok "platform" "Linux ($(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-Linux}"))"
+fi
+
+# --- Host tools -------------------------------------------------------------------------
+section "Host tools"
+for tool in gcc g++ git curl unzip cmake jq ninja; do
+    if command -v "$tool" > /dev/null 2>&1; then
+        ok "$tool" "$(command -v "$tool")"
+    else
+        bad "MISSING" "$tool" "not found" "Install Linux Host Tools"
+    fi
+done
+
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*)
+        ok "PATH" "$HOME/.local/bin is on the PATH"
+        ;;
+    *)
+        bad "MISSING" "PATH" "$HOME/.local/bin is not on the PATH" "Create a Local Bin Directory"
+        ;;
+esac
+
+# --- Python -----------------------------------------------------------------------------
+section "Python environment"
+if command -v uv > /dev/null 2>&1; then
+    ok "uv" "$(first_line uv --version)"
+else
+    bad "MISSING" "uv" "not found" "Python and uv"
+fi
+
+if [ -d "$ROOT/.venv" ]; then
+    ok ".venv" "$ROOT/.venv exists"
+else
+    note ".venv" "not created yet: the build creates it (uv sync)"
+fi
+
+# --- Toolchains -------------------------------------------------------------------------
+section "Toolchains"
+if command -v m68hc11-elf-as > /dev/null 2>&1; then
+    ok "m68hc11-elf-as" "$(first_line m68hc11-elf-as --version)"
+else
+    bad "MISSING" "m68hc11-elf-as" "not found" "Build 68HC11 Toolchain"
+fi
+for tool in m68hc11-elf-ld m68hc11-elf-objcopy; do
+    if command -v "$tool" > /dev/null 2>&1; then
+        ok "$tool" "$(command -v "$tool")"
+    else
+        bad "MISSING" "$tool" "not found" "Build 68HC11 Toolchain"
+    fi
+done
+
+# The build uses the newest toolchain directory: it sorts the names in descending order.
+ARM_VERSION=""
+if [ -d "$ARM_BASE" ]; then
+    ARM_VERSION="$(ls -1 "$ARM_BASE" 2>/dev/null | sort -r | head -1)"
+fi
+if [ -n "$ARM_VERSION" ] && [ -x "$ARM_BASE/$ARM_VERSION/bin/arm-none-eabi-gcc" ]; then
+    ok "arm-none-eabi-gcc" "$ARM_VERSION: $(first_line "$ARM_BASE/$ARM_VERSION/bin/arm-none-eabi-gcc" --version)"
+else
+    bad "MISSING" "arm-none-eabi-gcc" "no toolchain found under $ARM_BASE" "Install ARM Cross-Compiler Toolchain"
+fi
+if [ -n "$ARM_VERSION" ] && [ -x "$ARM_BASE/$ARM_VERSION/bin/arm-none-eabi-gdb" ]; then
+    ok "arm-none-eabi-gdb" "$(first_line "$ARM_BASE/$ARM_VERSION/bin/arm-none-eabi-gdb" --version)"
+else
+    bad "MISSING" "arm-none-eabi-gdb" "not found" "Install ARM Cross-Compiler Toolchain"
+fi
+
+# --- Debugging and hardware access ------------------------------------------------------
+section "Debugging tools"
+if command -v openocd > /dev/null 2>&1; then
+    ok "openocd" "$(first_line openocd --version)"
+    cfg_out="$(openocd -c "find target/rp2040.cfg" -c "find target/rp2350.cfg" -c shutdown 2>&1)"
+    for cfg in rp2040.cfg rp2350.cfg; do
+        if echo "$cfg_out" | grep -q "$cfg"; then
+            ok "openocd $cfg" "supported"
+        else
+            bad "WRONG" "openocd $cfg" "this OpenOCD has no $cfg: it needs the Raspberry Pi fork" "Install OpenOCD"
+        fi
+    done
+else
+    bad "MISSING" "openocd" "not found" "Install OpenOCD"
+fi
+
+if [ -f /etc/udev/rules.d/46-probe.rules ]; then
+    ok "udev probe rule" "/etc/udev/rules.d/46-probe.rules"
+else
+    bad "MISSING" "udev probe rule" "/etc/udev/rules.d/46-probe.rules not found" "Install OpenOCD"
+fi
+
+groups_now="$(id -nG 2>/dev/null)"
+if echo "$groups_now" | grep -qw plugdev; then
+    ok "group plugdev" "member (debug probe access)"
+else
+    bad "MISSING" "group plugdev" "not a member" "Install OpenOCD"
+fi
+if echo "$groups_now" | grep -qw dialout; then
+    ok "group dialout" "member (serial ports for the test harness)"
+else
+    bad "MISSING" "group dialout" "not a member (needed to run the test harness)" "Install OpenOCD"
+fi
+
+if [ "$IS_WSL" -eq 1 ]; then
+    if command -v usbipd.exe > /dev/null 2>&1; then
+        ok "usbipd" "$(first_line usbipd.exe --version)"
+    else
+        bad "MISSING" "usbipd" "usbipd.exe not reachable from WSL" "WSL2: USB Device Sharing"
+    fi
+fi
+
+# --- Source checkouts -------------------------------------------------------------------
+section "Source checkouts (next to this repository, in $PROJECTS)"
+
+SDK_VERSION="$(sed -n 's/^set(PICO_SDK_VERSION *\([^ )]*\)).*/\1/p' "$ROOT/CMakeLists.txt" | head -1)"
+if [ -z "$SDK_VERSION" ]; then
+    bad "WRONG" "pico-sdk" "could not read PICO_SDK_VERSION from CMakeLists.txt" ""
+else
+    SDK_DIR="$PROJECTS/pico-sdk/$SDK_VERSION"
+    if [ -d "$SDK_DIR" ]; then
+        tag="$(git -C "$SDK_DIR" describe --tags 2>/dev/null)"
+        missing_sub="$(git -C "$SDK_DIR" submodule status 2>/dev/null | grep -c '^-')"
+        if [ "$tag" != "$SDK_VERSION" ]; then
+            bad "WRONG" "pico-sdk" "$SDK_DIR is on '${tag:-no tag}', expected $SDK_VERSION" "RPi SDK"
+        elif [ "$missing_sub" != "0" ]; then
+            bad "WRONG" "pico-sdk" "$missing_sub submodule(s) not fetched" "RPi SDK"
+        else
+            ok "pico-sdk" "$SDK_VERSION, all submodules present"
+        fi
+    else
+        bad "MISSING" "pico-sdk" "$SDK_DIR not found (version from CMakeLists.txt)" "RPi SDK"
+    fi
+
+    EX_DIR="$PROJECTS/pico-examples/$SDK_VERSION"
+    if [ -d "$EX_DIR" ]; then
+        tag="$(git -C "$EX_DIR" describe --tags 2>/dev/null)"
+        if [ "$tag" = "sdk-$SDK_VERSION" ]; then
+            ok "pico-examples" "sdk-$SDK_VERSION"
+        else
+            bad "WRONG" "pico-examples" "$EX_DIR is on '${tag:-no tag}', expected sdk-$SDK_VERSION" "pico-examples"
+        fi
+    else
+        bad "MISSING" "pico-examples" "$EX_DIR not found" "pico-examples"
+    fi
+fi
+
+FR_DIR="$PROJECTS/FreeRTOS-Kernel"
+FR_PORT="$FR_DIR/portable/ThirdParty/Community-Supported-Ports/GCC/RP2350_ARM_NTZ"
+if [ -d "$FR_DIR" ]; then
+    tag="$(git -C "$FR_DIR" describe --tags 2>/dev/null)"
+    if [ "$tag" != "$FREERTOS_VERSION" ]; then
+        bad "WRONG" "FreeRTOS-Kernel" "on '${tag:-no tag}', the project is pinned to $FREERTOS_VERSION" "FreeRTOS-Kernel"
+    elif [ ! -d "$FR_PORT" ]; then
+        bad "WRONG" "FreeRTOS-Kernel" "the RP2350_ARM_NTZ port is missing: submodules not fetched" "FreeRTOS-Kernel"
+    else
+        ok "FreeRTOS-Kernel" "$FREERTOS_VERSION, RP2350 port present"
+    fi
+else
+    bad "MISSING" "FreeRTOS-Kernel" "$FR_DIR not found" "FreeRTOS-Kernel"
+fi
+
+# --- Project configuration --------------------------------------------------------------
+section "Project configuration"
+if [ -f "$ROOT/build/build.ninja" ]; then
+    ok "configured" "build/build.ninja exists"
+else
+    bad "MISSING" "configured" "build/build.ninja not found: the project is not configured yet" "Configuration"
+fi
+
+# --- Summary ----------------------------------------------------------------------------
+if [ "$problems" -eq 0 ]; then
+    echo "check_build_env: all $checked checks passed."
+    exit 0
+fi
+echo "check_build_env: $problems of $checked checks are MISSING or WRONG."
+echo "Hardware (probe, board) is not checked here: use 'uv run tests/runner.py --preflight-only'."
+exit 1
