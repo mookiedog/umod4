@@ -367,6 +367,24 @@ class Database:
         finally:
             session.close()
 
+    def has_deduplicated_transfer(self, device_mac: str, filename: str, size_bytes: int, note: str) -> bool:
+        """True if a 'deduplicated' record with this file and this note already exists.
+
+        The server checks in every few minutes and skips every log it already has.  Without this check
+        it wrote a new 'deduplicated' row for every log at every check-in (33,000 rows by November 2026).
+        """
+        session = self.get_session()
+        try:
+            return session.query(Transfer.id).filter_by(
+                device_mac=device_mac,
+                filename=filename,
+                size_bytes=size_bytes,
+                status='deduplicated',
+                error_message=note
+            ).first() is not None
+        finally:
+            session.close()
+
     def find_successful_transfer(self, device_mac: str, filename: str, size_bytes: int):
         """Find a previous successful transfer for a given file.
 

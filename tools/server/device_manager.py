@@ -293,17 +293,20 @@ class DeviceManager:
                     print(f"DeviceManager: Dedup tail mismatch for {device_name}:{filename} — downloading fresh copy")
                 else:
                     note = f"Already downloaded on {prior_date}"
-                    dedup_transfer = self.database.add_transfer(
-                        device_mac=device_mac,
-                        filename=filename,
-                        size_bytes=file_size,
-                        status='deduplicated',
-                    )
-                    self.database.update_transfer(
-                        dedup_transfer.id,
-                        end_time=datetime.utcnow(),
-                        error_message=note,
-                    )
+                    # Record the skip once.  The same log is skipped again at every check-in, and a new
+                    # row each time made the database grow by hundreds of rows per hour.
+                    if not self.database.has_deduplicated_transfer(device_mac, filename, file_size, note):
+                        dedup_transfer = self.database.add_transfer(
+                            device_mac=device_mac,
+                            filename=filename,
+                            size_bytes=file_size,
+                            status='deduplicated',
+                        )
+                        self.database.update_transfer(
+                            dedup_transfer.id,
+                            end_time=datetime.utcnow(),
+                            error_message=note,
+                        )
                     print(f"DeviceManager: Skipping {device_name}:{filename} ({note})")
                     continue
 
