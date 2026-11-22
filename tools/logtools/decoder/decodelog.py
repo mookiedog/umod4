@@ -907,7 +907,10 @@ class TimeKeeper:
         return self.time_ns
 
     def process_retrospective_t_event(self, raw_ts):
-        """Process a retrospective timestamp (spark that has already fired).
+        """Place an event by its own timer value, without moving the clock.
+
+        Used for the spark events (hardware captures logged just after the spark) and the
+        injector ON events (logged a few microseconds before the injector opens).
 
         The raw_ts is the actual TCNT capture value of the event.  We compute
         its absolute time by applying a signed delta from the most recent known
@@ -1749,13 +1752,14 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_U16:
                     fi_on = int.from_bytes(read(f, L.LOGID_ECU_F_INJ_ON_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
-                    # Do not advance time_ns based on this value
+                    # fi_on is the timer value at which the ECU turns the injector on.  The ECU logs it
+                    # a few microseconds before that moment, so it is effectively "now", but the
+                    # decoder's clock is usually the crank event that preceded it, about 0.6 ms earlier.
+                    # Place the event by its own value.  Do not advance time_ns based on this value.
                     timekeeper.advance_time_by_ns(1)
                     print(f"{fmt_record(recordCnt, timekeeper)} FI_ON:  {fi_on:04X}")
                     if h5_writer:
-                        # TODO: implement prospective timestamp conversion
-                        actual_time_ns = timekeeper.get_time_ns()
+                        actual_time_ns = timekeeper.process_retrospective_t_event(fi_on)
                         # Record as pending for combined bar dataset
                         h5_writer.append_injector_on('front', actual_time_ns, fi_on)
 
@@ -1768,12 +1772,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_R_INJ_ON_TYPE_U16:
                     ri_on = int.from_bytes(read(f, L.LOGID_ECU_R_INJ_ON_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - this is when the event WILL happen, not when it occurred
+                    # ri_on is the timer value at which the ECU turns the injector on: see FI_ON above.
+                    # Place the event by its own value.  Do not advance time_ns based on this value.
                     timekeeper.advance_time_by_ns(1)
                     print(f"{fmt_record(recordCnt, timekeeper)} RI_ON:  {ri_on:04X}")
                     if h5_writer:
-                        # TODO: implement prospective timestamp conversion
-                        actual_time_ns = timekeeper.get_time_ns()
+                        actual_time_ns = timekeeper.process_retrospective_t_event(ri_on)
                         # Record as pending for combined bar dataset
                         h5_writer.append_injector_on('rear', actual_time_ns, ri_on)
 
