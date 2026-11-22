@@ -63,7 +63,7 @@ from viz_components.widgets import (ColorCheckbox, StreamCheckbox, DraggableStre
                                      ZoomableGraphWidget, ResizableSplitter)
 from viz_components.utils import parse_color_to_rgba, MapPageServer
 from viz_components.rendering import min_max_decimate, DataNormalizer
-from viz_components.data import HDF5DataLoader, DataManager
+from viz_components.data import HDF5DataLoader, DataManager, damaged_log_message
 from viz_components.navigation import ViewNavigationController, ViewHistory
 
 # Import decoder for .um4 file conversion
@@ -1593,10 +1593,30 @@ class DataVisualizationTool(QMainWindow):
 
             print("HDF5 file loaded successfully!")
 
+            # Tell the user if the decoder found damage in this log.  The decoder's own warning goes to
+            # the console, which a rider never sees, and opening an existing .h5 does not run the decoder
+            # at all, so the file's attributes are the only reliable place to find out.
+            self._warn_if_log_damaged(filename)
+
         except Exception as e:
             print(f"Error loading HDF5 file: {e}")
             import traceback
             traceback.print_exc()
+
+    def _warn_if_log_damaged(self, filename):
+        """Show a warning if the decoder recorded unknown LOGID bytes in this log's attributes.
+
+        Never raises: a problem here must not make a successful load look like a failed one.
+        """
+        try:
+            from PySide6.QtWidgets import QMessageBox
+            with h5py.File(filename, 'r') as hf:
+                message = damaged_log_message(hf.attrs)
+            if message:
+                print(f"Damaged log: {message.splitlines()[0]}")
+                QMessageBox.warning(self, "Damaged Log", message)
+        except Exception as e:
+            print(f"Could not check the log for damage: {e}")
 
     # -----------------------------------------------------------------------
     # Log viewer — toggle, seek, decode, sync

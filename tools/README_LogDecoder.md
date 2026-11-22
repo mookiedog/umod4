@@ -45,6 +45,7 @@ The decoder reports this at the end of the run, on the error output:
 The human readable output has one `ERR: Unknown LOGID` line for each unknown byte.
 The HDF5 file records the same counts as attributes: `unknown_logid_bytes`, `unknown_logid_runs` and `unknown_logid_bytes_after_start`, plus `unknown_logid_first_offset` and `unknown_logid_last_offset` when there were any.
 A file without these attributes came from an older decoder.
+The visualizer reads these attributes when it loads an HDF5 file, and shows a "Damaged Log" warning if there are unknown bytes after the start of the log.
 The option `--strict` makes the decoder exit with a non-zero status when there are unknown bytes after the start of the log, which suits scripts.
 The decoder still decodes the whole file: it does not repair the log or skip the damaged part.
 
