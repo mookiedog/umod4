@@ -100,3 +100,35 @@ This costs no extra log space, and it helps refine the timing for the many event
 Those events are sequenced against the VTA events around them, so their times are known to about 2 ms, even with the engine stopped.
 Without VTA, the only anchors would be the overflow events, 131 ms apart (65 ms with the half-overflow event), which is 64 times (or 32 times) coarser.
 The decoder also counts a wrap when it sees one in these timer bits, but the overflow mechanism described above does not depend on them.
+
+### Events That Carry a Timer Value but Do Not Advance Time
+
+Only the crankshaft, camshaft, OFLO and HOFLO events move the decoder's clock.
+A few other events carry a timer value too, but the decoder never uses them to advance time.
+It places each one at its own timer value, relative to the clock it already has, choosing the nearest timer wrap (within 65 ms either way).
+
+**Spark (SPRK_X1, SPRK_X2).**
+The value is the timer reading captured by hardware at the moment the spark was detected, and the ECU logs it from the capture interrupt, so it is as precise as a crankshaft timestamp.
+It is still not treated as a timestamp:
+
+* A spark adds no clock information that OFLO and HOFLO do not already give, because sparks happen while the engine is turning, and then crankshaft events are arriving anyway.
+* A spark can fall within microseconds of a crankshaft edge, and the two are logged from different interrupts.
+  The log cannot promise that their order in the log is their order in time, and a timestamp must promise that.
+
+A spark can be logged just after the timer wraps, before any event has reported the wrap.
+Placing it by the nearest wrap handles that.
+Without it, the spark lands a whole timer period (131 ms) in the past.
+
+A spark can also happen with no crankshaft events.
+If no crankshaft event arrives for about half a second, the ECU assumes the engine has stopped and forces both coils to stop charging, which fires a coil that was charging.
+The decoder labels a spark by the last crankshaft position it saw, so for this kind of spark that label is not meaningful.
+
+**Injector ON.**
+The value is logged within microseconds of the moment the injector opens, so the decoder places it by its own value.
+Stamping it with the decoder's clock instead would draw it about 0.6 ms early: the clock is the crankshaft edge, and that is how long the ECU's crankshaft interrupt takes to reach the injector routine (measured on one ride).
+The injector OFF time is not logged, only the duration.
+
+**Coil OFF.**
+The value is the scheduled spark time, which is in the future of the log record.
+The decoder does not convert it: it stamps the event with its current time.
+The current ECU firmware logs it rarely, and it defines but never emits the coil ON events, so spark timing comes from the SPRK events.
