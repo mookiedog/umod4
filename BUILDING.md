@@ -50,6 +50,7 @@ Once everything is set up, rebuilding the entire system is as easy as pushing th
 | GNU binutils for the 68HC11 | 2.42 | this document |
 | OpenOCD | `raspberrypi/openocd` tag `sdk-2.2.0` (commit 04ae2c3) | this document |
 | Python | 3.12 | `requires-python` in `pyproject.toml`; uv fetches it if needed |
+| usbipd-win (WSL2 only) | 5.3.0 | nothing in the build: install it with winget (see "Install usbipd" below). The test harness passed with this version |
 | picotool | built by the superbuild | nothing to install |
 
 A newer release of the compiler or of binutils should work, but has not been tested here.

@@ -34,6 +34,7 @@ Search it for the old version rather than trusting line numbers.
 | **68HC11 binutils** | none | BUILDING.md only |
 | **OpenOCD** | none | BUILDING.md; a comment in `CMakeLists.txt` |
 | **Python** | `requires-python` in `pyproject.toml`, then `uv lock` (the comment above that line lists the steps) | BUILDING.md; CLAUDE.md; RELEASING.md; `tests/README.md`; `tools/bundle/README.txt` |
+| **usbipd-win** (WSL2 only) | none: installed on Windows with winget | BUILDING.md (the versions table). After an upgrade, check that the probe and the ap_proxy are still Shared, run the full harness, and check `tools/setup_usb_wsl` if a device shows Not shared |
 
 Notes:
 
