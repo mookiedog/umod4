@@ -909,14 +909,22 @@ class TimeKeeper:
     def process_retrospective_t_event(self, raw_ts):
         """Process a retrospective timestamp (spark that has already fired).
 
-        The raw_ts is the actual TCNT capture value from the past.  We compute
+        The raw_ts is the actual TCNT capture value of the event.  We compute
         its absolute time by applying a signed delta from the most recent known
-        timer position (last_raw_ts).  If the spark timestamp appears to be
-        ahead of last_raw_ts by more than half a cycle, it wrapped around and
-        is actually in the past.
+        timer position (last_raw_ts), normalized to the nearest wrap: between
+        -half a cycle and +half a cycle.
+
+        A positive delta is normal: last_raw_ts is often a VTA bucket floor, which
+        lags the true timer by up to ~2 ms, and the spark fired after that.
+        A delta above half a cycle means the spark wrapped around, so it is
+        really in the past.
+        A delta below minus half a cycle means the spark fired just AFTER the timer
+        wrapped, before any OFLO/CRID/VTA event told the decoder about the wrap
+        (for example last_raw_ts = 0xFC00, raw_ts = 0x0007).  It is slightly in
+        the future of last_raw_ts, not a whole cycle in the past.
 
         Args:
-            raw_ts: Raw 16-bit timer capture value of the past event
+            raw_ts: Raw 16-bit timer capture value of the event
 
         Returns:
             Absolute time in nanoseconds when the event actually occurred
@@ -924,6 +932,8 @@ class TimeKeeper:
         delta_ticks = raw_ts - self.last_raw_ts
         if delta_ticks > self.TIMER_MAX // 2:
             delta_ticks -= self.TIMER_MAX
+        elif delta_ticks < -(self.TIMER_MAX // 2):
+            delta_ticks += self.TIMER_MAX
         return self.time_ns + (delta_ticks * self.TICKS_TO_NS)
 
     def advance_time_by_ns(self, ns):
