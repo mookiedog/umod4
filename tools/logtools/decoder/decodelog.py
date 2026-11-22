@@ -380,9 +380,6 @@ class HDF5Writer:
         self.gps_sync_time_ns = None
         self.gps_first_time = None  # (csecs, secs, mins, hours, date, month, year)
 
-        # Prospective timestamp warnings (deprecated - will be removed)
-        self.prospective_past_warning_count = 0  # Prospective timestamps in the past
-
         # Pending injector events for pairing ON+duration into combined bar datasets
         self.pending_front_inj = None  # (time_ns, on_value) waiting for duration
         self.pending_rear_inj = None   # (time_ns, on_value) waiting for duration
@@ -430,7 +427,7 @@ class HDF5Writer:
         self.datasets['ecu_rear_coil_bar'] = self.h5file.create_dataset('ecu_rear_coil_bar', (0, 2), dtype='uint64', **ds_opts_bar)
         self.datasets['ecu_rear_coil_manual_bar'] = self.h5file.create_dataset('ecu_rear_coil_manual_bar', (0, 2), dtype='uint64', **ds_opts_bar)
 
-        # Ignition - dual events for prospective timestamps
+        # Ignition coil events: "calc" and "actual" currently hold the same time (not converted)
         self.datasets['ecu_front_coil_on_calc'] = self.h5file.create_dataset('ecu_front_coil_on_calc', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_front_coil_on_actual'] = self.h5file.create_dataset('ecu_front_coil_on_actual', (0, 2), dtype='uint64', **ds_opts)
         self.datasets['ecu_front_coil_off_calc'] = self.h5file.create_dataset('ecu_front_coil_off_calc', (0, 2), dtype='uint64', **ds_opts)
@@ -853,9 +850,9 @@ class TimeKeeper:
         self.spark_x2_seen_this_crid = False
 
         # Store spark timestamps for advance calculation (populated during CR4-5 or CR9-10)
-        self.pending_spark1_ts = None
+        self.pending_spark1_raw = None
         self.pending_spark1_time_ns = None
-        self.pending_spark2_ts = None
+        self.pending_spark2_raw = None
         self.pending_spark2_time_ns = None
 
         # GPS PPS tracking for timer accuracy verification
@@ -877,7 +874,7 @@ class TimeKeeper:
         the previous raw value had bit 15 set (upper half ≥ 0x8000) and the new
         raw value has bit 15 clear (lower half < 0x8000).
 
-        This is called by every timestamp path — process_ts_event and
+        This is called by every path that reads the timer — process_clock_event and
         try_update_timer_bits — so whichever source (OFLO, CAM, VTA, CRID)
         first observes the crossing counts it once, and subsequent sources
         that carry the same crossing see bit 15 already 0 and skip it.
@@ -885,7 +882,7 @@ class TimeKeeper:
         if (self.last_raw_ts >> 15) & 1 == 1 and (new_raw_ts >> 15) & 1 == 0:
             self.overflow_count += 1
 
-    def process_ts_event(self, raw_ts, is_oflo=False, is_hoflo=False):
+    def process_clock_event(self, raw_ts, is_oflo=False, is_hoflo=False):
         """Process a timestamped event and advance time.
 
         Overflow detection uses the bit-15 sign transition of last_raw_ts→raw_ts.
@@ -971,7 +968,7 @@ class TimeKeeper:
         The true TCNT at conversion time is in [bucket_floor, bucket_floor + 1023],
         so this is a lower bound — accurate to within 2046 µs.
 
-        Overflow detection uses the same bit-15 sign transition as process_ts_event.
+        Overflow detection uses the same bit-15 sign transition as process_clock_event.
         VTA always updates last_raw_ts so the shared crossing signal stays current
         regardless of which source (OFLO, VTA, CAM) observes the overflow first.
 
@@ -1099,17 +1096,17 @@ class TimeKeeper:
             # Not in a valid spark window
             return (False, None)
 
-    def calculate_spark_advance(self, spark_pts, is_front_cylinder):
+    def calculate_spark_advance(self, spark_raw, is_front_cylinder):
         """Calculate spark advance in degrees BTDC.
 
         Formula:
         - Front cylinder (X1): CR5 is TDC, CR4 is 60° BTDC
-            advance = (CR5_TS - SPARK_PTS) * 60 / (CR5_TS - CR4_TS)
+            advance = (CR5_TS - SPARK_RAW) * 60 / (CR5_TS - CR4_TS)
         - Rear cylinder (X2): CR10 is TDC, CR9 is 60° BTDC
-            advance = (CR10_TS - SPARK_PTS) * 60 / (CR10_TS - CR9_TS)
+            advance = (CR10_TS - SPARK_RAW) * 60 / (CR10_TS - CR9_TS)
 
         Args:
-            spark_pts: Raw spark timestamp (PTS)
+            spark_raw: Raw spark timer value
             is_front_cylinder: True for X1 (front), False for X2 (rear)
 
         Returns:
@@ -1138,11 +1135,11 @@ class TimeKeeper:
             # CRID sequence error - cannot trust the CR interval for calculation
             return None
 
-        # Validate spark occurs within the CR interval: prev_ts <= spark_pts <= ref_ts
+        # Validate spark occurs within the CR interval: prev_ts <= spark_raw <= ref_ts
         # Calculate deltas with wraparound handling
-        delta_ref_spark = ref_ts - spark_pts  # Distance from spark to reference CR
+        delta_ref_spark = ref_ts - spark_raw  # Distance from spark to reference CR
         delta_ref_prev = ref_ts - prev_ts     # Distance from previous to reference CR
-        delta_spark_prev = spark_pts - prev_ts  # Distance from previous CR to spark
+        delta_spark_prev = spark_raw - prev_ts  # Distance from previous CR to spark
 
         # Handle timestamp wraparound (16-bit counter)
         if delta_ref_spark < 0:
@@ -1156,10 +1153,10 @@ class TimeKeeper:
         if delta_ref_prev == 0:
             return None
 
-        # Verify spark is within the interval: prev_ts <= spark_pts <= ref_ts
+        # Verify spark is within the interval: prev_ts <= spark_raw <= ref_ts
         # This is true when both:
-        # 1. (spark_pts - prev_ts) >= 0 and <= (ref_ts - prev_ts)
-        # 2. (ref_ts - spark_pts) >= 0 and <= (ref_ts - prev_ts)
+        # 1. (spark_raw - prev_ts) >= 0 and <= (ref_ts - prev_ts)
+        # 2. (ref_ts - spark_raw) >= 0 and <= (ref_ts - prev_ts)
         if delta_spark_prev > delta_ref_prev:
             # Spark is before prev_ts - wrong interval
             return None
@@ -1176,7 +1173,7 @@ class TimeKeeper:
         # If spark occurs at CR4/CR9 time, advance = 60° BTDC (maximum advance - early spark)
         # If spark is halfway between, advance = 30° BTDC
         #
-        # Formula: advance = (SPARK_PTS - CR4/CR9_TS) * 60 / (CR5/CR10_TS - CR4/CR9_TS)
+        # Formula: advance = (SPARK_RAW - CR4/CR9_TS) * 60 / (CR5/CR10_TS - CR4/CR9_TS)
         # This gives how far spark is AFTER CR4/CR9 (60° BTDC), scaled to degrees
         # Then we invert: 60 - value = degrees BTDC
         numerator = delta_spark_prev  # Distance from CR4/CR9 to spark
@@ -1192,19 +1189,19 @@ class TimeKeeper:
 
         return advance
 
-    def store_pending_spark(self, spark_pts, actual_time_ns, is_sprk1):
+    def store_pending_spark(self, spark_raw, actual_time_ns, is_sprk1):
         """Store a spark timestamp for later advance calculation.
 
         Args:
-            spark_pts: Raw spark timestamp
+            spark_raw: Raw spark timer value
             actual_time_ns: Actual nanosecond time when spark occurred
             is_sprk1: True for SPRK1, False for SPRK2
         """
         if is_sprk1:
-            self.pending_spark1_ts = spark_pts
+            self.pending_spark1_raw = spark_raw
             self.pending_spark1_time_ns = actual_time_ns
         else:
-            self.pending_spark2_ts = spark_pts
+            self.pending_spark2_raw = spark_raw
             self.pending_spark2_time_ns = actual_time_ns
 
     def calculate_and_write_spark_advance(self, current_crid, h5_writer):
@@ -1265,8 +1262,8 @@ class TimeKeeper:
         cyl_name_lower = 'front' if n == 4 else 'rear'
 
         # Calculate SPRK1 advance if we have it
-        if self.pending_spark1_ts is not None:
-            delta_spark = self.pending_spark1_ts - cr_n_ts
+        if self.pending_spark1_raw is not None:
+            delta_spark = self.pending_spark1_raw - cr_n_ts
             if delta_spark < 0:
                 delta_spark += 65536
 
@@ -1284,8 +1281,8 @@ class TimeKeeper:
                     h5_writer.append_data(stream_name, [self.pending_spark1_time_ns, advance])
 
         # Calculate SPRK2 advance if we have it
-        if self.pending_spark2_ts is not None:
-            delta_spark = self.pending_spark2_ts - cr_n_ts
+        if self.pending_spark2_raw is not None:
+            delta_spark = self.pending_spark2_raw - cr_n_ts
             if delta_spark < 0:
                 delta_spark += 65536
 
@@ -1307,9 +1304,9 @@ class TimeKeeper:
         self.cr_timestamps_valid[n_plus_1] = False
 
         # Clear pending sparks
-        self.pending_spark1_ts = None
+        self.pending_spark1_raw = None
         self.pending_spark1_time_ns = None
-        self.pending_spark2_ts = None
+        self.pending_spark2_raw = None
         self.pending_spark2_time_ns = None
 
         return result
@@ -1729,11 +1726,11 @@ def _process_single_file(logfile_path, output_path, args, L):
                         ecuMetadataString = ""
 
                 elif byte == L.LOGID_ECU_T1_OFLO_TYPE_U16:
-                    oflo_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_OFLO_DLEN), byteorder='little', signed=False)
-                    # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
-                    # This is a timer overflow event, so mark it specially for wraparound handling
-                    timekeeper.process_ts_event(oflo_ts, is_oflo=True)
-                    print(f"{fmt_record(recordCnt, timekeeper)} OF_TS:  {oflo_ts}")
+                    oflo_raw = int.from_bytes(read(f, L.LOGID_ECU_T1_OFLO_DLEN), byteorder='little', signed=False)
+                    # OFLO: the ECU saw bit 15 of the timer go 1->0.  A state event, not a timestamp:
+                    # its value can be late.  The decoder uses it as a coarse clock reading.
+                    timekeeper.process_clock_event(oflo_raw, is_oflo=True)
+                    print(f"{fmt_record(recordCnt, timekeeper)} OFLO:   {oflo_raw}")
                     # OFLO not written to HDF5 - used only for time tracking
 
                 elif byte == L.LOGID_ECU_L4000_EVENT_TYPE_U8:
@@ -1743,11 +1740,10 @@ def _process_single_file(logfile_path, output_path, args, L):
                         h5_writer.append_data('ecu_l4000_event', [timekeeper.get_time_ns(), rd[0]])
 
                 elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_U16:
-                    marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_DLEN), byteorder='little', signed=False)
-                    # RETROSPECTIVE timestamp - event HAS occurred (b15 went 0→1)
-                    # This is a time anchor event, marks ~65536 ticks from previous anchor
-                    timekeeper.process_ts_event(marker_ts, is_hoflo=True)
-                    print(f"{fmt_record(recordCnt, timekeeper)} HOF_TS: {marker_ts}")
+                    hoflo_raw = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_DLEN), byteorder='little', signed=False)
+                    # HOFLO: the ECU saw bit 15 of the timer go 0->1.  A state event like OFLO.
+                    timekeeper.process_clock_event(hoflo_raw, is_hoflo=True)
+                    print(f"{fmt_record(recordCnt, timekeeper)} HOFLO:  {hoflo_raw}")
                     # HOFLO not written to HDF5 - used only for time tracking
 
                 elif byte == L.LOGID_ECU_F_INJ_ON_TYPE_U16:
@@ -1790,12 +1786,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_F_COIL_ON_TYPE_U16:
                     fc_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_ON_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - scheduled future event
+                    # Scheduled coil time (in the future of this log record), not converted to absolute time
                     print(f"{fmt_record(recordCnt, timekeeper)} FC_ON:  {fc_on:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_front_coil_on_calc', [calc_time_ns, fc_on])
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()  # not converted: stamped with the decoder's current time
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_front_coil_on_actual', [actual_time_ns, fc_on])
                             # Record as pending for combined bar dataset
@@ -1803,12 +1799,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_F_COIL_OFF_TYPE_U16:
                     fc_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_OFF_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - scheduled future event
+                    # Scheduled coil time (in the future of this log record), not converted to absolute time
                     print(f"{fmt_record(recordCnt, timekeeper)} FC_OFF: {fc_off:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_front_coil_off_calc', [calc_time_ns, fc_off])
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()  # not converted: stamped with the decoder's current time
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_front_coil_off_actual', [actual_time_ns, fc_off])
                             # Pair with pending ON event to create combined bar
@@ -1816,12 +1812,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_R_COIL_ON_TYPE_U16:
                     rc_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_ON_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - scheduled future event
+                    # Scheduled coil time (in the future of this log record), not converted to absolute time
                     print(f"{fmt_record(recordCnt, timekeeper)} RC_ON:  {rc_on:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_rear_coil_on_calc', [calc_time_ns, rc_on])
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()  # not converted: stamped with the decoder's current time
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_rear_coil_on_actual', [actual_time_ns, rc_on])
                             # Record as pending for combined bar dataset
@@ -1829,12 +1825,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_R_COIL_OFF_TYPE_U16:
                     rc_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_OFF_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - scheduled future event
+                    # Scheduled coil time (in the future of this log record), not converted to absolute time
                     print(f"{fmt_record(recordCnt, timekeeper)} RC_OFF: {rc_off:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_rear_coil_off_calc', [calc_time_ns, rc_off])
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()  # not converted: stamped with the decoder's current time
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_rear_coil_off_actual', [actual_time_ns, rc_off])
                             # Pair with pending ON event to create combined bar
@@ -1842,12 +1838,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_F_COIL_MAN_ON_TYPE_U16:
                     fcm_on = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - scheduled future event
+                    # Scheduled coil time (in the future of this log record), not converted to absolute time
                     print(f"{fmt_record(recordCnt, timekeeper)} FC_MON: {fcm_on:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_front_coil_manual_on_calc', [calc_time_ns, fcm_on])
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()  # not converted: stamped with the decoder's current time
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_front_coil_manual_on_actual', [actual_time_ns, fcm_on])
                             # Record as pending for combined bar dataset
@@ -1855,12 +1851,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_F_COIL_MAN_OFF_TYPE_U16:
                     fcm_off = int.from_bytes(read(f, L.LOGID_ECU_F_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - scheduled future event
+                    # Scheduled coil time (in the future of this log record), not converted to absolute time
                     print(f"{fmt_record(recordCnt, timekeeper)} FC_MOF: {fcm_off:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_front_coil_manual_off_calc', [calc_time_ns, fcm_off])
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()  # not converted: stamped with the decoder's current time
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_front_coil_manual_off_actual', [actual_time_ns, fcm_off])
                             # Pair with pending ON event to create combined bar
@@ -1868,12 +1864,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_R_COIL_MAN_ON_TYPE_U16:
                     rcm_on = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_ON_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - scheduled future event
+                    # Scheduled coil time (in the future of this log record), not converted to absolute time
                     print(f"{fmt_record(recordCnt, timekeeper)} RC_MON: {rcm_on:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_rear_coil_manual_on_calc', [calc_time_ns, rcm_on])
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()  # not converted: stamped with the decoder's current time
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_rear_coil_manual_on_actual', [actual_time_ns, rcm_on])
                             # Record as pending for combined bar dataset
@@ -1881,12 +1877,12 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_R_COIL_MAN_OFF_TYPE_U16:
                     rcm_off = int.from_bytes(read(f, L.LOGID_ECU_R_COIL_MAN_OFF_DLEN), byteorder='little', signed=False)
-                    # PROSPECTIVE timestamp - scheduled future event
+                    # Scheduled coil time (in the future of this log record), not converted to absolute time
                     print(f"{fmt_record(recordCnt, timekeeper)} RC_MOF: {rcm_off:04X}")
                     if h5_writer:
                         calc_time_ns = timekeeper.get_time_ns()
                         h5_writer.append_data('ecu_rear_coil_manual_off_calc', [calc_time_ns, rcm_off])
-                        actual_time_ns = timekeeper.get_time_ns()  # TODO: implement prospective timestamp conversion
+                        actual_time_ns = timekeeper.get_time_ns()  # not converted: stamped with the decoder's current time
                         if actual_time_ns is not None:
                             h5_writer.append_data('ecu_rear_coil_manual_off_actual', [actual_time_ns, rcm_off])
                             # Pair with pending ON event to create combined bar
@@ -2061,8 +2057,8 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 elif byte == L.LOGID_ECU_CRANKREF_START_TYPE_TS:
                     cr_ts = int.from_bytes(read(f, L.LOGID_ECU_CRANKREF_START_DLEN), byteorder='little', signed=False)
-                    # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
-                    timekeeper.process_ts_event(cr_ts)
+                    # Crank edge: a true timestamp that places the log on the clock
+                    timekeeper.process_clock_event(cr_ts)
                     # Save timestamp AFTER advancing - this is when the current CR event occurred
                     # This marks the END of the previous period, which is what the RPM calculation represents
                     rpm_timestamp_ns = timekeeper.get_time_ns()
@@ -2175,17 +2171,10 @@ def _process_single_file(logfile_path, output_path, args, L):
                     # Update previous CRID for next comparison
                     cridPrev = crid
 
-                elif byte == L.LOGID_ECU_T1_HOFLO_TYPE_U16:
-                    time_marker_ts = int.from_bytes(read(f, L.LOGID_ECU_T1_HOFLO_DLEN), byteorder='little', signed=False)
-                    # RETROSPECTIVE timestamp - tracks time when engine not rotating
-                    timekeeper.process_ts_event(time_marker_ts, is_hoflo=True)
-                    print(f"{fmt_record(recordCnt, timekeeper)} TIME_MKR: {time_marker_ts}")
-                    # HOFLO not written to HDF5 - used only for time tracking
-
                 elif byte == L.LOGID_ECU_CAMSHAFT_TYPE_TS:
                     cam_ts = int.from_bytes(read(f, L.LOGID_ECU_CAMSHAFT_DLEN), byteorder='little', signed=False)
-                    # RETROSPECTIVE timestamp - event HAS occurred, advance time_ns
-                    timekeeper.process_ts_event(cam_ts)
+                    # Cam edge: a true timestamp that places the log on the clock
+                    timekeeper.process_clock_event(cam_ts)
                     print(f"{fmt_record(recordCnt, timekeeper)} CAM_TS: {cam_ts:04X}")
                     if h5_writer:
                         h5_writer.append_data('ecu_camshaft_timestamp', [timekeeper.get_time_ns(), cam_ts])
@@ -2205,17 +2194,17 @@ def _process_single_file(logfile_path, output_path, args, L):
                         h5_writer.append_data('ecu_cam_error', [timekeeper.get_time_ns(), camErr])
 
                 elif byte == L.LOGID_ECU_SPRK_X1_TYPE_U16:
-                    spx1_ts_raw = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
+                    spx1_raw = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X1_DLEN), byteorder='little', signed=False)
 
                     # Apply spark delay correction
                     # There is a delay between when the spark is scheduled and when it is observed
-                    spx1_ts_corrected = spx1_ts_raw - TimeKeeper.SPARK_DELAY_X1_TICKS
-                    if spx1_ts_corrected < 0:
-                        spx1_ts_corrected += TimeKeeper.TIMER_MAX
+                    spx1_corrected = spx1_raw - TimeKeeper.SPARK_DELAY_X1_TICKS
+                    if spx1_corrected < 0:
+                        spx1_corrected += TimeKeeper.TIMER_MAX
 
-                    # RETROSPECTIVE timestamp - spark HAS fired
-                    # Convert raw timestamp to actual time when spark occurred
-                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx1_ts_raw)
+                    # Hardware capture of the spark, logged just after it happened.
+                    # Place it by its own timer value.  The clock does not move.
+                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx1_raw)
                     actual_spark_time_secs = actual_spark_time_ns / 1000000000.0
 
                     # Check if this spark is in a valid CRID range
@@ -2229,32 +2218,32 @@ def _process_single_file(logfile_path, output_path, args, L):
                     # Print to human-readable output (advance will be calculated later when CRID arrives)
                     cyl_name = "Front" if is_front_cylinder else "Rear" if is_front_cylinder is not None else "Unknown"
                     if not is_valid_crid:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - wrong CRID]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1: {spx1_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - wrong CRID]")
                     elif is_first_spark:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}, {cyl_name} cyl) [advance pending]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1: {spx1_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_corrected:04X} (actual: {actual_spark_time_secs:.1f}, {cyl_name} cyl) [advance pending]")
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1_TS: {spx1_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - bounce]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK1: {spx1_raw:04X} - {TimeKeeper.SPARK_DELAY_X1_TICKS:04X} = {spx1_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - bounce]")
 
                     # Store spark for advance calculation and write to HDF5
                     if is_first_spark and is_valid_crid:
                         # Store corrected spark timestamp - advance will be calculated when CRID N+2 arrives
-                        timekeeper.store_pending_spark(spx1_ts_corrected, actual_spark_time_ns, is_sprk1=True)
+                        timekeeper.store_pending_spark(spx1_corrected, actual_spark_time_ns, is_sprk1=True)
                         # Write to HDF5 if enabled
                         if h5_writer:
-                            h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_ts_raw])
+                            h5_writer.append_data('ecu_spark_x1', [actual_spark_time_ns, spx1_raw])
 
                 elif byte == L.LOGID_ECU_SPRK_X2_TYPE_U16:
-                    spx2_ts_raw = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
+                    spx2_raw = int.from_bytes(read(f, L.LOGID_ECU_SPRK_X2_DLEN), byteorder='little', signed=False)
 
                     # Apply spark delay correction
                     # There is a delay between when the spark is scheduled and when it is observed
-                    spx2_ts_corrected = spx2_ts_raw - TimeKeeper.SPARK_DELAY_X2_TICKS
-                    if spx2_ts_corrected < 0:
-                        spx2_ts_corrected += TimeKeeper.TIMER_MAX
+                    spx2_corrected = spx2_raw - TimeKeeper.SPARK_DELAY_X2_TICKS
+                    if spx2_corrected < 0:
+                        spx2_corrected += TimeKeeper.TIMER_MAX
 
-                    # RETROSPECTIVE timestamp - spark HAS fired
-                    # Convert raw timestamp to actual time when spark occurred
-                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx2_ts_raw)
+                    # Hardware capture of the spark, logged just after it happened.
+                    # Place it by its own timer value.  The clock does not move.
+                    actual_spark_time_ns = timekeeper.process_retrospective_t_event(spx2_raw)
                     actual_spark_time_secs = actual_spark_time_ns / 1000000000.0
 
                     # Check if this spark is in a valid CRID range
@@ -2268,19 +2257,19 @@ def _process_single_file(logfile_path, output_path, args, L):
                     # Print to human-readable output (advance will be calculated later when CRID arrives)
                     cyl_name = "Front" if is_front_cylinder else "Rear" if is_front_cylinder is not None else "Unknown"
                     if not is_valid_crid:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - wrong CRID]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2: {spx2_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - wrong CRID]")
                     elif is_first_spark:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}, {cyl_name} cyl) [advance pending]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2: {spx2_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_corrected:04X} (actual: {actual_spark_time_secs:.1f}, {cyl_name} cyl) [advance pending]")
                     else:
-                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2_TS: {spx2_ts_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_ts_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - bounce]")
+                        print(f"{fmt_record(recordCnt, timekeeper)} SPRK2: {spx2_raw:04X} - {TimeKeeper.SPARK_DELAY_X2_TICKS:04X} = {spx2_corrected:04X} (actual: {actual_spark_time_secs:.1f}) [IGNORED - bounce]")
 
                     # Store spark for advance calculation and write to HDF5
                     if is_first_spark and is_valid_crid:
                         # Store corrected spark timestamp - advance will be calculated when CRID N+2 arrives
-                        timekeeper.store_pending_spark(spx2_ts_corrected, actual_spark_time_ns, is_sprk1=False)
+                        timekeeper.store_pending_spark(spx2_corrected, actual_spark_time_ns, is_sprk1=False)
                         # Write to HDF5 if enabled
                         if h5_writer:
-                            h5_writer.append_data('ecu_spark_x2', [actual_spark_time_ns, spx2_ts_raw])
+                            h5_writer.append_data('ecu_spark_x2', [actual_spark_time_ns, spx2_raw])
 
                 elif byte == L.LOGID_ECU_NOSPARK_TYPE_U8:
                     sparkErr = read(f, L.LOGID_ECU_NOSPARK_DLEN)[0]
