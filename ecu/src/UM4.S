@@ -7127,15 +7127,22 @@ LDF4D_0:
         sbcA    #0x00
         staA    L010E
 
-;I guess that the counter will never increment to 13 unless the
-;crank has not produced a rotational event in 13*40mSec or 0.520
-;seconds.
+;ENGINE-STOPPED TIMEOUT: if no crank reference pulses have arrived for more than
+;0.5 second (nominal), shut off both ignition coils.
+;
+;L010E counts the ticks of this routine (nominally 40 mSec each) since the last crank
+;reference pulse.  It is zeroed by the crank reference interrupt (see IC2F_ISR_32),
+;and it saturates at 0xFF. If the counter reaches 13 ticks (nominally 0.5 second),
+;the engine is assumed to have stopped and we stop charging the coils.
+;Because the counter saturates, we harmlessly repeat this process on every later tick until a
+;new crank reference pulse zeroes the counter.
+;Note: log decoders should be aware that these "engine has stopped" spark events can occur
+;well outside the expected spark timing situations.
 
         cmpA    L9A47                   ;0x0D (13.)
         blo     LDF4D_1                 ;br if 0.5 second has not elapsed since the last crank event
 
-;This is probably shutting things down since the motor appears to
-;have stopped running.
+;The engine appears to have stopped running.
 
 ;Quit charging the FRONT ign coil (if we were), also prevents
 ;future charge events from occuring.
