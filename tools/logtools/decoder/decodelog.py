@@ -2073,8 +2073,10 @@ def _process_single_file(logfile_path, output_path, args, L):
                     # Store for potential printing below
                     spark_advance_data = None
 
-                    # A bit of a hack here: if elapsed gets way too big, we consider this crank even to be the first one
-                    if (elapsed > 200000):
+                    # A bit of a hack here: if elapsed gets way too big, we consider this crank even to be the first one.
+                    # An elapsed time of zero or less cannot come from a running engine (it can come from a damaged
+                    # log whose garbage happens to look like crank events), so it gets the same treatment.
+                    if (elapsed > 200000) or (elapsed <= 0):
                         print(f"{fmt_record(recordCnt, timekeeper)} CRK_TS: {cr_ts:04X}")
                     else:
                         # Calculate instantaneous RPM from single interval (30 degrees)
