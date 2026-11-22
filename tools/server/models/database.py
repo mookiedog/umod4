@@ -3,11 +3,35 @@
 from sqlalchemy import create_engine, Column, String, Integer, Float, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import os
 
 Base = declarative_base()
+
+
+def local_date_folder(utc_time):
+    """Return the date folder name (YYYY-MM-DD, in LOCAL time) for a time stored in UTC.
+
+    The database stores times as naive UTC (datetime.utcnow), but a download is filed under the LOCAL
+    date (datetime.now) of the machine running the server.  After about 16:00 local time in California
+    the UTC date is already tomorrow, so building the folder name straight from a stored time looks in
+    the wrong folder.  Use this function whenever a stored time has to be turned into a folder name.
+    """
+    return utc_time.replace(tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d")
+
+
+def candidate_date_folders(utc_time):
+    """Return the date folder names that a transfer's file may be in, best first.
+
+    The LOCAL date comes first: it is what the server files downloads under.  The UTC date comes second:
+    some older downloads (all of them in February and early March 2026) were filed under it.
+    """
+    names = [local_date_folder(utc_time)]
+    utc_name = utc_time.strftime("%Y-%m-%d")
+    if utc_name not in names:
+        names.append(utc_name)
+    return names
 
 
 class Device(Base):

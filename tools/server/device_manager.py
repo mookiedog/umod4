@@ -9,7 +9,7 @@ import threading
 from datetime import datetime
 from typing import Optional, Callable
 from device_client import DeviceClient
-from models.database import Database, Device
+from models.database import Database, Device, candidate_date_folders
 
 
 class DeviceManager:
@@ -208,18 +208,20 @@ class DeviceManager:
         return match
 
     def _find_previously_downloaded(self, device_mac: str, log_storage_path: str, filename: str, file_size: int):
-        """Return the Transfer record of a previously downloaded copy of this file, or None.
+        """Return (Transfer record, path) of a previously downloaded copy of this file, or None.
 
         Queries the database for a successful transfer matching device_mac, filename,
-        and size_bytes, then verifies the file still exists on disk.
+        and size_bytes, then verifies the file still exists on disk.  The database stores
+        times in UTC but downloads are filed under the local date, so the file is looked
+        for under the local date first and then under the UTC date (see candidate_date_folders).
         """
         transfer = self.database.find_successful_transfer(device_mac, filename, file_size)
         if transfer is None:
             return None
-        date_str = transfer.start_time.strftime("%Y-%m-%d")
-        candidate = os.path.join(log_storage_path, date_str, filename)
-        if os.path.exists(candidate):
-            return transfer
+        for date_str in candidate_date_folders(transfer.start_time):
+            candidate = os.path.join(log_storage_path, date_str, filename)
+            if os.path.exists(candidate):
+                return transfer, candidate
         return None
 
     def _download_new_logs_locked(self, device_mac: str, log_storage_path: str, device_name: str, client: DeviceClient) -> bool:
@@ -281,10 +283,10 @@ class DeviceManager:
             # Check if this file was already downloaded on a previous date.
             # If so, record it as deduplicated and skip the download.
             print(f"DeviceManager: checking dedup for {device_name}:{filename} ({file_size} bytes)")
-            prior_transfer = self._find_previously_downloaded(device_mac, log_storage_path, filename, file_size)
-            if prior_transfer is not None:
-                prior_date = prior_transfer.start_time.strftime("%Y-%m-%d")
-                prior_path = os.path.join(log_storage_path, prior_date, filename)
+            prior = self._find_previously_downloaded(device_mac, log_storage_path, filename, file_size)
+            if prior is not None:
+                prior_transfer, prior_path = prior
+                prior_date = os.path.basename(os.path.dirname(prior_path))
                 # Verify the tail of the local copy matches the device before trusting the dedup.
                 # This catches the case where a new file has the same name and size as an old one.
                 if file_size >= self.TAIL_VERIFY_SIZE and not self._file_tail_matches(prior_path, file_size, filename, client, device_name):

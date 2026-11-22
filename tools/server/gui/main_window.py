@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 from checkin_listener import CHECKIN_PORT
+from models.database import candidate_date_folders
 
 
 def _open_url(url):
@@ -572,18 +573,20 @@ class TransferHistoryWidget(QWidget):
     def _resolve_transfer_path(log_storage_path, filename, start_time):
         """Return the local filesystem path for a transfer.
 
-        Device manager saves files under a YYYY-MM-DD date subdirectory.
-        Falls back to the old flat layout for transfers downloaded before
-        that convention was introduced.
+        Device manager saves files under a YYYY-MM-DD date subdirectory, named
+        for the LOCAL date; start_time is stored in UTC, so the UTC date is
+        tried second (older downloads used it).  Falls back to the old flat
+        layout for transfers downloaded before the date folders existed.
         """
-        date_str = start_time.strftime("%Y-%m-%d")
-        dated = os.path.join(log_storage_path, date_str, filename)
-        if os.path.exists(dated):
-            return dated
+        folders = candidate_date_folders(start_time)
+        for date_str in folders:
+            dated = os.path.join(log_storage_path, date_str, filename)
+            if os.path.exists(dated):
+                return dated
         flat = os.path.join(log_storage_path, filename)
         if os.path.exists(flat):
             return flat
-        return dated  # default for new downloads not yet on disk
+        return os.path.join(log_storage_path, folders[0], filename)  # default for new downloads not yet on disk
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
