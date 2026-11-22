@@ -13,8 +13,11 @@
 // Must be a multiple of 512 (sector size).
 #define FLUSH_THRESHOLD 4096
 
-// Ring buffer for incoming log data. Must be a multiple of FLUSH_THRESHOLD
-// so that reads from the tail pointer never wrap past the end of the buffer.
+// Ring buffer for incoming log data. Must be a multiple of 512 so that a write
+// clamped at the end of the ring is still a whole number of sectors. It is also
+// kept a multiple of FLUSH_THRESHOLD so that steady-state writes end exactly at
+// the end of the ring. Writes do not depend on that: the first write of a log can
+// be shorter than FLUSH_THRESHOLD, and WRITE_DATA stops every write at the ring end.
 // Sized to hold the boot burst (~14.6 KB from EP metadata dump) plus
 // headroom. Steady-state peak is ~6.4 KB at 9 KB/s redline data rate.
 // With EP flow control (future), this could shrink to 8 KB.

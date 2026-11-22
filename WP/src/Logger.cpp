@@ -279,6 +279,7 @@ int32_t Logger::syncLog()
 void Logger::logTask()
 {
     static uint32_t totalByteCount;
+    static bool first_write_pending;    // true from the moment a log is opened until its first write
 
     enum {UNMOUNTED, OPEN_LOG, BOOT_SYNC, WAIT_FOR_DATA, WRITE_DATA, WRITE_FAILURE} state, state_prev;
 
@@ -324,6 +325,7 @@ void Logger::logTask()
 
         case OPEN_LOG:
             if (openNewLog()) {
+                first_write_pending = true;
                 state = BOOT_SYNC;
             } else {
                 state = UNMOUNTED;
@@ -331,14 +333,14 @@ void Logger::logTask()
             break;
 
         case BOOT_SYNC:
-            // Flush boot header data (log version + reset reason) immediately.
-            // Wait until we have at least one sector of data.
+            // Flush the boot header data (log version + WP reset reason) as soon as there is one
+            // sector of it, so it survives if the WP crashes again before a full FLUSH_THRESHOLD
+            // has accumulated.  This state only waits: WRITE_DATA decides how much to write.
+            // That first write is whatever is waiting, any multiple of 512 up to FLUSH_THRESHOLD,
+            // so it can be shorter than FLUSH_THRESHOLD.
             {
                 int32_t available = inUse();
                 if (available >= 512) {
-                    int32_t toWrite = available & ~511;     // round down to sector boundary
-                    if (toWrite > (int32_t)LFS_BLOCK_SIZE)
-                        toWrite = LFS_BLOCK_SIZE;
                     state = WRITE_DATA;
                 } else {
                     vTaskDelay(pdMS_TO_TICKS(100));
@@ -370,11 +372,28 @@ void Logger::logTask()
 
                 bool err = false;
 
-                // Write directly from ring buffer — no copy needed.
-                // Ring buffer size is a multiple of FLUSH_THRESHOLD, and
-                // tail only advances by multiples of FLUSH_THRESHOLD, so
-                // the write never wraps past the end of the buffer.
+                // Write directly from the ring buffer: no copy needed.
+                // A write must never run past the end of the ring, so it stops there and the next
+                // write starts at the beginning of the ring.  The tail is NOT always on a
+                // FLUSH_THRESHOLD boundary: the first write of a log (BOOT_SYNC) is whatever was
+                // waiting.  Every write is a multiple of 512 and so is the ring size, so the
+                // distance to the end of the ring is a multiple of 512 too, as LogStore requires.
                 uint8_t* tP = tailP;
+                int32_t bytesToEnd = (int32_t)(lastBufferP - tP) + 1;
+                if (((tP - buffer) & 511) != 0) {
+                    printf("%s: ERROR: ring tail offset %d is not a multiple of 512\n",
+                           __FUNCTION__, (int)(tP - buffer));
+                }
+                if (totalToWrite > bytesToEnd) {
+                    printf("%s: write clamped from %d to %d bytes at the end of the ring\n",
+                           __FUNCTION__, totalToWrite, bytesToEnd);
+                    totalToWrite = bytesToEnd;
+                }
+                if (first_write_pending) {
+                    first_write_pending = false;
+                    printf("%s: first write of %s: %d bytes, ring tail offset %d\n",
+                           __FUNCTION__, logName, totalToWrite, (int)(tP - buffer));
+                }
 
                 int32_t bytesWritten = writeChunk(tP, totalToWrite);
                 if (bytesWritten < 0) {
