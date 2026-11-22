@@ -368,6 +368,7 @@ class HDF5Writer:
         self.log_version_ecu = None
         self.log_version_ep = None
         self.log_version_wp = None
+        self.unknown_stats = None   # dict of unknown LOGID counts, set by _process_single_file
         self.eprom_loads = []  # List of (name, addr, len, err) tuples
         self.current_eprom_name = ""
         self.current_eprom_addr = None
@@ -656,6 +657,18 @@ class HDF5Writer:
             self.h5file.attrs['log_version_ep'] = self.log_version_ep
         if self.log_version_wp is not None:
             self.h5file.attrs['log_version_wp'] = self.log_version_wp
+
+        # Unknown LOGID accounting: always written, so a clean log says so and a missing attribute
+        # means the file came from an older decoder.  'after_start' ignores the first few bytes,
+        # which can hold the tail of a record that was split at the start of the log (harmless).
+        if self.unknown_stats is not None:
+            u = self.unknown_stats
+            self.h5file.attrs['unknown_logid_bytes'] = u['bytes']
+            self.h5file.attrs['unknown_logid_runs'] = u['runs']
+            self.h5file.attrs['unknown_logid_bytes_after_start'] = u['after_start']
+            if u['first'] is not None:
+                self.h5file.attrs['unknown_logid_first_offset'] = u['first']
+                self.h5file.attrs['unknown_logid_last_offset'] = u['last']
 
         # GPS sync timing
         if self.gps_sync_time_ns is not None:
@@ -1604,6 +1617,29 @@ def _process_single_file(logfile_path, output_path, args, L):
         h5_writer.open()
         print(f"# Writing HDF5 output to {output_path}")
 
+    # Unknown LOGID accounting, to make a damaged log visible.  A byte that is not a known LOGID
+    # means the decoder has lost track of the record boundaries, so the data around it may be wrong.
+    # A log opened while the WP was already running starts with the tail of a record that was split
+    # at the log boundary (the ring buffer is not cleared between logs), so unknown bytes in the
+    # first UNKNOWN_START_BYTES bytes are expected and harmless.
+    UNKNOWN_START_BYTES = 16
+    unknown_stats = {'bytes': 0, 'runs': 0, 'first': None, 'last': None, 'after_start': 0, 'prev': -2}
+    if h5_writer:
+        h5_writer.unknown_stats = unknown_stats
+
+    def note_unknown_logid(offset):
+        """Count one unknown LOGID byte found at the given file offset."""
+        u = unknown_stats
+        if offset != u['prev'] + 1:
+            u['runs'] += 1                  # not adjacent to the previous unknown byte: a new run
+        u['prev'] = offset
+        u['bytes'] += 1
+        if u['first'] is None:
+            u['first'] = offset
+        u['last'] = offset
+        if offset - args.seek_offset >= UNKNOWN_START_BYTES:
+            u['after_start'] += 1
+
     def report_end_of_file(bytes_read):
         """Report a final 100% and print the summary."""
         if PROGRESS_CALLBACK is not None and total_input_bytes > 0:
@@ -1614,6 +1650,16 @@ def _process_single_file(logfile_path, output_path, args, L):
         if max_data_rate_bytes_per_sec > 0:
             summary_msg += f", max data rate: {max_data_rate_bytes_per_sec:.1f} B/s"
         print(summary_msg, file=sys.stderr)
+
+        u = unknown_stats
+        if u['bytes'] > 0 and u['after_start'] == 0:
+            print(f"# Note: {u['bytes']} unknown LOGID byte(s) at the start of the log (the tail of a record "
+                  f"split when the log was opened; harmless)", file=sys.stderr)
+        elif u['after_start'] > 0:
+            print(f"# WARNING: {u['bytes']} unknown LOGID bytes in {u['runs']} run(s), first at {u['first']:#x}, "
+                  f"last at {u['last']:#x}; {u['after_start']} of them after the first {UNKNOWN_START_BYTES} bytes. "
+                  f"The log is probably damaged there: data in or near those runs can be missing or wrong.",
+                  file=sys.stderr)
 
     try:
         recordCnt = 0
@@ -2626,10 +2672,14 @@ def _process_single_file(logfile_path, output_path, args, L):
 
                 else:
                     print(f"{fmt_record(recordCnt, timekeeper)} ERR:    Unknown LOGID 0x{byte:02X}")
+                    note_unknown_logid(record_offset)
                     #read(f, 1)
 
             # End of file reached
             report_end_of_file(f.tell())
+
+        if args.strict and unknown_stats['after_start'] > 0:
+            return 1
 
     except TruncatedRecord as e:
         # The log ends in the middle of a record (see TruncatedRecord).  Everything before it was
@@ -2637,7 +2687,7 @@ def _process_single_file(logfile_path, output_path, args, L):
         print(f"Warning: the log ends in the middle of a record ({e}). The record starts at byte "
               f"{record_offset:#x}; it is incomplete and was ignored.", file=sys.stderr)
         report_end_of_file(address + e.got)
-        return 0
+        return 1 if (args.strict and unknown_stats['after_start'] > 0) else 0
     except FileNotFoundError:
         print(f"Error: File '{logfile_path}' not found.")
         return 1
@@ -2684,6 +2734,9 @@ def main():
                         help='Stop decoding after this many seconds past the seek point (0 = no limit)')
     parser.add_argument('--range-mode', action='store_true',
                         help='Write decoded output directly to stdout (used by viz.py log viewer)')
+    parser.add_argument('--strict', action='store_true',
+                        help='Exit with a non-zero status if the log contains unknown LOGID bytes '
+                             'after its first few bytes (a sign of a damaged log)')
 
     # Parse arguments
     args = parser.parse_args()

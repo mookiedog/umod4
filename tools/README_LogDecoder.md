@@ -33,6 +33,21 @@ There is no virtual environment to activate: `uv run` finds the project's enviro
 If you only want to look at logs, you do not need to build the project.
 `tools/make_tools_bundle` packages the server, the visualizer and the decoder (and, in a release, the firmware files) into a zip that needs only uv (see [RELEASING.md](../RELEASING.md)).
 
+## Damaged Logs
+
+A log has no record markers: the decoder finds each record only because it knows the length of every LOGID.
+If it meets a byte that is not a known LOGID, it has lost its place, and the records around that spot can be wrong or missing.
+The decoder reports this at the end of the run, on the error output:
+
+* A few unknown bytes at the very start of a log are normal when the log was opened while the WP was already running: they are the tail of a record that was split at the start of the log. The decoder prints a one-line note.
+* Unknown bytes anywhere else produce a warning with the number of bytes, the number of separate runs, and the offsets of the first and last one.
+
+The human readable output has one `ERR: Unknown LOGID` line for each unknown byte.
+The HDF5 file records the same counts as attributes: `unknown_logid_bytes`, `unknown_logid_runs` and `unknown_logid_bytes_after_start`, plus `unknown_logid_first_offset` and `unknown_logid_last_offset` when there were any.
+A file without these attributes came from an older decoder.
+The option `--strict` makes the decoder exit with a non-zero status when there are unknown bytes after the start of the log, which suits scripts.
+The decoder still decodes the whole file: it does not repair the log or skip the damaged part.
+
 ## DecodeLog: Human Readable
 
 The human readable format is really just for debugging by software developers.
