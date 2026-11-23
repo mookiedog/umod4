@@ -126,3 +126,15 @@ uv run tools/logtools/decoder/decodelog.py --format h5 <path-to-log-file>
 ```
 
 Note that there is really no reason to create .h5 files 'manually' in this fashion: the visualizer will invoke the log decoder to create h5 files for you, as needed.
+
+### When did the log start?
+
+The umod4 has no clock, so a log does not say when it began.
+What it does contain is a GPS time snapshot, which the WP logs once the GPS receiver first reports a fix.
+The decoder takes the first snapshot, subtracts the time the log had been running when it appeared, and writes the result into the HDF5 file as two attributes: `log_start_timestamp_utc` (seconds since 1970, in UTC) and `log_start_timestamp_iso` (the same time as text).
+It also writes `gps_sync_elapsed_ns`, which is how far into the log the snapshot was.
+These are in UTC, the time GPS provides: convert to local time for display.
+
+A log that never got a GPS time has none of these attributes.
+That includes a log recorded without an antenna or indoors, or one that is too short to contain a fix.
+Also, for a log that has no ECU events (the engine never turned and the ECU was off), the decoder cannot tell how long the log had been running, so the start time is the time of the snapshot, which can be later than the true start.

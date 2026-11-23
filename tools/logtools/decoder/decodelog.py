@@ -380,6 +380,7 @@ class HDF5Writer:
         # GPS back-calculation
         self.gps_sync_time_ns = None
         self.gps_first_time = None  # (csecs, secs, mins, hours, date, month, year)
+        self.gps_snapshot = None    # fields of the GPS time snapshot being collected (see note_gps_time_field)
 
         # Pending injector events for pairing ON+duration into combined bar datasets
         self.pending_front_inj = None  # (time_ns, on_value) waiting for duration
@@ -640,6 +641,29 @@ class HDF5Writer:
                 if duration_ns > 0:
                     self.append_data('ecu_rear_coil_manual_bar', [on_time_ns, duration_ns])
                 self.pending_rear_coil_manual = None
+
+    def note_gps_time_field(self, name, value):
+        """Collect the GPS time snapshot that the WP logs when the receiver first reports a fix.
+
+        The snapshot is the events YR, MON, DT, HRS, MIN, SEC and CS, in that order (largest unit
+        first); the WP logs it again when the date changes, and other events can land between its
+        events.  A snapshot starts at YR and is complete at the CS that follows SEC.  The first
+        complete one gives the time of day at which the decoder's clock read gps_sync_time_ns, and
+        close() back-calculates the log's start time from that.
+        name is one of 'YR', 'MON', 'DT', 'HRS', 'MIN', 'SEC', 'CS'.
+        """
+        if name == 'YR':
+            self.gps_snapshot = {'YR': value}
+            return
+        if self.gps_snapshot is None:
+            return
+        self.gps_snapshot[name] = value
+        s = self.gps_snapshot
+        if (name == 'CS' and self.gps_first_time is None
+                and all(k in s for k in ('YR', 'MON', 'DT', 'HRS', 'MIN', 'SEC'))):
+            self.gps_first_time = (s['CS'], s['SEC'], s['MIN'], s['HRS'], s['DT'], s['MON'], s['YR'])
+            self.gps_sync_time_ns = self.timekeeper.get_time_ns()
+            self.gps_snapshot = None
 
     def close(self):
         """Write metadata and close HDF5 file."""
@@ -2513,7 +2537,7 @@ def _process_single_file(logfile_path, output_path, args, L):
                     csecs = read(f, L.LOGID_WP_CSECS_DLEN)[0]
                     print(f"{fmt_record(recordCnt, timekeeper)} CS:     {csecs:02}")
                     if h5_writer:
-                        h5_writer.temp_gps_csecs = csecs
+                        h5_writer.note_gps_time_field('CS', csecs)
 
                 elif byte == L.LOGID_WP_SECS_TYPE_U8:
                     secs = read(f, L.LOGID_WP_SECS_DLEN)[0]
@@ -2572,49 +2596,39 @@ def _process_single_file(logfile_path, output_path, args, L):
                     gps_last_sec_file_pos = current_file_pos
 
                     if h5_writer:
-                        h5_writer.temp_gps_secs = secs
+                        h5_writer.note_gps_time_field('SEC', secs)
 
                 elif byte == L.LOGID_WP_MINS_TYPE_U8:
                     mins = read(f, L.LOGID_WP_MINS_DLEN)[0]
                     print(f"{fmt_record(recordCnt, timekeeper)} MIN:    {mins:02}")
                     if h5_writer:
-                        h5_writer.temp_gps_mins = mins
+                        h5_writer.note_gps_time_field('MIN', mins)
 
                 elif byte == L.LOGID_WP_HOURS_TYPE_U8:
                     hours = read(f, L.LOGID_WP_HOURS_DLEN)[0]
                     print(f"{fmt_record(recordCnt, timekeeper)} HRS:    {hours:02}")
                     if h5_writer:
-                        h5_writer.temp_gps_hours = hours
+                        h5_writer.note_gps_time_field('HRS', hours)
 
                 elif byte == L.LOGID_WP_DATE_TYPE_U8:
                     date = read(f, L.LOGID_WP_DATE_DLEN)[0]
                     print(f"{fmt_record(recordCnt, timekeeper)} DT:     {date:02}")
                     if h5_writer:
-                        h5_writer.temp_gps_date = date
+                        h5_writer.note_gps_time_field('DT', date)
 
                 elif byte == L.LOGID_WP_MONTH_TYPE_U8:
                     month = read(f, L.LOGID_WP_MONTH_DLEN)[0]
                     print(f"{fmt_record(recordCnt, timekeeper)} MON:    {month:02}")
                     if h5_writer:
-                        h5_writer.temp_gps_month = month
+                        h5_writer.note_gps_time_field('MON', month)
 
                 elif byte == L.LOGID_WP_YEAR_TYPE_U8:
                     year = read(f, L.LOGID_WP_YEAR_DLEN)[0]
                     print(f"{fmt_record(recordCnt, timekeeper)} YR:     {year:02}")
                     if h5_writer:
-                        h5_writer.temp_gps_year = year
-                        # Year is the last GPS time field - record this for back-calculation if first time
-                        if h5_writer.gps_first_time is None and hasattr(h5_writer, 'temp_gps_csecs'):
-                            h5_writer.gps_first_time = (
-                                h5_writer.temp_gps_csecs,
-                                h5_writer.temp_gps_secs,
-                                h5_writer.temp_gps_mins,
-                                h5_writer.temp_gps_hours,
-                                h5_writer.temp_gps_date,
-                                h5_writer.temp_gps_month,
-                                h5_writer.temp_gps_year
-                            )
-                            h5_writer.gps_sync_time_ns = timekeeper.get_time_ns()
+                        # The year starts a GPS time snapshot (YR, MON, DT, HRS, MIN, SEC, CS); see
+                        # HDF5Writer.note_gps_time_field for how the first one becomes the log start time
+                        h5_writer.note_gps_time_field('YR', year)
 
                 elif byte == L.LOGID_WP_FIXTYPE_TYPE_U8:
                     fix = read(f, L.LOGID_WP_FIXTYPE_DLEN)[0]
