@@ -14,7 +14,6 @@ import sys
 import os
 import math
 import argparse
-from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from log_convert import (
     logconv_ecu_raw_thw, logconv_ecu_raw_tha,
@@ -54,283 +53,6 @@ except ImportError:
 # in-process and want periodic progress reports during a long decode.
 # Signature: callback(bytes_read, total_bytes)
 PROGRESS_CALLBACK = None
-
-# ================================================================================================
-# Output Handler Classes
-# ================================================================================================
-
-class OutputHandler(ABC):
-    """Abstract base class for handling decoded log output in different formats."""
-
-    def __init__(self, L):
-        """Initialize with Logsyms reference.
-
-        Args:
-            L: Logsyms class reference containing all LOGID constants
-        """
-        self.L = L
-        self.time_ns = 0  # Unified nanosecond counter from log start
-        self.prev_timestamp = -1  # Previous raw timestamp for delta calculation
-        self.record_count = 0
-
-        # State variables for accumulating values
-        self.cr_ts = -1
-        self.cr_ts_prev = -1
-        self.elapsed = -1
-        self.crid = -1
-        self.cridPrev = -1
-        self.fc_off = 0
-        self.rc_off = 0
-        self.map = -1
-        self.aap = -1
-        self.vm_V = -1
-        self.vta = -1
-        self.fi_on = -1
-        self.ri_on = -1
-        self.fi_dur = 0
-        self.ri_dur = 0
-        self.secs = -1
-        self.tha_C = -1
-        self.thw_C = -1
-        self.rpm_avg = 0.0
-
-        # EPROM load tracking
-        self.epromIdString = ""
-        self.currentEpromId = ""
-
-        # GPS time tracking for back-calculation
-        self.gps_sync_time_ns = None  # When GPS first synced
-        self.gps_first_timestamp = None  # The GPS time when sync occurred
-
-    def update_time(self, has_timestamp=False, raw_timestamp=None):
-        """Update the unified nanosecond counter.
-
-        Args:
-            has_timestamp: True if this event has a raw timestamp
-            raw_timestamp: The raw 16-bit timestamp value (if has_timestamp=True)
-        """
-        if has_timestamp and raw_timestamp is not None:
-            if self.prev_timestamp >= 0:
-                # Calculate delta, handling wraparound
-                delta_ticks = raw_timestamp - self.prev_timestamp
-                if delta_ticks < 0:
-                    delta_ticks += 65536  # Handle 16-bit wraparound
-                # Each tick is 2 microseconds = 2000 nanoseconds
-                self.time_ns += delta_ticks * 2000
-            self.prev_timestamp = raw_timestamp
-        else:
-            # Untimestamped event - increment by 1ns to preserve sequence
-            self.time_ns += 1
-
-    @abstractmethod
-    def begin(self):
-        """Called once before processing begins."""
-        pass
-
-    @abstractmethod
-    def end(self):
-        """Called once after all processing is complete."""
-        pass
-
-    @abstractmethod
-    def write_ecu_log_version(self, version):
-        pass
-
-    @abstractmethod
-    def write_ep_log_version(self, version):
-        pass
-
-    @abstractmethod
-    def write_wp_log_version(self, version):
-        pass
-
-    @abstractmethod
-    def write_cpu_event(self, event_type):
-        pass
-
-    @abstractmethod
-    def write_l4000_event(self, value):
-        pass
-
-    @abstractmethod
-    def write_front_inj_on(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_front_inj_dur(self, duration):
-        pass
-
-    @abstractmethod
-    def write_rear_inj_on(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_rear_inj_dur(self, duration):
-        pass
-
-    @abstractmethod
-    def write_front_coil_on(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_front_coil_off(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_rear_coil_on(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_rear_coil_off(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_front_coil_manual_on(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_front_coil_manual_off(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_rear_coil_manual_on(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_rear_coil_manual_off(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_front_ign_delay(self, degrees):
-        pass
-
-    @abstractmethod
-    def write_rear_ign_delay(self, degrees):
-        pass
-
-    @abstractmethod
-    def write_5ms_marker(self):
-        pass
-
-    @abstractmethod
-    def write_p6_max_marker(self):
-        pass
-
-    @abstractmethod
-    def write_fuel_pump(self, state):
-        pass
-
-    @abstractmethod
-    def write_error_L000C(self, bitmap):
-        pass
-
-    @abstractmethod
-    def write_error_L000D(self, bitmap):
-        pass
-
-    @abstractmethod
-    def write_error_L000E(self, bitmap):
-        pass
-
-    @abstractmethod
-    def write_error_L000F(self, bitmap):
-        pass
-
-    @abstractmethod
-    def write_throttle(self, adc_value):
-        pass
-
-    @abstractmethod
-    def write_map(self, adc_value):
-        pass
-
-    @abstractmethod
-    def write_aap(self, adc_value):
-        pass
-
-    @abstractmethod
-    def write_coolant_temp(self, temp_celsius):
-        pass
-
-    @abstractmethod
-    def write_air_temp(self, temp_celsius):
-        pass
-
-    @abstractmethod
-    def write_battery_voltage(self, volts):
-        pass
-
-    @abstractmethod
-    def write_portg(self, bitmap):
-        pass
-
-    @abstractmethod
-    def write_crankref_start(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_crankref_id(self, crank_id):
-        pass
-
-    @abstractmethod
-    def write_camshaft(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_cam_error(self, error_code):
-        pass
-
-    @abstractmethod
-    def write_spark_x1(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_spark_x2(self, timestamp):
-        pass
-
-    @abstractmethod
-    def write_nospark(self, error_code):
-        pass
-
-    @abstractmethod
-    def write_eprom_load_name(self, name):
-        pass
-
-    @abstractmethod
-    def write_eprom_load_addr(self, address):
-        pass
-
-    @abstractmethod
-    def write_eprom_load_len(self, length):
-        pass
-
-    @abstractmethod
-    def write_eprom_load_err(self, error_code):
-        pass
-
-    @abstractmethod
-    def write_gps_time(self, csecs, secs, mins, hours, date, month, year):
-        pass
-
-    @abstractmethod
-    def write_gps_fix_type(self, fix_type):
-        pass
-
-    @abstractmethod
-    def write_gps_position(self, latitude, longitude):
-        pass
-
-    @abstractmethod
-    def write_gps_velocity(self, velocity_mph):
-        pass
-
-    @abstractmethod
-    def write_fs_write_time(self, milliseconds):
-        pass
-
-    @abstractmethod
-    def write_fs_sync_time(self, milliseconds):
-        pass
 
 # ================================================================================================
 # HDF5 Writer Class - Simplified implementation
@@ -1349,10 +1071,6 @@ class TimeKeeper:
         return result
 
 
-# Global time tracking for human-readable output (OLD - to be replaced)
-global_time_ns = 0
-global_prev_timestamp = -1
-global_in_upper_half = False  # Track which half of timer cycle we're in
 gps_last_sec_time_ns = -1  # Track when we last saw a GPS SEC change
 gps_first_sec_time_ns = -1  # Track when we saw the FIRST GPS SEC (for drift calculation)
 gps_sec_count = 0  # Count of GPS SEC events seen
@@ -1361,60 +1079,6 @@ gps_last_sec_file_pos = -1  # Track file position at last SEC event for data rat
 max_data_rate_bytes_per_sec = 0  # Maximum data rate observed between SEC events
 
 f=""
-
-def update_global_time(has_timestamp=False, raw_timestamp=None, is_overflow=False, is_marker=False):
-    """Update the global nanosecond counter for human-readable output.
-
-    Args:
-        has_timestamp: True if this event has a raw timestamp
-        raw_timestamp: The raw 16-bit timestamp value (if has_timestamp=True)
-        is_overflow: True if this is a T1_OFLO event (timer wrapped 65535→0, b15: 1→0)
-        is_marker: True if this is a TIME_MARKER event (b15 went 0→1, timestamp ~32768)
-    """
-    global global_time_ns, global_prev_timestamp, global_in_upper_half
-
-    if has_timestamp and raw_timestamp is not None:
-        if global_prev_timestamp >= 0:
-            delta_ticks = raw_timestamp - global_prev_timestamp
-
-            if is_overflow:
-                # OFLO: Timer wrapped. Timestamp is the counter value shortly after wrap.
-                # Delta = (65536 - prev_timestamp) + raw_timestamp
-                delta_ticks = (65536 - global_prev_timestamp) + raw_timestamp
-                global_time_ns += delta_ticks * 2000
-                global_prev_timestamp = raw_timestamp
-                global_in_upper_half = False  # Now in lower half (timestamps 0-32767)
-            # MARKER and all other timestamped events: calculate delta normally
-            else:
-                # Check if timestamp is in expected half of timer cycle
-                ts_in_upper_half = (raw_timestamp >= 32768)
-
-                # Handle negative delta (wraparound or out-of-order)
-                if delta_ticks < 0:
-                    # Could be wraparound or out-of-order
-                    if ts_in_upper_half != global_in_upper_half:
-                        # Crossing half boundary - add wraparound
-                        delta_ticks += 65536
-                    else:
-                        # Same half, negative delta = out-of-order
-                        # Don't advance time, don't update prev_timestamp
-                        pass
-
-                # Only advance time if we have positive delta
-                if delta_ticks >= 0:
-                    global_time_ns += delta_ticks * 2000
-                    global_prev_timestamp = raw_timestamp
-                    # Update half tracking
-                    if is_marker:
-                        global_in_upper_half = True  # MARKER indicates entry to upper half
-                    else:
-                        global_in_upper_half = ts_in_upper_half
-        else:
-            # First timestamp - initialize tracking
-            global_prev_timestamp = raw_timestamp
-            global_in_upper_half = (raw_timestamp >= 32768)
-    else:
-        global_time_ns += 1  # Untimestamped event
 
 def fmt_record(recordCnt, timekeeper):
     """Format record number with elapsed time for human-readable output.
@@ -1539,7 +1203,6 @@ def _process_single_file(logfile_path, output_path, args, L):
     global address, showBinData, current_record_hex, current_record_address
     global headingsPrinted, msb, msb_id
     global crank_ts_history
-    global global_time_ns, global_prev_timestamp, global_in_upper_half
     global gps_last_sec_time_ns, gps_first_sec_time_ns, gps_sec_count
     global gps_last_sec_value, gps_last_sec_file_pos, max_data_rate_bytes_per_sec
 
@@ -1574,9 +1237,6 @@ def _process_single_file(logfile_path, output_path, args, L):
     msb = 0
     msb_id = -1
     crank_ts_history.clear()
-    global_time_ns = 0
-    global_prev_timestamp = -1
-    global_in_upper_half = False
     gps_last_sec_time_ns = -1
     gps_first_sec_time_ns = -1
     gps_sec_count = 0
