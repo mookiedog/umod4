@@ -57,9 +57,10 @@
 //    _U16  uint16  Unsigned 16-bit int
 //                  Some _U16 events carry a value of the ECU's free-running timer instead of a measurement:
 //                  the timer overflow (OFLO) and half-overflow (HOFLO) events, and the injector, coil and spark times.
-//                  Unlike a _TS event, none of these places the log on the clock.
-//                  Their time can be in the future (an injector pulse that is scheduled to begin)
-//                  or in the past (the time at which a spark was actually observed).
+//                  Unlike a _TS event, none of these places the log on the clock: the log does not promise where they
+//                  sit relative to the crankshaft events, even when the value is a hardware capture (the spark times).
+//                  Their time can be a few microseconds in the future (an injector that is about to open), well in the
+//                  future (a scheduled coil OFF time), or in the past (a spark time, logged just after the spark).
 //                  OFLO and HOFLO exist so that a decoder can see every timer rollover:
 //                  a decoder treats them as changes of state, and uses their values only as coarse clock readings.
 //    _TS   uint16  A true timestamp: the value of the ECU's free-running timer, captured by hardware when a crankshaft or camshaft event occurred.
@@ -190,19 +191,24 @@
 
 
 // Injector events, front and rear
-#define   LOGID_ECU_F_INJ_ON_TYPE_U16               ((LOGID_ECU_BASE) + 0x10)       // timestamp of injector on time in ticks
+#define   LOGID_ECU_F_INJ_ON_TYPE_U16               ((LOGID_ECU_BASE) + 0x10)       // timer value at which the front injector opens (output compare), logged a few uSec before it opens
 #define   LOGID_ECU_F_INJ_ON_DLEN                   2
 
 #define   LOGID_ECU_F_INJ_DUR_TYPE_U16              ((LOGID_ECU_BASE) + 0x12)       // duration of injector pulse in ticks
 #define   LOGID_ECU_F_INJ_DUR_DLEN                  2
 
-#define   LOGID_ECU_R_INJ_ON_TYPE_U16               ((LOGID_ECU_BASE) + 0x14)       // timestamp of injector on time in ticks
+#define   LOGID_ECU_R_INJ_ON_TYPE_U16               ((LOGID_ECU_BASE) + 0x14)       // timer value at which the rear injector opens (output compare), logged a few uSec before it opens
 #define   LOGID_ECU_R_INJ_ON_DLEN                   2
 
 #define   LOGID_ECU_R_INJ_DUR_TYPE_U16              ((LOGID_ECU_BASE) + 0x16)       // duration of injector pulse in ticks
 #define   LOGID_ECU_R_INJ_DUR_DLEN                  2
 
 // Ignition coil events, front and rear
+//   COIL_OFF is the SCHEDULED spark time: the value loaded into the output compare register whose match ends the coil
+//   charge, so it is in the future of the log record. The current ECU firmware logs it only rarely.
+//   COIL_MAN_OFF is the same for a coil fired by hand while cranking (below about 400 RPM): 32 uSec ahead of the log record.
+//   The COIL_ON and COIL_MAN_ON events are defined, but the current ECU firmware (UM4.S) never logs them.
+//   The sparks themselves are reported by SPRK_X1 and SPRK_X2, below.
 #define   LOGID_ECU_F_COIL_ON_TYPE_U16              ((LOGID_ECU_BASE) + 0x20)
 #define   LOGID_ECU_F_COIL_ON_DLEN                  2
 
@@ -342,11 +348,18 @@
 #define   LOGID_ECU_CAMSHAFT_TYPE_TS                ((LOGID_ECU_BASE) + 0x64)           // Timestamp of most recent camshaft sensor falling-edge event
 #define   LOGID_ECU_CAMSHAFT_DLEN                   2
 
+// Spark events (UM4.S built with SPARK_ISR, which is the default).
+//   The value is the timer reading captured by hardware (input capture) when the spark was detected, logged from the
+//   capture interrupt a short time afterwards. It is precise, but it is not a _TS: the log does not promise its position
+//   relative to the crankshaft events, so a decoder places it by its own value and never advances the clock from it.
+//   X1 follows the scheduled COIL_OFF time by about 14 to 18 uSec and X2 by about 28 to 36 uSec (measured).
+//   A spark can happen with no crankshaft events: about half a second after the last crank pulse the ECU stops charging
+//   both coils, and a coil that was charging fires.
 #define   LOGID_ECU_SPRK_X1_TYPE_U16                ((LOGID_ECU_BASE) + 0x70)           // The time when front OR rear coil #1 fired
-#define   LOGID_ECU_SPRK_X1_DLEN                    2                                   // By design, this is reported during the CR period AFTER it occurred
+#define   LOGID_ECU_SPRK_X1_DLEN                    2
 
 #define   LOGID_ECU_SPRK_X2_TYPE_U16                ((LOGID_ECU_BASE) + 0x72)           // The time when front OR rear coil #2 fired
-#define   LOGID_ECU_SPRK_X2_DLEN                    2                                   // By design, this is reported during the CR period AFTER it occurred
+#define   LOGID_ECU_SPRK_X2_DLEN                    2
 
 #define   LOGID_ECU_NOSPARK_TYPE_U8                 ((LOGID_ECU_BASE) + 0x74)           // U8 value indicates the coil that did not spark: 0x11, 0x12, 0x21, 0x22
 #define   LOGID_ECU_NOSPARK_DLEN                    1
